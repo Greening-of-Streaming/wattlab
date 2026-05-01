@@ -53,6 +53,16 @@ def load() -> dict:
 
 
 def save(data: dict) -> dict:
-    merged = {**DEFAULTS, **{k: data[k] for k in DEFAULTS if k in data}}
+    """Partial-update save: any key in `data` that is also a recognised
+    setting overwrites the on-disk value; every other key is preserved.
+
+    Previously this merged against DEFAULTS instead of the current state,
+    which silently wiped variance calibration outputs (variance_*_pct)
+    on every POST /settings call that didn't include them. The fix is
+    to merge against load() — load() already overlays DEFAULTS with the
+    on-disk file, so the merge base is what's actually live.
+    """
+    current = load()
+    merged = {**current, **{k: data[k] for k in DEFAULTS if k in data}}
     SETTINGS_FILE.write_text(json.dumps(merged, indent=2))
     return merged

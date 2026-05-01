@@ -374,6 +374,88 @@ Dom guessed five days of Claude Code work. Probably correct order of magnitude. 
 
 ---
 
+## CR-010 · France historical reference in "how this is calculated" comparison strip
+
+**Status:** captured 2026-05-01.
+**Triggered by:** owner notes during spine-refactor session — concern that LIVE French intensity (~11 g/kWh, dominated by nuclear) can read very differently from the long-run average, leading viewers to draw the wrong conclusion when they compare FR-LIVE against UK/DE/PL annual means.
+
+### Problem
+
+The "If this had run elsewhere · how this is calculated" dropdown today shows:
+- Home zone (France) at the **live** intensity (Eco2mix or ElectricityMaps, badged LIVE).
+- Comparison cities (Warsaw / London / Berlin / …) at **annual mean** intensity (Ember 2024, badged EST).
+
+This is internally consistent but visually misleading: France looks unusually clean simply because it's currently low-carbon, and viewers can't see how *typical* that is. A visitor doing a back-of-envelope comparison may conclude "France beats Germany by 10×" when in fact the live snapshot is at the cleanest end of France's own distribution.
+
+### Agreed direction
+
+Add **France 2024 annual mean** as an extra row in the comparison strip dropdown, badged distinctly so viewers can do an apples-to-apples comparison both ways:
+- France LIVE (today's grid right now) — badged **LIVE**, accent colour.
+- France HISTORICAL (2024 annual mean) — badged **EST · REF**, muted, with a small note like *"Historical reference — France's 2024 annual mean. Compare against this for a like-for-like view of the other countries below."*
+- Other zones at annual mean — badged **EST**, unchanged.
+
+Implementation note: this is the same Ember 2024 number the existing comparison strip already uses — `carbon.STATIC_INTENSITY["FR"]["g_per_kwh"]`. Today the home zone goes straight to the live path; CR-010 just exposes the static value alongside, with a tag clarifying it's a reference, not the live reading.
+
+### Where it lives
+
+`_CARBON_JS` in `main.py` — the comparison-strip rendering block. Probably one extra row in the table builder; one line of CSS for the muted REF badge.
+
+### Pre-conference: yes — small change, high pedagogical value, sharpens the "live grid varies" story (which is already the core CR-007 thesis).
+
+---
+
+## CR-011 · Staging environment via maintenance-page swap
+
+**Status:** captured 2026-05-01 — pre-conference enabler.
+**Triggered by:** spine-refactor session — every restart-and-test loop currently takes the public service down with no friendly intermediate state, and there's no path for the owner to test a feature branch live before merging.
+
+### Problem
+
+OWL is a single systemd unit on a single port, behind nginx + cert at `wattlab.greeningofstreaming.org`. Today, testing any change requires either (a) testing locally without the production wiring (misses real-world behaviour), or (b) restarting prod and hoping no public visitor hits a connection error during the window. Neither is acceptable for the conference runway, when visitors may arrive at any time.
+
+### Constraint that shapes the design
+
+GoS1 has **one Tapo P110 plug measuring the whole machine** and **one GPU**. Two OWL processes running measurement workloads simultaneously corrupt each other's readings — they both see each other's energy as part of their own ΔW. So a "staging" environment that runs measurements alongside prod is not a real option without buying a second plug + isolating GPU access; a side-by-side instance would only be safe for UI / route / docs work.
+
+### Agreed direction — single-service swap with maintenance page
+
+The owner's actual workflow is short manual test windows (5–15 min) on a feature branch, not parallel staging. So:
+
+1. **One service, swap branches in place.** No second systemd unit, no second port, no env-var split, no worktree. `git checkout <feature-branch> && sudo systemctl restart wattlab`, manually test, `git checkout main && sudo systemctl restart wattlab`.
+2. **Maintenance page at the nginx layer** during the swap window. Triggered by a flag file (`/tmp/owl-maintenance`); when the file exists, nginx returns a static `maintenance.html` instead of proxying to FastAPI. Works even while wattlab is stopped — that's the whole point.
+3. **Staging access bypasses nginx.** Owner accesses `http://192.168.1.62:8000` (LAN) or `localhost:8000` via SSH tunnel — both routes don't traverse nginx, so the maintenance flag has no effect on them.
+
+### Mechanism
+
+- **`maintenance.html`** (static, lives at `/var/www/maintenance.html` or similar): re-uses `_BASE_STYLES` palette, owl mark, GoS bug, link to greeningofstreaming.org. Reusable for any planned downtime (cert renewal, reboots, demo prep).
+- **nginx config** for `wattlab.greeningofstreaming.org`: `if (-f /tmp/owl-maintenance)` block returns the static page with HTTP 503. ~10 lines.
+- **`bin/stage-on`** shell script: optionally drains the queue (checks `queue_control.depth()` via `/queue` JSON; waits up to N seconds), touches `/tmp/owl-maintenance`, restarts wattlab. Optionally takes a branch name and does the checkout.
+- **`bin/stage-off`** shell script: opposite — checkout main, restart, remove flag.
+
+### Why not the alternatives
+
+- **Two systemd units on different ports** (Option A in the discussion): ~half-day to build, requires env-driven config split (results dirs, DBs, ports), still has P110/GPU contention for measurement work. Pays off only if staging runs for hours-days at a time, which is not the workflow.
+- **Docker-isolated staging** (Option B): same P110/GPU contention; ROCm-in-container is non-trivial; only earns its keep when GoS1 hosts other projects. Tracked separately in CLAUDE.md "Dockerize OWL" deferred item.
+- **Different machine entirely** (Option C): can't validate measurement code paths since hardware differs. Misses the point.
+
+### Open questions
+
+- **Queue drain on `stage-on`** — block until queue empties, with a timeout, or just accept the dropped-job risk? Lean: short timeout (60s), then warn-and-proceed.
+- **Where the maintenance HTML lives** — `/var/www/owl-maintenance.html` is conventional; could also live inside the repo at `wattlab_service/static/maintenance.html` and be served via nginx alias. Slight preference for the repo location so the page evolves with the brand without a separate deploy step.
+- **Auth on staging** — staging runs the same gate password as prod (since it's the same `.env`). For testing CR-001's auth flow, staging may need its own gate password override. Defer until CR-001 lands.
+
+### Implementation order
+
+Single afternoon, ~1 hour of actual work:
+1. Write `maintenance.html` (5 min).
+2. nginx vhost edit + reload (15 min, including syntax debugging).
+3. `bin/stage-on` and `bin/stage-off` (20 min).
+4. Document the workflow in CLAUDE.md or a `STAGING.md` (10 min).
+
+### Pre-conference: yes — unblocks every other CR's restart-and-test loop. Probably the second-most-leveraged conference-runway change after the access-spine refactor itself.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
