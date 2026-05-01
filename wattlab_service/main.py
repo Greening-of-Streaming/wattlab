@@ -1,10 +1,9 @@
 import asyncio
 import io
-import ipaddress
 import json
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, File, UploadFile, Form, Request
+from fastapi import FastAPI, File, UploadFile, Form, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
@@ -20,6 +19,13 @@ import rag as rag_module
 import settings as cfg
 import carbon
 import queue_control
+import audience
+from capabilities import (
+    requires, can,
+    PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
+    VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD,
+    SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN,
+)
 
 config = dotenv_values("/home/gos/wattlab/.env")
 app = FastAPI()
@@ -43,7 +49,7 @@ async def gate_middleware(request: Request, call_next):
     next_url = request.url.path
     return RedirectResponse(url=f"/gate?next={next_url}", status_code=302)
 
-@app.get("/gate", response_class=HTMLResponse)
+@app.get("/gate", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def gate_page(next: str = "/", error: bool = False):
     err_html = ('<p style="color:var(--err);font-family:monospace;font-size:0.85rem;'
                 'margin-bottom:1rem">Incorrect password.</p>') if error else ''
@@ -83,7 +89,7 @@ async def gate_page(next: str = "/", error: bool = False):
 </body>
 </html>"""
 
-@app.post("/gate")
+@app.post("/gate", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def gate_submit(request: Request, password: str = Form(...), next: str = Form("/")):
     if password == GATE_PASSWORD:
         response = RedirectResponse(url=next, status_code=302)
@@ -633,7 +639,7 @@ function wlRenderQueued(pos) {
 
 # --- Home ---
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def index():
     watts = _power_cache["watts"]
     watts_str = f"{watts:.1f}" if watts is not None else "—"
@@ -730,12 +736,12 @@ async def index():
 </body>
 </html>"""
 
-@app.get("/power")
+@app.get("/power", dependencies=[Depends(requires(LIVE_TELEMETRY))])
 async def power_json():
     return {"watts": _power_cache["watts"], "scope": "device_only", "source": "tapo_p110"}
 
 
-@app.get("/live")
+@app.get("/live", dependencies=[Depends(requires(LIVE_TELEMETRY))])
 async def live_json():
     """Bundled live telemetry for the shared UI poller. One round-trip for
     everything that updates in real-time on any page: watts, temps, GPU PPT,
@@ -751,7 +757,7 @@ async def live_json():
     }
 
 
-@app.get("/carbon")
+@app.get("/carbon", dependencies=[Depends(requires(LIVE_TELEMETRY))])
 async def carbon_json():
     """Diagnostic + UI feed for the carbon module. Returns the home-zone
     intensity (live or static fallback) and the comparison-cities table.
@@ -761,9 +767,13 @@ async def carbon_json():
 
 # --- Video page ---
 
-@app.get("/video", response_class=HTMLResponse)
+@app.get("/video", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_page(request: Request):
-    is_lan = _is_local(request)
+    # Render-mode predicate: Lab tier sees editable custom ffmpeg command
+    # boxes; everyone else sees the same boxes read-only. Same shape as
+    # /settings GET. SETTINGS_READ_FULL doubles as the "editable inputs"
+    # capability today; CR-001 may split it.
+    is_lan = can(audience.tier(request), SETTINGS_READ_FULL)
     queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
@@ -1570,7 +1580,7 @@ async def run_job(job_id: str, input_path: Path, preset: str, delete_after: bool
             input_path.unlink(missing_ok=True)
 
 
-@app.post("/video/use-source")
+@app.post("/video/use-source", dependencies=[Depends(requires(VIDEO_RUN))])
 async def use_preloaded_source(
     source_key: str = Form(...),
     preset: str = Form("both"),
@@ -1599,7 +1609,7 @@ async def use_preloaded_source(
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
 
-@app.post("/video/upload")
+@app.post("/video/upload", dependencies=[Depends(requires(CUSTOM_UPLOAD))])
 async def upload_video(
     file: UploadFile = File(...),
     preset: str = Form("both"),
@@ -1636,12 +1646,12 @@ async def upload_video(
     return {"job_id": job_id, "queue_position": position}
 
 
-@app.get("/video/sources")
+@app.get("/video/sources", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_sources():
     return get_all_sources()
 
 
-@app.get("/video/preview-cmd")
+@app.get("/video/preview-cmd", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_preview_cmd(preset: str = "both"):
     from video import PRESETS, build_preset_cmd
     placeholder_in = Path("{input}")
@@ -1666,10 +1676,8 @@ async def video_preview_cmd(preset: str = "both"):
         return JSONResponse({"error": "Unknown preset"}, status_code=400)
 
 
-@app.post("/variance/run")
+@app.post("/variance/run", dependencies=[Depends(requires(VARIANCE_RUN))])
 async def variance_run(request: Request):
-    if not _is_local(request):
-        return JSONResponse({"error": "Forbidden — variance calibration is lab-only"}, status_code=403)
     from video import run_variance_calibration
     job_id = str(uuid.uuid4())[:8]
     label = "Variance calibration — system offline"
@@ -1709,7 +1717,7 @@ async def run_llm_job(job_id: str, model_key: str, task_key: str,
     except Exception as e:
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
-@app.get("/llm", response_class=HTMLResponse)
+@app.get("/llm", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def llm_page():
     models_html = "".join([
         f'''<div class="preset" id="model-{k}" onclick="selectModel('{k}')">
@@ -2402,7 +2410,7 @@ async def llm_page():
 </body>
 </html>"""
 
-@app.post("/llm/run")
+@app.post("/llm/run", dependencies=[Depends(requires(LLM_RUN))])
 async def llm_run(
     model_key: str = Form(...),
     task_key: str = Form(...),
@@ -2479,7 +2487,7 @@ async def run_llm_all_job(job_id: str, model_key: str, warm: bool, device: str):
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
 
-@app.post("/llm/run-all")
+@app.post("/llm/run-all", dependencies=[Depends(requires(LLM_RUN))])
 async def llm_run_all(
     model_key: str = Form(...),
     warm: bool = Form(False),
@@ -2502,26 +2510,26 @@ async def llm_run_all(
     return {"job_id": job_id, "queue_position": position}
 
 
-@app.get("/llm/job/{job_id}")
+@app.get("/llm/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def llm_job_status(job_id: str):
     return jobs.get(job_id, {"status": "not_found"})
 
-@app.get("/video/job/{job_id}")
+@app.get("/video/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def job_status(job_id: str):
     return jobs.get(job_id, {"status": "not_found"})
 
-@app.get("/image/job/{job_id}")
+@app.get("/image/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def image_job_status(job_id: str):
     return jobs.get(job_id, {"status": "not_found"})
 
-@app.get("/queue")
+@app.get("/queue", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_status_endpoint():
     return queue_control.snapshot()
 
 
 # --- RAG page and endpoints ---
 
-@app.get("/rag", response_class=HTMLResponse)
+@app.get("/rag", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def rag_page():
     models_html = "".join([
         f'''<div class="preset" id="rmodel-{k}" onclick="selectRModel('{k}')">
@@ -3104,7 +3112,7 @@ async def rag_page():
 </html>"""
 
 
-@app.get("/rag/index-status")
+@app.get("/rag/index-status", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def rag_index_status():
     return {
         "status": rag_module.index_status,
@@ -3113,7 +3121,7 @@ async def rag_index_status():
     }
 
 
-@app.get("/rag/corpus-list")
+@app.get("/rag/corpus-list", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def rag_corpus_list():
     docs = rag_module.corpus_list()
     return {
@@ -3123,7 +3131,7 @@ async def rag_corpus_list():
     }
 
 
-@app.post("/rag/build-index")
+@app.post("/rag/build-index", dependencies=[Depends(requires(RAG_RUN))])
 async def rag_build_index(request: Request):
     body = await request.json()
     rebuild = bool(body.get("rebuild", False))
@@ -3134,7 +3142,7 @@ async def rag_build_index(request: Request):
     return {"status": "started"}
 
 
-@app.post("/rag/run")
+@app.post("/rag/run", dependencies=[Depends(requires(RAG_RUN))])
 async def rag_run(
     model_key: str = Form(...),
     rag_mode: str = Form(...),
@@ -3165,7 +3173,7 @@ async def rag_run(
     return {"job_id": job_id, "queue_position": position}
 
 
-@app.get("/rag/job/{job_id}")
+@app.get("/rag/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def rag_job_status(job_id: str):
     return jobs.get(job_id, {"status": "not_found"})
 
@@ -3206,7 +3214,7 @@ async def run_rag_compare_job(job_id: str, model_key: str, question: str):
         jobs[job_id] = {"stage": "error", "error": str(e)}
 
 
-@app.post("/rag/run-compare")
+@app.post("/rag/run-compare", dependencies=[Depends(requires(RAG_RUN))])
 async def rag_run_compare(
     model_key: str = Form(...),
     question: str = Form(...),
@@ -3232,13 +3240,13 @@ async def rag_run_compare(
 
 # --- Results: list, JSON download, CSV download ---
 
-@app.get("/results/{job_type}/list")
+@app.get("/results/{job_type}/list", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def results_list(job_type: str):
     if job_type not in ("video", "llm", "image"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
     return list_results(job_type)
 
-@app.get("/results/{job_type}/{job_id}/download.json")
+@app.get("/results/{job_type}/{job_id}/download.json", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def results_download_json(job_type: str, job_id: str):
     if job_type not in ("video", "llm", "image"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
@@ -3252,7 +3260,7 @@ async def results_download_json(job_type: str, job_id: str):
         headers={"Content-Disposition": f"attachment; filename=wattlab_{job_type}_{job_id}.json"},
     )
 
-@app.get("/results/{job_type}/{job_id}/download.csv")
+@app.get("/results/{job_type}/{job_id}/download.csv", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def results_download_csv(job_type: str, job_id: str):
     if job_type not in ("video", "llm", "image"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
@@ -3269,22 +3277,10 @@ async def results_download_csv(job_type: str, job_id: str):
 
 # --- Settings ---
 
-def _is_local(request: Request) -> bool:
-    """True if the request originates from a loopback or private IP.
-    Uses X-Real-IP (set by nginx) when present, otherwise the direct client IP.
-    This blocks both domain-based and raw IP-based public access."""
-    ip_str = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
-    try:
-        addr = ipaddress.ip_address(ip_str)
-        return addr.is_loopback or addr.is_private
-    except ValueError:
-        return False
-
-
-@app.get("/settings", response_class=HTMLResponse)
+@app.get("/settings", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def settings_page(request: Request):
     s = cfg.load()
-    local = _is_local(request)
+    local = can(audience.tier(request), SETTINGS_READ_FULL)
 
     def field(fid, val, min_, max_, unit, hint="", step=None):
         step_attr = f' step="{step}"' if step else ""
@@ -3489,10 +3485,8 @@ async def settings_page(request: Request):
 </html>"""
 
 
-@app.post("/settings")
+@app.post("/settings", dependencies=[Depends(requires(SETTINGS_WRITE))])
 async def settings_save(request: Request, data: dict):
-    if not _is_local(request):
-        return JSONResponse({"error": "Forbidden"}, status_code=403)
     saved = cfg.save(data)
     return {"ok": True, "settings": saved}
 
@@ -4682,7 +4676,7 @@ function buildSummary() {{
 </body>
 </html>"""
 
-@app.get("/image", response_class=HTMLResponse)
+@app.get("/image", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def image_page():
     queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
@@ -5196,7 +5190,7 @@ if (_resumeJob) {{ document.getElementById('run-btn').disabled = true; pollTimer
 </html>"""
 
 
-@app.post("/image/start")
+@app.post("/image/start", dependencies=[Depends(requires(IMAGE_RUN))])
 async def image_start(prompt: str = Form(...),
                       device: str = Form("cpu"),
                       model_key: str = Form("sd-turbo")):
@@ -5238,7 +5232,7 @@ async def image_start(prompt: str = Form(...),
     return {"job_id": job_id, "queue_position": position}
 
 
-@app.get("/queue-status", response_class=HTMLResponse)
+@app.get("/queue-status", response_class=HTMLResponse, dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_page():
     return """<!DOCTYPE html>
 <html>
@@ -5322,7 +5316,7 @@ load();
 </html>"""
 
 
-@app.get("/demo", response_class=HTMLResponse)
+@app.get("/demo", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def demo_page():
     return _DEMO_HTML
 
@@ -5902,7 +5896,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 </html>"""
 
 
-@app.get("/methodology", response_class=HTMLResponse)
+@app.get("/methodology", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def methodology_page():
     # Inject live settings into placeholder fields so the methodology page
     # can never silently drift from the actual configuration in settings.json.
