@@ -456,6 +456,43 @@ Single afternoon, ~1 hour of actual work:
 
 ---
 
+## CR-012 · Persist variance calibration history
+
+**Status:** captured 2026-05-01 — nice-to-have.
+**Triggered by:** owner notes during Session 17 wrap — every variance calibration overwrites the previous values in `settings.json`, so there's no record of how variance has drifted across kernel updates, room-temperature changes, GPU driver bumps, or thermal-paste age.
+
+### Problem
+
+`settings.json` keeps only the **latest** `variance_pct`, `variance_idle_pct`, `variance_cpu_pct`, `variance_gpu_pct` — the four numbers written by `video.py:657` at the end of a calibration run. The previous run's numbers vanish on the next save. This makes it impossible to ask:
+- "Has the system become noisier over the last quarter?"
+- "Did the kernel 6.17 update change our baseline?"
+- "What was variance the day we ran the canonical Meridian benchmark?"
+
+For a measurement project that publishes confidence figures, that history is genuinely useful — and trivially cheap to keep.
+
+### Agreed direction
+
+Append every completed calibration to `results/variance/history.jsonl` (or similar). One JSON object per line, append-only:
+
+```json
+{"ts": "2026-05-01T18:42:11Z", "variance_pct": 1.08, "variance_idle_pct": 1.79,
+ "variance_cpu_pct": 0.82, "variance_gpu_pct": 0.64,
+ "w_base_mean": 53.2, "cpu_tctl_at_start": 41.2, "gpu_junction_at_start": 36.0,
+ "runs": 10, "kernel": "6.17.0-22-generic", "git_sha": "880825c"}
+```
+
+Captures enough context that a future spike about "why did variance jump" is answerable. Use the existing `persist.py` save machinery if it fits (write a sibling helper or a `save_calibration` function), or a small append in `video.py` near line 657.
+
+Bonus: a small `/variance/history` page or JSON endpoint surfaces the trend (CR-004 graphing territory — could share that work).
+
+### Where it lives
+
+`video.py:651–658` — the block that writes back to `settings.json` is the natural place to also write the history line.
+
+### Pre-conference: no, but cheap (~30 min). Could slot into any session as a low-priority filler. The data starts being valuable from the moment we start logging — every missed calibration is one more datapoint that's gone forever.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
