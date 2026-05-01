@@ -19,6 +19,7 @@ from image_gen import (run_image_measurement, run_image_both_measurement,
 import rag as rag_module
 import settings as cfg
 import carbon
+import queue_control
 
 config = dotenv_values("/home/gos/wattlab/.env")
 app = FastAPI()
@@ -127,69 +128,19 @@ async def sensors_poller():
         await asyncio.sleep(2)
 
 # --- Queue ---
-pending_queue = []          # list of {"job_id", "type", "label", "coro_fn"}
-queue_event = asyncio.Event()
-current_job_id = None       # job currently executing
-MAX_QUEUE_DEPTH = 8         # total queued + running; 429 beyond this
-
-# External pause: when this file exists, queue_worker waits between jobs
-# rather than picking up the next one. In-flight jobs are unaffected.
-# Created/removed by external tools (e.g. the local-model router at
-# /home/gos/claude-local-router which holds the GPU during its session).
-# See OWL_INTEGRATION_PROPOSAL.md in that repo for the full rationale.
-PAUSE_FLAG = "/tmp/owl-paused"
-
-
-def enqueue(job_id: str, job_type: str, label: str, coro_fn):
-    """Add a job to the FIFO queue. Returns 1-based position, or None if queue is full."""
-    total = len(pending_queue) + (1 if current_job_id else 0)
-    if total >= MAX_QUEUE_DEPTH:
-        return None
-    position = len(pending_queue) + 1
-    jobs[job_id] = {"stage": "queued", "queue_position": position, "type": job_type, "label": label, "result": None, "error": None}
-    pending_queue.append({"job_id": job_id, "type": job_type, "label": label, "coro_fn": coro_fn})
-    queue_event.set()
-    return position
+# Queue state, enqueue chokepoint, and worker live in queue_control.py.
+# CR-001 (per-tier rate limits) and CR-001b (demo lock) plug into the
+# enqueue chokepoint via the optional `request` parameter.
 
 
 @app.on_event("startup")
 async def startup():
-    asyncio.create_task(queue_worker())
+    queue_control.start(jobs, LOCK_FILE)
     asyncio.create_task(power_poller())
     asyncio.create_task(sensors_poller())
     asyncio.create_task(carbon.poller(zones=[carbon.HOME_ZONE]))
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, rag_module.check_index)
-
-
-async def queue_worker():
-    global current_job_id
-    while True:
-        await queue_event.wait()
-        queue_event.clear()
-        while pending_queue:
-            # External pause: tools can touch PAUSE_FLAG to block the worker
-            # between jobs without killing it. In-flight jobs are unaffected.
-            # See OWL_INTEGRATION_PROPOSAL.md for the full design.
-            while Path(PAUSE_FLAG).exists() and pending_queue:
-                await asyncio.sleep(1)
-            if not pending_queue:
-                break
-            entry = pending_queue.pop(0)
-            job_id = entry["job_id"]
-            current_job_id = job_id
-            # Update queue positions for remaining jobs
-            for i, e in enumerate(pending_queue):
-                if e["job_id"] in jobs:
-                    jobs[e["job_id"]]["queue_position"] = i + 1
-            try:
-                await entry["coro_fn"]()
-            except Exception as e:
-                jobs[job_id] = {**jobs.get(job_id, {}),
-                                "stage": "error", "error": str(e)}
-                LOCK_FILE.unlink(missing_ok=True)
-            finally:
-                current_job_id = None
 
 GOS_LOGO_URL = "https://static.wixstatic.com/media/b1006e_f5e9aff607cf4133abf7089207dc3cab~mv2.png"
 _LOGO = (
@@ -795,8 +746,8 @@ async def live_json():
         "cpu_tctl":     _power_cache["cpu_tctl"],
         "gpu_junction": _power_cache["gpu_junction"],
         "gpu_ppt_w":    _power_cache["gpu_ppt_w"],
-        "queue_depth":  len(pending_queue) + (1 if current_job_id else 0),
-        "paused":       Path(PAUSE_FLAG).exists(),
+        "queue_depth":  queue_control.depth(),
+        "paused":       queue_control.paused(),
     }
 
 
@@ -813,7 +764,7 @@ async def carbon_json():
 @app.get("/video", response_class=HTMLResponse)
 async def video_page(request: Request):
     is_lan = _is_local(request)
-    queue_depth = len(pending_queue) + (1 if current_job_id else 0)
+    queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
                    f'⏱ {queue_depth} job{"s" if queue_depth != 1 else ""} in queue — '
@@ -1643,7 +1594,7 @@ async def use_preloaded_source(
                       custom_cmd_cpu=custom_cmd_cpu,
                       custom_cmd_gpu=custom_cmd_gpu)
 
-    position = enqueue(job_id, "video", label, coro)
+    position = queue_control.enqueue(job_id, "video", label, coro)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -1679,7 +1630,7 @@ async def upload_video(
                       custom_cmd_cpu=custom_cmd_cpu,
                       custom_cmd_gpu=custom_cmd_gpu)
 
-    position = enqueue(job_id, "video", label, coro)
+    position = queue_control.enqueue(job_id, "video", label, coro)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -1731,7 +1682,7 @@ async def variance_run(request: Request):
         except Exception as e:
             jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
-    position = enqueue(job_id, "variance", label, coro)
+    position = queue_control.enqueue(job_id, "variance", label, coro)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -2477,7 +2428,7 @@ async def llm_run(
     async def coro():
         await run_llm_job(job_id, model_key, task_key, repeats, warm, effective_prompt, device)
 
-    position = enqueue(job_id, "llm", label, coro)
+    position = queue_control.enqueue(job_id, "llm", label, coro)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -2545,7 +2496,7 @@ async def llm_run_all(
     async def coro():
         await run_llm_all_job(job_id, model_key, warm, device)
 
-    position = enqueue(job_id, "llm", label, coro)
+    position = queue_control.enqueue(job_id, "llm", label, coro)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -2565,20 +2516,7 @@ async def image_job_status(job_id: str):
 
 @app.get("/queue")
 async def queue_status_endpoint():
-    running = None
-    if current_job_id and current_job_id in jobs:
-        j = jobs[current_job_id]
-        running = {"job_id": current_job_id, "stage": j.get("stage"), "type": j.get("type"), "label": j.get("label")}
-    pending_info = [
-        {"job_id": e["job_id"], "type": e["type"], "label": e["label"], "position": i + 1}
-        for i, e in enumerate(pending_queue)
-    ]
-    return {
-        "depth": len(pending_queue) + (1 if current_job_id else 0),
-        "running": running,
-        "pending": pending_info,
-        "paused": Path(PAUSE_FLAG).exists(),
-    }
+    return queue_control.snapshot()
 
 
 # --- RAG page and endpoints ---
@@ -2593,7 +2531,7 @@ async def rag_page():
         for k, v in rag_module.MODELS.items()
     ])
 
-    queue_depth = len(pending_queue) + (1 if current_job_id else 0)
+    queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
                    f'⏱ {queue_depth} job{"s" if queue_depth != 1 else ""} in queue — '
@@ -3221,7 +3159,7 @@ async def rag_run(
         save_result("llm", job_id, result)
         jobs[job_id] = {"stage": "done", "result": result}
 
-    position = enqueue(job_id, "rag", label, coro)
+    position = queue_control.enqueue(job_id, "rag", label, coro)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -3286,7 +3224,7 @@ async def rag_run_compare(
     async def coro():
         await run_rag_compare_job(job_id, model_key, question.strip())
 
-    position = enqueue(job_id, "rag", label, coro)
+    position = queue_control.enqueue(job_id, "rag", label, coro)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -4746,7 +4684,7 @@ function buildSummary() {{
 
 @app.get("/image", response_class=HTMLResponse)
 async def image_page():
-    queue_depth = len(pending_queue) + (1 if current_job_id else 0)
+    queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
                    f'⏱ {queue_depth} job{"s" if queue_depth != 1 else ""} in queue — '
@@ -5294,7 +5232,7 @@ async def image_start(prompt: str = Form(...),
             jobs[job_id]["error"] = str(e)
             LOCK_FILE.unlink(missing_ok=True)
 
-    position = enqueue(job_id, "image", label, coro)
+    position = queue_control.enqueue(job_id, "image", label, coro)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -5919,7 +5857,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 temporal resolution.</strong> 1-second polling means tasks shorter than ~5 seconds produce few data points. Very fast models (e.g., TinyLlama single inference at 1&ndash;4 seconds) are at the edge of measurability. Batching mitigates this but changes what&rsquo;s being measured (batch cost, not single-inference cost).</span></div>
 
-  <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 power resolution.</strong> The ~&plusmn;1W noise floor means low-delta tasks (e.g., idle audio processing, lightweight network operations) cannot be reliably measured with this instrument.</span></div>
+  <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 power resolution.</strong> The Tapo P110 instrument itself reports at <strong>1&nbsp;mW</strong> resolution via direct device read, but its <strong>public HTTP API exposes only 1&nbsp;W</strong> &mdash; and the public API is what this deployment polls. The effective ~&plusmn;1&nbsp;W noise floor is therefore an API-shape limit, not a hardware limit: low-delta tasks (e.g., idle audio processing, lightweight network operations) cannot be reliably measured against it. A future direct-device path would unlock ~1000&times; finer resolution from the same plug.</span></div>
 
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>Single server.</strong> All results are from one machine. Generalisability to other hardware configurations is unknown without cross-platform measurement.</span></div>
 
@@ -5953,7 +5891,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <div class="footer-note">
     WattLab is built and maintained by <a href="https://greeningofstreaming.org" style="color:var(--accent);text-decoration:none;">Greening of Streaming</a>, a French NGO (loi 1901).<br>
-    Methodology version 0.2 &middot; last updated 2026-04-24 &middot; Feedback: bs@ctoic.net<br>
+    Methodology version 0.2 &middot; last updated 2026-05-01 &middot; Feedback: bs@ctoic.net<br>
     Source: <a href="https://github.com/greeningofstreaming/wattlab" style="color:var(--accent);text-decoration:none;">github.com/greeningofstreaming/wattlab</a>
   </div>
 
