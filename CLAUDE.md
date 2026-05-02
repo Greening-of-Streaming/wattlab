@@ -1,10 +1,10 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current.
-# Last updated: 2026-05-01 (Session 16)
+# Last updated: 2026-05-02 (Session 17)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also: GOS1_INFRA.md — server infrastructure, Nextcloud backup, personal stack context
 # See also: TESTING.md — three-tier testing strategy
-# See also: CHANGE_REQUESTS.md — open CRs (CR-001 two-tier OWL, CR-001b demo lock, CR-002…CR-009)
+# See also: CHANGE_REQUESTS.md — open CRs (CR-001 two-tier OWL, CR-001b demo lock, CR-003…CR-013); CR-002 + CR-014 done
 # See also: AUDIT_BRIEF.md + AUDIT_RESPONSE.md — pre-CR-001 architecture audit + recommendations
 # See also: JOURNAL.md — session-by-session change log (full detail; not auto-loaded)
 # See also: REM/CLAUDE.md — sibling project (distributed fleet via Tapo P110 + TP-Link cloud); repo at dom-robinson/stats. OWL = bench, REM = meter on the building.
@@ -145,12 +145,13 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 - **S14 (2026-04-24):** Gemma 3 12B + Phi-4 added; SDXL-Turbo image gen; Compare Models ⚡; progressive-disclosure pilot; live telemetry badge; queue pause flag (/tmp/owl-paused); owl logo across all 10 pages.
 - **S15 (2026-04-29):** _BASE_STYLES palette (CSS-var contrast pass); RAG compare cooldown; corpus browser; LLM CSV gains response column.
 - **S16 (2026-05-01):** **CO₂e measurement** — `carbon.py` module (Eco2mix→ElectricityMaps→Ember static fallback ladder), `walk_and_enrich()` injects co2e block on all result shapes, `_CARBON_JS` UI helpers (live/EST badges, comparison strip with collapsed details + live French production mix), fmtMass auto-switches g/mg/µg, "below measurement floor" rendering when ΔE=0. **CR-002 methodology accuracy pass** — placeholders + settings injection so `baseline_polls`/`video_cooldown_s`/confidence thresholds can never drift from settings.json. **First test suite** — `wattlab_service/tests/test_carbon.py`, 28 tests, sets the testing pattern for the upcoming access-spine modules. Strategy docs landed: `CHANGE_REQUESTS.md` (CR-001 two-tier OWL + CR-001b demo lock + CR-002…CR-009), `AUDIT_BRIEF.md` + `AUDIT_RESPONSE.md`, `TRAINING_OWL_5MIN.md`, `rem-theme.css`.
+- **S17 (2026-05-01 / 2026-05-02):** **Access spine refactor (audit's #1 recommendation, A/3 + B/3 + C/3)** — extract `queue_control.py`, add `audience.py` + `capabilities.py`, tag every route with `requires(...)`, remove `_is_local`. Sets the seam (`enqueue(request=None)`) for CR-001b demo lock. **CR-002 closure** — popover (`_CONF_HELP_WIDGET`) rewritten to framework-correct copy + `position:fixed` offset bug fixed (was `+window.scrollY`, sent popover offscreen when scrolled), Guided Tour gains placeholder injection, ~13 fresh-run badges + all prev-run badges across `/video` `/llm` `/rag` `/image` wrapped in `class="conf-badge"` so the popover fires uniformly. **CR-014** RAG compare-3-modes gains the carbon comparison strip (was missing — only single-mode had it). **CRs captured:** CR-010 (France historical reference row in comparison strip), CR-011 (staging via maintenance-page swap), CR-012 (persist variance calibration history), CR-013 (prev-run rows clickable for full stored detail). Settings.save partial-update fix (settings.py) so `/settings` form posts merge cleanly with on-disk state.
 
 ### Deferred / open
 - [ ] **Confidence multiplier grounding** — `variance_green_x`/`variance_yellow_x` (5×/2×) by judgement; statistical grounding pending session with Tanya.
 - [ ] **Transcoding apples-to-apples** — bitrate is ABR-controlled; GOP/profile still default-per-encoder. Working session with Simon/Tanya.
 - [ ] **Benchmark 2** — codec-natural rate control (CRF/QP) alongside Benchmark 1 (ABR). Add to `WATTLAB_SPEC.md`.
-- [ ] **Access spine refactor** (audit's #1 recommendation) — `audience.py` + `capabilities.py` + `queue_control.py` before CR-001 lands.
+- [x] **Access spine refactor** (audit's #1 recommendation) — `audience.py` + `capabilities.py` + `queue_control.py` shipped S17 parts A/3 + B/3 + C/3. Spine seam (`enqueue(request=None)`) ready for CR-001b.
 - [ ] **Dockerize OWL** — isolate from future GoS1 projects. Two-stage plan (FastAPI+VAAPI, then ROCm). Long-term.
 - [ ] **Factorise `_HEADER` constant** — mirror `_FOOTER` so `/methodology` and `/queue-status` use the same shape as standard pages.
 - [ ] **Guided Tour Findings step** — currently echoes session run; redesign to aggregate across all stored results to surface body-of-evidence learnings (see Key Findings).

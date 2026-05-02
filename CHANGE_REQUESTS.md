@@ -168,7 +168,7 @@ Can ship **before** CR-001 — uses today's auth model (the gate password = the 
 
 ## CR-002 · Methodology page accuracy pass
 
-**Status:** captured 2026-05-01 — pre-conference must-fix.
+**Status:** ✅ done 2026-05-02 (Session 17 follow-up). Original three issues shipped in S16 (994e380); extended scope (popover + Guided Tour drift) shipped today.
 **Triggered by:** training-prep walkthrough of the methodology page (transcript ~T+790s) + owner notes.
 
 ### Problem
@@ -184,6 +184,17 @@ Three inaccuracies on `/methodology` need fixing before the page is shown to a p
 Single editing pass on the `_METHODOLOGY_HTML` block in `main.py`. No new features — accuracy patch only. Where possible, render values from settings/code at request time so future drift is impossible.
 
 ### Pre-conference: must.
+
+### Done
+
+- **S16 (994e380):** `/methodology` page rewritten — P110 1W/1mW resolution stated correctly, Eco2mix → ElectricityMaps → Ember fallback ladder named, `baseline_polls` / `video_cooldown_s` / confidence-multiplier / poll-count placeholders injected at request time from `settings.json`.
+- **S17 follow-up (2026-05-02):** extended scope — verified that the *spirit* of CR-002 (no copy contradicting running config) was leaking outside the methodology page. Fixed:
+  - **Popover content (`_CONF_HELP_WIDGET`)** — was still using the **pre-S11 fixed-watt framework** ("ΔW > 5W and ≥ 10 polls"), directly contradicting the methodology page. Rewritten to qualitative, framework-correct copy + link to `/methodology` for the formal numbers. Avoids plumbing live settings into 5 frozen page templates.
+  - **Guided Tour video step + confidence step** — same pattern as `/methodology`: placeholder tokens (`{BASELINE_POLLS}`, `{VIDEO_COOLDOWN_S}`, `{CONF_GREEN_X}`, `{CONF_GREEN_POLLS}`, `{CONF_YELLOW_X}`, `{CONF_YELLOW_POLLS}`) replaced at request time in `demo_page()`. Tour now agrees with `/methodology` on every threshold.
+  - **Popover positioning bug** (root cause of "click does nothing" reports) — widget script set `pop.style.top = r.bottom + 6 + window.scrollY`, but the popover is `position:fixed` (viewport-relative). The `+window.scrollY` pushed it offscreen below the visible area whenever the user had scrolled to see the badge. Fixed: drop the scroll offset.
+  - **Missing `class="conf-badge"` on fresh-run badges** — ~13 badge sites across `/video`, `/llm`, `/image`, plus a few shared helpers, rendered the flag in plain `<div>`/`<td>`/inline interpolation without the class. Click handler's `e.target.closest(".conf-badge")` returned null → handler silently skipped. Class added in batch via Python script with strict-count assertions.
+  - **Prev-run badges wrapped in `<span class="conf-badge">`** — the "Previous runs" panels on `/video`, `/llm`, `/rag`, `/image` flattened the confidence flag into a one-line summary string with no wrapping element. Wrapped the flag emoji (and label where present) so prev-run badges fire the popover too. `/image`'s prev-rendering is server-side Python f-string and got the same treatment. Made CR-013 visible (rows themselves should drill into stored detail).
+  - **Net effect:** popover now fires uniformly across `/video`, `/llm`, `/rag`, `/image`, `/demo` on both fresh-run and prev-run badges, with framework-correct copy that matches `/methodology` exactly.
 
 ---
 
@@ -490,6 +501,63 @@ Bonus: a small `/variance/history` page or JSON endpoint surfaces the trend (CR-
 `video.py:651–658` — the block that writes back to `settings.json` is the natural place to also write the history line.
 
 ### Pre-conference: no, but cheap (~30 min). Could slot into any session as a low-priority filler. The data starts being valuable from the moment we start logging — every missed calibration is one more datapoint that's gone forever.
+
+---
+
+## CR-013 · Previous-result rows clickable for full stored detail
+
+**Status:** captured 2026-05-02 — medium priority.
+**Triggered by:** owner notes during CR-002 verification — once the confidence popover started firing on prev-run badges, it became obvious that the rows themselves carry only a one-line summary (date, model, mWh/tok, confidence flag). All the rich detail sits in the stored result JSON, but the only path to it today is downloading the JSON and reading raw fields.
+
+### Problem
+
+Today, "Previous runs" panels on `/video`, `/llm`, `/rag`, `/image`, and `/queue-status` show one terse line per run plus JSON / CSV download links. Anything beyond the summary line — the actual ΔW trace, thermals, ffmpeg command, response text, retrieval sources, generated image, full CO₂e block — is invisible without downloading. For a visitor giving OWL a serious look, that's a dead end. For Lab repetitive work, it's also a friction point (can't quickly re-inspect yesterday's run without round-tripping through JSON).
+
+### Agreed direction (rough)
+
+Make each prev-run row click-to-expand-or-load-full-card. Two competing design constraints:
+
+1. **Public visitors:** want everything visible — the same rich result card they'd see for a fresh run, just labelled "↩ Previous run · 2 hours ago" (the `prevNote` line that already exists in `/image`'s `renderImageBoth` etc.).
+2. **Lab repetitive work:** dozens of runs in a session; expanding inline would clutter the page; collapse-by-default with a click-to-expand affordance is right.
+
+Default lean: **collapsed by default, click row to expand inline below the row**, fetching the full result via the existing `/results/{type}/{job_id}` GET path and rendering through the same per-page render function used for fresh runs (`renderResult`, `renderLLMSingle`, etc.). A second click collapses. Multiple rows can be open at once for side-by-side compare. Lab tier could optionally get an "expand all" toggle.
+
+### Where it lives
+
+Each page's `renderPrevRuns` JS function (one per route — see line numbers in main.py: `/video` ~1504, `/llm` ~2377, `/rag` ~3090, `/image` server-side ~4700, `/queue-status` similar). Render functions for fresh runs are already structured to take a result object and produce a card — re-use them.
+
+### Open questions
+
+- Lazy-load JSON on click vs. preload all when prev-runs list renders? Lazy-load is right at scale (tens to hundreds of runs in `results/`).
+- Image previews on `/image` already inline-render thumbnails server-side — interaction with the click-to-expand pattern needs thought (probably: click thumbnail → open full result; the row stays as-is).
+- Prev-run cards should reuse the corrected confidence popover (which now fires on the wrapped flag spans — landed today as part of CR-002 follow-up).
+
+### Pre-conference: medium priority. Worth doing if there's a quiet half-day; the popover work today made the gap visible.
+
+---
+
+## CR-014 · RAG compare-3-modes missing carbon strip
+
+**Status:** ✅ done 2026-05-02 (Session 17 follow-up — fixed inline alongside CR-002 closure).
+**Triggered by:** owner notes during CR-002 verification — `/rag` single-mode results show the "If this had run elsewhere · how this is calculated" comparison strip, but the compare-3-modes report was missing it entirely. Visitors using compare-3-modes (the more interesting view) saw no cross-grid comparison and no live French production-mix breakdown.
+
+### Root cause
+
+`/llm` CPU-vs-GPU calls `wlCarbonStrip(_stripWh, _stripLbl)` at the top of the comparison report (main.py:2177). `/rag` single-mode does the equivalent at line 2899. The compare-3-modes path (`renderCompareResult` around line 3024) was built later and never wired up the strip — it only renders per-mode KPI cards.
+
+### Fix
+
+Added the strip at the top of the compare-3-modes report:
+
+```javascript
+const _stripWhArr = MODES
+    .map(m => (r.results||{})[m] && r.results[m].energy ? r.results[m].energy.delta_e_wh : null)
+    .filter(v => v != null);
+const _stripWh = _stripWhArr.length ? Math.min.apply(null, _stripWhArr) : null;
+const _stripLbl = r.model_label + ' · 3-mode RAG comparison (best of)';
+```
+
+Uses `Math.min` across the three modes (most efficient mode) — same idiom as `/llm` CPU-vs-GPU which uses the lower of CPU/GPU energy. Inserted between the question line and the per-mode cards.
 
 ---
 

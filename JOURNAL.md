@@ -7,6 +7,56 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 17 — 2026-05-01 / 2026-05-02
+
+### What we did
+
+**Access spine refactor (audit's #1 recommendation, A/3 + B/3 + C/3) · CR-002 closure · CR-014 RAG carbon strip · CRs 010/011/012/013 captured**
+
+Two-day session. Day one extracted the access spine the audit called out as the prerequisite for CR-001. Day two closed CR-002 properly — the original methodology fix shipped in S16, but the popover and Guided Tour were still drifting (and the popover had a silent positioning bug nobody had noticed because the *content* was technically present, just rendered offscreen). Followed by a small RAG carbon-strip gap discovered during verification.
+
+### Code — Spine refactor (parts A/3 + B/3 + C/3, day one)
+
+- **`queue_control.py`** (new module, extracted from `main.py`) — single chokepoint for queue mutation. Public API: `depth()`, `paused()`, `pause(reason)`, `unpause()`, `enqueue(request=None)`. The `request=None` parameter is the CR-001b demo-lock seam — when a request is supplied, `enqueue` can consult `audience.tier(request)` and a future demo-lock owner check before honouring the call. No behaviour change today; the seam is for next session.
+- **`audience.py`** (new module) — single source of truth for "who is this request from". `tier(request)` returns `Anonymous | Member | Lab`. Today it implements only the Anonymous-vs-Lab split (LAN IP detection, replacing the old `_is_local()` helper); Member tier is stubbed for CR-001. Tests assert that `127.0.0.1`, `192.168.x`, and `10.x` private blocks return `Lab`; everything else returns `Anonymous`.
+- **`capabilities.py`** (new module) — declarative capability constants (`PUBLIC_PAGE`, `SETTINGS_READ_FULL`, `QUEUE_VIEW`, etc.) plus `requires(cap)` FastAPI dependency factory and `can(tier, cap)` helper. Every existing endpoint now declares its required capability; the grep target `requires(` becomes the security audit. No-op for end users today (every cap is satisfied by Anonymous), but CR-001 just tightens the table without touching routes.
+- **Route tagging pass** — every `@app.get` / `@app.post` in `main.py` gained `dependencies=[Depends(requires(...))]`. ~30 endpoints touched. `_is_local()` removed; callers use `can(audience.tier(request), SETTINGS_READ_FULL)`.
+- **Settings.save partial-update fix** (`settings.py`) — POST to `/settings` was overwriting the on-disk file with only the form-submitted keys, dropping anything the form doesn't render (e.g. variance values written at calibration time). Fix: load → merge → save. Caught by hand-testing CR-002's variance threshold rendering.
+
+### Code — CR-002 closure + CR-014 (day two)
+
+- **`_CONF_HELP_WIDGET` rewritten** (main.py:555) — the popover content was still using the **pre-S11 fixed-watt framework** (`ΔW > 5W and ≥ 10 polls`), directly contradicting `/methodology`. Made qualitative + framework-correct (`ΔW well above measured noise, with enough polls to confirm`) with a footer link to `/methodology` for formal numbers. Avoided plumbing live settings into 5 frozen page templates.
+- **Popover positioning bug** — script set `pop.style.top = r.bottom + 6 + window.scrollY`. Popover is `position:fixed` (viewport-relative). The `+window.scrollY` pushed it offscreen below the viewport whenever the user had scrolled to see the badge. **Removed the scroll offset.** This was the root cause of every "click does nothing" report — the popover *was* opening, just not where the user could see it. Subtle bug because the cursor:pointer rule and event handler were both wired correctly; only the final positioning was wrong.
+- **Missing `class="conf-badge"` batch fix** — ~13 badge-rendering sites across `/video`, `/llm`, `/image` (and a few shared helpers) emitted the flag in plain `<div>`/`<td>`/inline interpolations without the class. Click handler's `e.target.closest(".conf-badge")` returned null → silently skipped. Added via Python script with strict-count assertions per pattern. Total class hits in source: 22.
+- **Prev-run badges wrapped** (main.py:1514, 1517, 1520, 2384, 3097, 4765) — Previous-runs panels flattened the confidence flag into a one-line summary string with no wrapping element. Wrapped the flag emoji in `<span class="conf-badge">` so prev-run rows fire the popover too. `/image`'s prev-rendering is server-side Python f-string and got the same treatment.
+- **Guided Tour placeholder injection** (main.py:5319) — `demo_page()` route now calls `cfg.load()` and `.replace(...)` on `_DEMO_HTML` for `{BASELINE_POLLS}`, `{VIDEO_COOLDOWN_S}`, `{CONF_GREEN_X}`, `{CONF_GREEN_POLLS}`, `{CONF_YELLOW_X}`, `{CONF_YELLOW_POLLS}`. Same idiom as `methodology_page()`. Tour now agrees with `/methodology` on every threshold.
+- **CR-014 — RAG compare-3-modes carbon strip** (main.py:3066) — single-mode RAG already called `wlCarbonStrip` at line 2899. Compare-3-modes was missing it entirely (visitors using the more interesting view saw no cross-grid comparison). Added at the top of the report using `Math.min` of the three modes' energies — same idiom as `/llm` CPU-vs-GPU at line 2177.
+
+### CRs captured (day one)
+
+- **CR-010** — France historical reference row in the comparison strip dropdown. Live FR (~11 g/kWh, nuclear-dominated) reads very differently from the 2024 annual mean; without the historical row, viewers could conclude "France beats Germany 10×" when in fact the live snapshot is at the cleanest end of France's own distribution. Add `France HISTORICAL · EST · REF` row in `_CARBON_JS` comparison strip.
+- **CR-011** — Staging environment via maintenance-page swap. Single-service swap with nginx-level static maintenance page triggered by `/tmp/owl-maintenance` flag file. ~1 hour of work; high leverage for CR-001 testing because the spine refactor's restart-and-test cycle was painful enough to make this worth doing before CR-001 lands.
+- **CR-012** — Persist variance calibration history. `settings.json` only keeps the latest `variance_pct`/`variance_idle_pct`/etc.; previous values vanish. Append-only `results/variance/history.jsonl` with kernel + git_sha context for "did variance jump after kernel 6.17?" type questions. ~30 min, cheap filler.
+- **CR-013** (day two) — Previous-result rows clickable for full stored detail. The popover wrapping made the prev-runs panel's information density gap obvious: rows show date + summary + JSON download, but no inline detail. Click-to-expand-inline pattern, re-using each page's existing render function. Medium priority.
+
+### What's NOT done
+
+- Service restarted on day two; popover + RAG strip live and verified working across `/video` `/llm` `/rag` `/image` `/demo`.
+- Spine refactor is wired but no Member tier yet — CR-001 will define and add Member identity (magic-link auth).
+- ElectricityMaps API trial still pending (token requested 2026-04-30).
+- No tests added for the spine modules yet — they were extracted from working code, but the audit recommendation was "tests-with-spine." Test suite for `audience.py` / `capabilities.py` / `queue_control.py` is technical debt going into CR-001b/CR-001.
+
+### What's next
+
+Order locked in during day-two scope conversation:
+1. **CR-010** France historical row — small, high pedagogical value.
+2. **CR-006** AI workloads → beta/skunkworks framing — small, shapes what conference visitors see first.
+3. **CR-011** staging environment — ~1 hour, lands right before CR-001 to amplify the upcoming restart-and-test churn.
+4. **CR-001b** demo lock — uses the `enqueue(request=None)` seam from S17 spine refactor.
+5. **CR-001** two-tier OWL — magic-link auth, capability-tier UI, conference launch (mid-June 2026).
+
+---
+
 ## Session 16 — 2026-04-30 / 2026-05-01
 
 ### What we did

@@ -561,17 +561,18 @@ _CONF_HELP_WIDGET = (
     '<div style="margin-bottom:0.5rem">'
     '<span style="font-family:monospace">🟢 Repeatable</span>'
     '<span style="color:var(--text-3);display:block;font-size:0.75rem;padding-left:1.4rem">'
-    'ΔW &gt; 5W and ≥ 10 polls. Reliable enough to cite.</span></div>'
+    'ΔW well above measured noise, with enough polls to confirm. Reliable enough to cite.</span></div>'
     '<div style="margin-bottom:0.5rem">'
     '<span style="font-family:monospace">🟡 Early insight</span>'
     '<span style="color:var(--text-3);display:block;font-size:0.75rem;padding-left:1.4rem">'
-    'ΔW ≥ 2W or ≥ 5 polls. Directional, needs more runs.</span></div>'
+    'ΔW above noise, or partial poll count. Directional, needs more runs.</span></div>'
     '<div>'
     '<span style="font-family:monospace">🔴 Need more data</span>'
     '<span style="color:var(--text-3);display:block;font-size:0.75rem;padding-left:1.4rem">'
-    'ΔW &lt; 2W. Near P110 noise floor. Don\'t cite yet.</span></div>'
+    'Near the noise floor. Don\'t cite yet.</span></div>'
     '<div style="color:var(--text-5);font-size:0.7rem;margin-top:0.75rem;font-family:monospace">'
-    'ΔW = mean task power \u2212 idle baseline \u00b7 1s P110 polls</div>'
+    'noise = (variance% / 100) × W<sub>base</sub> · thresholds on '
+    '<a href="/methodology" style="color:var(--text-3)">methodology</a></div>'
     '</div>'
     '<script>(function(){'
     'var s=document.createElement("style");'
@@ -583,7 +584,7 @@ _CONF_HELP_WIDGET = (
     'if(b){e.stopPropagation();'
     'var r=b.getBoundingClientRect();'
     'pop.style.left=Math.min(r.left,window.innerWidth-320)+"px";'
-    'pop.style.top=(r.bottom+6+window.scrollY)+"px";'
+    'pop.style.top=(r.bottom+6)+"px";'
     'pop.style.display=pop.style.display==="none"?"block":"none";'
     '}else if(!pop.contains(e.target)){pop.style.display="none";}'
     '});'
@@ -1286,7 +1287,7 @@ async def video_page(request: Request):
             ${{metricRow('CPU base → peak', t.cpu_base + ' → ' + t.cpu_peak, '°C')}}
             ${{metricRow('GPU base → peak', t.gpu_base + ' → ' + t.gpu_peak, '°C')}}
             ${{pptNote}}
-            <div style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+            <div class="conf-badge" style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
             ${{e.confidence.hint ? '<div style="margin-top:0.35rem;color:var(--text-3);font-size:0.72rem">' + e.confidence.hint + '</div>' : ''}}
         </div>`;
     }}
@@ -1330,7 +1331,7 @@ async def video_page(request: Request):
                 ${{metricRow('CPU base → peak', t.cpu_base + ' → ' + t.cpu_peak, '°C')}}
                 ${{metricRow('GPU base → peak', t.gpu_base + ' → ' + t.gpu_peak, '°C')}}
                 ${{pptNote}}
-                <div style="margin-top:0.75rem;font-size:0.8rem">
+                <div class="conf-badge" style="margin-top:0.75rem;font-size:0.8rem">
                     ${{e.confidence.flag}} ${{e.confidence.label}}
                 </div>
                 ${{e.confidence.hint ? '<div style="margin-top:0.3rem;color:var(--text-3);font-size:0.7rem">' + e.confidence.hint + '</div>' : ''}}
@@ -1389,7 +1390,7 @@ async def video_page(request: Request):
                 <td>${{fmt(ge.delta_t_s)}}s</td>
                 <td style="color:${{ew==='GPU'?'#00ff99':'#888'}}">${{fmt(ge.delta_e_wh)}} Wh ${{gpuWin}}</td>
                 <td style="color:var(--text-3);font-size:0.75rem">${{fmt(cd.gpu.output_size_mb)}} MB</td>
-                <td style="font-size:0.78rem">${{ce.confidence.flag}} ${{ge.confidence.flag}}</td>
+                <td class="conf-badge" style="font-size:0.78rem">${{ce.confidence.flag}} ${{ge.confidence.flag}}</td>
             </tr>`;
         }}).join('');
 
@@ -1418,7 +1419,7 @@ async def video_page(request: Request):
                     ${{metricRow('Polls', e.poll_count)}}
                     ${{metricRow('CPU peak', t.cpu_peak, '°C')}}
                     ${{metricRow('GPU peak', t.gpu_peak, '°C')}}
-                    <div style="margin-top:0.5rem;font-size:0.78rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+                    <div class="conf-badge" style="margin-top:0.5rem;font-size:0.78rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
                     ${{e.confidence.hint ? '<div style="color:var(--text-3);font-size:0.7rem;margin-top:0.2rem">' + e.confidence.hint + '</div>' : ''}}
                 </div>`;
             }}
@@ -1510,13 +1511,13 @@ async def video_page(request: Request):
             let summary, codec;
             if (r.mode === 'both') {{
                 codec = [r.cpu_preset, r.gpu_preset].filter(Boolean).join(' vs ');
-                summary = `CPU ${{r.cpu_delta_e_wh}} Wh ${{r.cpu_confidence||''}} · GPU ${{r.gpu_delta_e_wh}} Wh ${{r.gpu_confidence||''}}`;
+                summary = `CPU ${{r.cpu_delta_e_wh}} Wh ${{r.cpu_confidence ? '<span class="conf-badge">'+r.cpu_confidence+'</span>' : ''}} · GPU ${{r.gpu_delta_e_wh}} Wh ${{r.gpu_confidence ? '<span class="conf-badge">'+r.gpu_confidence+'</span>' : ''}}`;
             }} else if (r.mode === 'all_codecs') {{
                 codec = 'H.264 · H.265 · AV1 — all codecs';
-                summary = `Best: ${{r.most_efficient||'—'}} (${{r.best_delta_e_wh||'—'}} Wh) · Fastest: ${{r.fastest||'—'}} ${{r.all_green ? '🟢' : ''}}`;
+                summary = `Best: ${{r.most_efficient||'—'}} (${{r.best_delta_e_wh||'—'}} Wh) · Fastest: ${{r.fastest||'—'}} ${{r.all_green ? '<span class="conf-badge">🟢</span>' : ''}}`;
             }} else {{
                 codec = r.preset || '';
-                summary = `${{r.delta_e_wh}} Wh ${{r.confidence||''}}`;
+                summary = `${{r.delta_e_wh}} Wh ${{r.confidence ? '<span class="conf-badge">'+r.confidence+'</span>' : ''}}`;
             }}
             const base = '/results/video/' + r.job_id;
             return `<div style="border-bottom:1px solid var(--panel);padding:0.6rem 0">
@@ -2095,7 +2096,7 @@ async def llm_page():
                     <span class="val">${{t.cpu_base}}→${{t.cpu_end}}°C</span></div>
                 <div class="metric"><span>GPU (start→end)</span>
                     <span class="val">${{t.gpu_base}}→${{t.gpu_end}}°C</span></div>
-                <div style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+                <div class="conf-badge" style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
                 <div class="section-title">Response preview</div>
                 <div class="response-box">${{i.response}}</div>
                 <div class="scope-note">${{r.scope}}</div>
@@ -2115,7 +2116,7 @@ async def llm_page():
                 <td>${{i.tokens_per_sec}}</td>
                 <td>${{e.delta_e_wh}} Wh</td>
                 <td>${{e.mwh_per_token}} mWh/tok</td>
-                <td>${{e.confidence.flag}}</td>
+                <td class="conf-badge">${{e.confidence.flag}}</td>
             </tr>`;
         }}).join('');
         return `<div class="result-box">
@@ -2190,7 +2191,7 @@ async def llm_page():
                 <div class="metric"><span>mWh/token</span>
                   <span class="val" style="color:${{winnerColor(a.mwh_winner,'CPU')}}">${{ce.mwh_per_token}}</span></div>
                 <div class="metric"><span>ΔW</span><span class="val">${{ce.delta_w}} W</span></div>
-                <div style="margin-top:0.5rem">${{ce.confidence.flag}} ${{ce.confidence.label}}</div>
+                <div class="conf-badge" style="margin-top:0.5rem">${{ce.confidence.flag}} ${{ce.confidence.label}}</div>
               </div>
               <div style="border:1px solid var(--border);padding:1rem">
                 <div style="color:var(--text-3);font-size:0.72rem;margin-bottom:0.75rem">GPU (ROCm · RX 7800 XT)</div>
@@ -2203,7 +2204,7 @@ async def llm_page():
                 <div class="metric"><span>mWh/token</span>
                   <span class="val" style="color:${{winnerColor(a.mwh_winner,'GPU')}}">${{ge.mwh_per_token}}</span></div>
                 <div class="metric"><span>ΔW</span><span class="val">${{ge.delta_w}} W</span></div>
-                <div style="margin-top:0.5rem">${{ge.confidence.flag}} ${{ge.confidence.label}}</div>
+                <div class="conf-badge" style="margin-top:0.5rem">${{ge.confidence.flag}} ${{ge.confidence.label}}</div>
               </div>
             </div>
             <div class="section-title">GPU response preview</div>
@@ -2226,7 +2227,7 @@ async def llm_page():
                 ${{wlCarbonRow(e)}}
                 <div class="metric"><span>mWh/token</span><span class="val">${{e.mwh_per_token}}</span></div>
                 <div class="metric"><span>ΔW</span><span class="val">${{e.delta_w}} W</span></div>
-                <div style="margin-top:0.5rem;font-size:0.82rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+                <div class="conf-badge" style="margin-top:0.5rem;font-size:0.82rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
                 <div class="section-title" style="margin-top:0.75rem">Response preview</div>
                 <div class="response-box">${{i.response}}</div>
             </div>`;
@@ -2266,7 +2267,7 @@ async def llm_page():
                 <td style="padding:0.5rem 0.75rem;font-size:0.8rem;color:${{gSpeedCol}}">${{gi.tokens_per_sec ?? '—'}}</td>
                 <td style="padding:0.5rem 0.75rem;font-size:0.8rem;color:${{cECol}}">${{ce.mwh_per_token ?? '—'}}</td>
                 <td style="padding:0.5rem 0.75rem;font-size:0.8rem;color:${{gECol}}">${{ge.mwh_per_token ?? '—'}}</td>
-                <td style="padding:0.5rem 0;font-size:0.78rem">${{ce.confidence ? ce.confidence.flag : ''}} ${{ge.confidence ? ge.confidence.flag : ''}}</td>
+                <td class="conf-badge" style="padding:0.5rem 0;font-size:0.78rem">${{ce.confidence ? ce.confidence.flag : ''}} ${{ge.confidence ? ge.confidence.flag : ''}}</td>
             </tr>`;
         }}).join('');
         return `<div class="result-box">
@@ -2380,7 +2381,7 @@ async def llm_page():
         }}
         const rows = runs.map(r => {{
             const date = r.saved_at ? r.saved_at.slice(0,16).replace('T',' ') : '—';
-            const summary = `${{r.model||''}} · ${{r.task||''}} · ${{r.mwh_per_token}} mWh/tok · ${{r.tokens_per_sec}} tok/s ${{r.confidence||''}}`;
+            const summary = `${{r.model||''}} · ${{r.task||''}} · ${{r.mwh_per_token}} mWh/tok · ${{r.tokens_per_sec}} tok/s ${{r.confidence ? '<span class="conf-badge">'+r.confidence+'</span>' : ''}}`;
             const base = '/results/llm/' + r.job_id;
             return `<div style="border-bottom:1px solid var(--panel);padding:0.6rem 0">
                 <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -3054,10 +3055,19 @@ async def rag_page():
                 + 'border-left:2px solid ' + STRIPE[m] + '44">' + (inf.response || '') + '</div>'
                 + '</div>';
         }}).join('');
+        // Per-report carbon strip: use the lowest energy across the 3 modes
+        // (the most efficient mode) so the "if this had run elsewhere"
+        // comparison reflects the best-case carbon footprint of this run.
+        const _stripWhArr = MODES
+            .map(m => (r.results||{{}})[m] && r.results[m].energy ? r.results[m].energy.delta_e_wh : null)
+            .filter(v => v != null);
+        const _stripWh = _stripWhArr.length ? Math.min.apply(null, _stripWhArr) : null;
+        const _stripLbl = r.model_label + ' \xb7 3-mode RAG comparison (best of)';
         document.getElementById('status').innerHTML =
             '<div style="border:1px solid var(--border);padding:1.5rem">'
             + '<div style="color:var(--accent);font-size:1.1rem;margin-bottom:0.25rem">Comparison \u2014 ' + r.model_label + '</div>'
             + '<div style="color:var(--text-3);font-size:0.82rem;margin-bottom:1rem">' + r.question + '</div>'
+            + wlCarbonStrip(_stripWh, _stripLbl)
             + cards
             + '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.75rem">' + (r.scope||'') + '</div>'
             + '<div style="display:flex;gap:0.5rem;margin-top:0.75rem">'
@@ -3084,7 +3094,7 @@ async def rag_page():
         }}
         const rows = runs.map(r => {{
             const date = r.saved_at ? r.saved_at.slice(0,16).replace('T',' ') : '\u2014';
-            const summary = (r.model||'') + ' \xb7 ' + (r.task||'') + ' \xb7 ' + r.mwh_per_token + ' mWh/tok ' + (r.confidence||'');
+            const summary = (r.model||'') + ' \xb7 ' + (r.task||'') + ' \xb7 ' + r.mwh_per_token + ' mWh/tok ' + (r.confidence ? '<span class="conf-badge">'+r.confidence+'</span>' : '');
             const base = '/results/llm/' + r.job_id;
             return '<div style="border-bottom:1px solid var(--panel);padding:0.6rem 0">'
                 + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
@@ -3671,8 +3681,8 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     </p>
     <details>
       <summary>How this is measured</summary>
-      <p>10s idle baseline before each run. 60s thermal cooldown between CPU and GPU.
-      Energy = ΔW × duration / 3600. Confidence 🟢 = ΔW &gt; 5W and ≥ 10 polls.</p>
+      <p>{{BASELINE_POLLS}}s idle baseline before each run. {{VIDEO_COOLDOWN_S}}s thermal cooldown between CPU and GPU.
+      Energy = ΔW × duration / 3600. Confidence 🟢 = ΔW &gt; {{CONF_GREEN_X}}× noise and ≥ {{CONF_GREEN_POLLS}} polls.</p>
       <p>Source: 812 MB, 4K. Encode time ~2–3 min CPU, ~90s GPU (full pipeline).
       Previous runs (partial pipeline): CPU 174s / 4.06 Wh · GPU 114s / 4.42 Wh.
       Full pipeline results pending first run.</p>
@@ -3874,12 +3884,12 @@ _DEMO_HTML = f"""<!DOCTYPE html>
       <div style="border-left:2px solid #1a3a1a;padding:0.6rem 1rem">
         <div style="font-family:monospace;font-size:0.9rem">🟢 Repeatable</div>
         <div style="color:var(--text-3);font-size:0.82rem;margin-top:0.25rem">
-          ΔW &gt; 5× noise <em>and</em> ≥ 10 polls. Well above noise floor. Reliable enough to cite.</div>
+          ΔW &gt; {{CONF_GREEN_X}}× noise <em>and</em> ≥ {{CONF_GREEN_POLLS}} polls. Well above noise floor. Reliable enough to cite.</div>
       </div>
       <div style="border-left:2px solid #3a3a00;padding:0.6rem 1rem">
         <div style="font-family:monospace;font-size:0.9rem">🟡 Early insight</div>
         <div style="color:var(--text-3);font-size:0.82rem;margin-top:0.25rem">
-          ΔW ≥ 2× noise <em>or</em> ≥ 5 polls. Directional signal, but needs more runs
+          ΔW ≥ {{CONF_YELLOW_X}}× noise <em>or</em> ≥ {{CONF_YELLOW_POLLS}} polls. Directional signal, but needs more runs
           before we'd stake a public claim on it.</div>
       </div>
       <div style="border-left:2px solid #2a0000;padding:0.6rem 1rem">
@@ -4405,7 +4415,7 @@ function renderRAGResult(r, savedAt, isPrev) {{
         ${{fmt(inf.tokens_per_sec, 1)}} tok/s<br>
         ${{inTok}} in · ${{outTok}} out tokens<br>
         ${{retMs}}<br>
-        ${{e.confidence ? e.confidence.flag + ' ' + e.confidence.label : ''}}
+        ${{e.confidence ? '<span class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</span>' : ''}}
       </div>
     </div>`;
   }});
@@ -4752,7 +4762,7 @@ async def image_page():
                   <div>
                     <span class="prev-meta">
                       {date_str} &nbsp;·&nbsp; {mode_label}
-                      &nbsp;·&nbsp; {conf.get("flag","")} {conf.get("label","")}
+                      &nbsp;·&nbsp; <span class="conf-badge">{conf.get("flag","")} {conf.get("label","")}</span>
                       &nbsp;·&nbsp; {r.get("delta_e_wh","?")} Wh/image
                       &nbsp;·&nbsp; {r.get("delta_t_s","?")}s
                     </span>
@@ -5058,7 +5068,7 @@ function _imageCard(label, pass_r, isWinner) {{
       <div class="kpi"><div class="val" style="font-size:1.1rem">${{fmt(e.delta_w,1)}} W</div><div class="lbl">delta W</div></div>
       <div class="kpi"><div class="val" style="font-size:1.1rem">${{e.poll_count}}</div><div class="lbl">polls</div></div>
     </div>
-    <div style="font-size:0.78rem;color:var(--text-3);margin-top:0.5rem">${{e.confidence.flag}} ${{e.confidence.label}} · ${{gen.batch_size}}×${{gen.steps}} steps</div>
+    <div style="font-size:0.78rem;color:var(--text-3);margin-top:0.5rem"><span class="conf-badge">${{e.confidence.flag}} ${{e.confidence.label}}</span> · ${{gen.batch_size}}×${{gen.steps}} steps</div>
     ${{imgHtml}}
   </div>`;
 }}
@@ -5103,7 +5113,7 @@ function _modelCard(side_r) {{
       <div class="kpi"><div class="val" style="font-size:1.1rem">${{fmt(e.delta_w,1)}} W</div><div class="lbl">delta W</div></div>
       <div class="kpi"><div class="val" style="font-size:1.1rem">${{e.poll_count}}</div><div class="lbl">polls</div></div>
     </div>
-    <div style="font-size:0.78rem;color:var(--text-3);margin-top:0.5rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+    <div class="conf-badge" style="font-size:0.78rem;color:var(--text-3);margin-top:0.5rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
     ${{imgHtml}}
   </div>`;
 }}
@@ -5318,7 +5328,18 @@ load();
 
 @app.get("/demo", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def demo_page():
-    return _DEMO_HTML
+    # CR-002: confidence numbers and baseline/cooldown windows in the Guided
+    # Tour are injected from settings.json at request time, so the tour can
+    # never silently contradict the running config (same pattern as
+    # /methodology — see methodology_page below).
+    s = cfg.load()
+    return (_DEMO_HTML
+            .replace("{BASELINE_POLLS}",     str(s.get("baseline_polls",     "—")))
+            .replace("{VIDEO_COOLDOWN_S}",   str(s.get("video_cooldown_s",   "—")))
+            .replace("{CONF_GREEN_X}",       str(s.get("variance_green_x",   "—")))
+            .replace("{CONF_YELLOW_X}",      str(s.get("variance_yellow_x",  "—")))
+            .replace("{CONF_GREEN_POLLS}",   str(s.get("conf_green_polls",   "—")))
+            .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—"))))
 
 
 _METHODOLOGY_HTML = """<!DOCTYPE html>
