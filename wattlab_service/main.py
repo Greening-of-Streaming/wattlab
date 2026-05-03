@@ -23,9 +23,10 @@ import audience
 import auth
 import email_send
 from capabilities import (
-    requires, can,
+    requires, can, gate,
     PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
     VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD,
+    CUSTOM_PROMPT, BATCH_COMPARE, RAG_CORPUS_UPLOAD, RESULTS_EXPORT_CSV,
     SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN,
 )
 
@@ -1992,6 +1993,7 @@ async def run_job(job_id: str, input_path: Path, preset: str, delete_after: bool
 
 @app.post("/video/use-source", dependencies=[Depends(requires(VIDEO_RUN))])
 async def use_preloaded_source(
+    request: Request,
     source_key: str = Form(...),
     preset: str = Form("both"),
     custom_cmd: str = Form(None),
@@ -2000,6 +2002,12 @@ async def use_preloaded_source(
 ):
     if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs"):
         return JSONResponse({"error": "Invalid preset"}, status_code=400)
+    # CR-001 capability dispatch: all-codecs sweep is BATCH_COMPARE; any
+    # custom ffmpeg arg is CUSTOM_PROMPT.
+    if preset == "all_codecs":
+        gate(request, BATCH_COMPARE)
+    if any((custom_cmd, custom_cmd_cpu, custom_cmd_gpu)):
+        gate(request, CUSTOM_PROMPT)
 
     source = PRELOADED.get(source_key)
     if not source or not source["path"].exists():
@@ -2021,6 +2029,7 @@ async def use_preloaded_source(
 
 @app.post("/video/upload", dependencies=[Depends(requires(CUSTOM_UPLOAD))])
 async def upload_video(
+    request: Request,
     file: UploadFile = File(...),
     preset: str = Form("both"),
     custom_cmd: str = Form(None),
@@ -2029,6 +2038,11 @@ async def upload_video(
 ):
     if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs"):
         return JSONResponse({"error": "Invalid preset"}, status_code=400)
+    # CR-001 capability dispatch — same shape as /video/use-source.
+    if preset == "all_codecs":
+        gate(request, BATCH_COMPARE)
+    if any((custom_cmd, custom_cmd_cpu, custom_cmd_gpu)):
+        gate(request, CUSTOM_PROMPT)
 
     allowed = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".ts"}
     suffix = Path(file.filename).suffix.lower()
@@ -2822,6 +2836,7 @@ async def llm_page():
 
 @app.post("/llm/run", dependencies=[Depends(requires(LLM_RUN))])
 async def llm_run(
+    request: Request,
     model_key: str = Form(...),
     task_key: str = Form(...),
     repeats: int = Form(1),
@@ -2839,6 +2854,13 @@ async def llm_run(
         return JSONResponse({"error": "repeats must be 1, 3, or 5"}, status_code=400)
 
     effective_prompt = prompt.strip() if prompt and prompt.strip() else None
+    # CR-001 capability dispatch: presence of free-form prompt or any
+    # multi-run / cross-device request escalates the required capability.
+    # Routes never compare tiers; they ask for the capability.
+    if effective_prompt is not None:
+        gate(request, CUSTOM_PROMPT)
+    if repeats > 1 or device == "both":
+        gate(request, BATCH_COMPARE)
     job_id = str(uuid.uuid4())[:8]
     device_label = "CPU vs GPU" if device == "both" else device.upper()
     label = f"LLM — {MODELS[model_key]['label']} · {TASKS[task_key]['label']} · {device_label}"
@@ -2897,7 +2919,7 @@ async def run_llm_all_job(job_id: str, model_key: str, warm: bool, device: str):
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
 
-@app.post("/llm/run-all", dependencies=[Depends(requires(LLM_RUN))])
+@app.post("/llm/run-all", dependencies=[Depends(requires(BATCH_COMPARE))])
 async def llm_run_all(
     model_key: str = Form(...),
     warm: bool = Form(False),
@@ -3550,7 +3572,7 @@ async def rag_corpus_list():
     }
 
 
-@app.post("/rag/build-index", dependencies=[Depends(requires(RAG_RUN))])
+@app.post("/rag/build-index", dependencies=[Depends(requires(RAG_CORPUS_UPLOAD))])
 async def rag_build_index(request: Request):
     body = await request.json()
     rebuild = bool(body.get("rebuild", False))
@@ -5732,13 +5754,19 @@ if (_resumeJob) {{ document.getElementById('run-btn').disabled = true; pollTimer
 
 
 @app.post("/image/start", dependencies=[Depends(requires(IMAGE_RUN))])
-async def image_start(prompt: str = Form(...),
+async def image_start(request: Request,
+                      prompt: str = Form(...),
                       device: str = Form("cpu"),
                       model_key: str = Form("sd-turbo")):
     if device not in ("cpu", "gpu", "both", "compare_models"):
         device = "cpu"
     if model_key not in IMAGE_MODELS:
         return JSONResponse({"error": f"Unknown model: {model_key}"}, status_code=400)
+    # CR-001 capability dispatch: cross-device / compare-models is BATCH_COMPARE.
+    # Free-form prompt → CUSTOM_PROMPT lands in C2b alongside the curated wrapper
+    # /image/start-curated; without it, /demo step 3 would 403.
+    if device in ("both", "compare_models"):
+        gate(request, BATCH_COMPARE)
     cfg_m = IMAGE_MODELS[model_key]
     if device in ("cpu", "both") and not cfg_m["cpu_ok"]:
         return JSONResponse(

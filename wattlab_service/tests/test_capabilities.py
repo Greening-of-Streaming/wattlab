@@ -188,6 +188,47 @@ async def test_requires_raises_403_for_member_when_lab_required(monkeypatch):
     assert exc.value.status_code == 403
 
 
+# --- gate() helper for runtime capability dispatch -------------------------
+
+def test_gate_passes_when_tier_satisfies():
+    """Lab tier should pass gate() for any capability."""
+    capabilities.gate(lab_request(), capabilities.BATCH_COMPARE,
+                      capabilities.CUSTOM_PROMPT)  # should not raise
+
+
+def test_gate_raises_403_with_capability_name_in_detail():
+    """The 403 detail must name the failing capability so the front-end
+    can map it to a "Members only · Join GoS" affordance."""
+    with pytest.raises(HTTPException) as exc:
+        capabilities.gate(anon_request(), capabilities.CUSTOM_PROMPT)
+    assert exc.value.status_code == 403
+    assert "custom_prompt" in exc.value.detail
+
+
+def test_gate_raises_on_first_failing_cap():
+    """When multiple caps are required and several fail, gate() reports the
+    first one — keeps the error deterministic and the trace short."""
+    with pytest.raises(HTTPException) as exc:
+        capabilities.gate(anon_request(),
+                          capabilities.BATCH_COMPARE,
+                          capabilities.CUSTOM_PROMPT)
+    assert "batch_compare" in exc.value.detail
+    assert "custom_prompt" not in exc.value.detail
+
+
+def test_gate_validates_capability_names_eagerly():
+    """A typo in a gate() argument should fail fast with KeyError, not
+    silently bypass the check."""
+    with pytest.raises(KeyError):
+        capabilities.gate(lab_request(), "nonsense_capability")
+
+
+def test_gate_with_no_caps_is_a_noop():
+    """Calling gate() with zero arguments should not raise — useful for
+    routes that conditionally build the cap list and may end up empty."""
+    capabilities.gate(anon_request())  # should not raise
+
+
 # --- Policy snapshot --------------------------------------------------------
 
 def test_required_tier_table_snapshot():

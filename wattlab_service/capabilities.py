@@ -119,6 +119,34 @@ def requires(capability: str):
     return _dep
 
 
+def gate(request: Request, *capabilities_required: str) -> None:
+    """Imperative capability check inside a route body.
+
+    Use when the *required capability depends on runtime input* — e.g. a
+    single endpoint that accepts both a curated preset and a free-form
+    custom command, where the cap is decided after the form is parsed.
+    Raises 403 with the first failing capability named.
+
+    Routes still never compare tiers directly:
+        if preset == "all_codecs":
+            capabilities.gate(request, BATCH_COMPARE)   # OK
+        if request_tier == Tier.Member: ...             # NOT OK
+
+    The factorisation contract: capability names are the only thing routes
+    speak. If the policy moves BATCH_COMPARE between tiers tomorrow,
+    this call site doesn't change.
+
+    Validates capability names eagerly so typos blow up at the call, not
+    at audit time.
+    """
+    t = resolve_tier(request)
+    for cap in capabilities_required:
+        if cap not in _REQUIRED_TIER:
+            raise KeyError(f"undefined capability: {cap!r}")
+        if not can(t, cap):
+            raise HTTPException(status_code=403, detail=f"requires {cap}")
+
+
 def all_capabilities() -> list[str]:
     """Sorted list of every defined capability — for tests and introspection."""
     return sorted(_REQUIRED_TIER.keys())
