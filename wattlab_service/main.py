@@ -21,6 +21,7 @@ import carbon
 import queue_control
 import audience
 import auth
+import curated
 import email_send
 from capabilities import (
     requires, can, gate,
@@ -3585,16 +3586,22 @@ async def rag_build_index(request: Request):
 
 @app.post("/rag/run", dependencies=[Depends(requires(RAG_RUN))])
 async def rag_run(
+    request: Request,
     model_key: str = Form(...),
     rag_mode: str = Form(...),
-    question: str = Form(...),
+    question: str = Form(None),
 ):
     if model_key not in rag_module.MODELS:
         return JSONResponse({"error": "Invalid model"}, status_code=400)
     if rag_mode not in ("baseline", "rag", "rag_large"):
         return JSONResponse({"error": "Invalid rag_mode"}, status_code=400)
-    if not question.strip():
-        return JSONResponse({"error": "Question required"}, status_code=400)
+    # CR-001 capability dispatch — free-form question → CUSTOM_PROMPT;
+    # absent → curated canonical (Anonymous-OK).
+    effective_question = question.strip() if question and question.strip() else None
+    if effective_question is not None:
+        gate(request, CUSTOM_PROMPT)
+    else:
+        effective_question = curated.CANONICAL_RAG_QUESTION
     if rag_mode != "baseline" and rag_module.index_status != "ready":
         return JSONResponse({"error": "Index not ready — build it first"}, status_code=400)
 
@@ -3604,7 +3611,7 @@ async def rag_run(
 
     async def coro():
         jobs[job_id]["stage"] = "baseline"
-        result = await rag_module.run_rag_measurement(model_key, rag_mode, question.strip(), jobs, job_id)
+        result = await rag_module.run_rag_measurement(model_key, rag_mode, effective_question, jobs, job_id)
         save_result("llm", job_id, result)
         jobs[job_id] = {"stage": "done", "result": result}
 
@@ -3657,13 +3664,20 @@ async def run_rag_compare_job(job_id: str, model_key: str, question: str):
 
 @app.post("/rag/run-compare", dependencies=[Depends(requires(RAG_RUN))])
 async def rag_run_compare(
+    request: Request,
     model_key: str = Form(...),
-    question: str = Form(...),
+    question: str = Form(None),
 ):
     if model_key not in rag_module.MODELS:
         return JSONResponse({"error": "Invalid model"}, status_code=400)
-    if not question.strip():
-        return JSONResponse({"error": "Question required"}, status_code=400)
+    # CR-001 capability dispatch — free-form 3-mode compare with a custom
+    # question is BATCH_COMPARE (it crosses both axes: free-form input AND
+    # multi-mode sweep); absent question falls back to curated, Anonymous-OK.
+    effective_question = question.strip() if question and question.strip() else None
+    if effective_question is not None:
+        gate(request, BATCH_COMPARE)
+    else:
+        effective_question = curated.CANONICAL_RAG_QUESTION
     if rag_module.index_status != "ready":
         return JSONResponse({"error": "Index not ready — build it first"}, status_code=400)
 
@@ -3671,7 +3685,7 @@ async def rag_run_compare(
     label = f"RAG Compare — {rag_module.MODELS[model_key]['label']} · 3 modes"
 
     async def coro():
-        await run_rag_compare_job(job_id, model_key, question.strip())
+        await run_rag_compare_job(job_id, model_key, effective_question)
 
     position = queue_control.enqueue(job_id, "rag", label, coro)
     if position is None:
@@ -4901,7 +4915,8 @@ async function runDemoRAG() {{
   try {{
     const form = new FormData();
     form.append('model_key', 'mistral');
-    form.append('question', 'How does codec choice affect streaming energy consumption?');
+    // No `question` field — server uses curated.CANONICAL_RAG_QUESTION,
+    // which keeps the call Anonymous-OK (CR-001 capability dispatch).
     const resp = await fetch('/rag/run-compare', {{method:'POST', body:form}});
     const data = await resp.json();
     if (data.job_id) pollDemoRAG(data.job_id, Date.now());
@@ -4988,10 +5003,12 @@ async function runDemoImage() {{
   document.getElementById('image-btns').style.display = 'none';
   document.getElementById('image-status').innerHTML =
     '<p class="progress-note">Submitting…</p>';
+  // No `prompt` field — server uses curated.CANONICAL_IMAGE_PROMPT, which
+  // keeps the call Anonymous-OK (CR-001 capability dispatch).
   const resp = await fetch('/image/start', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
-    body: 'prompt=' + encodeURIComponent('a lone wind turbine in an open landscape'),
+    body: '',
   }});
   const data = await resp.json();
   if (data.error) {{
@@ -5755,18 +5772,25 @@ if (_resumeJob) {{ document.getElementById('run-btn').disabled = true; pollTimer
 
 @app.post("/image/start", dependencies=[Depends(requires(IMAGE_RUN))])
 async def image_start(request: Request,
-                      prompt: str = Form(...),
+                      prompt: str = Form(None),
                       device: str = Form("cpu"),
                       model_key: str = Form("sd-turbo")):
     if device not in ("cpu", "gpu", "both", "compare_models"):
         device = "cpu"
     if model_key not in IMAGE_MODELS:
         return JSONResponse({"error": f"Unknown model: {model_key}"}, status_code=400)
-    # CR-001 capability dispatch: cross-device / compare-models is BATCH_COMPARE.
-    # Free-form prompt → CUSTOM_PROMPT lands in C2b alongside the curated wrapper
-    # /image/start-curated; without it, /demo step 3 would 403.
+    # CR-001 capability dispatch:
+    #   prompt provided (free-form) → CUSTOM_PROMPT
+    #   prompt absent                → curated canonical, Anonymous-OK
+    #   device in {'both','compare_models'} → BATCH_COMPARE
+    effective_prompt = prompt.strip() if prompt and prompt.strip() else None
+    if effective_prompt is not None:
+        gate(request, CUSTOM_PROMPT)
+    else:
+        effective_prompt = curated.CANONICAL_IMAGE_PROMPT
     if device in ("both", "compare_models"):
         gate(request, BATCH_COMPARE)
+    prompt = effective_prompt
     cfg_m = IMAGE_MODELS[model_key]
     if device in ("cpu", "both") and not cfg_m["cpu_ok"]:
         return JSONResponse(
