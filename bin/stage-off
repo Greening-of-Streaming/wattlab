@@ -17,13 +17,9 @@ CHECKOUT_MAIN=0
 WAIT_TIMEOUT_S=30
 FLAG="/tmp/owl-maintenance"
 LIVE_URL="http://localhost:8000/live"
-ENV_FILE="/home/gos/wattlab/.env"
 
-# Gate-cookie auth — see stage-on for the rationale.
-if [[ -f "$ENV_FILE" ]]; then
-  set -a; . "$ENV_FILE"; set +a
-fi
-GATE_COOKIE="wl_auth=${WATTLAB_GATE_PASSWORD:-}"
+# CR-001 task #10: WATTLAB_GATE_PASSWORD retired. Loopback /live is now
+# Lab-tier — no cookie needed.
 
 usage() {
   cat <<EOF
@@ -60,7 +56,7 @@ echo "▸ waiting for /live to respond (up to ${WAIT_TIMEOUT_S}s)…"
 end=$((SECONDS + WAIT_TIMEOUT_S))
 ready=0
 while [[ "$SECONDS" -lt "$end" ]]; do
-  if curl -fsS -m 3 --cookie "$GATE_COOKIE" "$LIVE_URL" >/dev/null 2>&1; then
+  if curl -fsS -m 3 "$LIVE_URL" >/dev/null 2>&1; then
     ready=1
     break
   fi

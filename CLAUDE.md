@@ -53,7 +53,7 @@ BouyguesBox (192.168.1.x)
 
 ## Environment
 - `.env` at `/home/gos/wattlab/.env` — gitignored
-- Variables: `TAPO_EMAIL`, `TAPO_PASSWORD`, `TAPO_P110_IP`, `WATTLAB_GATE_PASSWORD`
+- Variables: `TAPO_EMAIL`, `TAPO_PASSWORD`, `TAPO_P110_IP`, `OWL_AUTH_SECRET` (CR-001 magic-link signing key), `OWL_GMAIL_USER` + `OWL_GMAIL_APP_PASSWORD` (Gmail SMTP for magic-link delivery)
 
 ## Installed Packages
 - Python: tapo==0.8.12, python-dotenv, fastapi, uvicorn, python-multipart, torch 2.5.1+rocm6.2, diffusers, transformers, accelerate, pillow
@@ -129,7 +129,7 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 - LAN: `http://192.168.1.62:8000` (paths: `/video /llm /image /demo /settings /queue-status /methodology /rag /carbon`)
 - Tunnel: `ssh -p 2222 -L 8000:localhost:8000 user@gos1.duckdns.org`
 - Public (HTTPS via certbot): `https://wattlab.greeningofstreaming.org`
-- Gate password: in `.env` as `WATTLAB_GATE_PASSWORD` (ask owner)
+- Auth model: tier-based (CR-001). Anonymous = no auth, Member = magic-link sign-in via `/auth/sign-in` (allowlist `data/members.json`), Lab = LAN/loopback IP.
 
 ## Roadmap
 

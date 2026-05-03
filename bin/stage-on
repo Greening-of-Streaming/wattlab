@@ -29,15 +29,10 @@ BRANCH=""
 DRAIN_TIMEOUT_S=60
 FLAG="/tmp/owl-maintenance"
 LIVE_URL="http://localhost:8000/live"
-ENV_FILE="/home/gos/wattlab/.env"
 
-# Gate-cookie auth: /live is behind the WATTLAB_GATE_PASSWORD middleware,
-# so even loopback requests need the cookie. Source .env so curl can
-# present `wl_auth=<password>` — same value the gate POST sets.
-if [[ -f "$ENV_FILE" ]]; then
-  set -a; . "$ENV_FILE"; set +a
-fi
-GATE_COOKIE="wl_auth=${WATTLAB_GATE_PASSWORD:-}"
+# CR-001 task #10: WATTLAB_GATE_PASSWORD retired. Loopback /live is now
+# Lab-tier (audience.tier resolves 127.0.0.1 → Lab), so curl needs no
+# cookie at all.
 
 usage() {
   cat <<EOF
@@ -61,7 +56,7 @@ done
 
 # --- 1. Drain the queue (best-effort, with timeout) ---
 queue_depth() {
-  curl -fsS -m 3 --cookie "$GATE_COOKIE" "$LIVE_URL" 2>/dev/null \
+  curl -fsS -m 3 "$LIVE_URL" 2>/dev/null \
     | jq -r '.queue_depth // 0' 2>/dev/null \
     || echo 0
 }

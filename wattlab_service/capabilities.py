@@ -31,7 +31,7 @@ from audience import Tier, tier as resolve_tier
 # String-valued so test failures and 403 messages name the capability
 # directly. One per row of the matrix in CHANGE_REQUESTS.md (CR-001).
 
-# Public, no gating (anyone past today's gate password)
+# Public, no gating — every audience tier sees these
 PUBLIC_PAGE        = "public_page"
 QUEUE_VIEW         = "queue_view"
 RESULTS_DOWNLOAD   = "results_download"   # single-record fetch (per-job JSON / CSV used by /demo + recent-runs panels)

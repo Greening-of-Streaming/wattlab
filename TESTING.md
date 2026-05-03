@@ -24,7 +24,8 @@ These are covered by Tier 3 manual checks before high-stakes use.
 # Smoke test outline — implement as a single bash script
 set -e
 BASE=http://127.0.0.1:8000
-COOKIE="wl_auth=$(grep WATTLAB_GATE_PASSWORD /home/gos/wattlab/.env | cut -d= -f2-)"
+# CR-001 task #10: WATTLAB_GATE_PASSWORD retired. Loopback hits Lab tier
+# automatically — no cookie needed.
 
 # 1. Module imports
 cd /home/gos/wattlab/wattlab_service && python3 -c \
@@ -32,19 +33,19 @@ cd /home/gos/wattlab/wattlab_service && python3 -c \
 
 # 2. Page routes return 200 (HTML pages — assert content-length > 1000)
 for p in "" /video /llm /image /rag /demo /methodology /queue-status /settings; do
-    code=$(curl -sS -o /dev/null -w "%{http_code}" -b "$COOKIE" "$BASE$p")
+    code=$(curl -sS -o /dev/null -w "%{http_code}" "$BASE$p")
     [ "$code" = "200" ] || { echo "FAIL: $p returned $code"; exit 1; }
 done
 
-# 3. Gate page renders without auth
-curl -sS "$BASE/gate" | grep -q "WattLab" || { echo "FAIL: /gate"; exit 1; }
+# 3. Sign-in page renders for unauthenticated visitors
+curl -sS "$BASE/auth/sign-in" | grep -q "WattLab" || { echo "FAIL: /auth/sign-in"; exit 1; }
 
 # 4. Static asset serves
 curl -sS -o /dev/null -w "%{http_code}\n" "$BASE/static/owl.svg" | grep -q "^200$"
 
 # 5. JSON endpoints — assert valid JSON + expected keys
 for ep in /live /power /queue /rag/index-status /rag/corpus-list; do
-    curl -sS -b "$COOKIE" "$BASE$ep" | python3 -m json.tool > /dev/null \
+    curl -sS "$BASE$ep" | python3 -m json.tool > /dev/null \
         || { echo "FAIL: $ep not JSON"; exit 1; }
 done
 
@@ -143,7 +144,7 @@ echo 'INTEGRATION OK'
 
 ### Pages render correctly (1 min)
 - [ ] Open https://wattlab.greeningofstreaming.org on desktop **and** phone
-- [ ] Owl + "WattLab ← Home" wordmark at top of every page (except `/gate`)
+- [ ] Owl + "WattLab ← Home" wordmark at top of every page (except the `/auth/*` flow)
 - [ ] Sub-labels readable on phone (no `#555` ghost text)
 - [ ] `/methodology` shows owl + GoS logo in topbar
 - [ ] `/queue-status` shows the owl wordmark via `_BACK`

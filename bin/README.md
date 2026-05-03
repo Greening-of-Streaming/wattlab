@@ -79,7 +79,7 @@ If FastAPI fails to come up within 30s, the flag is **not** removed and the scri
 
 - **The maintenance flag does NOT auto-disable.** Once `stage-on` raises `/tmp/owl-maintenance`, the public site stays on the maintenance page until you explicitly run `stage-off`, manually `rm /tmp/owl-maintenance`, or the server reboots (which clears `/tmp` — implicit safety net, don't rely on it). If you walk away from the desk after running `stage-on`, public visitors will see "Brief maintenance" for as long as you're gone. A future CR could add an auto-lower cron after N hours; for now, just remember to run `stage-off` when you're done.
 - **Owner bypass paths during staging:** LAN `http://192.168.1.62:8000` (direct to FastAPI, skips nginx) or SSH tunnel `ssh -p 2222 -L 8000:localhost:8000 user@gos1.duckdns.org`. Both reach the live site with zero maintenance page in the way.
-- **Both scripts source `/home/gos/wattlab/.env`** to get `WATTLAB_GATE_PASSWORD` for the `/live` cookie — needed because the loopback `/live` request still goes through the gate middleware.
+- **Loopback `/live` needs no cookie.** Since CR-001 task #10 retired `WATTLAB_GATE_PASSWORD`, audience.tier resolves loopback IP → Lab and the request passes capability checks directly.
 - **Both call `sudo systemctl restart wattlab`** — your shell's sudo cache will be prompted if it's expired.
 - **Manual recovery:** if a script fails partway through and leaves things wedged, the safe sequence is: `rm /tmp/owl-maintenance`, then `sudo systemctl restart wattlab`, then `git checkout main` if you want to be back on main. The flag file is the only persistent state.
 

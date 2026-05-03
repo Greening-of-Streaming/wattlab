@@ -2,7 +2,7 @@
 Audience tier resolution — single source of truth for "who is this request?".
 
 Three tiers, in ascending privilege:
-  Anonymous (0) — anyone past the gate password (today) / unauthenticated visitor (post-CR-001)
+  Anonymous (0) — unauthenticated visitor (no owl_session cookie)
   Member    (1) — authenticated GoS member (defined-but-unreachable until CR-001 magic-link auth lands)
   Lab       (2) — request originating on the LAN / loopback / SSH-tunnelled to localhost
 
