@@ -553,22 +553,25 @@ _CARBON_JS = """
       }
     }
 
-    // Live source explainer — FR has the Eco2mix→ElectricityMaps ladder;
-    // any other home zone uses ElectricityMaps directly. The full live-
-    // source dispatch is a deferred CR; until then this just keeps the
-    // wording correct if HOME_ZONE flips.
+    // Live source explainer — FR derives lifecycle intensity from the
+    // current Eco2mix production mix × IPCC AR6 factors (CR-016). Any
+    // other home zone uses ElectricityMaps' published intensity directly.
+    // Full live-source dispatch for non-FR zones is a deferred CR; this
+    // just keeps the wording correct if HOME_ZONE flips.
     var homeLabel = (homeI.zone_label || home);
     var liveExplain = (home === 'FR')
-      ? 'Live (home zone, ' + homeLabel + '): '
+      ? 'Live (home zone, ' + homeLabel + '): production mix from '
         + '<a href="https://www.rte-france.com/eco2mix" target="_blank" rel="noopener" '
-        + 'style="color:var(--text-3)">Eco2mix</a> — RTE/Etalab official French TSO data, '
-        + 'refreshed every 15 min. Falls back to '
+        + 'style="color:var(--text-3)">Eco2mix</a> (RTE/Etalab — official French TSO, '
+        + 'refreshed every 15 min) × IPCC AR6 lifecycle emission factors per source. '
+        + 'Falls back to '
         + '<a href="https://www.electricitymaps.com" target="_blank" rel="noopener" '
-        + 'style="color:var(--text-3)">ElectricityMaps</a>, then to estimated if both unavailable.'
+        + 'style="color:var(--text-3)">ElectricityMaps</a>, then to the static '
+        + 'annual mean if both are unavailable.'
       : 'Live (home zone, ' + homeLabel + '): '
         + '<a href="https://www.electricitymaps.com" target="_blank" rel="noopener" '
         + 'style="color:var(--text-3)">ElectricityMaps</a> real-time grid intensity. '
-        + 'Falls back to estimated annual mean if unavailable.';
+        + 'Falls back to the static annual mean if unavailable.';
 
     var formulaHtml =
         '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2);'
@@ -578,8 +581,12 @@ _CARBON_JS = """
       + liveExplain + '<br>'
       + 'Estimated (reference &amp; comparison zones): '
       + '<a href="https://ember-energy.org" target="_blank" rel="noopener" '
-      + 'style="color:var(--text-3)">Ember</a> 2024 annual mean grid carbon intensity. '
-      + 'Static so values do not drift between page loads.<br>'
+      + 'style="color:var(--text-3)">Ember</a> 2024 annual mean grid carbon intensity, '
+      + 'lifecycle basis. Static so values do not drift between page loads.<br>'
+      + '<span style="color:var(--text-5)">Live and reference are on the same '
+      + 'lifecycle boundary, so the two numbers are directly comparable. The gap '
+      + 'between them reflects real diurnal grid variance, not a methodology '
+      + 'mismatch.</span><br>'
       + 'Raw module status: <a href="/carbon" style="color:var(--text-3)">/carbon</a>'
       + '</div>';
 
@@ -6040,11 +6047,12 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>PSU efficiency curve.</strong> Wall power includes PSU conversion losses, which are non-linear (PSUs are less efficient at low and very high loads). Two tasks that consume the same <em>internal</em> power may report different wall-power deltas depending on where they sit on the PSU efficiency curve.</span></div>
 
   <h2>From energy to CO<sub>2</sub>e</h2>
-  <p>Every Wh figure on this site is also shown as gCO<sub>2</sub>e &mdash; Wh &times; the carbon intensity of the electricity that produced it. Three data sources arranged as a fallback ladder, with explicit <strong>LIVE</strong> or <strong>EST</strong> badges so the source is never ambiguous:</p>
+  <p>Every Wh figure on this site is also shown as gCO<sub>2</sub>e &mdash; Wh &times; the carbon intensity of the electricity that produced it. The CO<sub>2</sub>e numbers are framed as <em>high-level estimates</em> on every result: the energy figure is what we measure at the wall; the carbon figure is derived from it for carbon-accounting comparison with other activities (driving an EV, etc.).</p>
+  <p>Three data sources arranged as a fallback ladder, with explicit <strong>LIVE</strong> or <strong>EST</strong> badges so the source is never ambiguous. <strong>All three are on a lifecycle boundary</strong> &mdash; nuclear fuel cycle, plant construction, methane upstream leaks, etc. &mdash; so the live and reference numbers in the comparison strip are directly comparable, and the gap between them reflects real diurnal grid variance rather than a methodology mismatch.</p>
   <ol>
-    <li><strong>Live, primary (home zone, France):</strong> <a href="https://www.rte-france.com/eco2mix" style="color:var(--accent);text-decoration:none">Eco2mix</a> &mdash; the official RTE / Etalab French TSO real-time grid data. No authentication required; refreshed every <strong>15 minutes</strong>. Includes the precomputed <code>taux_co2</code> field (gCO<sub>2</sub>/kWh) directly from RTE, plus the full live production mix (nuclear, wind, solar, hydro, gas, coal, etc.). When this path resolves, the UI shows a green <strong>LIVE</strong> badge and surfaces the live mix breakdown in the comparison-strip dropdown.</li>
-    <li><strong>Live, backup:</strong> <a href="https://www.electricitymaps.com" style="color:var(--accent);text-decoration:none">ElectricityMaps</a> &mdash; third-party aggregator covering many zones. Used only if Eco2mix is unreachable for the home zone. Requires an API token (configured in the lab&rsquo;s <code>.env</code>); free tier covers a single zone.</li>
-    <li><strong>Estimated, fallback:</strong> annual mean grid carbon intensity per country, from <a href="https://ember-energy.org" style="color:var(--accent);text-decoration:none">Ember</a>&rsquo;s 2024 yearly electricity data. This is the floor when no live source is available, <em>and</em> it is also used for all comparison cities (Warsaw, London, Berlin, &hellip;) so those figures stay stable across page loads rather than drifting between two loads five minutes apart.</li>
+    <li><strong>Live, primary (home zone, France):</strong> <a href="https://www.rte-france.com/eco2mix" style="color:var(--accent);text-decoration:none">Eco2mix</a> &mdash; the official RTE / Etalab French TSO real-time grid data. No authentication required; refreshed every <strong>15 minutes</strong>. We take the live production mix (nuclear, wind, solar, hydro, gas, coal, &hellip;) and compute a lifecycle intensity from it using <strong>IPCC AR6 WGIII (2022) lifecycle median emission factors</strong> per source. Eco2mix&rsquo;s own <code>taux_co2</code> field is direct combustion only (nuclear ~0, gas only counts the smokestack) and is preserved in the JSON for transparency, but is not what drives the displayed gCO<sub>2</sub>e &mdash; that would put live and reference on different boundaries and produce a misleading 4&times; gap. When this path resolves the UI shows a green <strong>LIVE</strong> badge and surfaces the live mix breakdown in the comparison-strip dropdown.</li>
+    <li><strong>Live, backup:</strong> <a href="https://www.electricitymaps.com" style="color:var(--accent);text-decoration:none">ElectricityMaps</a> &mdash; third-party aggregator covering many zones. Used only if Eco2mix is unreachable for the home zone. Requires an API token (configured in the lab&rsquo;s <code>.env</code>); free tier covers a single zone. Their published intensity is lifecycle.</li>
+    <li><strong>Estimated, fallback:</strong> annual mean grid carbon intensity per country, from <a href="https://ember-energy.org" style="color:var(--accent);text-decoration:none">Ember</a>&rsquo;s 2024 yearly electricity data, lifecycle basis. This is the floor when no live source is available, <em>and</em> it is also used for all comparison cities (Warsaw, London, Berlin, &hellip;) so those figures stay stable across page loads rather than drifting between two loads five minutes apart.</li>
   </ol>
   <p>Both source and value are recorded in the saved result JSON at measurement time, so any cited figure is traceable back to <em>which</em> intensity number was used. CSV exports include <code>co2e_g</code>, <code>co2e_intensity_g_per_kwh</code>, <code>co2e_source</code>, and <code>co2e_zone</code> columns. The raw module status (live cache, source, age, fallback state) is available at <a href="/carbon" style="color:var(--accent);text-decoration:none">/carbon</a>.</p>
   <p style="color:var(--text-3);font-size:0.85rem">Why &ldquo;estimated&rdquo; sometimes? Comparison cities never go live by design (so they don&rsquo;t drift between page loads). The home zone falls back to estimated if Eco2mix and ElectricityMaps are both unreachable, or if the most recent live reading is older than 30 minutes. The ladder degrades gracefully: numbers stay sensible even when the network does not.</p>
