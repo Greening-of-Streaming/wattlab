@@ -51,6 +51,11 @@ async def gate_middleware(request: Request, call_next):
             or request.url.path.startswith("/auth")
             or request.url.path.startswith("/static")):
         return await call_next(request)
+    # Lab tier (loopback or RFC1918) bypasses the gate. SSH-tunnelled or
+    # LAN users are already past the household firewall — making them know
+    # the shared password adds nothing. Same shape as audience.tier().
+    if audience.tier(request) == audience.Tier.Lab:
+        return await call_next(request)
     if request.cookies.get("wl_auth") == GATE_PASSWORD:
         return await call_next(request)
     if auth.member_email_from_request(request) is not None:
@@ -237,6 +242,55 @@ async def auth_sign_out():
     response = RedirectResponse(url="/", status_code=302)
     response.delete_cookie(auth.SESSION_COOKIE_NAME)
     return response
+
+
+# --- Auth chip (tier-aware top-right widget) -------------------------------
+#
+# Rendered on every page the visitor can land on (today: `/` and `/demo`,
+# more pages in CR-001 part C). Three states:
+#
+#   Anonymous → "Sign in" link → /auth/sign-in
+#   Member    → "<email> · Sign out" form
+#   Lab       → "▣ Lab" pill (auth is by IP, no sign-out makes sense)
+#
+# CSS lives in a string constant so any page that wants the chip just
+# concatenates _AUTH_CHIP_STYLES into its own <style> block. (Could move
+# to _BASE_STYLES later when more pages opt in.)
+
+_AUTH_CHIP_STYLES = (
+    ".auth-chip{position:fixed;top:0.6rem;right:0.75rem;z-index:100;"
+    "font-family:monospace;font-size:0.72rem;color:var(--text-4);"
+    "background:rgba(15,15,15,0.92);border:1px solid var(--border-2);"
+    "padding:0.3rem 0.7rem;border-radius:2px;display:flex;gap:0.45rem;"
+    "align-items:center}"
+    ".auth-chip a,.auth-chip button{color:var(--accent);background:none;"
+    "border:none;padding:0;font-family:monospace;font-size:inherit;"
+    "cursor:pointer;text-decoration:none}"
+    ".auth-chip a:hover,.auth-chip button:hover{text-decoration:underline}"
+    ".auth-chip .auth-email{color:var(--text-3)}"
+    ".auth-chip.lab{border-color:var(--accent);color:var(--accent)}"
+)
+
+
+def _auth_chip_html(request: Request) -> str:
+    """Tier-aware sign-in widget. Pure HTML, no script — safe to inject
+    into any page template via .replace('{AUTH_CHIP}', ...)."""
+    t = audience.tier(request)
+    if t == audience.Tier.Lab:
+        return '<div class="auth-chip lab" title="Authenticated by LAN/loopback IP">▣ Lab</div>'
+    if t == audience.Tier.Member:
+        email = auth.member_email_from_request(request) or ""
+        return (
+            '<div class="auth-chip">'
+            f'<span class="auth-email">{email}</span>'
+            '<span style="color:var(--text-5)">·</span>'
+            '<form method="post" action="/auth/sign-out" style="display:inline">'
+            '<button type="submit">Sign out</button>'
+            '</form>'
+            '</div>'
+        )
+    # Anonymous
+    return '<div class="auth-chip"><a href="/auth/sign-in">Sign in</a></div>'
 
 
 jobs = {}
@@ -977,7 +1031,14 @@ function wlRenderQueued(pos) {
 # --- Home ---
 
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def index():
+async def index(request: Request):
+    # CR-001: Anonymous visitors land on the Guided Tour — more guidance,
+    # capability matrix as the GoS sales pitch. Member/Lab land on the
+    # working nav grid. Same URL, two distinct experiences. /demo already
+    # exists as the visitor environment, so this is a single redirect.
+    if audience.tier(request) == audience.Tier.Anonymous:
+        return RedirectResponse(url="/demo", status_code=302)
+
     watts = _power_cache["watts"]
     watts_str = f"{watts:.1f}" if watts is not None else "—"
     return f"""<!DOCTYPE html>
@@ -986,6 +1047,7 @@ async def index():
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
   <title>WattLab — GoS</title>
     <style>
+        {_AUTH_CHIP_STYLES}
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: monospace; background: var(--bg); color: var(--text);
                display: flex; flex-direction: column; align-items: center;
@@ -1036,6 +1098,7 @@ async def index():
     </style>
 </head>
 <body>
+    {_auth_chip_html(request)}
     <div class="hero-mark">
         <img src="/static/owl.svg" alt="WattLab owl">
         <div>
@@ -3948,9 +4011,11 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   .summary-table td{{padding:0.5rem 0.75rem;border-bottom:1px solid var(--panel)}}
   .summary-table td:first-child{{color:var(--text-3);width:40%}}
   .summary-table td:last-child{{color:var(--accent)}}
+  {{AUTH_CHIP_STYLES}}
 </style>
 </head>
 <body>
+    {{AUTH_CHIP}}
     {_BACK}
 <div class="page-header">
   <div id="step-nav" class="step-nav">
@@ -5685,11 +5750,12 @@ load();
 
 
 @app.get("/demo", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def demo_page():
+async def demo_page(request: Request):
     # CR-002: confidence numbers and baseline/cooldown windows in the Guided
     # Tour are injected from settings.json at request time, so the tour can
     # never silently contradict the running config (same pattern as
     # /methodology — see methodology_page below).
+    # CR-001: AUTH_CHIP placeholder renders the tier-aware sign-in widget.
     s = cfg.load()
     return (_DEMO_HTML
             .replace("{BASELINE_POLLS}",     str(s.get("baseline_polls",     "—")))
@@ -5698,7 +5764,9 @@ async def demo_page():
             .replace("{CONF_YELLOW_X}",      str(s.get("variance_yellow_x",  "—")))
             .replace("{CONF_GREEN_POLLS}",   str(s.get("conf_green_polls",   "—")))
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
-            .replace("{BETA_CHIP}",          _BETA_CHIP))
+            .replace("{BETA_CHIP}",          _BETA_CHIP)
+            .replace("{AUTH_CHIP_STYLES}",   _AUTH_CHIP_STYLES)
+            .replace("{AUTH_CHIP}",          _auth_chip_html(request)))
 
 
 _METHODOLOGY_HTML = """<!DOCTYPE html>
