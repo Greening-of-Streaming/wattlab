@@ -16,6 +16,14 @@ a badge based on this so visitors know which they're looking at.
 The home zone (where the GoS1 server lives) gets a background poller; the
 comparison zones use the static table only, so their numbers don't drift
 between page loads.
+
+CR-016 — both live and static numbers are on a **lifecycle** boundary
+(includes nuclear fuel cycle, plant construction, methane upstream leaks,
+etc.) so they are directly comparable. The live FR path used to trust
+Eco2mix's `taux_co2` field (direct combustion only), which produced a
+spurious ~4× live-vs-static gap during nuclear-heavy hours. We now derive
+the live FR intensity from Eco2mix's production mix × IPCC AR6 lifecycle
+factors instead — same method as the static annual means.
 """
 import asyncio
 import time
@@ -142,17 +150,30 @@ def compute_intensity_from_mix(mix_mw: dict) -> Optional[float]:
 # --- Live fetchers ---
 
 async def _fetch_eco2mix(client) -> Optional[dict]:
-    """RTE/Etalab Eco2mix real-time, gCO2eq/kWh + production mix in MW.
+    """RTE/Etalab Eco2mix real-time — production mix in MW, converted to
+    lifecycle gCO2eq/kWh using IPCC AR6 factors so live and static numbers
+    sit on the same boundary (CR-016).
 
     Returns:
-      {"g_per_kwh": float, "mix_mw": {...}, "source_datetime": str,
-       "computed": bool}    — computed=True if `taux_co2` was missing and
-                              we derived it from the mix.
+      {"g_per_kwh": float,            # lifecycle, derived from mix
+       "g_per_kwh_direct": float,     # Eco2mix's own taux_co2 (direct
+                                      # combustion only, kept for transparency)
+       "mix_mw": {...},
+       "source_datetime": str}
     or None on any failure.
+
+    Why lifecycle over Eco2mix's `taux_co2`: `taux_co2` only counts direct
+    combustion emissions (nuclear ~0, gas ~smokestack only). Our static
+    table (Ember 2024 annual means) is on a lifecycle basis — including
+    nuclear fuel cycle, plant construction, methane upstream leaks, etc.
+    Mixing the two produced a ~4× live-vs-static gap that was almost
+    entirely a methodology artefact (live 13 g/kWh vs static 53 g/kWh
+    during a nuclear-heavy hour). With both on lifecycle, the gap reflects
+    real diurnal grid variance (typically 1.0–1.5×).
 
     Filters `where=taux_co2 IS NOT NULL` because the dataset pre-populates
     rows for upcoming intervals as NULL placeholders — the latest *real*
-    record is the one we want.
+    record is the one we want (also tells us the mix data is finalised).
     """
     try:
         r = await client.get(
@@ -172,22 +193,18 @@ async def _fetch_eco2mix(client) -> Optional[dict]:
             return None
         rec = records[0]
         mix = {k: rec.get(k) for k in EMISSION_FACTORS.keys() if rec.get(k) is not None}
-        precomputed = rec.get("taux_co2")
-        if isinstance(precomputed, (int, float)) and precomputed > 0:
-            return {
-                "g_per_kwh": float(precomputed),
-                "mix_mw": mix,
-                "source_datetime": rec.get("date_heure"),
-                "computed": False,
-            }
-        derived = compute_intensity_from_mix(mix)
-        if derived is None:
+        lifecycle = compute_intensity_from_mix(mix)
+        if lifecycle is None:
+            # Mix unusable (all-zero or missing). No lifecycle number means
+            # we can't honour our same-boundary contract — let the caller
+            # fall through to ElectricityMaps or static.
             return None
+        direct = rec.get("taux_co2")
         return {
-            "g_per_kwh": derived,
+            "g_per_kwh": round(lifecycle, 1),
+            "g_per_kwh_direct": float(direct) if isinstance(direct, (int, float)) else None,
             "mix_mw": mix,
             "source_datetime": rec.get("date_heure"),
-            "computed": True,
         }
     except Exception:
         return None
@@ -244,12 +261,13 @@ async def poller(zones=(HOME_ZONE,), interval_s: int = POLL_INTERVAL_S):
                         if eco is not None:
                             fetched = {
                                 "g_per_kwh": eco["g_per_kwh"],
+                                "g_per_kwh_direct": eco.get("g_per_kwh_direct"),
                                 "fetched_at": time.time(),
                                 "ok": True,
                                 "provider": "Eco2mix (RTE/Etalab)",
                                 "provider_url": "https://www.rte-france.com/eco2mix",
                                 "mix_mw": eco["mix_mw"],
-                                "computed": eco["computed"],
+                                "boundary": "lifecycle",
                                 "source_datetime": eco["source_datetime"],
                             }
 

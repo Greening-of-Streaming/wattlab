@@ -343,3 +343,48 @@ def test_compute_intensity_from_mix_ignores_negative_and_zero():
 def test_compute_intensity_from_mix_returns_none_when_no_production():
     assert carbon.compute_intensity_from_mix({}) is None
     assert carbon.compute_intensity_from_mix({"charbon": 0}) is None
+
+
+# --- CR-016 regression: live FR must use lifecycle, not Eco2mix taux_co2 ---
+
+def test_eco2mix_response_returns_lifecycle_not_taux_co2():
+    """Eco2mix's `taux_co2` is direct combustion only (~0 for nuclear).
+    Static table is lifecycle (nuclear ~12 g/kWh including fuel cycle).
+    Mixing the two produced a spurious ~4× live-vs-static gap. We must
+    derive live intensity from the production mix using lifecycle factors,
+    not pass `taux_co2` through. Regression test: a nuclear-heavy mix with
+    `taux_co2=2` (very low direct) must still return ~12 g/kWh lifecycle."""
+    import asyncio
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"results": [{
+                "date_heure": "2026-05-03T13:00:00+02:00",
+                "taux_co2": 2,            # direct: ~0 because nuclear
+                "nucleaire": 50000,       # 50 GW nuclear
+                "gaz": 0,
+                "charbon": 0,
+            }]}
+    class FakeClient:
+        async def get(self, *a, **kw): return FakeResp()
+    out = asyncio.run(carbon._fetch_eco2mix(FakeClient()))
+    assert out is not None
+    # Lifecycle nuclear ~12 g/kWh, NOT the taux_co2 value of 2.
+    assert out["g_per_kwh"] == pytest.approx(12.0, abs=0.5)
+    # Direct value preserved for transparency in the JSON, but not used.
+    assert out["g_per_kwh_direct"] == pytest.approx(2.0)
+
+
+def test_eco2mix_returns_none_when_mix_unusable():
+    """If the production mix is empty/zero we have no lifecycle path; the
+    caller falls through to ElectricityMaps or static. Must not silently
+    pass `taux_co2` through to preserve the boundary contract."""
+    import asyncio
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"results": [{"date_heure": "...", "taux_co2": 50}]}  # no mix
+    class FakeClient:
+        async def get(self, *a, **kw): return FakeResp()
+    out = asyncio.run(carbon._fetch_eco2mix(FakeClient()))
+    assert out is None
