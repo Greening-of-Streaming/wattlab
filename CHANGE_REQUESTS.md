@@ -620,6 +620,62 @@ The conference is the strongest argument *for* this CR (forgetting to lower the 
 
 ---
 
+## CR-017 · 24/7 projection on the carbon strip (workload-aware "if this ran continuously")
+
+**Status:** captured 2026-05-03 — sibling to the EV-distance equivalence (shipped in Session 18 part 11). Owner request: make CO2e more meaningful by showing not just "this single job's footprint" but also "what happens if this workload runs continuously."
+**Triggered by:** CO2e numbers for individual jobs are honestly tiny (a single image gen is mm-scale of EV driving). The magnitude only starts to matter for streaming when you multiply by time × volume. A "if this ran 24/7" line in the carbon strip would make the scale leap visible without arithmetic.
+
+### The opportunity
+
+For a long-running or always-on workload — live-stream encoding, an LLM model serving requests, an image-generation API — the natural framing is rate × time:
+
+```
+This image generation: 156 µg CO2e (≈ 3 mm EV)
+Continuous (24h × 365): ~75 g CO2e/year (≈ 1.5 km EV)
+```
+
+That's the thinking the EV equivalence line *almost* gets to but stops short of.
+
+### Why this is more nuanced than EV equivalence
+
+The EV line works on every workload because every workload has a known total energy. The 24/7 projection only makes physical sense for workloads that could plausibly run continuously:
+
+- **Yes:** live-stream encoding, LLM model serving, embedding generation pipeline, image generation API endpoint, RAG retrieval service.
+- **No, or only with framing:** a single one-off video transcode (no one runs the same transcode in a loop), a one-shot image prompt (creative workflow, not a service), a single batch run (it's a measurement, not a service).
+
+If we project 24/7 on every result, "if this image gen ran 24/7 = X" reads as silly because no one does that. If we project only on certain workloads, we need either a workload classifier or a UI toggle.
+
+### Design candidates
+
+1. **Always-on toggle on the result page** ("Show as continuous service: [off / 1h / 1day / 1month / 1year]"). Visitor opts in. Multiplies the displayed CO2e (and EV-distance) by the chosen multiplier. Universally applicable, no per-workload heuristics needed. Probably the cleanest first version.
+2. **Workload-aware projection** — only show 24/7 on jobs that pass a "naturally continuous" filter (LLM serving, RAG, live-stream encode benchmarks). Cleaner UX (no toggle to discover) but requires the classifier and is harder to extend.
+3. **Both** — workload-aware projection appears by default on continuous-natured workloads, but the toggle is always present so visitors can override. Best UX, most code.
+
+Lean: ship #1 first. Add #2 layered on top later if visitors are hitting it. #3 is the eventual right answer but earns its keep only after #1 has been used in anger.
+
+### Open questions
+
+- **Where does the toggle live in the UI?** Inside the carbon strip's collapsed `<details>`? As a sibling control above the strip? On the top-of-page "results filter" if we ever add one? Lean: inside the carbon strip, just above the EV line, since that's the section the projection modifies.
+- **What multipliers?** 1h / 1day / 1month / 1year is the obvious set. Could also include "1B requests" for serving workloads — but that's a different framing (volume not time). Defer.
+- **Should the 24/7 default state be "off" or "on" for naturally-continuous workloads?** "On" is more impactful for LLM serving demos; "off" is safer (visitor sees the as-measured value first). Lean: off, but auto-suggest the toggle on continuous workloads.
+- **Pricing the projection in a different currency** (e.g. "≈ X round-trip flights LON–PAR" alongside or instead of EV-km) — separate CR, not bundled here. EV is the universal-comparator default; flights / homes / etc. are bigger framings worth their own design.
+
+### Implementation order
+
+Half a session, ~2 hours for the toggle-only version (#1):
+
+1. Add a small toggle UI inside the carbon strip — radio or compact dropdown (15 min).
+2. Wire the multiplier into the headline + EV line + reference row + comparison rows. Every grams display gets `× multiplier` (45 min).
+3. State persistence in the URL hash (`#continuous=1d`) so visitors can share a "look at this serving footprint" link (20 min).
+4. Tooltip explaining "this is the same workload assumed to run continuously" (10 min).
+5. Capture per-workload-type defaults as a follow-up if usage warrants (#2 later).
+
+### Pre-conference: nice-to-have
+
+CR-017 strengthens the streaming-impact story (which is the conference headline) by making "single job × volume = real impact" tangible without forcing the visitor to do the arithmetic. But it's not on the critical path for CR-001 / CR-001b (auth + demo lock are launch blockers). Land it after CR-001b if there's time, or post-launch if not.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
