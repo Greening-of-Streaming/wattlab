@@ -295,6 +295,63 @@ def _auth_chip_html(request: Request) -> str:
     return '<div class="auth-chip"><a href="/auth/sign-in">Sign in</a></div>'
 
 
+# CR-001 part C2c — capability lock badge + dim treatment.
+#
+# Member-tier inputs (custom prompts, custom ffmpeg, all-codecs sweeps,
+# batch / compare modes, RAG corpus upload) render visible-but-disabled
+# for Anonymous, with the badge above as the GoS membership pitch.
+# The locks ARE the pitch — see `/demo` capability matrix for the same
+# product copy.
+#
+# Pure HTML / CSS, no script. Pages that opt in concatenate `_LOCK_STYLES`
+# into their <style> block, then call `_lock_badge_html()` per locked
+# control and add the `_lock_class()` to the parent block.
+
+JOIN_GOS_URL = "https://www.greeningofstreaming.org/membership"
+
+_LOCK_STYLES = (
+    ".lock-badge{display:inline-flex;align-items:center;gap:0.35rem;"
+    "border:1px solid var(--border-3);background:rgba(255,170,0,0.05);"
+    "color:var(--warn);font-family:monospace;font-size:0.7rem;"
+    "padding:0.2rem 0.55rem;text-decoration:none;border-radius:2px;"
+    "margin-bottom:0.5rem}"
+    ".lock-badge:hover{border-color:var(--warn);text-decoration:none}"
+    ".lock-block{opacity:0.55;filter:saturate(0.5)}"
+    ".lock-block input,.lock-block textarea,.lock-block button,"
+    ".lock-block select,.lock-block label{cursor:not-allowed!important}"
+)
+
+
+def _lock_badge_html(request: Request, capability: str,
+                      label: str = "Members only") -> str:
+    """Return a 🔒 Members only · Join GoS pitch badge if `request` lacks
+    `capability`; '' if the tier already has it. Pair with `_lock_class()`
+    on the parent block so the dim/disabled treatment lands in the same
+    place. The badge links to greeningofstreaming.org/membership."""
+    if can(audience.tier(request), capability):
+        return ""
+    return (
+        f'<a href="{JOIN_GOS_URL}" target="_blank" rel="noopener noreferrer" '
+        f'class="lock-badge" title="{label} — join GoS to unlock">'
+        f'🔒 {label} · Join GoS ↗</a>'
+    )
+
+
+def _lock_class(request: Request, capability: str) -> str:
+    """Returns 'lock-block' (dim + not-allowed cursor) when the request
+    lacks `capability`; '' when it has it. Drop into a class= attribute
+    next to the lock badge."""
+    return "" if can(audience.tier(request), capability) else "lock-block"
+
+
+def _disabled_attr(request: Request, capability: str) -> str:
+    """Returns ' disabled' when `request` lacks `capability`, else ''.
+    Use on inputs/buttons inside a lock-block so they can't be focused
+    or clicked. The runtime gate (`gate(request, ...)`) is the actual
+    enforcement — this is just the polite UX layer."""
+    return "" if can(audience.tier(request), capability) else " disabled"
+
+
 jobs = {}
 
 # --- Live telemetry cache ---
@@ -1181,11 +1238,17 @@ async def carbon_json():
 
 @app.get("/video", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_page(request: Request):
-    # Render-mode predicate: Lab tier sees editable custom ffmpeg command
-    # boxes; everyone else sees the same boxes read-only. Same shape as
-    # /settings GET. SETTINGS_READ_FULL doubles as the "editable inputs"
-    # capability today; CR-001 may split it.
-    is_lan = can(audience.tier(request), SETTINGS_READ_FULL)
+    # CR-001 part C2c — custom ffmpeg edits were Lab-only by UI before
+    # CR-001 had a notion of Member tier. Now they key on CUSTOM_PROMPT
+    # (Member+), matching the runtime gate in /video/use-source. The
+    # all_codecs preset and custom-cmd textareas show as locked for
+    # Anonymous with a "Members only · Join GoS" badge.
+    can_custom_cmd    = can(audience.tier(request), CUSTOM_PROMPT)
+    can_batch_compare = can(audience.tier(request), BATCH_COMPARE)
+    lk_cmd_class      = _lock_class(request, CUSTOM_PROMPT)
+    lk_cmd_badge      = _lock_badge_html(request, CUSTOM_PROMPT, "Custom ffmpeg — Members only")
+    lk_batch_class    = _lock_class(request, BATCH_COMPARE)
+    lk_batch_badge    = _lock_badge_html(request, BATCH_COMPARE, "All-codecs sweep — Members only")
     queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
@@ -1269,6 +1332,7 @@ async def video_page(request: Request):
         a.back {{ color: var(--text-3); text-decoration: none; font-size: 0.82rem;
                   display: inline-block; margin-top: 1.5rem; }}
         a.back:hover {{ color: var(--accent); }}
+        {_LOCK_STYLES}
     </style>
 </head>
 <body>
@@ -1353,10 +1417,10 @@ async def video_page(request: Request):
         </div>
     </div>
 
-    <div style="border:1px solid #00ff9933;padding:0.9rem 1rem;margin-bottom:1.5rem;
+    {lk_batch_badge}
+    <div class="{lk_batch_class}" style="border:1px solid #00ff9933;padding:0.9rem 1rem;margin-bottom:1.5rem;
                 display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem"
-         id="preset-all_codecs" onclick="selectPreset('all_codecs')"
-         style="cursor:pointer">
+         id="preset-all_codecs" onclick="if(CAN_BATCH_COMPARE) selectPreset('all_codecs')">
         <div>
             <div style="color:var(--accent);font-size:0.9rem;font-weight:bold">Compare all codecs</div>
             <div style="color:var(--text-3);font-size:0.75rem;margin-top:0.2rem">H.264 · H.265 · AV1 · CPU + GPU · same source · same target bitrate — full matrix</div>
@@ -1407,9 +1471,12 @@ async def video_page(request: Request):
         </div>
     </div>
 
-    <div id="cmd-preview-area" style="margin-bottom:1.5rem;display:none">
-        <div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;
-                    letter-spacing:0.05em;margin-bottom:0.5rem">ffmpeg command</div>
+    <div id="cmd-preview-area" class="{lk_cmd_class}" style="margin-bottom:1.5rem;display:none">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem">
+            <div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;
+                        letter-spacing:0.05em">ffmpeg command</div>
+            <div>{lk_cmd_badge}</div>
+        </div>
         <div id="cmd-preview-box"></div>
     </div>
 
@@ -1422,7 +1489,15 @@ async def video_page(request: Request):
     <div id="prev-runs" style="margin-top:2rem;border-top:1px solid var(--panel);padding-top:1.5rem"></div>
 
     <script>
-    const IS_LAN = {'true' if is_lan else 'false'};
+    // CR-001 part C2c — capability flags from server. CAN_CUSTOM_CMD
+    // mirrors the CUSTOM_PROMPT cap the /video/use-source route gates on;
+    // CAN_BATCH_COMPARE mirrors the BATCH_COMPARE gate for all_codecs.
+    const CAN_CUSTOM_CMD = {'true' if can_custom_cmd else 'false'};
+    const CAN_BATCH_COMPARE = {'true' if can_batch_compare else 'false'};
+    // IS_LAN kept as an alias so _cmdBox() reads naturally — same
+    // editable-textarea-vs-readonly-div decision, just resolved against
+    // the right capability now.
+    const IS_LAN = CAN_CUSTOM_CMD;
     let selectedPreset = 'both';
     let selectedSource = 'upload';
     let customCmds = {{}};   // {{single: str}} or {{cpu: str, gpu: str}}
@@ -2143,7 +2218,20 @@ async def run_llm_job(job_id: str, model_key: str, task_key: str,
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
 @app.get("/llm", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def llm_page():
+async def llm_page(request: Request):
+    # CR-001 part C2c — capability flags drive the lock-badge UI.
+    # Anonymous sees the same controls dim/disabled with a "Members only ·
+    # Join GoS" badge; the runtime gates in /llm/run already enforce the
+    # rule — this is the visible product copy.
+    can_custom_prompt = can(audience.tier(request), CUSTOM_PROMPT)
+    can_batch_compare = can(audience.tier(request), BATCH_COMPARE)
+    lk_prompt_class   = _lock_class(request, CUSTOM_PROMPT)
+    lk_prompt_badge   = _lock_badge_html(request, CUSTOM_PROMPT, "Edit prompt — Members only")
+    lk_batch_class    = _lock_class(request, BATCH_COMPARE)
+    lk_batch_badge    = _lock_badge_html(request, BATCH_COMPARE, "Batch / compare — Members only")
+    dis_prompt        = _disabled_attr(request, CUSTOM_PROMPT)
+    dis_batch         = _disabled_attr(request, BATCH_COMPARE)
+
     models_html = "".join([
         f'''<div class="preset" id="model-{k}" onclick="selectModel('{k}')">
             <h3>{v["label"]}</h3>
@@ -2218,6 +2306,7 @@ async def llm_page():
         a.back {{ color:var(--text-3); text-decoration:none; font-size:0.82rem;
                   display:inline-block; margin-top:1.5rem; }}
         a.back:hover {{ color:var(--accent); }}
+        {_LOCK_STYLES}
     </style>
 </head>
 <body>
@@ -2248,13 +2337,14 @@ async def llm_page():
     <div class="section-label">Task</div>
     {tasks_html}
 
-    <div id="prompt-editor" style="margin-bottom:1.5rem">
+    {lk_prompt_badge}
+    <div id="prompt-editor" class="{lk_prompt_class}" style="margin-bottom:1.5rem">
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.4rem">
             <div style="color:var(--text-2);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">✎ Edit prompt</div>
-            <button onclick="resetPrompt()" style="background:none;border:none;color:var(--text-3);
+            <button onclick="resetPrompt()"{dis_prompt} style="background:none;border:none;color:var(--text-3);
                 font-size:0.75rem;cursor:pointer;padding:0;font-family:monospace">Reset to default</button>
         </div>
-        <textarea id="promptText" rows="3"
+        <textarea id="promptText" rows="3"{dis_prompt}
             style="width:100%;background:#0f0f0f;border:1px solid var(--border-3);border-left:2px solid #00ff9966;
                    color:var(--text-2);font-family:monospace;font-size:0.8rem;padding:0.75rem;
                    resize:vertical;line-height:1.5"></textarea>
@@ -2273,8 +2363,8 @@ async def llm_page():
                     <input type="radio" name="device" value="cpu"
                            onchange="selectedDevice='cpu'" style="accent-color:var(--accent)"> CPU
                 </label>
-                <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem">
-                    <input type="radio" name="device" value="both"
+                <label class="{lk_batch_class}" style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem">
+                    <input type="radio" name="device" value="both"{dis_batch}
                            onchange="selectedDevice='both'" style="accent-color:var(--accent)"> Both ⚡
                 </label>
             </div>
@@ -2307,12 +2397,12 @@ async def llm_page():
                     <input type="radio" name="repeats" value="1" checked
                            onchange="selectedRepeats=1" style="accent-color:var(--accent)"> 1×
                 </label>
-                <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem">
-                    <input type="radio" name="repeats" value="3"
+                <label class="{lk_batch_class}" style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem">
+                    <input type="radio" name="repeats" value="3"{dis_batch}
                            onchange="selectedRepeats=3" style="accent-color:var(--accent)"> 3×
                 </label>
-                <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem">
-                    <input type="radio" name="repeats" value="5"
+                <label class="{lk_batch_class}" style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.85rem">
+                    <input type="radio" name="repeats" value="5"{dis_batch}
                            onchange="selectedRepeats=5" style="accent-color:var(--accent)"> 5×
                 </label>
             </div>
@@ -2322,9 +2412,10 @@ async def llm_page():
         </div>
     </div>
 
+    {lk_batch_badge}
     <div style="display:flex;gap:0.75rem;flex-wrap:wrap">
         <button id="runBtn" onclick="runInference()">Run Measurement</button>
-        <button id="runAllBtn" onclick="runAllTasks()"
+        <button id="runAllBtn" class="{lk_batch_class}" onclick="runAllTasks()"{dis_batch}
             style="background:var(--bg);border:1px solid #00ff9966;color:var(--accent);
                    padding:0.65rem 1.25rem;font-family:monospace;font-size:0.85rem;cursor:pointer">
             Run All Tasks (T1+T2+T3)
@@ -2334,6 +2425,13 @@ async def llm_page():
     <div id="prev-runs" style="margin-top:2rem;border-top:1px solid var(--panel);padding-top:1.5rem"></div>
 
     <script>
+    // CR-001 part C2c — capability flags from the server.
+    // CAN_CUSTOM_PROMPT false → JS never posts `prompt=`, server uses
+    // the canonical task prompt. Stops Anonymous from tripping the
+    // runtime CUSTOM_PROMPT gate just because the textarea is pre-filled.
+    const CAN_CUSTOM_PROMPT = {('true' if can_custom_prompt else 'false')};
+    const CAN_BATCH_COMPARE = {('true' if can_batch_compare else 'false')};
+
     let selectedModel = 'tinyllama';
     let selectedTask = 'T1';
     let selectedWarm = false;
@@ -2406,7 +2504,7 @@ async def llm_page():
         form.append('warm', selectedWarm ? 'true' : 'false');
         form.append('device', selectedDevice);
         const promptVal = document.getElementById('promptText').value.trim();
-        if (promptVal) form.append('prompt', promptVal);
+        if (promptVal && CAN_CUSTOM_PROMPT) form.append('prompt', promptVal);
 
         try {{
             const resp = await fetch('/llm/run', {{method:'POST', body:form}});
@@ -2963,7 +3061,24 @@ async def queue_status_endpoint():
 # --- RAG page and endpoints ---
 
 @app.get("/rag", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def rag_page():
+async def rag_page(request: Request):
+    # CR-001 part C2c — capability flags drive lock badges on the question
+    # textarea (CUSTOM_PROMPT), the 3-mode compare button (BATCH_COMPARE),
+    # and the corpus build/rebuild buttons (RAG_CORPUS_UPLOAD). The runtime
+    # gates already enforce these — this is the visible product copy.
+    can_custom_prompt = can(audience.tier(request), CUSTOM_PROMPT)
+    can_batch_compare = can(audience.tier(request), BATCH_COMPARE)
+    can_corpus_upload = can(audience.tier(request), RAG_CORPUS_UPLOAD)
+    lk_q_class        = _lock_class(request, CUSTOM_PROMPT)
+    lk_q_badge        = _lock_badge_html(request, CUSTOM_PROMPT, "Edit question — Members only")
+    lk_batch_class    = _lock_class(request, BATCH_COMPARE)
+    lk_batch_badge    = _lock_badge_html(request, BATCH_COMPARE, "Compare 3 modes — Members only")
+    lk_corpus_class   = _lock_class(request, RAG_CORPUS_UPLOAD)
+    lk_corpus_badge   = _lock_badge_html(request, RAG_CORPUS_UPLOAD, "Build / rebuild index — Members only")
+    dis_q             = _disabled_attr(request, CUSTOM_PROMPT)
+    dis_batch         = _disabled_attr(request, BATCH_COMPARE)
+    dis_corpus        = _disabled_attr(request, RAG_CORPUS_UPLOAD)
+
     models_html = "".join([
         f'''<div class="preset" id="rmodel-{k}" onclick="selectRModel('{k}')">
             <h3>{v["label"]}</h3>
@@ -3033,6 +3148,7 @@ async def rag_page():
                       font-size:0.8rem; color:var(--text-3); margin-bottom:1.5rem;
                       display:flex; align-items:center; justify-content:space-between; gap:1rem; }}
         .index-dot {{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }}
+        {_LOCK_STYLES}
     </style>
 </head>
 <body>
@@ -3062,12 +3178,13 @@ async def rag_page():
             <div class="index-dot" id="index-dot" style="background:var(--border-3)"></div>
             <span id="index-status-text">Checking index…</span>
         </div>
-        <div style="display:flex;gap:0.5rem">
-            <button id="buildBtn" onclick="buildIndex(false)"
+        <div class="{lk_corpus_class}" style="display:flex;gap:0.5rem;align-items:center">
+            {lk_corpus_badge}
+            <button id="buildBtn" onclick="buildIndex(false)"{dis_corpus}
                     style="background:none;border:1px solid var(--border-3);color:var(--text-3);
                            font-size:0.75rem;padding:0.3rem 0.75rem;cursor:pointer;
                            font-family:monospace;margin-top:0">Build index</button>
-            <button id="rebuildBtn" onclick="buildIndex(true)"
+            <button id="rebuildBtn" onclick="buildIndex(true)"{dis_corpus}
                     style="background:none;border:1px solid var(--border-3);color:var(--text-3);
                            font-size:0.75rem;padding:0.3rem 0.75rem;cursor:pointer;
                            font-family:monospace;margin-top:0">Rebuild</button>
@@ -3104,9 +3221,12 @@ async def rag_page():
     </div>
 
     <div class="section-label">Question</div>
-    <textarea id="questionText" rows="3"
-              placeholder="What is REM (Remote Energy Measurement)?"
-              style="margin-bottom:0.5rem"></textarea>
+    {lk_q_badge}
+    <div class="{lk_q_class}">
+      <textarea id="questionText" rows="3"{dis_q}
+                placeholder="What is REM (Remote Energy Measurement)?"
+                style="margin-bottom:0.5rem"></textarea>
+    </div>
     <details style="margin-bottom:1.5rem;color:var(--text-3);font-size:0.78rem">
       <summary style="cursor:pointer;color:var(--text-2)">ⓘ Why this question, and how to read the answers</summary>
       <div style="padding:0.75rem 0;line-height:1.6">
@@ -3116,9 +3236,10 @@ async def rag_page():
       </div>
     </details>
 
+    {lk_batch_badge}
     <div style="display:flex;gap:0.75rem;flex-wrap:wrap">
         <button id="runBtn" onclick="startRag()">▶ Run single</button>
-        <button id="compareBtn" onclick="startCompare()"
+        <button id="compareBtn" class="{lk_batch_class}" onclick="startCompare()"{dis_batch}
                 style="background:var(--panel);border:1px solid var(--accent);color:var(--accent)">
             ▶▶ Compare 3 modes
         </button>
@@ -3129,6 +3250,13 @@ async def rag_page():
     <div id="prev-runs" style="margin-top:2.5rem"></div>
 
     <script>
+    // CR-001 part C2c — capability flags from server.
+    // Anonymous: textarea is locked, JS posts an empty `question` so
+    // /rag/run uses CANONICAL_RAG_QUESTION (curated.py); the BATCH_COMPARE
+    // gate is enforced server-side, the disabled button is just polite UX.
+    const CAN_CUSTOM_PROMPT = {('true' if can_custom_prompt else 'false')};
+    const CAN_BATCH_COMPARE = {('true' if can_batch_compare else 'false')};
+
     let selectedRModel = 'tinyllama';
     let selectedRMode = 'baseline';
     let ragTimer = null;
@@ -3236,7 +3364,7 @@ async def rag_page():
 
     async function startRag() {{
         const question = document.getElementById('questionText').value.trim();
-        if (!question) {{
+        if (CAN_CUSTOM_PROMPT && !question) {{
             document.getElementById('status').innerHTML =
                 '<div style="color:var(--err);font-size:0.85rem;margin-top:1rem">Please enter a question.</div>';
             return;
@@ -3246,7 +3374,7 @@ async def rag_page():
         const form = new FormData();
         form.append('model_key', selectedRModel);
         form.append('rag_mode', selectedRMode);
-        form.append('question', question);
+        if (CAN_CUSTOM_PROMPT && question) form.append('question', question);
         try {{
             const resp = await fetch('/rag/run', {{method:'POST', body:form}});
             const data = await resp.json();
@@ -3360,8 +3488,9 @@ async def rag_page():
     // --- Compare 3 modes ---
 
     async function startCompare() {{
+        if (!CAN_BATCH_COMPARE) return;   // button is disabled, this is a backstop
         const question = document.getElementById('questionText').value.trim();
-        if (!question) {{
+        if (CAN_CUSTOM_PROMPT && !question) {{
             document.getElementById('status').innerHTML =
                 '<div style="color:var(--err);font-size:0.85rem;margin-top:1rem">Please enter a question.</div>';
             return;
@@ -3371,7 +3500,7 @@ async def rag_page():
         ragStartTime = Date.now();
         const form = new FormData();
         form.append('model_key', selectedRModel);
-        form.append('question', question);
+        if (CAN_CUSTOM_PROMPT && question) form.append('question', question);
         try {{
             const resp = await fetch('/rag/run-compare', {{method:'POST', body:form}});
             const data = await resp.json();
@@ -5257,7 +5386,24 @@ function buildSummary() {{
 </html>"""
 
 @app.get("/image", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def image_page():
+async def image_page(request: Request):
+    # CR-001 part C2c — capability flags drive the lock UI on the prompt
+    # textarea (CUSTOM_PROMPT) and the Both / Compare-Models buttons
+    # (BATCH_COMPARE). Anonymous sees the curated CANONICAL_IMAGE_PROMPT
+    # rendered read-only with a lock badge; the runtime gate enforces.
+    can_custom_prompt = can(audience.tier(request), CUSTOM_PROMPT)
+    can_batch_compare = can(audience.tier(request), BATCH_COMPARE)
+    lk_prompt_class   = _lock_class(request, CUSTOM_PROMPT)
+    lk_prompt_badge   = _lock_badge_html(request, CUSTOM_PROMPT, "Edit prompt — Members only")
+    lk_batch_class    = _lock_class(request, BATCH_COMPARE)
+    lk_batch_badge    = _lock_badge_html(request, BATCH_COMPARE, "CPU vs GPU compare — Members only")
+    dis_prompt        = _disabled_attr(request, CUSTOM_PROMPT)
+    dis_batch         = _disabled_attr(request, BATCH_COMPARE)
+    # Anonymous default = canonical curated prompt; Member/Lab default = today's
+    # original copy. Avoids "user types nothing → server rejects empty".
+    default_prompt    = ("a lone wind turbine in an open landscape"
+                          if can_custom_prompt else curated.CANONICAL_IMAGE_PROMPT)
+
     queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
@@ -5389,6 +5535,7 @@ async def image_page():
         .image-caption {{ color: var(--text-4); font-size: 0.75rem; margin-top: 0.5rem; font-style: italic; }}
         .back {{ color: var(--text-3); font-size: 0.8rem; margin-bottom: 1.5rem; display: block; }}
         .back:hover {{ color: var(--accent); }}
+        {_LOCK_STYLES}
     </style>
 </head>
 <body>
@@ -5430,7 +5577,10 @@ async def image_page():
     </div>
 
     <label style="color:var(--text-3);font-size:0.8rem;display:block;margin-bottom:0.4rem">Prompt</label>
-    <textarea id="prompt" rows="3">a lone wind turbine in an open landscape</textarea>
+    {lk_prompt_badge}
+    <div class="{lk_prompt_class}">
+      <textarea id="prompt" rows="3"{dis_prompt}>{default_prompt}</textarea>
+    </div>
     <div style="color:var(--text-3);font-size:0.75rem;margin-bottom:1.2rem">
         A random colour/mood modifier is appended per run (e.g. "bathed in emerald light").
     </div>
@@ -5443,14 +5593,15 @@ async def image_page():
       <label style="font-size:0.85rem;margin-right:1.2rem;cursor:pointer">
         <input type="radio" name="img-device" value="gpu" onchange="selectedDevice=this.value"> GPU
       </label>
-      <label style="font-size:0.85rem;cursor:pointer" id="lbl-both">
-        <input type="radio" name="img-device" value="both" onchange="selectedDevice=this.value"> Both ⚡
+      <label class="{lk_batch_class}" style="font-size:0.85rem;cursor:pointer" id="lbl-both">
+        <input type="radio" name="img-device" value="both"{dis_batch} onchange="selectedDevice=this.value"> Both ⚡
       </label>
     </div>
+    {lk_batch_badge}
 
     <div style="display:flex;gap:0.75rem;flex-wrap:wrap">
       <button id="run-btn" onclick="startMeasurement()">Generate &amp; Measure</button>
-      <button id="compare-btn" onclick="startCompareModels()"
+      <button id="compare-btn" class="{lk_batch_class}" onclick="startCompareModels()"{dis_batch}
               style="background:var(--bg);border:1px solid var(--accent);color:var(--accent);
                      padding:0.75rem 1.5rem;font-family:monospace;font-size:0.95rem;cursor:pointer">
         Compare Models (GPU) ⚡
@@ -5479,6 +5630,13 @@ const STAGE_LABELS = {{
   'large_generating': 'SDXL-Turbo — generating (GPU batch)',
   'done': 'Complete',
 }};
+// CR-001 part C2c — capability flags from server.
+// Anonymous: textarea is locked at the canonical prompt; JS omits
+// `prompt=` from the body so /image/start uses the curated default
+// without tripping the CUSTOM_PROMPT gate.
+const CAN_CUSTOM_PROMPT = {('true' if can_custom_prompt else 'false')};
+const CAN_BATCH_COMPARE = {('true' if can_batch_compare else 'false')};
+
 let pollTimer = null;
 let selectedDevice = 'cpu';
 let selectedModelKey = 'sd-turbo';
@@ -5527,18 +5685,19 @@ function fmt(v, dp=2) {{
 
 async function startMeasurement() {{
   const prompt = document.getElementById('prompt').value.trim();
-  if (!prompt) {{ alert('Enter a prompt'); return; }}
+  if (CAN_CUSTOM_PROMPT && !prompt) {{ alert('Enter a prompt'); return; }}
 
   document.getElementById('run-btn').disabled = true;
   document.getElementById('compare-btn').disabled = true;
   document.getElementById('status').innerHTML = '';
 
+  let body = 'device=' + encodeURIComponent(selectedDevice)
+           + '&model_key=' + encodeURIComponent(selectedModelKey);
+  if (CAN_CUSTOM_PROMPT && prompt) body += '&prompt=' + encodeURIComponent(prompt);
   const resp = await fetch('/image/start', {{
     method: 'POST',
     headers: {{'Content-Type':'application/x-www-form-urlencoded'}},
-    body: 'prompt=' + encodeURIComponent(prompt)
-        + '&device=' + encodeURIComponent(selectedDevice)
-        + '&model_key=' + encodeURIComponent(selectedModelKey)
+    body: body,
   }});
   const data = await resp.json();
   if (data.error) {{
@@ -5555,19 +5714,21 @@ async function startMeasurement() {{
 }}
 
 async function startCompareModels() {{
+  if (!CAN_BATCH_COMPARE) return;   // button is disabled, this is a backstop
   const prompt = document.getElementById('prompt').value.trim();
-  if (!prompt) {{ alert('Enter a prompt'); return; }}
+  if (CAN_CUSTOM_PROMPT && !prompt) {{ alert('Enter a prompt'); return; }}
 
   document.getElementById('run-btn').disabled = true;
   document.getElementById('compare-btn').disabled = true;
   document.getElementById('status').innerHTML = '';
 
+  let body = 'device=compare_models'
+           + '&model_key=sd-turbo';   // ignored by server for compare_models
+  if (CAN_CUSTOM_PROMPT && prompt) body += '&prompt=' + encodeURIComponent(prompt);
   const resp = await fetch('/image/start', {{
     method: 'POST',
     headers: {{'Content-Type':'application/x-www-form-urlencoded'}},
-    body: 'prompt=' + encodeURIComponent(prompt)
-        + '&device=compare_models'
-        + '&model_key=sd-turbo'    // ignored by server for compare_models
+    body: body,
   }});
   const data = await resp.json();
   if (data.error) {{
