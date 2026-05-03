@@ -7,6 +7,143 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 19 — 2026-05-03
+
+### What we did
+
+**CR-001 two-tier OWL — bulk of the work.** Eight commits + one closing tidy on `feature/cr-001-two-tier`. CR-001b marked resolved (covered by CR-011 + CR-015). CR-001 itself: parts A (magic-link auth foundation), B/1 (tier-aware routing on `/`), B/2 (capability matrix as product copy on `/demo`), C1 (Member-tier capability constants), C2a (`gate()` helper + simple retags + inline cap dispatch), C2b (curated fallbacks for free-form input routes) all shipped. Remaining: C2c (UI affordances on workload pages) and D (per-tier queue caps + Anonymous upload size cap). 168 tests passing.
+
+Mid-session interlude: caught + fixed a /demo navigation dead-end (when no previous result is on file, the per-step back/next/again block stayed hidden — visitor stuck with only a Run button). Captured CR-019 (unify the in-progress widget across `/demo` and main pages) for later.
+
+**Factorisation contract established this session, must keep holding:**
+- The capability table (`capabilities._REQUIRED_TIER`) is the policy. New rule = one row edited.
+- Routes only declare/call helpers — `Depends(requires(CAP))` (decorator) or `gate(request, CAP)` (imperative). Grep `audience.tier(request) ==` in route files = 0.
+- Business modules (`video.py`, `llm.py`, `image_gen.py`, `rag.py`) stay tier-blind. Grep `import audience` / `import capabilities` in those files = 0.
+- No runtime "is this the default?" detection. Capability is decided by *presence/absence of free-form input* (curated wrapper pattern in C2b) or by *enum value* (preset='all_codecs' in C2a). Curated content lives in `curated.py`.
+
+The contract was named explicitly mid-session after the owner flagged that the original sketch (a "custom-prompt detection helper" comparing submitted text to defaults) would be brittle and drift as the spec evolves. The rewritten approach in C2b — making free-form params optional and falling back to a curated canonical when absent — is the literal embodiment of that fix.
+
+### Code — Part 1 (CR-001b resolution doc)
+
+`d5867c4` — text-only CHANGE_REQUESTS.md edit. Marks CR-001b ✅ resolved 2026-05-03 by CR-011 + CR-015. Documents what the cheaper path loses vs. the original CR-001b design ("ends 13:42" UI, demo pill, extend/end-now buttons) so a future demo format that genuinely needs that UX can re-open the CR. No code shipped under CR-001b's name.
+
+### Code — Part A: magic-link auth foundation
+
+`3b05152` — new modules + route wiring.
+
+- **`auth.py`** — HMAC-SHA256-signed magic-link tokens (15-min TTL) and session cookies (30-day TTL), stdlib-only (`hmac`/`secrets`/`base64`) so we don't add a new pip dep. `purpose` field cross-rejects magic-link vs. session payloads. Member allowlist loaded from `data/members.json` (gitignored, env-overridable path), `reload_members()` callable for hot-reload.
+- **`email_send.py`** — Gmail SMTP via app password (`smtplib.SMTP_SSL`), `OWL_SMTP_DRY_RUN` flag for staging without real credentials, falls back to dry-run when no password is configured. Both text and HTML alternatives in the message (anti-spam).
+- **`audience.tier()`** — now returns `Tier.Member` when a valid `owl_session` cookie maps to an allowlisted email. Lab beats Member (a member SSH-tunnelling from outside still gets Lab privileges). Lazy `import auth` inside the resolver so a misconfigured auth module can't break Anonymous/Lab routing.
+- **Routes** — `GET/POST /auth/sign-in`, `GET /auth/verify`, `POST /auth/sign-out`. POST sign-in is anti-enumeration: identical UI feedback for member and non-member emails — only members get an email.
+- **Gate middleware** — bypasses `/auth/*` (so unauthenticated members can sign in) and any request carrying a valid `owl_session` cookie (so signed-in members don't also need the gate password). Legacy `WATTLAB_GATE_PASSWORD` stays in place as a backstop during the transition; retired in CR-001 task #10 once the rest has shipped.
+- **Tests** — 27 new (`test_auth.py` 20 + `test_email_send.py` 7). `test_audience.py` gains 5 Member-tier cases and drops the now-obsolete "Member is unreachable" regression.
+- **`.env`** config: `OWL_AUTH_SECRET` (required, HMAC signing key 32+ random bytes), `OWL_SMTP_PASSWORD` (Gmail app password for greeningofstreaming@gmail.com), `OWL_SMTP_DRY_RUN=1` to skip real SMTP.
+- **`.gitignore`** tightened: `data/*` ignored except `*.example.*`. Real `members.json` (personal data) stays out of repo.
+
+### Code — Part B/1: tier-aware routing + sign-in chip
+
+`e8bc5f0` — Anonymous visitors land on `/demo` by default; Member/Lab land on the working nav grid. Same `/` URL, two distinct experiences.
+
+- **5-line tier check at the top of `/`** — `audience.tier(request) == Anonymous` returns `RedirectResponse('/demo')`; everything else falls through to the existing nav-grid render. `/demo` already exists as the visitor environment (Guided Tour), so this is reuse rather than a new page.
+- **Auth chip** — top-right server-rendered HTML, three states:
+  - Anonymous → "Sign in" link → `/auth/sign-in`
+  - Member → `<email> · Sign out` form
+  - Lab → `▣ Lab` pill (no sign-out — auth is by IP)
+- CSS lives in `_AUTH_CHIP_STYLES`; `/` and `/demo` opt in by concatenating into their `<style>` block. `/demo` template uses placeholder injection (`{AUTH_CHIP}`, `{AUTH_CHIP_STYLES}`) since it's a frozen f-string.
+- **Gate middleware** also gains a Lab-tier bypass (loopback / RFC1918 skip the password). SSH-tunnelled and LAN users were already past the household firewall; making them know the gate password adds nothing and contradicts `audience.tier()`'s Lab semantics.
+- Smoke-tested all four paths via side-by-side uvicorn on port 8001: public IP → 302 /demo, /demo public IP → renders + "Sign in" chip, loopback → renders nav grid + "▣ Lab" chip, public IP + member cookie → renders nav grid + "<email> · Sign out".
+
+### Code — Part B/2: capability matrix on /demo Findings step
+
+`b187c92` — the Guided Tour's Findings step (step 6) gains a "Want to dig deeper?" section: 7-row capability matrix comparing Public vs. GoS member, with a "Join GoS" CTA pointing at greeningofstreaming.org/membership and an "Already a member? Sign in" sibling CTA.
+
+The matrix is the GoS membership pitch in product-copy form. The line that holds against feature creep — *public sees results, members shape inputs* — also lands as the closing micro-copy under the table.
+
+Row design: tier-shared capabilities at the top (anti-feel-restricted), the partial-credit "Custom video upload" middle row showing the quantitative quota difference (≤100 MB / 1 job vs. no cap), then four member-only rows (custom prompts/ffmpeg, all-codecs sweeps, RAG corpus upload, CSV/JSON export). Per-user run history and named presets deferred to CR-001 part C / future work.
+
+Visual treatment: monospace, accent-tinted right column so the eye lands there. `.cap-yes` accent green, `.cap-no` text-5 (faint), `.cap-partial` warn-amber to read as "constraint" rather than "lock" — the visitor already has this capability, just throttled. Tier-aware rendering for Member visitors viewing /demo would be polish; skipped (Members land on / by default per B/1, /demo is off the happy path).
+
+### Code — Part 5: /demo navigation dead-end fix
+
+`e394f2a` — bug found mid-session by the owner testing on mobile.
+
+Symptom: on `/demo` step 4 (RAG), if no `RAG compare (3 modes)` result is on file (e.g. only single-mode `RAG/baseline` runs exist, the current state), the visitor sees the Run button but no back/next/again. Same shape in all four data-loading steps (1 video / 2 LLM / 3 image / 4 RAG): each `showPrev*()` had two paths that left `#next-N` hidden — the empty-list branch and the catch branch. `next-N` was only ever revealed from the success path inside `render*Result()`. Result: anyone landing on a step with no matching prior run — or hitting a transient fetch error — got stranded.
+
+Fix: in each `showPrev*()`, both the empty-list and catch branches now write a short status note ("No previous run on file — run one below, or skip ahead." / error text) and call `revealNext(N)`. Also adds the missing error-message line in `showPrevRAG`'s catch (the other three already had it).
+
+Verified by counting `revealNext(1..4);` occurrences in the served `/demo` HTML — each goes from 2 to 4 (original render path + goStep guard + new no-result branch + new catch).
+
+### Code — Part C1: Member-tier capability constants
+
+`8e9fe56` — policy-only commit. Adds the four Member-tier capability constants from the CR-001 capability matrix, with no route changes. Behaviour unchanged — nothing references the new constants. C2 wires them into routes; this commit is the policy diff in isolation so the table edit is reviewable on its own.
+
+New constants in `capabilities.py`:
+- `CUSTOM_PROMPT` — free-form LLM/image prompt or custom ffmpeg args
+- `BATCH_COMPARE` — all-codecs, LLM all-tasks, CPU-vs-GPU compare, RAG 3-mode
+- `RAG_CORPUS_UPLOAD` — PDF upload into the RAG corpus
+- `RESULTS_EXPORT_CSV` — bulk CSV/JSON export of run history (≠ RESULTS_DOWNLOAD)
+
+`RESULTS_DOWNLOAD` (existing, Anonymous) gains a comment clarifying it's the per-job fetch used by `/demo` and recent-runs panels — distinct from the new bulk `RESULTS_EXPORT_CSV`. The two need to differ because /demo's "show last result" path is Anonymous-allowed (the Anonymous visitor is *seeing* the result, not exporting their personal history).
+
+21 new tests (163 total, all passing). Anonymous denied on each of the four new caps (parametrised); Member allowed on each (parametrised); Member inherits Anonymous-tier caps (lattice invariant); Member denied on Lab-tier caps (Member is not a settings operator). Snapshot fixture updated — the diff to `_REQUIRED_TIER` IS the security review; future row edits stay visible.
+
+### Code — Part C2a: gate() helper + simple retags
+
+`d6d3482` — tightens the security boundary on the four endpoints whose required capability depends on runtime input, without splitting them. Adds the imperative-gate primitive that lets the policy table stay the single source of truth even when one URL handles multiple capabilities.
+
+**New primitive** — `capabilities.gate(request, *caps)`. Imperative sibling of `requires()`: used inside route bodies when the cap is decided after Form parsing (preset='all_codecs' vs. preset='cpu', prompt='' vs. prompt='hello world'). Raises 403 with the failing cap named in the detail; reports the first failing cap so traces stay short. Validates cap names eagerly so typos at the call site fail loudly. 5 new tests (60 in `test_capabilities.py`, 168 total).
+
+**Route changes** in `main.py`:
+- `/llm/run-all` retag LLM_RUN → BATCH_COMPARE (always all-tasks)
+- `/rag/build-index` retag RAG_RUN → RAG_CORPUS_UPLOAD
+- `/llm/run` inline `gate()`: prompt set → CUSTOM_PROMPT; repeats > 1 OR device == 'both' → BATCH_COMPARE
+- `/video/use-source` inline `gate()`: preset=='all_codecs' → BATCH_COMPARE; any custom_cmd* → CUSTOM_PROMPT
+- `/video/upload` same dispatch as `/video/use-source`
+- `/image/start` inline `gate()`: device in {'both','compare_models'} → BATCH_COMPARE (free-form prompt → CUSTOM_PROMPT waits for C2b's curated wrapper; otherwise /demo step 3 would 403)
+
+Smoke-tested via TestClient (lifespan-managed) with `x-real-ip` headers to switch tier:
+- Anon prompt set → 403 requires custom_prompt
+- Anon repeats=3 / device=both / all_codecs / custom_cmd / /llm/run-all / /rag/build → 403 with the right cap
+- Anon defaults (the `/demo` call shape) → 200, queues normally
+- Lab any of the above → 200
+
+### Code — Part C2b: curated fallbacks for free-form routes
+
+`680e4ac` — closes the last three holes C2a deferred: `/image/start`, `/rag/run`, `/rag/run-compare` were still tagged Anonymous-OK because gating them as Member-only would have 403'd `/demo` step 3 and step 4 on the spot (they post hardcoded prompt/question strings).
+
+**Approach:** keep one URL per workload — no `/start-curated` siblings — and let the *presence* of the free-form input decide the capability:
+- prompt/question provided → `gate(CUSTOM_PROMPT or BATCH_COMPARE)`
+- prompt/question absent → server falls back to a curated canonical, Anonymous-OK
+
+This mirrors the C2a shape on `/llm/run` and keeps the spec readable: "the cap depends on whether the caller supplied free-form input."
+
+**New module** — `curated.py`:
+- `CANONICAL_IMAGE_PROMPT` = "a lone wind turbine in an open landscape"
+- `CANONICAL_RAG_QUESTION` = "How does codec choice affect streaming energy consumption?"
+- `CANONICAL_RAG_MODEL` = "mistral"
+
+Zero project-internal imports — content config, like settings.json. Adding a row here is how the public path gets a new piece of pre-baked content.
+
+**Route changes:**
+- `/image/start`: `prompt: Form(...)` → `Form(None)`. Prompt set → `gate(CUSTOM_PROMPT)`. Prompt absent → use `curated.CANONICAL_IMAGE_PROMPT`. Plus the existing C2a BATCH_COMPARE on `device in {both, compare_models}`.
+- `/rag/run`: same shape as `/image/start` with CUSTOM_PROMPT.
+- `/rag/run-compare`: question set → `gate(BATCH_COMPARE)`; question absent → use `curated.CANONICAL_RAG_QUESTION` (3-mode compare with a free-form question is BATCH_COMPARE rather than CUSTOM_PROMPT — it crosses both axes).
+
+**`/demo` JS updates:** `runDemoImage()` drops the hardcoded `prompt=...` body; `runDemoRAG()` drops the hardcoded `question=...` body. Server picks curated.
+
+Smoke-tested with TestClient + lifespan startup — Anon free-form → 403 with the right cap; Anon no input → 200 (curated); Lab any → 200. Live wattlab queue stayed clean (TestClient state is module-private).
+
+### Captured for later — CR-019
+
+`/demo`'s in-progress UI is much less informative than what the equivalent main pages show for the same workload — no multi-stage breakdown, no big live wall-power readout, no extras slot. Caused by: `/demo`'s four poll loops (`pollLLM`, `pollDemoImage`, `pollDemoRAG`, `pollVideo`) build their own bespoke `<p class="progress-note">` HTML instead of calling the shared `wlRenderProgress(opts)` widget that `/video`, `/llm`, `/image`, `/rag` already use. Refactor adds `opts.target` to `wlRenderProgress` (default `#status` for back-compat) + hoists STAGES arrays out of per-page f-strings into the shared block. Estimate ~½ day. Captured in `CHANGE_REQUESTS.md` CR-019.
+
+### Settings + UX rough edges (deferred to follow-up commits)
+
+- **Anonymous on `/llm`, `/image`, `/rag` page submission** with custom inputs → 403 with JSON detail. Backend correct, UI hasn't yet hidden Member-only inputs. Lands in C2c (UI affordances + `_lock_badge(cap)` helper).
+- **Sign-in on mobile via magic link verified working** during the session. The routing behaviour confirmed: pre-auth, hitting `/video` directly works (page is PUBLIC_PAGE; Anonymous can render it); only the workload submission with custom inputs is gated.
+
+---
+
 ## Session 18 — 2026-05-03
 
 ### What we did

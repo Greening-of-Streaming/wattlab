@@ -6,9 +6,28 @@ Design / change requests captured for later implementation. Each entry has a sta
 
 ## CR-001 · Two-tier OWL: anonymous public + authenticated members
 
-**Status:** captured 2026-05-01 — awaiting implementation slot.
-**Triggered by:** demo today (2026-05-01) — discussion of opening OWL to the wider streaming community at the sustainable-streaming conference (mid-June 2026, OWL's first public showing).
-**Refined 2026-05-01 (training-prep transcript):** anonymous tier explicitly *can* upload (capped at 100 MB, 1 concurrent job per visitor); LAN/SSH-tunnel auto-detection already implements the Lab tier today; quotas restated below.
+**Status:** in progress on `feature/cr-001-two-tier` — parts A, B/1, B/2, C1, C2a, C2b shipped in S19. Remaining: C2c (UI affordances on workload pages), D (per-tier queue caps + Anonymous upload size cap), task #10 (retire `WATTLAB_GATE_PASSWORD`).
+**Triggered by:** demo on 2026-05-01 — discussion of opening OWL to the wider streaming community.
+**Refined 2026-05-01:** anonymous tier explicitly *can* upload (capped at 100 MB, 1 concurrent job per visitor); LAN/SSH-tunnel auto-detection already implements the Lab tier today; quotas restated below.
+
+### Shipped in S19 (commits on `feature/cr-001-two-tier`)
+
+- **Part A** (3b05152) — magic-link auth: `auth.py`, `email_send.py`, `/auth/sign-in /verify /sign-out`. Member allowlist `data/members.json`. `audience.tier()` returns Member from cookie. Gate middleware bypasses `/auth/*` and any valid session cookie.
+- **Part B/1** (e8bc5f0) — tier-aware routing on `/`. Anonymous → 302 `/demo`; Member/Lab → nav grid. Sign-in/Sign-out/Lab chip top-right.
+- **Part B/2** (b187c92) — capability matrix on `/demo` Findings step. 7-row Public-vs-GoS-member table + Join-GoS CTA + sign-in CTA. The locks are the membership pitch.
+- **Part C1** (8e9fe56) — Member-tier capability constants in `capabilities.py`: `CUSTOM_PROMPT`, `BATCH_COMPARE`, `RAG_CORPUS_UPLOAD`, `RESULTS_EXPORT_CSV`. Snapshot test pinned. 21 new tests.
+- **Part C2a** (d6d3482) — `capabilities.gate(request, *caps)` imperative helper. Retag `/llm/run-all` → BATCH_COMPARE; `/rag/build-index` → RAG_CORPUS_UPLOAD. Inline `gate()` on `/llm/run` (prompt set, repeats>1, device='both'), `/video/use-source` + `/video/upload` (preset='all_codecs', custom_cmd*), `/image/start` (device in {both, compare_models}).
+- **Part C2b** (680e4ac) — `curated.py` (CANONICAL_IMAGE_PROMPT, CANONICAL_RAG_QUESTION, CANONICAL_RAG_MODEL). `/image/start`, `/rag/run`, `/rag/run-compare` made `prompt`/`question` optional; absent → server uses curated; present → gate(CUSTOM_PROMPT or BATCH_COMPARE). `/demo` JS dropped the hardcoded prompt/question params on image and RAG.
+
+168 tests passing through C2b.
+
+### Factorisation contract (held throughout S19, must keep holding)
+
+- **Capability table is the policy.** `capabilities._REQUIRED_TIER` is the single source of truth. New rule = one row edit.
+- **Routes only declare or call the helpers.** `Depends(requires(CAP))` (decorator) or `gate(request, CAP)` (imperative). Grep `audience.tier(request) ==` in route files = 0.
+- **Business modules know nothing about auth.** Grep `import audience` / `import capabilities` in `video.py`/`llm.py`/`image_gen.py`/`rag.py` = 0.
+- **No runtime "is this default?" detection.** Capability is decided by *presence/absence of free-form input* (curated wrapper pattern in C2b) or by *enum value* (preset='all_codecs' in C2a).
+- **Curated content lives in `curated.py`.** Adding pre-baked content to the Anonymous path = one row edit there; no policy change.
 
 ### Problem
 
@@ -741,6 +760,51 @@ Lifecycle factors (IPCC AR6 WGIII 2022) are static, so we're applying current fa
 ### Pre-conference: no
 
 Tier 1 is enough for the conference. Tier 2 lands post-launch if visitors ask for it; Tier 3 only if Tier 2 itself proves popular.
+
+---
+
+## CR-019 · Unify the in-progress widget across `/demo` and the main pages
+
+**Status:** captured 2026-05-03 (Session 19).
+**Triggered by:** owner running the 3-mode RAG comparison from `/demo` step 4 on mobile and noticing the in-progress UI is *much* less informative than what `/rag` shows for the same workload — no multi-stage breakdown ("Baseline poll → Inference running → Complete"), no big live wall-power readout, no carbon strip preview. Suspected to apply to all four `/demo` workload steps (video, LLM, image, RAG), since they all share the same simpler-than-main-page polling pattern.
+
+### Problem
+
+Two parallel progress UIs exist today:
+
+- **Main pages** (`/video`, `/llm`, `/image`, `/rag`) use the shared widget `wlRenderProgress(opts)` (defined in `_PROGRESS_JS` around `main.py:1005`). It renders a single bordered card with: yellow "Measuring — do not close this tab" header, multi-stage list with ✓/▶/· icons (via `wlStageList(stages, cur)`), big 2.5rem live watts ("live wall power · Tapo P110"), elapsed timer, and extra HTML slot for stage-specific detail (e.g. partial RAG results between modes). Each page has its own STAGES array (`VIDEO_STAGES`, `LLM_STAGES`, `RAG_STAGES`, `IMAGE_STAGES`) and threads `data.watts` from the job-status payload through `opts.watts`.
+- **`/demo`** rolls its own per-step progress in `pollLLM`, `pollDemoImage`, `pollDemoRAG`, `pollVideo` — just a single line `<p class="progress-note">▶ stage label</p>` plus an elapsed line. No stages list, no live watts, no extras slot.
+
+Result: the visitor running the canonical guided tour gets a *worse* experience than the same visitor clicking through to a main page directly, even though `/demo` is supposed to be the polished public surface.
+
+### Agreed direction
+
+**One widget, one signature, all five surfaces.** `/demo`'s four poll loops drop their bespoke HTML and call `wlRenderProgress` with the same STAGES arrays the main pages already define. No new module — `wlStageList` and `wlRenderProgress` are already in `_PROGRESS_JS`, which `/demo` includes (it ships under `_DEMO_BASE_STYLES` / `_PROGRESS_JS` indirectly via the main.py page assembly).
+
+Required mechanical changes:
+
+1. **`wlRenderProgress` writes to `#status` today.** `/demo` already has per-step status divs (`#video-status`, `#llm-status`, `#image-status`, `#rag-status`). Either:
+   - Add an `opts.target` field; default to `#status` for back-compat. `/demo` passes the per-step ID. Smallest change.
+   - Or refactor `/demo` to use a shared `#status` per active step. Bigger change, no real benefit.
+   The `opts.target` route is cleaner.
+2. **Live watts threading.** Main pages get `data.watts` from the job-status JSON (the worker writes the live P110 reading into the job state on each poll). `/demo`'s poll endpoints (`/llm/job/{id}`, `/image/job/{id}`, `/rag/job/{id}`, `/video/job/{id}`) likely already include this — verify, fix if not.
+3. **Stages reuse.** Pull `RAG_STAGES`, `VIDEO_STAGES`, `LLM_STAGES`, `IMAGE_STAGES` out of their per-page f-strings into `_PROGRESS_JS` (or a sibling shared block) so `/demo` references the same arrays the main pages do. Without this, the stages drift and the unification rots.
+4. **Extras slot.** `/demo`'s RAG step today shows nothing during the cooldown between modes; the equivalent on `/rag` shows partial-results-so-far. Same widget, same `opts.extraHtml`, same render — comes for free once the call shape is unified.
+
+### Why this matters
+
+`/demo` is the conference narrative — the visitor's first 60-second impression of OWL. The big live wall-power readout *is* the proof-of-reality moment ("there's a real power meter, this isn't a slideshow"). Hiding it during the in-progress phase is exactly the wrong moment to drop it.
+
+Refactor also collapses ~80 LOC of duplicated progress markup spread across five poll functions, which removes a class of "fixed it on `/rag` but forgot the same fix on `/demo`" drift bugs (we already had one of these — the carbon-strip on RAG compare-3-modes was missing from `/demo` for weeks before being noticed).
+
+### Cost / leverage
+
+Small refactor (~½ day). Large UX impact: `/demo` is the highest-traffic surface, and the live wall-power readout *is* the proof-of-reality moment, so dropping it during the in-progress phase is exactly the wrong moment to drop it. Also collapses ~80 LOC of duplicated progress markup, which removes a class of "fixed it on `/rag` but forgot the same fix on `/demo`" drift bugs (we already had one of these — the carbon-strip was missing from `/demo` for weeks).
+
+### Open questions
+
+- Does `data.watts` already flow through every job's poll payload, or only some? Verify on `/llm`, `/image`, `/video`, `/rag`. If not, write it once in `queue_control.py` so all workloads inherit.
+- During the cooldown phase between RAG modes, the stages list shows "Inference running" but the system is actually idle. Does the active-stage indicator need a fourth state ("cooldown") or does the existing logic handle it? The `RAG_STAGES` array on `/rag` doesn't include cooldown explicitly; live-watts dipping back to baseline is the actual signal.
 
 ---
 
