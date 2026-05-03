@@ -82,3 +82,39 @@ If FastAPI fails to come up within 30s, the flag is **not** removed and the scri
 - **Both scripts source `/home/gos/wattlab/.env`** to get `WATTLAB_GATE_PASSWORD` for the `/live` cookie — needed because the loopback `/live` request still goes through the gate middleware.
 - **Both call `sudo systemctl restart wattlab`** — your shell's sudo cache will be prompted if it's expired.
 - **Manual recovery:** if a script fails partway through and leaves things wedged, the safe sequence is: `rm /tmp/owl-maintenance`, then `sudo systemctl restart wattlab`, then `git checkout main` if you want to be back on main. The flag file is the only persistent state.
+
+---
+
+## fetch-historical-mix — historical France carbon-intensity helper
+
+One-shot Python helper that fetches a given month from the Eco2mix consolidated dataset (RTE/Etalab, 2012–present, 30-min resolution), runs each record through `carbon.compute_intensity_from_mix`, and prints the monthly mean **lifecycle gCO₂/kWh**. Same calculation as the live FR path, so its output is directly comparable to today's number.
+
+Shipped as part of **CR-018 Tier 1** — see [`CHANGE_REQUESTS.md`](../CHANGE_REQUESTS.md) for the upgrade path (Tier 2 = visitor-pickable any month, Tier 3 = interactive scrubber).
+
+### Usage
+
+```bash
+~/wattlab/bin/fetch-historical-mix --year 2022 --month 6
+~/wattlab/bin/fetch-historical-mix --year 2020 --month 6 --quiet
+```
+
+**Output:** one line on stdout, e.g. `2024-06: 26.9 g/kWh  (n=1440, range 22.5–41.8)`.
+
+| Flag | Purpose |
+|---|---|
+| `--year YYYY` | Required. Any year from 2012 to last year (consolidated data lags real-time by months). |
+| `--month MM` | Required. 1–12. |
+| `--quiet` | Suppress per-page progress on stderr. Only prints the final line. |
+
+### When to use it
+
+- **Adding a new historical date to the carbon comparison strip.** Pick a year and month, run the script, copy the printed `g_per_kwh` value into `carbon.HISTORICAL_INTENSITY` (in `wattlab_service/carbon.py`) along with a label and one-line note explaining what's notable about that period. Restart wattlab. Done.
+- **Sanity-checking an existing entry** if you want to confirm the table value against the source data (the script is deterministic for a given month — same factors, same records).
+
+### Things to know
+
+- **One-off, not a service.** No cron, no cache, no daemon. Run it when you want to add or refresh a date; otherwise it sits idle.
+- **Reuses the same lifecycle math as the live path.** The script imports `carbon.compute_intensity_from_mix` directly, so any future change to `EMISSION_FACTORS` automatically applies here too. The historical and live numbers can never silently drift to different methodologies.
+- **FR-only.** Eco2mix is RTE's data; for non-FR historical you'd need ElectricityMaps' paid historical API or Ember monthly data — captured as a follow-up consideration in CR-018.
+- **Network and time cost.** A monthly fetch is ~1500 records via the Opendatasoft API; takes 5–15 seconds depending on RTT. Well under the API's 10000-offset cap.
+- **No write side-effects.** The script doesn't touch `carbon.py`, `settings.json`, or any cache file — just prints to stdout. You manually paste the value.
