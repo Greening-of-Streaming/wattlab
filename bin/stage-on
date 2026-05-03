@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# stage-on — flip OWL into "staging" mode.
+#
+# What this does, in order:
+#   1. Read queue depth from /live. If non-zero, poll every 2s up to a
+#      60s budget. If still non-zero after the budget, warn and proceed
+#      (any pending jobs will be lost — see CR-011 in CHANGE_REQUESTS.md
+#      for why we accepted this trade-off rather than full snapshot+restore).
+#   2. Touch /tmp/owl-maintenance — the flag the nginx vhost watches.
+#      From this point onward, public visitors hitting
+#      wattlab.greeningofstreaming.org get a maintenance page (HTTP 503).
+#   3. Optional: git checkout to a feature branch (--branch <name>).
+#   4. Restart the wattlab systemd unit so the new code loads.
+#
+# Owner-only access during the staging window is via:
+#   - LAN:    http://192.168.1.62:8000  (bypasses nginx, no maintenance page)
+#   - Tunnel: ssh -L 8000:localhost:8000 ...; then http://localhost:8000
+#
+# Run `stage-off` to reverse everything.
+#
+# CR-011 — easy rollback: this script + bin/stage-off + maintenance.html
+# are the only OWL-side artifacts. The nginx-side change is one block
+# documented in STAGING.md. None of this touches Python code, so a
+# `git revert` on the staging commit + manual nginx revert undoes it.
+
+set -euo pipefail
+
+BRANCH=""
+DRAIN_TIMEOUT_S=60
+FLAG="/tmp/owl-maintenance"
+LIVE_URL="http://localhost:8000/live"
+ENV_FILE="/home/gos/wattlab/.env"
+
+# Gate-cookie auth: /live is behind the WATTLAB_GATE_PASSWORD middleware,
+# so even loopback requests need the cookie. Source .env so curl can
+# present `wl_auth=<password>` — same value the gate POST sets.
+if [[ -f "$ENV_FILE" ]]; then
+  set -a; . "$ENV_FILE"; set +a
+fi
+GATE_COOKIE="wl_auth=${WATTLAB_GATE_PASSWORD:-}"
+
+usage() {
+  cat <<EOF
+usage: stage-on [--branch <feature-branch>] [--drain-timeout <seconds>]
+
+  --branch <name>   Check out this branch before restarting.
+                    Omit to keep the currently-checked-out branch.
+  --drain-timeout   Max seconds to wait for the queue to empty (default 60).
+EOF
+  exit 2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --branch)         BRANCH="$2"; shift 2 ;;
+    --drain-timeout)  DRAIN_TIMEOUT_S="$2"; shift 2 ;;
+    -h|--help)        usage ;;
+    *)                echo "unknown arg: $1" >&2; usage ;;
+  esac
+done
+
+# --- 1. Drain the queue (best-effort, with timeout) ---
+queue_depth() {
+  curl -fsS -m 3 --cookie "$GATE_COOKIE" "$LIVE_URL" 2>/dev/null \
+    | jq -r '.queue_depth // 0' 2>/dev/null \
+    || echo 0
+}
+
+depth=$(queue_depth)
+if [[ "$depth" -gt 0 ]]; then
+  echo "▸ queue has $depth job(s) in flight; waiting up to ${DRAIN_TIMEOUT_S}s for drain…"
+  end=$((SECONDS + DRAIN_TIMEOUT_S))
+  while [[ "$(queue_depth)" -gt 0 && "$SECONDS" -lt "$end" ]]; do
+    sleep 2
+  done
+  depth=$(queue_depth)
+  if [[ "$depth" -gt 0 ]]; then
+    echo "⚠ queue still has $depth job(s) after ${DRAIN_TIMEOUT_S}s — proceeding anyway."
+    echo "  pending jobs will be lost on restart; visitors will need to re-submit."
+  else
+    echo "▸ queue drained."
+  fi
+fi
+
+# --- 2. Raise the maintenance flag ---
+echo "▸ raising maintenance flag at $FLAG"
+touch "$FLAG"
+
+# --- 3. (optional) switch branch ---
+if [[ -n "$BRANCH" ]]; then
+  echo "▸ git checkout $BRANCH"
+  cd /home/gos/wattlab
+  git checkout "$BRANCH"
+fi
+
+# --- 4. Restart wattlab ---
+echo "▸ sudo systemctl restart wattlab"
+sudo systemctl restart wattlab
+
+echo
+echo "✓ staging mode active."
+echo "  public visitors:  see maintenance page (HTTP 503)"
+echo "  owner LAN:        http://192.168.1.62:8000"
+echo "  owner tunnel:     ssh -L 8000:localhost:8000 …; then http://localhost:8000"
+echo
+echo "  run \`stage-off\` to lower the flag and (if used) checkout main."

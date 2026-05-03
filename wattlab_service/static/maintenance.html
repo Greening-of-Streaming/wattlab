@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WattLab — Brief maintenance</title>
+<link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #111;
+    --border: #222;
+    --border-3: #333;
+    --text: #e0e0e0;
+    --text-3: #8a8a8a;
+    --text-4: #707070;
+    --text-5: #5a5a5a;
+    --accent: #00ff99;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: monospace;
+    background: var(--bg);
+    color: var(--text);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 2rem 1rem; line-height: 1.6;
+  }
+  .mark { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; }
+  .mark img { height: 64px; width: 64px; }
+  .mark .name { font-size: 1.3rem; color: var(--accent); font-weight: bold;
+                letter-spacing: 0.05em; }
+  .mark .tagline { display: block; color: var(--text-4); font-size: 0.7rem;
+                   letter-spacing: 0.04em; margin-top: 0.15rem; }
+  h1 { color: var(--accent); font-size: 1.4rem; margin-bottom: 1rem;
+       letter-spacing: 0.04em; }
+  p { color: var(--text-3); max-width: 520px; text-align: center;
+      margin-bottom: 1rem; font-size: 0.92rem; }
+  .note { color: var(--text-5); font-size: 0.78rem; margin-top: 1.5rem;
+          padding-top: 1rem; border-top: 1px solid var(--border); max-width: 480px;
+          text-align: center; }
+  a { color: var(--text-3); text-decoration: none; border-bottom: 1px solid var(--border-3); }
+  a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="mark">
+    <img src="/static/owl.svg" alt="WattLab owl">
+    <div>
+      <div class="name">WattLab</div>
+      <span class="tagline">Online WattLab · GoS1</span>
+    </div>
+  </div>
+
+  <h1>◆ Brief maintenance window</h1>
+
+  <p>OWL is offline for a short technical update — typically 5 to 15 minutes. The
+     measurement lab and your past results are safe; nothing has been lost.</p>
+
+  <p>Please refresh in a few minutes. If you reached this page from a job link
+     and were waiting on a result, your job may need to be re-submitted.</p>
+
+  <div class="note">
+    Greening of Streaming &middot;
+    <a href="https://greeningofstreaming.org" target="_blank" rel="noopener">greeningofstreaming.org</a>
+  </div>
+</body>
+</html>

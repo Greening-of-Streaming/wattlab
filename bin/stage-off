@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# stage-off — leave staging mode and return OWL to public.
+#
+# What this does, in order:
+#   1. Optional: git checkout main (--main flag).
+#   2. Restart the wattlab systemd unit on the now-current branch.
+#   3. Wait for /live to respond OK (up to 30s) so we don't briefly serve
+#      a 502 to public visitors between flag-removal and FastAPI being ready.
+#   4. Remove /tmp/owl-maintenance — nginx stops returning the maintenance
+#      page on the next request.
+#
+# CR-011 — see stage-on for context and rollback notes.
+
+set -euo pipefail
+
+CHECKOUT_MAIN=0
+WAIT_TIMEOUT_S=30
+FLAG="/tmp/owl-maintenance"
+LIVE_URL="http://localhost:8000/live"
+ENV_FILE="/home/gos/wattlab/.env"
+
+# Gate-cookie auth — see stage-on for the rationale.
+if [[ -f "$ENV_FILE" ]]; then
+  set -a; . "$ENV_FILE"; set +a
+fi
+GATE_COOKIE="wl_auth=${WATTLAB_GATE_PASSWORD:-}"
+
+usage() {
+  cat <<EOF
+usage: stage-off [--main]
+
+  --main   Check out the main branch before restarting.
+           Omit if you want to stay on the currently-checked-out branch
+           (e.g. you're shipping the staged feature directly).
+EOF
+  exit 2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --main)     CHECKOUT_MAIN=1; shift ;;
+    -h|--help)  usage ;;
+    *)          echo "unknown arg: $1" >&2; usage ;;
+  esac
+done
+
+# --- 1. (optional) switch branch ---
+if [[ "$CHECKOUT_MAIN" == "1" ]]; then
+  echo "▸ git checkout main"
+  cd /home/gos/wattlab
+  git checkout main
+fi
+
+# --- 2. Restart wattlab ---
+echo "▸ sudo systemctl restart wattlab"
+sudo systemctl restart wattlab
+
+# --- 3. Wait for /live to respond OK before lowering the flag ---
+echo "▸ waiting for /live to respond (up to ${WAIT_TIMEOUT_S}s)…"
+end=$((SECONDS + WAIT_TIMEOUT_S))
+ready=0
+while [[ "$SECONDS" -lt "$end" ]]; do
+  if curl -fsS -m 3 --cookie "$GATE_COOKIE" "$LIVE_URL" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$ready" == "0" ]]; then
+  echo "⚠ /live still not responding after ${WAIT_TIMEOUT_S}s."
+  echo "  flag NOT removed — investigate before retrying."
+  echo "  (run \`journalctl -u wattlab -n 50\` for diagnostics.)"
+  exit 1
+fi
+echo "▸ wattlab is up."
+
+# --- 4. Lower the maintenance flag ---
+if [[ -f "$FLAG" ]]; then
+  echo "▸ removing maintenance flag at $FLAG"
+  rm -f "$FLAG"
+else
+  echo "▸ no flag at $FLAG — nothing to remove."
+fi
+
+echo
+echo "✓ staging mode cleared. public visitors get the live site again."
