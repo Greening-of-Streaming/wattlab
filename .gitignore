@@ -3,3 +3,21 @@ test_content/
 results/
 __pycache__/
 *.pyc
+
+# RAG runtime data (vectors regenerable from corpus; corpus is source PDFs
+# we don't want to bloat the repo with — and CR follow-up plans visitor
+# uploads landing here).
+.chroma/
+corpus/
+
+# Backup / scratch files left around by previous sessions.
+*.bak
+*.session*
+
+# One-off OS install artifacts that landed in the working tree.
+amdgpu-install_*.deb
+
+# Sibling project (REM has its own repo at dom-robinson/stats; this is
+# just a working copy here for cross-project context).
+REM/
+TRAINING_REM_5MIN.md
