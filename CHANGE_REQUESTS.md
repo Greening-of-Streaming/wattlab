@@ -114,8 +114,23 @@ The line that holds against feature creep: **public sees results, members shape 
 
 ## CR-001b · Demo lock (sub-feature of CR-001)
 
-**Status:** captured 2026-05-01 — must ship with or before CR-001.
+**Status:** ✅ resolved 2026-05-03 by CR-011 + CR-015. No code shipped under this CR's name.
 **Triggered by:** owner running important demos and needing exclusive control of the queue.
+
+### How CR-011 covers the intent
+
+- `bin/stage-on` raises `/tmp/owl-maintenance`, which nginx honours with a static maintenance page (HTTP 503) for everyone hitting the public hostname.
+- The owner accesses OWL via LAN (`http://192.168.1.62:8000`) or SSH tunnel (`localhost:8000`) — both bypass nginx, so the owner has full, exclusive use of the queue while the maintenance flag is up.
+- This delivers the headline guarantee CR-001b was capturing ("only the owner can run jobs during a demo") without a new flag, new banner, or new auth concept.
+- The "I forgot to unlock" failure mode is handled by CR-015 (auto-lower the maintenance flag on Lab-tier inactivity), captured 2026-05-03 as a CR-011 follow-up.
+
+### What this loses vs. the original CR-001b design
+
+- No "demo in progress, ends 13:42" friendly UI for blocked users — public sees the generic maintenance page instead. Acceptable: the maintenance page is already on-brand and the messaging is clear.
+- No `🔒 demo` pill on the floating telemetry badge for the owner — owner already knows because they ran `stage-on`.
+- No fixed expiry timer with `[extend]/[end now]` controls — replaced by the activity-driven CR-015 watchdog, which is a better fit (extends when the owner is using the system, lowers when they walk away).
+
+If a future demo format genuinely needs the in-app banner / extend-button UX, re-open this CR. For now the cheaper path covers the use case.
 
 ### Problem
 
