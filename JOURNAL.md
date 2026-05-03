@@ -11,9 +11,11 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ### What we did
 
-**CR-010 closure · CR-006 closure · CR-011 OWL-side artifacts (system config still pending) · variance recalibration · gitignore tidy**
+**Long carbon-credibility session. Sixteen commits. CR-010 + CR-006 + CR-011 + CR-016 + CR-018 Tier 1 closed. CR-015 + CR-017 + CR-018 Tier 2/3 captured. Variance recalibration + gitignore tidy + bin/README pattern established.**
 
-A clean-up + ship session. Working tree from S17 had ~155 lines of uncommitted main.py work that turned out to be CR-010 and CR-006 already implemented and already loaded into the running service (the `__pycache__` mtimes told the tale). Plus drafted but uncommitted CR-011 OWL-side artifacts. Day's work was: split the main.py diff into two clean per-CR commits, ship the CR-011 scripts, fix the noisy gitignore situation, and hand the CR-011 system-side config off as a sudo runbook for the owner.
+Started as a tidy-up: working tree from S17 had ~155 lines of uncommitted main.py work that turned out to be CR-010 and CR-006 already implemented and live (the `__pycache__` mtimes told the tale). Plus drafted but uncommitted CR-011 OWL-side artifacts. First half of the session: split the main.py diff into clean per-CR commits, ship CR-011, fix gitignore, and hand the CR-011 system-side config off as a sudo runbook (which the owner ran + smoke-tested green same day).
+
+Second half pivoted into carbon-credibility work after the owner spotted that the live FR carbon intensity (13 g/kWh) and the 2024 annual mean (53 g/kWh) differed by ~4× — which would be alarming if it were real. Investigation found a methodology mismatch: live used Eco2mix's `taux_co2` (direct combustion only, ~0 for nuclear), static used Ember 2024 (lifecycle, includes nuclear fuel cycle + plant construction etc.). Fixed by always deriving live from the production mix × IPCC AR6 lifecycle factors (CR-016). Then a sequence of UI-credibility improvements: de-emphasise the carbon block (move to bottom of every result, smaller font), frame it as "high-level estimate" everywhere, add EV-distance equivalence as a relatable comparator, then add curated historical France data (CR-018 Tier 1) so visitors can see how the grid has actually evolved.
 
 ### Code — CR-010 (carbon comparison strip)
 
@@ -28,12 +30,53 @@ A clean-up + ship session. Working tree from S17 had ~155 lines of uncommitted m
 - **Page h1s** — `/llm` (main.py:1900), `/rag` (main.py:2708), `/image` (main.py:4938) all gain `{_BETA_CHIP}` next to their h1 text. Streaming `/video` deliberately untouched — that's the headline.
 - **Demo Tour entering-beta band** (main.py:~3805) — after step 1 (the production-grade video result), a dashed-border framing band appears: "Entering beta · exploratory" header + body text inviting visitors to stop here if they only wanted the streaming-impact story. Steps 2/3/4 (LLM, image, RAG) gain `{{BETA_CHIP}}` placeholders next to their h1s, substituted at render time by `demo_page()` (main.py:~5453).
 
-### Code — CR-011 OWL-side artifacts (system config NOT YET applied)
+### Code — CR-011 staging via maintenance-page swap (fully shipped)
 
 - **`bin/stage-on`** — drain queue (60s timeout, polls `/live` for `queue_depth`), touch `/tmp/owl-maintenance`, optional `git checkout <branch>`, `sudo systemctl restart wattlab`. Sources `.env` for the gate cookie so loopback `/live` calls can authenticate.
 - **`bin/stage-off`** — optional `git checkout main`, `sudo systemctl restart`, **wait for `/live` to respond OK (30s budget)**, then remove the flag. If the service fails to come back up the flag stays raised and the script exits non-zero — visitors keep seeing the maintenance page until a successful `stage-off`.
 - **`wattlab_service/static/maintenance.html`** — owl mark + GoS framing + "5–15 minutes" expectation, no JS. Served by nginx directly so no FastAPI dependency during restart.
 - **`STAGING.md`** — workflow doc + nginx vhost edits + rollback notes. Captures the queue-drain trade-off (didn't implement snapshot+restore for pending jobs because that would require refactoring every `enqueue()` call site to serialise (type, params) tuples plus a coroutine factory registry — ~half a day touching four modules; drain-with-timeout is ~10 lines of bash and acceptable given GoS1's typical idle queue depth ≈ 0).
+- **System-side config applied + smoke-tested same day** — `usermod -a -G gos www-data`, nginx vhost edits installed via `/tmp/wattlab.nginx.new` → `/etc/nginx/sites-available/wattlab` (added `error_page 503 @maintenance` block, `/static/` direct location, and `if (-f /tmp/owl-maintenance) { return 503; }` in both proxy `location` blocks), `nginx -t && systemctl reload nginx`. Smoke test: flag raised → public returned 503 + maintenance.html, LAN returned 302 (owner bypass intact); flag lowered → public returned 302 (back to live); `/static/owl.svg` direct-served by nginx returned 200.
+- **`bin/README.md` established** — the canonical home for operator-script docs. Pattern: each script gets a section with description, usage block, options table, examples, and a "Things to know" list. Future scripts in `bin/` add a section here. Root `README.md` gets a one-line pointer.
+
+### Code — CO2e UI hierarchy (de-emphasis pass)
+
+GoS works in Watts primarily; CO2e is secondary. Two changes to reflect the hierarchy:
+
+- **Strip moved from top to bottom** — `wlCarbonStrip(...)` was rendering immediately under each result `<h2>`, competing visually with the energy figures. Moved to just before the scope-note in every result block. Mechanical edit across 12 sites: video single/both/all_codecs, LLM single/batch/both/all, RAG single/compare-3-modes, image single/cpu-vs-gpu/compare-models. The inline `wlCarbonRow` line stays where it is — already small and low-weight under each Energy ΔE.
+- **Headline number shrunk** 1.5rem → 1rem in `wlCarbonStrip` (and the matching "below P110 measurement floor" placeholder branch). The strip no longer competes with the energy figures above it.
+
+### Code — CR-016 (live and static CO2e on the same lifecycle boundary)
+
+- **`carbon._fetch_eco2mix` flipped** — was: prefer Eco2mix's precomputed `taux_co2`, fall back to `compute_intensity_from_mix(mix)` if missing. Now: always derive lifecycle intensity from the production mix × IPCC AR6 factors. The infrastructure was already there (`compute_intensity_from_mix` existed as a fallback path; mix already extracted from the record); the fix was a path-flip plus dropping the `computed` flag (every value is now derived; the distinction is gone). Eco2mix's own `taux_co2` is preserved as `g_per_kwh_direct` in the response for transparency in the JSON audit trail, but no longer drives the displayed UI.
+- **Module docstring + comments updated** to call out: live and static both lifecycle, comparable, gap reflects real diurnal variance.
+- **Two regression tests added** (`test_eco2mix_response_returns_lifecycle_not_taux_co2`, `test_eco2mix_returns_none_when_mix_unusable`) so the boundary contract can't silently regress later. 30 carbon tests passing.
+- **Sanity check after restart**: live FR moved from 13 g/kWh (direct, nuclear-heavy hour) to 26 g/kWh (lifecycle from a 66% nuclear / 17% solar / 9% hydro / 6% wind / 0.5% gas mix). Math confirmed: 0.66×12 + 0.17×45 + 0.09×24 + 0.06×11 + 0.005×490 ≈ 26 g/kWh. Live-vs-static gap dropped from ~4× to ~2× — within the genuine diurnal range for France.
+
+### Code — CO2e framing + EV equivalence
+
+- **`_BETA_CHIP`-style "HIGH-LEVEL CO₂e ESTIMATE" caption** at the top of every carbon strip. Frames the whole block as derived/estimated context, distinct from the measured energy above. Tooltip explains the basis (Wh × grid intensity, energy is measured at the wall).
+- **Inline row label** `wlCarbonRow` changes "CO₂e" to "CO₂e (est.)" so the framing carries through.
+- **EV-distance equivalence line** in the strip headline: `≈ X mm/m/km driving a typical EV` using `EV_G_PER_KM = 50` (Transport & Environment 2024 European fleet average lifecycle operational intensity). New `fmtEvDistance()` helper auto-switches units so tiny digital workloads still read meaningfully (e.g., `≈ 3 mm` for an image gen). The "this is genuinely tiny in EV-terms" reading IS the message — streaming-at-scale is about volume × frequency, not single-job footprint.
+- **Methodology page + carbon-strip explainer text updated** for CR-016: now describes the lifecycle calculation (production mix × IPCC AR6 factors) instead of "trust Eco2mix's precomputed value." New trailing italic line: "Live and reference are on the same lifecycle boundary, so the two numbers are directly comparable. The gap reflects real diurnal grid variance, not a methodology mismatch." That line is the credibility insurance — it pre-empts the "wait, this doesn't add up" reaction.
+
+### Code — CR-018 Tier 1 (historical France carbon rows)
+
+- **`bin/fetch-historical-mix`** — one-shot Python helper. Hits the Eco2mix consolidated dataset (`eco2mix-national-cons-def`, FR national, 2012–present, 30-min resolution) for a given `--year YYYY --month MM`, runs each record through `carbon.compute_intensity_from_mix` (same code path as live), prints monthly mean lifecycle g/kWh. Reusable for adding more dates: `--quiet` for pipeline use, otherwise prints per-page progress on stderr.
+- **Five curated FR historical entries** added to `carbon.HISTORICAL_INTENSITY`:
+
+  | Date | g/kWh | Story |
+  |---|---|---|
+  | Jan 2020 | 65.8 | Pre-Covid winter |
+  | Jun 2020 | 54.6 | Covid-lockdown summer |
+  | Jun 2022 | 59.5 | Energy-crisis-era summer |
+  | Jan 2024 | 53.4 | Post-recovery winter — cleaner than Jan 2020 despite the season |
+  | Jun 2024 | 26.9 | Recent summer — nuclear back, solar buildout reflected |
+
+- **Notable finding from the data**: the French nuclear corrosion crisis (popularly framed as a huge carbon spike in 2022/early 2023) shows up much less dramatically in monthly lifecycle averages than the news made it sound — Jan 2023 was 63.2 g/kWh, only marginally higher than Jan 2020's 65.8 and Jan 2024's 53.4. The bigger story the data tells is the long-term cleaning trend, especially in summer (Jun 2022 → Jun 2024 = 55% reduction in two years). Captions revised to reflect what the data actually shows, not the popular narrative.
+- **`historical_for_zone(zone)` helper + `historical_table` / `historical_source` fields on `/carbon`** so the JS can render without a separate fetch.
+- **"Through history" rows in the carbon strip** between comparison cities and the formula explainer. FR-only (suppressed for other home zones until those have curated history). Each row shows label + grams + ratio-vs-now + monthly mean intensity, with the narrative note as a small italic sub-line. Closing italic disclaimer: "Same lifecycle methodology as the live number above … Curated dates illustrate the range of grid evolution; not exhaustive."
+- **Methodology page** picks up a new "Through history (France)" subsection documenting source, methodology consistency with live, the curated-vs-exhaustive choice, and the ops command for adding more dates.
 
 ### Variance recalibration
 
@@ -44,24 +87,41 @@ Settings.json picked up runtime updates from a calibration run during S17/S18 te
 - **`.gitignore`** expanded for `.chroma/`, `corpus/` (RAG runtime data + source PDFs), `*.bak`, `*.session*`, `amdgpu-install_*.deb`, plus `REM/` and `TRAINING_REM_5MIN.md` (sibling project — REM has its own repo at `dom-robinson/stats`; the in-repo dir is just a working copy for cross-project context).
 - **`__pycache__/*.pyc`** — four files (`llm`, `main`, `sources`, `video`) had slipped into the index before `*.pyc` was in `.gitignore`. `git rm --cached`'d so they stop appearing as modified noise on every restart.
 
-### What's NOT done
+### CRs captured (for later)
 
-- **CR-011 system-side config** — nginx vhost edits (`error_page 503 @maintenance`, `/static/` location override, `if (-f /tmp/owl-maintenance)` returns) plus adding `www-data` to the `gos` group are documented in `STAGING.md` but not yet applied. Requires sudo. Handed off to owner as a runbook this session — `bin/stage-on`/`stage-off` are inert until those land.
-- **Smoke test of CR-011 end-to-end** — pending the system config above. Plan: touch flag → curl public (expect 503 + maintenance.html) → curl LAN (expect 200 + normal site) → rm flag → curl public (expect 200).
+- **CR-015** — Auto-lower the maintenance flag on inactivity. CR-011's flag persists indefinitely until explicit `stage-off`; walking away leaves public on the maintenance page. Design: piggyback on the S17 access spine — Lab-tier middleware bumps the flag's mtime on every request; systemd watchdog lowers it if mtime exceeds `max_idle_mins` (default 30, settings-tunable). Owner does nothing extra.
+- **CR-017** — 24/7 projection toggle on the carbon strip. Owner asked about adding "if this workload ran continuously" to make CO2e at scale visible. Not shipped because it only makes physical sense for naturally-continuous workloads (LLM serving, live-stream encoding, RAG service); projecting onto a one-off image gen reads as silly. Design: simplest first version is a multiplier toggle (1h / 1d / 1mo / 1yr) the visitor opts into, with per-workload-type defaults layered on later.
+- **CR-018 Tier 2 + Tier 3** — full historical coverage. Tier 2: bin/refresh-historical-carbon fetches every month from 2012, caches to JSON, comparison strip gains a year-month picker. Tier 3: interactive timeline scrubber. Both post-launch — Tier 1's curated five-date story actually lands sharper for conference than a slider would.
 
 ### What's next
 
-- **CR-011 system config** — owner to run sudo steps; Claude verifies with smoke test.
-- **CR-001b — demo lock** — uses the `enqueue(request=None)` seam from S17. Owner-identity check before enqueue; gate password as stopgap owner identity until CR-001 lands magic-link auth.
-- **CR-001 — two-tier OWL** — magic-link auth, capability-tier UI, conference launch (mid-June 2026).
+Next session opens cleanly on **CR-001b — demo lock**:
+
+- Plugs into the seam shipped in S17 spine commit A — `queue_control.enqueue(request=None)` takes the request specifically so CR-001b's owner-identity check has somewhere to attach.
+- Stopgap owner identity: gate password (`WATTLAB_GATE_PASSWORD` cookie). Magic-link auth lands with CR-001 proper.
+- Iteration cycle is now amplified by CR-011 staging — use `bin/stage-on --branch cr-001b` to test live without bouncing the public site.
+- Estimated effort: ~½ day. Full design context in `CHANGE_REQUESTS.md` lines 115–166.
+
+After CR-001b: **CR-001** (two-tier OWL — magic-link auth + capability-tier UI + conference launch, mid-June 2026).
 
 ### Commits
 
-- `63d38fc` Session 18 part 1: close CR-010 (carbon comparison strip — home-zone reference row)
-- `4c0b496` Session 18 part 2: close CR-006 (BETA framing for AI workloads)
-- `13ba8af` Session 18 part 3: settings.json — variance recalibration + bitrate fields
-- `d622505` Session 18 part 4: CR-011 OWL-side — staging via maintenance-page swap
-- `8dcad5e` Session 18 part 5: tidy gitignore + untrack .pyc files
+- `63d38fc` part 1: close CR-010 (carbon comparison strip — home-zone reference row)
+- `4c0b496` part 2: close CR-006 (BETA framing for AI workloads)
+- `13ba8af` part 3: settings.json — variance recalibration + bitrate fields
+- `d622505` part 4: CR-011 OWL-side — staging via maintenance-page swap
+- `8dcad5e` part 5: tidy gitignore + untrack .pyc files
+- `3f39288` part 6: update CLAUDE.md + JOURNAL.md for S18 (interim)
+- `e0b3b2f` part 7: document operator scripts in bin/README.md
+- `2ab739c` part 8: capture CR-015 + mark CR-011 done
+- `c8791e2` part 9: de-emphasise CO2e in result reports
+- `c8c2316` part 10: close CR-016 (live + static CO2e on the same boundary)
+- `4875ba5` part 11: CO2e UI framing + EV-distance equivalence
+- `dcbadbb` part 12: capture CR-017 (24/7 projection on the carbon strip)
+- `6d06a81` part 13: update CO2e explanation text for CR-016 methodology
+- `bf462c3` part 14: CR-018 Tier 1 — historical France carbon rows
+- `34c9d5e` part 15: capture CR-018 Tier 2 + Tier 3 (full historical)
+- `2da3b23` part 16: document fetch-historical-mix in bin/README.md
 
 ---
 
