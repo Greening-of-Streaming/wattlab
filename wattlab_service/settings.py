@@ -39,6 +39,18 @@ DEFAULTS = {
     "av1_bitrate_kbps":  1500,
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
+    # CR-001 part D — per-tier queue caps + Anonymous upload size.
+    # Concurrent (queued + running) jobs per visitor; Lab is uncapped.
+    # Anonymous = keyed by client IP; Member = keyed by allowlisted email.
+    # Conference-day spike from Anonymous can't drain the queue and
+    # starve Members.
+    "queue_anonymous_cap": 1,
+    "queue_member_cap": 4,
+    # Upload byte cap, in MB. Anonymous = 100 MB (sized so a 1080p clip
+    # gets ~30s+ of transcode wall-time, comparable to the bundled
+    # meridian_120s asset). Member/Lab = 1024 MB (today's 1GB).
+    "upload_size_anonymous_mb": 100,
+    "upload_size_member_mb":    1024,
 }
 
 

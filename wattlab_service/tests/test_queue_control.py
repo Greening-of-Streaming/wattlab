@@ -172,3 +172,124 @@ def test_snapshot_pending_jobs_listed_with_positions():
     assert len(snap["pending"]) == 2
     assert snap["pending"][0] == {"job_id": "j1", "type": "video", "label": "a", "position": 1}
     assert snap["pending"][1] == {"job_id": "j2", "type": "llm",   "label": "b", "position": 2}
+
+
+# --- Per-tier concurrent-job cap (CR-001 part D) ----------------------------
+#
+# Tests stub `_visitor_key()` directly rather than building real Request
+# objects + cookies, so the cap-logic tests stay decoupled from the
+# audience/auth wiring (which has its own tests).
+
+def test_anonymous_visitor_capped_at_one_by_default(monkeypatch):
+    """Default queue_anonymous_cap=1 → 2nd Anonymous job from same IP rejected."""
+    monkeypatch.setattr(queue_control, "_visitor_key", lambda r: "a:203.0.113.7")
+    assert queue_control.enqueue("j1", "video", "x", _noop_coro(), request=object()) == 1
+    assert queue_control.enqueue("j2", "video", "y", _noop_coro(), request=object()) is None
+
+
+def test_different_anonymous_visitors_each_get_a_slot(monkeypatch):
+    """The cap is per-visitor — IP A and IP B each get 1 slot."""
+    keys = iter(["a:1.1.1.1", "a:2.2.2.2"])
+    monkeypatch.setattr(queue_control, "_visitor_key", lambda r: next(keys))
+    assert queue_control.enqueue("j1", "video", "a", _noop_coro(), request=object()) == 1
+    assert queue_control.enqueue("j2", "video", "b", _noop_coro(), request=object()) == 2
+
+
+def test_member_visitor_default_cap_is_four(monkeypatch):
+    """Default queue_member_cap=4 → 5th Member job from same email rejected."""
+    monkeypatch.setattr(queue_control, "_visitor_key", lambda r: "m:user@example.com")
+    for i in range(4):
+        assert queue_control.enqueue(f"j{i}", "video", str(i), _noop_coro(),
+                                      request=object()) == i + 1
+    assert queue_control.enqueue("j5", "video", "fifth", _noop_coro(),
+                                  request=object()) is None
+
+
+def test_lab_tier_uncapped(monkeypatch):
+    """Lab returns visitor_key=None → cap is None → only MAX_QUEUE_DEPTH bites."""
+    monkeypatch.setattr(queue_control, "_visitor_key", lambda r: None)
+    for i in range(queue_control.MAX_QUEUE_DEPTH):
+        assert queue_control.enqueue(f"j{i}", "video", str(i), _noop_coro(),
+                                      request=object()) == i + 1
+    # The depth cap, not the per-visitor cap, is what stops the next one.
+    assert queue_control.enqueue("overflow", "video", "x", _noop_coro(),
+                                  request=object()) is None
+
+
+def test_anonymous_running_job_counts_toward_cap(monkeypatch):
+    """A running Anonymous job blocks a new one from the same IP, even if
+    the pending queue is empty."""
+    monkeypatch.setattr(queue_control, "_visitor_key", lambda r: "a:203.0.113.9")
+    queue_control.current_job_id = "running"
+    queue_control.current_visitor_key = "a:203.0.113.9"
+    assert queue_control.enqueue("j2", "video", "x", _noop_coro(),
+                                  request=object()) is None
+
+
+def test_settings_override_anonymous_cap(monkeypatch):
+    """A bumped queue_anonymous_cap in settings.json takes effect immediately
+    (read live, no restart)."""
+    monkeypatch.setattr(queue_control, "_visitor_key", lambda r: "a:198.51.100.5")
+    import settings as _cfg
+    monkeypatch.setattr(_cfg, "load",
+                        lambda: {**_cfg.DEFAULTS, "queue_anonymous_cap": 3})
+    for i in range(3):
+        assert queue_control.enqueue(f"j{i}", "video", str(i), _noop_coro(),
+                                      request=object()) == i + 1
+    assert queue_control.enqueue("j4", "video", "fourth", _noop_coro(),
+                                  request=object()) is None
+
+
+def test_enqueue_records_visitor_key_in_pending_entry(monkeypatch):
+    """The pending-queue entry carries visitor_key so the worker can
+    publish it to current_visitor_key when the job starts."""
+    monkeypatch.setattr(queue_control, "_visitor_key", lambda r: "a:test")
+    queue_control.enqueue("j1", "video", "x", _noop_coro(), request=object())
+    assert queue_control.pending_queue[0]["visitor_key"] == "a:test"
+
+
+# --- _visitor_key resolution ------------------------------------------------
+
+def _stub_request(headers=None, cookies=None, client_host=""):
+    class _StubClient:
+        host = client_host
+    class _StubReq:
+        def __init__(self):
+            self.headers = headers or {}
+            self.cookies = cookies or {}
+            self.client = _StubClient()
+    return _StubReq()
+
+
+def test_visitor_key_anonymous_uses_x_real_ip():
+    # 8.8.8.8 chosen because Python's ipaddress.is_private flags TEST-NET
+    # ranges (203.0.113/24) as private — they'd resolve to Lab here.
+    req = _stub_request(headers={"x-real-ip": "8.8.8.8"})
+    assert queue_control._visitor_key(req) == "a:8.8.8.8"
+
+
+def test_visitor_key_anonymous_falls_back_to_client_host():
+    """No X-Real-IP header (no nginx in front) → use client.host."""
+    req = _stub_request(headers={}, client_host="1.1.1.1")
+    assert queue_control._visitor_key(req) == "a:1.1.1.1"
+
+
+def test_visitor_key_lab_returns_none():
+    """Loopback IP → Lab tier → None (uncapped)."""
+    req = _stub_request(headers={"x-real-ip": "127.0.0.1"})
+    assert queue_control._visitor_key(req) is None
+
+
+def test_visitor_key_request_none_returns_none():
+    """Tests calling enqueue with request=None must opt out of cap accounting."""
+    assert queue_control._visitor_key(None) is None
+
+
+def test_visitor_key_member_uses_email_lowercased(monkeypatch):
+    """Member tier → 'm:<email>', case-folded so MIXED@case treated the same."""
+    import audience as _aud
+    import auth as _auth
+    monkeypatch.setattr(_aud, "tier", lambda r: _aud.Tier.Member)
+    monkeypatch.setattr(_auth, "member_email_from_request", lambda r: "Foo@Bar.COM")
+    req = _stub_request()
+    assert queue_control._visitor_key(req) == "m:foo@bar.com"

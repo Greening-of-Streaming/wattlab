@@ -12,16 +12,80 @@ this module imports nothing from main.py — no circular deps.
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from fastapi import Request
 
 # --- Public state -----------------------------------------------------------
-pending_queue: list = []        # list of {"job_id", "type", "label", "coro_fn"}
+pending_queue: list = []        # list of {"job_id", "type", "label", "coro_fn",
+                                #          "visitor_key": Optional[str]}
 queue_event = asyncio.Event()
 current_job_id = None           # job currently executing, or None
+current_visitor_key: Optional[str] = None  # visitor of the running job, for cap accounting
 MAX_QUEUE_DEPTH = 8             # total queued + running; 429 beyond this
+
+
+def _visitor_key(request) -> Optional[str]:
+    """Identity for per-tier cap accounting.
+
+    - Lab tier      → None (uncapped).
+    - Member tier   → 'm:<lowercased email>'.
+    - Anonymous     → 'a:<X-Real-IP or client.host>'; '' if neither known.
+
+    queue_control depending on audience+auth is fine: both sit at the
+    spine layer, neither imports queue_control. Kept at the bottom of
+    enqueue() so the queue tests that don't pass a request keep working.
+    """
+    if request is None:
+        return None
+    try:
+        import audience as _aud
+        t = _aud.tier(request)
+    except (AttributeError, TypeError):
+        # Stub / non-Request object passed (legacy tests). Treat as
+        # uncapped — the cap is a soft layer over the depth limit, so
+        # silently opting out is safer than blowing up the request.
+        return None
+    if t == _aud.Tier.Lab:
+        return None
+    if t == _aud.Tier.Member:
+        try:
+            import auth as _auth
+            email = _auth.member_email_from_request(request) or ""
+        except Exception:
+            email = ""
+        return f"m:{email.strip().lower()}"
+    # Anonymous
+    ip = (request.headers.get("x-real-ip") if request.headers else None) or (
+        request.client.host if request.client else "")
+    return f"a:{ip}"
+
+
+def _visitor_cap(visitor_key: Optional[str]) -> Optional[int]:
+    """Look up the concurrent-job cap for a visitor key.
+
+    None (Lab) → uncapped. Otherwise returns the int cap from settings.json
+    (queue_anonymous_cap / queue_member_cap). Read live so a /settings save
+    takes effect without a restart.
+    """
+    if visitor_key is None:
+        return None
+    import settings as _cfg
+    s = _cfg.load()
+    if visitor_key.startswith("m:"):
+        return int(s.get("queue_member_cap", 4))
+    return int(s.get("queue_anonymous_cap", 1))
+
+
+def _visitor_in_flight(visitor_key: Optional[str]) -> int:
+    """Count of jobs (queued + running) that belong to this visitor."""
+    if visitor_key is None:
+        return 0
+    n = sum(1 for e in pending_queue if e.get("visitor_key") == visitor_key)
+    if current_job_id is not None and current_visitor_key == visitor_key:
+        n += 1
+    return n
 
 # External pause: when this file exists, the worker waits between jobs
 # rather than picking up the next one. In-flight jobs are unaffected.
@@ -54,13 +118,18 @@ def enqueue(job_id: str, job_type: str, label: str, coro_fn,
     """Add a job to the FIFO queue.
 
     Returns the 1-based queue position, or None if the queue is full
-    (caller should respond 429).
+    or the caller is over their per-tier concurrent-job cap (caller
+    should respond 429).
 
-    The optional `request` parameter is a seam for CR-001b (demo lock) and
-    CR-001 per-tier rate limits — unused today. When the demo lock ships,
-    this is where the owner-vs-others check goes; when CR-001 ships, this
-    is where the per-tier concurrent-job cap is enforced.
+    `request` is used for per-tier cap accounting (CR-001 part D):
+    Anonymous visitors are capped to settings.json's queue_anonymous_cap
+    (default 1, IP-keyed); Members to queue_member_cap (default 4,
+    email-keyed); Lab is uncapped. Tests pass request=None to opt out.
     """
+    visitor_key = _visitor_key(request)
+    cap = _visitor_cap(visitor_key)
+    if cap is not None and _visitor_in_flight(visitor_key) >= cap:
+        return None
     total = len(pending_queue) + (1 if current_job_id else 0)
     if total >= MAX_QUEUE_DEPTH:
         return None
@@ -73,6 +142,7 @@ def enqueue(job_id: str, job_type: str, label: str, coro_fn,
     pending_queue.append({
         "job_id": job_id, "type": job_type,
         "label": label, "coro_fn": coro_fn,
+        "visitor_key": visitor_key,
     })
     queue_event.set()
     return position
@@ -114,7 +184,7 @@ def snapshot() -> dict:
 async def _worker():
     """Single sequential worker. Pops from pending_queue, dispatches the
     coroutine, cleans up on exception. Honours PAUSE_FLAG between jobs."""
-    global current_job_id
+    global current_job_id, current_visitor_key
     while True:
         await queue_event.wait()
         queue_event.clear()
@@ -128,6 +198,7 @@ async def _worker():
             entry = pending_queue.pop(0)
             job_id = entry["job_id"]
             current_job_id = job_id
+            current_visitor_key = entry.get("visitor_key")
             # Update queue positions for remaining jobs
             for i, e in enumerate(pending_queue):
                 if e["job_id"] in _jobs:
@@ -140,3 +211,4 @@ async def _worker():
                 _lock_file.unlink(missing_ok=True)
             finally:
                 current_job_id = None
+                current_visitor_key = None

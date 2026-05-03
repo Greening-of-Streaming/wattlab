@@ -2098,7 +2098,7 @@ async def use_preloaded_source(
                       custom_cmd_cpu=custom_cmd_cpu,
                       custom_cmd_gpu=custom_cmd_gpu)
 
-    position = queue_control.enqueue(job_id, "video", label, coro)
+    position = queue_control.enqueue(job_id, "video", label, coro, request=request)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -2125,9 +2125,22 @@ async def upload_video(
     if suffix not in allowed:
         return JSONResponse({"error": f"File type {suffix} not allowed"}, status_code=400)
 
+    # CR-001 part D — per-tier upload size cap. Anonymous = 100 MB to keep
+    # the public surface bounded; Member/Lab = 1 GB. Pre-check via
+    # Content-Length so we 413 before reading the body when nginx hands
+    # us the header; fall back to length-after-read otherwise.
+    s = cfg.load()
+    max_mb = (s["upload_size_anonymous_mb"]
+              if audience.tier(request) == audience.Tier.Anonymous
+              else s["upload_size_member_mb"])
+    max_bytes = max_mb * 1024 * 1024
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > max_bytes:
+        return JSONResponse({"error": f"Upload too large (max {max_mb} MB for your tier)"}, status_code=413)
+
     contents = await file.read()
-    if len(contents) > 1024 * 1024 * 1024:
-        return JSONResponse({"error": "File too large (max 1GB)"}, status_code=400)
+    if len(contents) > max_bytes:
+        return JSONResponse({"error": f"Upload too large (max {max_mb} MB for your tier)"}, status_code=413)
 
     job_id = str(uuid.uuid4())[:8]
     input_path = UPLOAD_DIR / f"{job_id}_in{suffix}"
@@ -2140,7 +2153,7 @@ async def upload_video(
                       custom_cmd_cpu=custom_cmd_cpu,
                       custom_cmd_gpu=custom_cmd_gpu)
 
-    position = queue_control.enqueue(job_id, "video", label, coro)
+    position = queue_control.enqueue(job_id, "video", label, coro, request=request)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -2190,7 +2203,7 @@ async def variance_run(request: Request):
         except Exception as e:
             jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
-    position = queue_control.enqueue(job_id, "variance", label, coro)
+    position = queue_control.enqueue(job_id, "variance", label, coro, request=request)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -2967,7 +2980,7 @@ async def llm_run(
     async def coro():
         await run_llm_job(job_id, model_key, task_key, repeats, warm, effective_prompt, device)
 
-    position = queue_control.enqueue(job_id, "llm", label, coro)
+    position = queue_control.enqueue(job_id, "llm", label, coro, request=request)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -3020,6 +3033,7 @@ async def run_llm_all_job(job_id: str, model_key: str, warm: bool, device: str):
 
 @app.post("/llm/run-all", dependencies=[Depends(requires(BATCH_COMPARE))])
 async def llm_run_all(
+    request: Request,
     model_key: str = Form(...),
     warm: bool = Form(False),
     device: str = Form("gpu"),
@@ -3035,7 +3049,7 @@ async def llm_run_all(
     async def coro():
         await run_llm_all_job(job_id, model_key, warm, device)
 
-    position = queue_control.enqueue(job_id, "llm", label, coro)
+    position = queue_control.enqueue(job_id, "llm", label, coro, request=request)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -3744,7 +3758,7 @@ async def rag_run(
         save_result("llm", job_id, result)
         jobs[job_id] = {"stage": "done", "result": result}
 
-    position = queue_control.enqueue(job_id, "rag", label, coro)
+    position = queue_control.enqueue(job_id, "rag", label, coro, request=request)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -3816,7 +3830,7 @@ async def rag_run_compare(
     async def coro():
         await run_rag_compare_job(job_id, model_key, effective_question)
 
-    position = queue_control.enqueue(job_id, "rag", label, coro)
+    position = queue_control.enqueue(job_id, "rag", label, coro, request=request)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -3988,6 +4002,16 @@ async def settings_page(request: Request):
     {field("conf_green_polls", s['conf_green_polls'],  1, 100, "polls", "🟢 minimum poll count")}
     {field("conf_yellow_polls",s['conf_yellow_polls'], 1, 50,  "polls", "🟡 minimum poll count")}
 
+    <div class="section">Tier limits</div>
+    <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
+      CR-001 part D — concurrent-job caps and upload-size caps per audience
+      tier. Anonymous keyed by IP, Member by email, Lab uncapped.
+    </div>
+    {field("queue_anonymous_cap",      s['queue_anonymous_cap'],      1, 10,   "jobs",  "concurrent (queued + running) Anonymous jobs per IP")}
+    {field("queue_member_cap",         s['queue_member_cap'],         1, 20,   "jobs",  "concurrent jobs per Member email")}
+    {field("upload_size_anonymous_mb", s['upload_size_anonymous_mb'], 10, 1024, "MB",    "Anonymous /video/upload byte cap")}
+    {field("upload_size_member_mb",    s['upload_size_member_mb'],    100, 4096, "MB",   "Member /video/upload byte cap")}
+
     <div class="section">Variance calibration</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
       Runs H.264 CPU then H.265 GPU on Meridian N times. Computes three coefficients of
@@ -4007,7 +4031,9 @@ async def settings_page(request: Request):
                             'h264_bitrate_kbps','h265_bitrate_kbps','av1_bitrate_kbps',
                             'variance_pct','variance_green_x','variance_yellow_x',
                             'conf_green_polls','conf_yellow_polls',
-                            'variance_runs','variance_cooldown_s'];
+                            'variance_runs','variance_cooldown_s',
+                            'queue_anonymous_cap','queue_member_cap',
+                            'upload_size_anonymous_mb','upload_size_member_mb'];
         const str_fields = ['variance_cpu_cmd','variance_gpu_cmd'];
         const body = {{}};
         for (const f of num_fields) {{
@@ -5980,7 +6006,7 @@ async def image_start(request: Request,
             jobs[job_id]["error"] = str(e)
             LOCK_FILE.unlink(missing_ok=True)
 
-    position = queue_control.enqueue(job_id, "image", label, coro)
+    position = queue_control.enqueue(job_id, "image", label, coro, request=request)
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
