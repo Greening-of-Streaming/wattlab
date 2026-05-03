@@ -4011,6 +4011,31 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   .summary-table td{{padding:0.5rem 0.75rem;border-bottom:1px solid var(--panel)}}
   .summary-table td:first-child{{color:var(--text-3);width:40%}}
   .summary-table td:last-child{{color:var(--accent)}}
+
+  /* CR-001 capability matrix — Findings step. Locked rows are the
+     GoS membership pitch; visual treatment must read as product copy,
+     not as a punishment. Two columns ("Public" / "GoS member"), with
+     the member column accent-tinted so the eye lands there. */
+  .cap-matrix{{width:100%;border-collapse:collapse;margin:0.5rem 0 1.5rem;
+               font-family:monospace;font-size:0.83rem}}
+  .cap-matrix thead th{{padding:0.6rem 0.5rem;text-align:left;
+                         border-bottom:1px solid var(--border-3);
+                         color:var(--text-4);font-weight:normal;
+                         font-size:0.72rem;letter-spacing:0.08em;
+                         text-transform:uppercase}}
+  .cap-matrix .cap-col-anon{{width:30%;color:var(--text-3)}}
+  .cap-matrix .cap-col-member{{width:30%;color:var(--accent)}}
+  .cap-matrix tbody td{{padding:0.55rem 0.5rem;
+                         border-bottom:1px solid var(--panel);
+                         color:var(--text-3);line-height:1.5}}
+  .cap-matrix tbody tr td:first-child{{color:var(--text-2);
+                                         font-family:system-ui,sans-serif;
+                                         font-size:0.88rem}}
+  .cap-matrix .cap-yes{{color:var(--accent);font-weight:bold}}
+  .cap-matrix .cap-no{{color:var(--text-5)}}
+  .cap-matrix .cap-partial{{color:var(--warn);font-size:0.78rem}}
+  .cap-cta{{display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1.5rem;
+            justify-content:center}}
   {{AUTH_CHIP_STYLES}}
 </style>
 </head>
@@ -4353,6 +4378,75 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   <div id="summary-content">
     <p style="color:var(--text-3);font-size:0.85rem">Loading results…</p>
   </div>
+
+  <hr class="divider">
+
+  <!-- CR-001: capability matrix. The locked rows are the GoS membership
+       pitch — same identical measurement quality across tiers, but
+       members shape the inputs (custom prompts, custom ffmpeg, all-codecs
+       compares, CSV export, RAG corpus upload). -->
+  <h2 style="margin-top:2rem;margin-bottom:0.5rem">Want to dig deeper?</h2>
+  <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.25rem;line-height:1.6">
+    Everything you've just seen is available to anyone — that's the public OWL.
+    GoS members get to drive the same measurement engine with their own inputs:
+  </p>
+  <table class="cap-matrix">
+    <thead>
+      <tr>
+        <th></th>
+        <th class="cap-col-anon">Public</th>
+        <th class="cap-col-member">GoS member</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Pre-baked workloads, live wall-power &amp; CO<sub>2</sub>e</td>
+        <td class="cap-yes">✓</td>
+        <td class="cap-yes">✓</td>
+      </tr>
+      <tr>
+        <td>Guided tour, methodology, recent-run history</td>
+        <td class="cap-yes">✓</td>
+        <td class="cap-yes">✓</td>
+      </tr>
+      <tr>
+        <td>Custom video upload</td>
+        <td class="cap-partial">≤ 100 MB · 1 job</td>
+        <td class="cap-yes">no cap, scheduled OK</td>
+      </tr>
+      <tr>
+        <td>Custom prompts &amp; custom ffmpeg commands</td>
+        <td class="cap-no">—</td>
+        <td class="cap-yes">✓</td>
+      </tr>
+      <tr>
+        <td>All-codecs sweeps, batch / compare-modes</td>
+        <td class="cap-no">—</td>
+        <td class="cap-yes">✓</td>
+      </tr>
+      <tr>
+        <td>RAG corpus upload (your own PDFs)</td>
+        <td class="cap-no">—</td>
+        <td class="cap-yes">✓</td>
+      </tr>
+      <tr>
+        <td>CSV / JSON export of your runs</td>
+        <td class="cap-no">—</td>
+        <td class="cap-yes">✓</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="cap-cta">
+    <a href="https://www.greeningofstreaming.org/membership" target="_blank"
+       class="btn btn-primary" style="text-decoration:none;display:inline-block;line-height:1">
+      Join GoS — unlock the right column ↗</a>
+    <a href="/auth/sign-in" class="btn btn-secondary"
+       style="text-decoration:none;display:inline-block;line-height:1">
+      Already a member? Sign in</a>
+  </div>
+  <p style="color:var(--text-5);font-size:0.72rem;margin-top:1rem;font-family:monospace;text-align:center">
+    Same measurement quality on both sides. Members shape the inputs; everyone sees the results.
+  </p>
 
   <hr class="divider">
   <div class="btn-row">
