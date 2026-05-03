@@ -40,6 +40,19 @@ def anon_request():
     return StubRequest(headers={}, client=SimpleNamespace(host="8.8.8.8"))
 
 
+def member_request(monkeypatch):
+    """Public IP + a stubbed `auth.member_email_from_request` returning an email.
+
+    `audience.tier()` lazy-imports `auth`; we monkeypatch the resolver there
+    so the test doesn't depend on real signing keys / cookies. Returned
+    StubRequest carries no real cookie — the stub short-circuits the lookup.
+    """
+    import auth as _auth
+    monkeypatch.setattr(_auth, "member_email_from_request",
+                        lambda req: "member@example.org")
+    return StubRequest(headers={}, client=SimpleNamespace(host="8.8.8.8"))
+
+
 # --- Capability constants are all in the table ------------------------------
 
 @pytest.mark.parametrize("cap", capabilities.all_capabilities())
@@ -74,6 +87,45 @@ def test_anonymous_cannot_read_full_settings():
     """SETTINGS_READ_FULL is the editable-vs-read-only render predicate.
     Anonymous gets the read-only view."""
     assert capabilities.can(Tier.Anonymous, capabilities.SETTINGS_READ_FULL) is False
+
+
+# --- Member-tier policy (CR-001 — "members shape inputs") -------------------
+
+@pytest.mark.parametrize("cap", [
+    "custom_prompt",
+    "batch_compare",
+    "rag_corpus_upload",
+    "results_export_csv",
+])
+def test_anonymous_cannot_use_member_capabilities(cap):
+    """The four Member-tier capabilities are the public/private boundary the
+    capability matrix calls out. Anonymous must be denied."""
+    assert capabilities.can(Tier.Anonymous, cap) is False
+
+
+@pytest.mark.parametrize("cap", [
+    "custom_prompt",
+    "batch_compare",
+    "rag_corpus_upload",
+    "results_export_csv",
+])
+def test_member_can_use_member_capabilities(cap):
+    assert capabilities.can(Tier.Member, cap) is True
+
+
+def test_member_can_run_curated_workloads():
+    """Tier-lattice: Member inherits everything Anonymous can do."""
+    for cap in (capabilities.VIDEO_RUN, capabilities.LLM_RUN,
+                capabilities.IMAGE_RUN, capabilities.RAG_RUN,
+                capabilities.CUSTOM_UPLOAD):
+        assert capabilities.can(Tier.Member, cap) is True
+
+
+def test_member_cannot_write_settings_or_run_variance():
+    """Lab-only stays Lab-only — Member is not a settings operator."""
+    assert capabilities.can(Tier.Member, capabilities.SETTINGS_WRITE) is False
+    assert capabilities.can(Tier.Member, capabilities.VARIANCE_RUN) is False
+    assert capabilities.can(Tier.Member, capabilities.SETTINGS_READ_FULL) is False
 
 
 def test_can_raises_on_unknown_capability():
@@ -111,6 +163,31 @@ async def test_requires_passes_for_anonymous_when_anonymous_required():
     await dep(anon_request())  # should not raise
 
 
+@pytest.mark.asyncio
+async def test_requires_raises_403_for_anonymous_when_member_required(monkeypatch):
+    """The Member-tier 403 is the user-facing artefact of the locked rows in
+    the capability matrix. Pin it: Anonymous → CUSTOM_PROMPT raises."""
+    dep = capabilities.requires(capabilities.CUSTOM_PROMPT)
+    with pytest.raises(HTTPException) as exc:
+        await dep(anon_request())
+    assert exc.value.status_code == 403
+    assert "custom_prompt" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_requires_passes_for_member_when_member_required(monkeypatch):
+    dep = capabilities.requires(capabilities.CUSTOM_PROMPT)
+    await dep(member_request(monkeypatch))  # should not raise
+
+
+@pytest.mark.asyncio
+async def test_requires_raises_403_for_member_when_lab_required(monkeypatch):
+    dep = capabilities.requires(capabilities.SETTINGS_WRITE)
+    with pytest.raises(HTTPException) as exc:
+        await dep(member_request(monkeypatch))
+    assert exc.value.status_code == 403
+
+
 # --- Policy snapshot --------------------------------------------------------
 
 def test_required_tier_table_snapshot():
@@ -122,6 +199,7 @@ def test_required_tier_table_snapshot():
     same commit that edits the table — the diff WILL be the security review.
     """
     expected = {
+        # Anonymous — public surface + curated workloads
         "public_page":         Tier.Anonymous,
         "queue_view":          Tier.Anonymous,
         "results_download":    Tier.Anonymous,
@@ -131,6 +209,12 @@ def test_required_tier_table_snapshot():
         "image_run":           Tier.Anonymous,
         "rag_run":             Tier.Anonymous,
         "custom_upload":       Tier.Anonymous,
+        # Member — "members shape inputs" (CR-001 part C1)
+        "custom_prompt":       Tier.Member,
+        "batch_compare":       Tier.Member,
+        "rag_corpus_upload":   Tier.Member,
+        "results_export_csv":  Tier.Member,
+        # Lab — instrument operators
         "settings_read_full":  Tier.Lab,
         "settings_write":      Tier.Lab,
         "variance_run":        Tier.Lab,

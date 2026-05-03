@@ -34,19 +34,24 @@ from audience import Tier, tier as resolve_tier
 # Public, no gating (anyone past today's gate password)
 PUBLIC_PAGE        = "public_page"
 QUEUE_VIEW         = "queue_view"
-RESULTS_DOWNLOAD   = "results_download"
+RESULTS_DOWNLOAD   = "results_download"   # single-record fetch (per-job JSON / CSV used by /demo + recent-runs panels)
 LIVE_TELEMETRY     = "live_telemetry"
 
-# Workload runs — Anonymous today; CR-001 may add per-tier caps
-VIDEO_RUN          = "video_run"
-LLM_RUN            = "llm_run"
-IMAGE_RUN          = "image_run"
-RAG_RUN            = "rag_run"
-CUSTOM_UPLOAD      = "custom_upload"
+# Workload runs — curated/pre-baked variants are Anonymous-allowed
+VIDEO_RUN          = "video_run"          # codec preset run (Meridian or other curated source)
+LLM_RUN            = "llm_run"            # curated task_key (T1/T2/T3) with the bundled prompt
+IMAGE_RUN          = "image_run"          # curated seed prompt
+RAG_RUN            = "rag_run"            # curated single-mode RAG question
+CUSTOM_UPLOAD      = "custom_upload"      # video upload — Anonymous OK but quota-capped (see quotas module, CR-001 part D)
 
-# Lab-only (currently behind _is_local() — to be replaced by capability check
-# in commit C of the spine refactor)
-SETTINGS_READ_FULL = "settings_read_full"   # render-mode predicate (editable inputs vs read-only)
+# Member-tier — the "members shape inputs" half of the CR-001 capability matrix
+CUSTOM_PROMPT      = "custom_prompt"      # free-form LLM/image prompt OR custom ffmpeg args
+BATCH_COMPARE      = "batch_compare"      # all-codecs sweep, LLM all-tasks, CPU-vs-GPU compare, RAG 3-mode compare
+RAG_CORPUS_UPLOAD  = "rag_corpus_upload"  # PDF upload into the RAG corpus
+RESULTS_EXPORT_CSV = "results_export_csv" # bulk CSV/JSON export of run history (≠ RESULTS_DOWNLOAD)
+
+# Lab-only
+SETTINGS_READ_FULL = "settings_read_full" # render-mode predicate (editable inputs vs read-only)
 SETTINGS_WRITE     = "settings_write"
 VARIANCE_RUN       = "variance_run"
 
@@ -56,7 +61,7 @@ VARIANCE_RUN       = "variance_run"
 # This is the policy. Edit here, not in route files.
 
 _REQUIRED_TIER: dict[str, Tier] = {
-    # Anonymous-allowed (today: anyone past gate password)
+    # Anonymous — public surface + curated/pre-baked workloads
     PUBLIC_PAGE:        Tier.Anonymous,
     QUEUE_VIEW:         Tier.Anonymous,
     RESULTS_DOWNLOAD:   Tier.Anonymous,
@@ -67,7 +72,13 @@ _REQUIRED_TIER: dict[str, Tier] = {
     RAG_RUN:            Tier.Anonymous,
     CUSTOM_UPLOAD:      Tier.Anonymous,
 
-    # Lab-only (today: _is_local())
+    # Member — "members shape inputs"
+    CUSTOM_PROMPT:      Tier.Member,
+    BATCH_COMPARE:      Tier.Member,
+    RAG_CORPUS_UPLOAD:  Tier.Member,
+    RESULTS_EXPORT_CSV: Tier.Member,
+
+    # Lab — instrument operators
     SETTINGS_READ_FULL: Tier.Lab,
     SETTINGS_WRITE:     Tier.Lab,
     VARIANCE_RUN:       Tier.Lab,
