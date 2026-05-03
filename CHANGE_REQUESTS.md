@@ -6,7 +6,7 @@ Design / change requests captured for later implementation. Each entry has a sta
 
 ## CR-001 · Two-tier OWL: anonymous public + authenticated members
 
-**Status:** in progress on `feature/cr-001-two-tier` — parts A, B/1, B/2, C1, C2a, C2b shipped in S19. Remaining: C2c (UI affordances on workload pages), D (per-tier queue caps + Anonymous upload size cap), task #10 (retire `WATTLAB_GATE_PASSWORD`).
+**Status:** ✅ shipped 2026-05-03 on `feature/cr-001-two-tier`. All parts (A, B/1, B/2, C1, C2a, C2b, C2c, D, task #10) landed across S19 + S20. Ready to merge to `main`.
 **Triggered by:** demo on 2026-05-01 — discussion of opening OWL to the wider streaming community.
 **Refined 2026-05-01:** anonymous tier explicitly *can* upload (capped at 100 MB, 1 concurrent job per visitor); LAN/SSH-tunnel auto-detection already implements the Lab tier today; quotas restated below.
 
@@ -19,7 +19,13 @@ Design / change requests captured for later implementation. Each entry has a sta
 - **Part C2a** (d6d3482) — `capabilities.gate(request, *caps)` imperative helper. Retag `/llm/run-all` → BATCH_COMPARE; `/rag/build-index` → RAG_CORPUS_UPLOAD. Inline `gate()` on `/llm/run` (prompt set, repeats>1, device='both'), `/video/use-source` + `/video/upload` (preset='all_codecs', custom_cmd*), `/image/start` (device in {both, compare_models}).
 - **Part C2b** (680e4ac) — `curated.py` (CANONICAL_IMAGE_PROMPT, CANONICAL_RAG_QUESTION, CANONICAL_RAG_MODEL). `/image/start`, `/rag/run`, `/rag/run-compare` made `prompt`/`question` optional; absent → server uses curated; present → gate(CUSTOM_PROMPT or BATCH_COMPARE). `/demo` JS dropped the hardcoded prompt/question params on image and RAG.
 
-168 tests passing through C2b.
+### Shipped in S20
+
+- **Part C2c** (8bdc4cb) — `_LOCK_STYLES` + `_lock_badge_html()` + `_lock_class()` + `_disabled_attr()` helpers. Applied across `/llm` (prompt editor, Both, repeats>1, Run All), `/video` (all-codecs preset, custom-cmd textarea now keys on CUSTOM_PROMPT so Members get edit too), `/image` (prompt textarea, Both, Compare Models), `/rag` (question, 3-mode compare, Build/Rebuild). JS on each page reads `CAN_CUSTOM_PROMPT` / `CAN_BATCH_COMPARE` flags from server and skips the corresponding form params for Anonymous so the runtime gate doesn't trip on pre-filled defaults.
+- **Part D** (1d15857) — per-tier concurrent-job caps and per-tier upload size caps. `queue_control._visitor_key()` resolves Anonymous to `a:<ip>`, Member to `m:<email>`, Lab to None (uncapped). `enqueue()` rejects (returns None → 429) when at cap; the worker publishes `current_visitor_key`. Settings keys: `queue_anonymous_cap=1`, `queue_member_cap=4`, `upload_size_anonymous_mb=100`, `upload_size_member_mb=1024`. `/video/upload` Content-Length pre-check returns 413 before reading the body. 12 new queue_control tests. `/settings` page renders a "Tier limits" section.
+- **Task #10** (5d7897c) — `WATTLAB_GATE_PASSWORD` and the gate middleware fully removed. The shared-password gate was the wrong shape once magic-link + per-tier caps shipped: it gated everyone equally and conflated Anonymous identity with password possession. CLAUDE.md, TESTING.md, bin/README.md, bin/stage-on, bin/stage-off all updated to drop the cookie. 77 lines removed from main.py; loopback `/live` now resolves Lab tier directly.
+
+180 tests passing.
 
 ### Factorisation contract (held throughout S19, must keep holding)
 
