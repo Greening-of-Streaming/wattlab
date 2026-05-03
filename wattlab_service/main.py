@@ -575,6 +575,16 @@ _CARBON_JS = """
 </script>
 """
 
+# Small "BETA" chip used next to h1 on AI-workload pages and Guided Tour
+# steps 2/3/4 (LLM, image, RAG). Single source of truth so the framing copy
+# stays consistent: video is production-grade, AI workloads are exploratory.
+_BETA_CHIP = (
+    '<span style="font-size:0.55rem;letter-spacing:0.08em;'
+    'color:var(--text-5);border:1px solid var(--border-3);padding:0.1rem 0.35rem;'
+    'border-radius:2px;vertical-align:middle;margin-left:0.5rem;'
+    'font-family:monospace">BETA</span>'
+)
+
 # "Report an issue" link in every page footer — points to GitHub issue tracker.
 _ISSUES_LINK = (
     '<div style="margin-top:0.75rem;font-family:monospace;font-size:0.72rem;color:var(--text-5)">'
@@ -763,11 +773,17 @@ async def index():
                         border: 1px solid var(--accent); padding: 0.55rem 2rem;
                         font-size: 1rem; display: inline-block; }}
         .nav-video a:hover {{ background: #00ff9922; }}
+        .nav-beta-note {{ font-size: 0.72rem; color: var(--text-5); text-align: center;
+                          line-height: 1.55; max-width: 460px; margin-top: -0.5rem; }}
         .nav-ai {{ display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }}
         .nav-ai a {{ color: var(--text-3); text-decoration: none;
                      border: 1px solid var(--border-2); padding: 0.4rem 1rem;
-                     font-size: 0.85rem; }}
+                     font-size: 0.85rem; display: inline-flex; align-items: baseline;
+                     gap: 0.45rem; }}
         .nav-ai a:hover {{ color: var(--text-2); border-color: var(--text-4); }}
+        .beta-tag {{ font-size: 0.55rem; letter-spacing: 0.08em; color: var(--text-5);
+                     border: 1px solid var(--border-3); padding: 0.05rem 0.3rem;
+                     border-radius: 2px; }}
         .nav-util {{ display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; }}
         .nav-util a {{ color: var(--text-4); text-decoration: none;
                        border: 1px solid var(--border-2); padding: 0.3rem 0.75rem;
@@ -803,11 +819,15 @@ async def index():
     <div class="nav">
         <div class="nav-tour"><a href="/demo">◆ Guided Tour</a></div>
         <div class="nav-video"><a href="/video">▶ Video transcode</a></div>
-        <div class="nav-label">AI workloads</div>
+        <div class="nav-label">Beta · exploratory</div>
+        <div class="nav-beta-note">
+            Energy / quality / faithfulness tradeoffs we're investigating.<br>
+            Less mature than video — signal can be below the P110 floor; interpret with care.
+        </div>
         <div class="nav-ai">
-            <a href="/image">Image generation</a>
-            <a href="/llm">LLM inference</a>
-            <a href="/rag">RAG energy test</a>
+            <a href="/image">Image generation <span class="beta-tag">BETA</span></a>
+            <a href="/llm">LLM inference <span class="beta-tag">BETA</span></a>
+            <a href="/rag">RAG energy test <span class="beta-tag">BETA</span></a>
         </div>
         <div class="nav-util">
             <a href="/queue-status">⏱ Queue</a>
@@ -1880,7 +1900,7 @@ async def llm_page():
 </head>
 <body>
     {_BACK}
-    <h1>LLM Inference Energy Test</h1>
+    <h1>LLM Inference Energy Test {_BETA_CHIP}</h1>
     <div class="subtitle">Greening of Streaming · WattLab · GoS1</div>
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
@@ -2688,7 +2708,7 @@ async def rag_page():
 <body>
     {_BACK}
     {busy_banner}
-    <h1>RAG Energy Test</h1>
+    <h1>RAG Energy Test {_BETA_CHIP}</h1>
     <div class="subtitle">Greening of Streaming · WattLab · GoS1</div>
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
@@ -3785,6 +3805,18 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   </div>
 
   <div id="next-1" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
+    <div style="margin-bottom:1.25rem;padding:0.85rem 1rem;border:1px dashed var(--border-3);
+                background:var(--panel-2);font-size:0.78rem;color:var(--text-3);
+                line-height:1.6;max-width:560px">
+      <div style="color:var(--text-5);font-size:0.6rem;letter-spacing:0.1em;
+                  text-transform:uppercase;margin-bottom:0.4rem">
+        Entering beta · exploratory</div>
+      That was the production-grade GoS measurement — video transcoding is what
+      we report on with confidence. The next three steps cover exploratory AI
+      workloads (LLM, image, RAG): less mature, signal can sit below the P110
+      floor on small tasks, and quality / faithfulness matter alongside energy.
+      Stop here if you only wanted the streaming-impact story.
+    </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="goStep(0)">← Welcome</button>
       <button class="btn btn-primary" onclick="goStep(2)">Next: LLM inference →</button>
@@ -3795,7 +3827,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
 
 <!-- Step 2: LLM -->
 <div class="step" id="step-2">
-  <h1>LLM Inference</h1>
+  <h1>LLM Inference {{BETA_CHIP}}</h1>
 
   <div class="band">
     <div class="band-label">What this shows</div>
@@ -3850,7 +3882,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
 
 <!-- Step 3: Image generation -->
 <div class="step" id="step-3">
-  <h1>Image Generation</h1>
+  <h1>Image Generation {{BETA_CHIP}}</h1>
 
   <div class="band">
     <div class="band-label">What this shows</div>
@@ -3896,7 +3928,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
 
 <!-- Step 4: RAG -->
 <div class="step" id="step-4">
-  <h1>RAG Energy Cost</h1>
+  <h1>RAG Energy Cost {{BETA_CHIP}}</h1>
 
   <div class="band">
     <div class="band-label">What this shows</div>
@@ -4906,7 +4938,7 @@ async def image_page():
 <body>
     {_BACK}
     {busy_banner}
-    <h1>Image Generation Test</h1>
+    <h1>Image Generation Test {_BETA_CHIP}</h1>
     <div class="subtitle">SD-Turbo (~1B) · SDXL-Turbo (~3.5B) · 512×512 · ROCm fp16 on RX 7800 XT</div>
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
@@ -5421,7 +5453,8 @@ async def demo_page():
             .replace("{CONF_GREEN_X}",       str(s.get("variance_green_x",   "—")))
             .replace("{CONF_YELLOW_X}",      str(s.get("variance_yellow_x",  "—")))
             .replace("{CONF_GREEN_POLLS}",   str(s.get("conf_green_polls",   "—")))
-            .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—"))))
+            .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
+            .replace("{BETA_CHIP}",          _BETA_CHIP))
 
 
 _METHODOLOGY_HTML = """<!DOCTYPE html>
