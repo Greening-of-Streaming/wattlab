@@ -107,4 +107,6 @@ The service runs as a systemd unit on GoS1 (`systemctl status wattlab`).
 
 - [`WATTLAB_SPEC.md`](WATTLAB_SPEC.md) — full product spec, measurement protocol, roadmap
 - [`JOURNAL.md`](JOURNAL.md) — session-by-session build log with findings
+- [`STAGING.md`](STAGING.md) — staging mode (swap onto a feature branch with a maintenance page)
+- [`bin/README.md`](bin/README.md) — operator-facing shell scripts (`stage-on`, `stage-off`, …)
 - [`CLAUDE.md`](CLAUDE.md) — project context for Claude Code (AI assistant config)
