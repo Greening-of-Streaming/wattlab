@@ -265,6 +265,19 @@ _CARBON_JS = """
     'ΔE rounded to 0 Wh — the task was too short or too efficient '
     + 'to register above the P110 ~1W × 1s poll noise floor. '
     + 'Try batch mode for reliable µ-scale readings.';
+  // EV-distance equivalence — relatable physical-world comparator for the
+  // CO2e block. ~50 g CO2e/km is a typical European EV operational
+  // intensity on a lifecycle grid mix (Transport & Environment 2024 fleet
+  // average). Imprecise on purpose; the point is "give visitors a feel for
+  // the magnitude in something they understand."
+  var EV_G_PER_KM = 50;
+  function fmtEvDistance(grams){
+    if (grams == null || grams === 0) return '';
+    var km = grams / EV_G_PER_KM;
+    if (km >= 1)     return km.toFixed(2) + ' km';
+    if (km >= 0.001) return (km * 1000).toFixed(1) + ' m';
+    return (km * 1e6).toFixed(0) + ' mm';
+  }
   function fmtAge(s){
     if (s == null) return '';
     if (s < 90)   return Math.round(s) + 's ago';
@@ -294,7 +307,7 @@ _CARBON_JS = """
     var live = i.source === 'live';
     if (c.grams === 0) {
       return '<div class="metric" title="' + BELOW_FLOOR_TOOLTIP + '">'
-           + '<span>CO₂e</span>'
+           + '<span>CO₂e (est.)</span>'
            + '<span class="val" style="color:var(--text-4)">— '
            + '<span style="color:var(--text-5);font-size:0.7rem;font-family:monospace;'
            + 'margin-left:0.5rem;font-weight:normal">below measurement floor</span>'
@@ -303,7 +316,7 @@ _CARBON_JS = """
     var freshness = live
       ? (i.zone_label + ' · ' + i.g_per_kwh + ' g/kWh · ' + fmtAge(i.age_s))
       : (i.zone_label + ' · ' + i.g_per_kwh + ' g/kWh · ' + (i.year ? i.year + ' mean' : 'annual mean'));
-    return '<div class="metric"><span>CO₂e</span>'
+    return '<div class="metric"><span>CO₂e (est.)</span>'
          + '<span class="val">' + fmtMass(c.grams)
          + (live ? liveBadge() : estBadge())
          + '<span style="color:var(--text-4);font-size:0.7rem;font-family:monospace;'
@@ -376,6 +389,35 @@ _CARBON_JS = """
       providerStr = ' · ' + prov;
     }
 
+    // "High-level estimate" caption — frames the whole strip as derived/
+    // estimated context. The energy figures above the strip ARE measured;
+    // these CO2e numbers are calculated from them × a grid-intensity
+    // estimate, useful for comparison with other activities (driving an
+    // EV, etc.) but never the primary measurement claim.
+    var estimateCaption =
+        '<div style="color:var(--text-5);font-size:0.6rem;letter-spacing:0.08em;'
+      + 'text-transform:uppercase;margin-bottom:0.4rem"'
+      + ' title="Wh × grid intensity. Energy is measured at the wall; this '
+      + 'block is derived for carbon-accounting comparison.">'
+      + 'High-level CO₂e estimate · for comparison with other activities'
+      + '</div>';
+
+    // EV-distance equivalence — a relatable physical-world comparator.
+    // Suppressed if homeGrams is null/0 (already covered by the headline).
+    var evHtml = '';
+    if (homeGrams != null && homeGrams > 0) {
+      var evDist = fmtEvDistance(homeGrams);
+      if (evDist) {
+        evHtml =
+            '<div style="color:var(--text-4);font-size:0.7rem;font-family:monospace;'
+          + 'margin-top:0.15rem" '
+          + 'title="Typical European EV at ~50 g CO2e/km (Transport & Environment '
+          + '2024 fleet average). Relatable scale, not precise.">'
+          + '≈ ' + evDist + ' driving a typical EV'
+          + '</div>';
+      }
+    }
+
     var headlineHtml =
         '<div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:0.4rem 0.75rem;'
       + 'margin-bottom:0.3rem">'
@@ -392,7 +434,8 @@ _CARBON_JS = """
       + (homeIntensity != null
           ? (homeIntensity + ' g/kWh · ' + homeFreshness + providerStr)
           : 'unknown')
-      + '</div>';
+      + '</div>'
+      + evHtml;
 
     // Pinned reference row — same zone as the headline, but its static
     // annual mean. When the headline is LIVE this gives visitors a baseline
@@ -553,7 +596,8 @@ _CARBON_JS = """
       : '';
 
     el.innerHTML =
-        headlineHtml
+        estimateCaption
+      + headlineHtml
       + '<details style="margin-top:0.6rem">'
       + '<summary style="cursor:pointer;color:var(--text-3);font-size:0.78rem;'
       + 'list-style:none;padding:0.25rem 0;border-top:1px solid var(--border-2)">'
