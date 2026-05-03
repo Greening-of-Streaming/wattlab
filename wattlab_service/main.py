@@ -344,9 +344,9 @@ _CARBON_JS = """
         + 'style="display:flex;align-items:baseline;flex-wrap:wrap;gap:0.4rem 0.75rem">'
         + '<span style="color:var(--text-4);font-size:0.7rem;letter-spacing:0.04em;'
         + 'text-transform:uppercase">CO₂e</span>'
-        + '<span style="color:var(--text-3);font-size:1.5rem;font-weight:bold;'
+        + '<span style="color:var(--text-3);font-size:1rem;font-weight:bold;'
         + 'font-family:monospace;line-height:1">—</span>'
-        + '<span style="color:var(--text-4);font-size:0.78rem;font-family:monospace">'
+        + '<span style="color:var(--text-4);font-size:0.72rem;font-family:monospace">'
         + 'below P110 measurement floor</span>'
         + '</div>'
         + '<div style="color:var(--text-5);font-size:0.7rem;font-family:monospace;margin-top:0.3rem">'
@@ -381,7 +381,7 @@ _CARBON_JS = """
       + 'margin-bottom:0.3rem">'
       + '<span style="color:var(--text-4);font-size:0.7rem;letter-spacing:0.04em;'
       + 'text-transform:uppercase">CO₂e</span>'
-      + '<span style="color:var(--accent);font-size:1.5rem;font-weight:bold;font-family:monospace;'
+      + '<span style="color:var(--accent);font-size:1rem;font-weight:bold;font-family:monospace;'
       + 'line-height:1">' + (homeGrams != null ? fmtMass(homeGrams) : '—') + '</span>'
       + (homeLive ? liveBadge() : estBadge())
       + '<span style="color:var(--text-3);font-size:0.78rem;font-family:monospace">'
@@ -1372,7 +1372,6 @@ async def video_page(request: Request):
         return `
         <div class="single-report">
             <h2>Energy Report — ${{r.preset_label}}</h2>
-            ${{wlCarbonStrip(e.delta_e_wh, r.preset_label)}}
             <div class="section-title">Encode</div>
             ${{metricRow('Preset', r.preset_detail)}}
             ${{metricRow('Duration', e.delta_t_s, 's')}}
@@ -1391,6 +1390,7 @@ async def video_page(request: Request):
             ${{pptNote}}
             <div class="conf-badge" style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
             ${{e.confidence.hint ? '<div style="margin-top:0.35rem;color:var(--text-3);font-size:0.72rem">' + e.confidence.hint + '</div>' : ''}}
+            ${{wlCarbonStrip(e.delta_e_wh, r.preset_label)}}
         </div>`;
     }}
 
@@ -1455,7 +1455,6 @@ async def video_page(request: Request):
         return `
         <div class="report">
             <h2>Comparison Report</h2>
-            ${{wlCarbonStrip(stripWh, stripLbl)}}
             <div class="analysis-box">
                 <h3>Finding</h3>
                 <div class="finding">${{a.finding}}</div>
@@ -1465,6 +1464,7 @@ async def video_page(request: Request):
                 ${{col(cpu)}}
                 ${{col(gpu)}}
             </div>
+            ${{wlCarbonStrip(stripWh, stripLbl)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -1542,7 +1542,6 @@ async def video_page(request: Request):
         return `
         <div class="report">
             <h2>All Codecs — Energy &amp; Speed Matrix</h2>
-            ${{wlCarbonStrip(stripWh, stripLbl)}}
             <table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:0.5rem">
                 <thead><tr style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em">
                     <th style="text-align:left;padding:0.3rem 0.5rem 0.5rem 0">Codec</th>
@@ -1560,6 +1559,7 @@ async def video_page(request: Request):
             ${{highlights}}
             <div style="margin-top:1rem;color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Per-codec detail</div>
             ${{details}}
+            ${{wlCarbonStrip(stripWh, stripLbl)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -2176,7 +2176,6 @@ async def llm_page():
         const modeNote = r.warm ? '🌡 Warm (model pre-loaded)' : '❄ Cold (model unloaded before baseline)';
         return `<div class="result-box">
                 <h2>Energy Report — ${{r.model_label}} · ${{r.task_label}}</h2>
-                ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + r.task_label)}}
                 <div class="section-title">Inference</div>
                 <div class="metric"><span>Model</span><span class="val">${{r.model_label}} (${{r.model_params}})</span></div>
                 <div class="metric"><span>Task</span><span class="val">${{r.task_label}}</span></div>
@@ -2201,6 +2200,7 @@ async def llm_page():
                 <div class="conf-badge" style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
                 <div class="section-title">Response preview</div>
                 <div class="response-box">${{i.response}}</div>
+                ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + r.task_label)}}
                 <div class="scope-note">${{r.scope}}</div>
             </div>`;
     }}
@@ -2223,7 +2223,6 @@ async def llm_page():
         }}).join('');
         return `<div class="result-box">
                 <h2>Batch Report — ${{r.model_label}} · ${{r.task_label}}</h2>
-                ${{wlCarbonStrip(agg.delta_e_wh_mean, r.model_label + ' · ' + r.task_label + ' (mean of ' + r.repeats + ')')}}
                 <div class="section-title">Run parameters</div>
                 <div class="metric"><span>Model</span><span class="val">${{r.model_label}} (${{r.model_params}})</span></div>
                 <div class="metric"><span>Task</span><span class="val">${{r.task_label}}</span></div>
@@ -2258,6 +2257,7 @@ async def llm_page():
                     <span class="val">${{t.gpu_base}}→${{t.gpu_end}}°C</span></div>
                 <div class="section-title">Response preview (last run)</div>
                 <div class="response-box">${{r.runs[r.runs.length-1].inference.response}}</div>
+                ${{wlCarbonStrip(agg.delta_e_wh_mean, r.model_label + ' · ' + r.task_label + ' (mean of ' + r.repeats + ')')}}
                 <div class="scope-note">${{r.scope}}</div>
             </div>`;
     }}
@@ -2276,7 +2276,6 @@ async def llm_page():
             + ' (' + (a.energy_winner ? a.energy_winner + ' wins' : 'best of CPU/GPU') + ')';
         return `<div class="result-box">
             <h2>CPU vs GPU — ${{r.model_label}} · ${{r.task_label}}</h2>
-            ${{wlCarbonStrip(_stripWh, _stripLbl)}}
             <div style="background:#0d1a0d;border:1px solid #00ff9933;
                         padding:1rem;margin-bottom:1.25rem;font-size:0.82rem;line-height:1.7">
               ${{a.finding}}
@@ -2311,6 +2310,7 @@ async def llm_page():
             </div>
             <div class="section-title">GPU response preview</div>
             <div class="response-box">${{gi.response}}</div>
+            ${{wlCarbonStrip(_stripWh, _stripLbl)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -2338,11 +2338,11 @@ async def llm_page():
         const _t3 = r.tasks && r.tasks.T3 && r.tasks.T3.energy ? r.tasks.T3.energy.delta_e_wh : null;
         return `<div class="result-box">
             <h2>All Tasks — ${{r.model_label}} (${{r.model_params}})</h2>
-            ${{wlCarbonStrip(_t3, r.model_label + ' · T3 long generation')}}
             <div style="color:var(--text-3);font-size:0.78rem;margin-bottom:1rem">
                 ${{r.warm ? '🌡 Warm' : '❄ Cold'}} · ${{r.device.toUpperCase()}} · 3 tasks
             </div>
             ${{cards}}
+            ${{wlCarbonStrip(_t3, r.model_label + ' · T3 long generation')}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -2998,7 +2998,6 @@ async def rag_page():
         document.getElementById('status').innerHTML = `
             <div class="result-box">
                 <h2>Result — ${{r.model_label}} · ${{ragModeLabels[r.rag_mode] || r.rag_mode}}</h2>
-                ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + (ragModeLabels[r.rag_mode] || r.rag_mode))}}
                 <div class="section-title">Question</div>
                 <div style="color:var(--text-2);font-size:0.82rem;margin-bottom:0.75rem">${{r.question}}</div>
                 ${{retrievalHtml}}
@@ -3017,6 +3016,7 @@ async def rag_page():
                     <span class="val conf-badge">${{conf.flag||'—'}} ${{conf.label||''}}</span></div>
                 <div class="section-title">Answer</div>
                 <div class="response-box">${{inf.response}}</div>
+                ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + (ragModeLabels[r.rag_mode] || r.rag_mode))}}
                 <div class="scope-note">${{r.scope}}</div>
                 <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
                     <a href="/results/llm/${{jobId}}/download.json" download
@@ -3169,8 +3169,8 @@ async def rag_page():
             '<div style="border:1px solid var(--border);padding:1.5rem">'
             + '<div style="color:var(--accent);font-size:1.1rem;margin-bottom:0.25rem">Comparison \u2014 ' + r.model_label + '</div>'
             + '<div style="color:var(--text-3);font-size:0.82rem;margin-bottom:1rem">' + r.question + '</div>'
-            + wlCarbonStrip(_stripWh, _stripLbl)
             + cards
+            + wlCarbonStrip(_stripWh, _stripLbl)
             + '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.75rem">' + (r.scope||'') + '</div>'
             + '<div style="display:flex;gap:0.5rem;margin-top:0.75rem">'
             + '<a href="/results/llm/' + jobId + '/download.json" download style="color:var(--text-3);font-size:0.75rem;text-decoration:none">\u2193 JSON</a>'
@@ -5197,7 +5197,6 @@ function renderImageBoth(r) {{
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>CPU vs GPU — Image Generation</h2>
-      ${{wlCarbonStrip(_stripWh, 'Image gen · most efficient device')}}
       <div style="background:var(--panel);border:1px solid var(--border-3);padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.85rem;color:var(--text-2)">
         ${{a.finding}}
       </div>
@@ -5208,6 +5207,7 @@ function renderImageBoth(r) {{
       <div style="font-size:0.75rem;color:var(--text-4);margin-top:0.5rem">
         Prompt: "${{r.full_prompt}}" · modifier: <em>${{r.modifier}}</em>
       </div>
+      ${{wlCarbonStrip(_stripWh, 'Image gen · most efficient device')}}
       <p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
@@ -5240,7 +5240,6 @@ function renderCompareModels(r) {{
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>SD-Turbo vs SDXL-Turbo — Same Prompt + Seed</h2>
-      ${{wlCarbonStrip(_stripWh, 'Image gen · smaller of the two models')}}
       <div style="background:var(--panel);border:1px solid var(--border-3);padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.85rem;color:var(--text-2)">
         ${{a.finding}}
       </div>
@@ -5255,6 +5254,7 @@ function renderCompareModels(r) {{
         Quality is subjective. Judge the visual output above — is the larger model's image worth
         ${{a.energy_ratio_large_over_small}}× the energy for this prompt?
       </div>
+      ${{wlCarbonStrip(_stripWh, 'Image gen · smaller of the two models')}}
       <p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
@@ -5273,7 +5273,6 @@ function renderResult(r) {{
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>Result</h2>
-      ${{wlCarbonStrip(e.delta_e_wh, 'Image generation total run')}}
       <div class="kpis">
         <div class="kpi">
           <div class="val">${{fmt(e.wh_per_image,4)}} Wh</div>
@@ -5301,6 +5300,7 @@ function renderResult(r) {{
       <div class="modifier-note" style="color:var(--text-4);font-size:0.75rem;margin-top:0.75rem">
         Modifier applied this run: "<em>${{r.modifier}}</em>"
       </div>
+      ${{wlCarbonStrip(e.delta_e_wh, 'Image generation total run')}}
       <p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
