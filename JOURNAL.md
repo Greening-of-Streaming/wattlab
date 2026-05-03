@@ -7,6 +7,64 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 18 — 2026-05-03
+
+### What we did
+
+**CR-010 closure · CR-006 closure · CR-011 OWL-side artifacts (system config still pending) · variance recalibration · gitignore tidy**
+
+A clean-up + ship session. Working tree from S17 had ~155 lines of uncommitted main.py work that turned out to be CR-010 and CR-006 already implemented and already loaded into the running service (the `__pycache__` mtimes told the tale). Plus drafted but uncommitted CR-011 OWL-side artifacts. Day's work was: split the main.py diff into two clean per-CR commits, ship the CR-011 scripts, fix the noisy gitignore situation, and hand the CR-011 system-side config off as a sudo runbook for the owner.
+
+### Code — CR-010 (carbon comparison strip)
+
+- **`_CARBON_JS` reference row** (main.py:~394–~575) — every result page's carbon comparison `<details>` now opens with a pinned **home-zone reference row**: same zone as the live headline, but its Ember 2024 annual mean. When live and reference diverge by ≥25%, a one-line note flags whether today's grid is "cleaner than" or "dirtier than" the year's mean (smaller deltas suppressed as noise). Reference row suppressed when the headline itself is EST — no value duplicating the same number.
+- **Live-source explainer dispatch on `HOME_ZONE`** — formerly hard-coded to France/Eco2mix wording. Now dispatches: FR gets the Eco2mix→ElectricityMaps→Ember ladder copy; any other home zone gets ElectricityMaps→Ember. Full live-source ladder for non-FR zones is a deferred CR; this just stops the wording from lying if the server moves zones.
+- **Live mix subheading dispatch** — `mixZone` and `mixProvider` now come from the live response (`zone_label`, `provider`) rather than the hard-coded "French grid right now (live, via Eco2mix)" string.
+
+### Code — CR-006 (BETA framing for AI workloads)
+
+- **`_BETA_CHIP` constant** (main.py:~575) — single source of truth: small monospace `BETA` chip with the project's border + text-5 colour tokens. Used everywhere the framing copy needs to land.
+- **Landing-page nav** (main.py:~773 + ~819) — `nav-label` "AI workloads" → "Beta · exploratory" with a short explainer below ("Energy / quality / faithfulness tradeoffs we're investigating. Less mature than video — signal can be below the P110 floor; interpret with care."). Each AI-workload nav button picks up an inline `<span class="beta-tag">BETA</span>`. CSS additions for `.nav-beta-note` and `.beta-tag`.
+- **Page h1s** — `/llm` (main.py:1900), `/rag` (main.py:2708), `/image` (main.py:4938) all gain `{_BETA_CHIP}` next to their h1 text. Streaming `/video` deliberately untouched — that's the headline.
+- **Demo Tour entering-beta band** (main.py:~3805) — after step 1 (the production-grade video result), a dashed-border framing band appears: "Entering beta · exploratory" header + body text inviting visitors to stop here if they only wanted the streaming-impact story. Steps 2/3/4 (LLM, image, RAG) gain `{{BETA_CHIP}}` placeholders next to their h1s, substituted at render time by `demo_page()` (main.py:~5453).
+
+### Code — CR-011 OWL-side artifacts (system config NOT YET applied)
+
+- **`bin/stage-on`** — drain queue (60s timeout, polls `/live` for `queue_depth`), touch `/tmp/owl-maintenance`, optional `git checkout <branch>`, `sudo systemctl restart wattlab`. Sources `.env` for the gate cookie so loopback `/live` calls can authenticate.
+- **`bin/stage-off`** — optional `git checkout main`, `sudo systemctl restart`, **wait for `/live` to respond OK (30s budget)**, then remove the flag. If the service fails to come back up the flag stays raised and the script exits non-zero — visitors keep seeing the maintenance page until a successful `stage-off`.
+- **`wattlab_service/static/maintenance.html`** — owl mark + GoS framing + "5–15 minutes" expectation, no JS. Served by nginx directly so no FastAPI dependency during restart.
+- **`STAGING.md`** — workflow doc + nginx vhost edits + rollback notes. Captures the queue-drain trade-off (didn't implement snapshot+restore for pending jobs because that would require refactoring every `enqueue()` call site to serialise (type, params) tuples plus a coroutine factory registry — ~half a day touching four modules; drain-with-timeout is ~10 lines of bash and acceptable given GoS1's typical idle queue depth ≈ 0).
+
+### Variance recalibration
+
+Settings.json picked up runtime updates from a calibration run during S17/S18 testing: `variance_pct` 1.08 → 3.62 (idle 1.79→6.66, CPU 0.82→3.72, GPU 0.64→0.49), `variance_runs` 10→15, `variance_cooldown_s` 90→60. Confidence multipliers (`variance_green_x=5`, `variance_yellow_x=2`) unchanged — 🟢/🟡/🔴 boundaries automatically widen. `baseline_polls` 7→8, `video_cooldown_s` 30→60 to match the recalibrated noise envelope. Three new `*_bitrate_kbps` fields (4000/2000/1500) added so the canonical ABR all-codecs benchmark values live in settings.
+
+### Tidy
+
+- **`.gitignore`** expanded for `.chroma/`, `corpus/` (RAG runtime data + source PDFs), `*.bak`, `*.session*`, `amdgpu-install_*.deb`, plus `REM/` and `TRAINING_REM_5MIN.md` (sibling project — REM has its own repo at `dom-robinson/stats`; the in-repo dir is just a working copy for cross-project context).
+- **`__pycache__/*.pyc`** — four files (`llm`, `main`, `sources`, `video`) had slipped into the index before `*.pyc` was in `.gitignore`. `git rm --cached`'d so they stop appearing as modified noise on every restart.
+
+### What's NOT done
+
+- **CR-011 system-side config** — nginx vhost edits (`error_page 503 @maintenance`, `/static/` location override, `if (-f /tmp/owl-maintenance)` returns) plus adding `www-data` to the `gos` group are documented in `STAGING.md` but not yet applied. Requires sudo. Handed off to owner as a runbook this session — `bin/stage-on`/`stage-off` are inert until those land.
+- **Smoke test of CR-011 end-to-end** — pending the system config above. Plan: touch flag → curl public (expect 503 + maintenance.html) → curl LAN (expect 200 + normal site) → rm flag → curl public (expect 200).
+
+### What's next
+
+- **CR-011 system config** — owner to run sudo steps; Claude verifies with smoke test.
+- **CR-001b — demo lock** — uses the `enqueue(request=None)` seam from S17. Owner-identity check before enqueue; gate password as stopgap owner identity until CR-001 lands magic-link auth.
+- **CR-001 — two-tier OWL** — magic-link auth, capability-tier UI, conference launch (mid-June 2026).
+
+### Commits
+
+- `63d38fc` Session 18 part 1: close CR-010 (carbon comparison strip — home-zone reference row)
+- `4c0b496` Session 18 part 2: close CR-006 (BETA framing for AI workloads)
+- `13ba8af` Session 18 part 3: settings.json — variance recalibration + bitrate fields
+- `d622505` Session 18 part 4: CR-011 OWL-side — staging via maintenance-page swap
+- `8dcad5e` Session 18 part 5: tidy gitignore + untrack .pyc files
+
+---
+
 ## Session 17 — 2026-05-01 / 2026-05-02
 
 ### What we did
