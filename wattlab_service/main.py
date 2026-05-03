@@ -394,6 +394,58 @@ _CARBON_JS = """
           : 'unknown')
       + '</div>';
 
+    // Pinned reference row — same zone as the headline, but its static
+    // annual mean. When the headline is LIVE this gives visitors a baseline
+    // to judge whether today's grid is unusually clean or dirty for the
+    // zone. Suppressed when the headline is itself EST (no value in
+    // duplicating the same number) or if no static is configured for home.
+    // Auto-follows HOME_ZONE — if the server moves, label/intensity/year
+    // come from /carbon's static_table[home] without code changes here.
+    var referenceRowHtml = '';
+    var divergenceHtml = '';
+    if (homeLive) {
+      var refStatic = statics[home];
+      var refIntensity = refStatic && refStatic.g_per_kwh;
+      if (refIntensity != null) {
+        var refYear  = refStatic.year;
+        var refLabel = refStatic.label || home;
+        var refGrams = (wh / 1000) * refIntensity;
+        referenceRowHtml =
+            '<div style="display:flex;align-items:baseline;justify-content:space-between;'
+          + 'gap:0.5rem;padding:0.35rem 0.4rem;font-family:monospace;'
+          + 'background:var(--panel);border-left:2px solid var(--border-3)">'
+          + '<span style="color:var(--text-2);flex:1;min-width:140px">' + refLabel
+          + '<span title="Ember annual mean — reference baseline for the home zone" '
+          + 'style="color:var(--text-4);font-size:0.6rem;font-family:monospace;letter-spacing:0.06em;'
+          + 'padding:0.05rem 0.3rem;border:1px solid var(--border-3);border-radius:2px;'
+          + 'margin-left:0.4rem">REF</span></span>'
+          + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
+          + 'min-width:90px;text-align:right">' + fmtMass(refGrams) + '</span>'
+          + '<span style="min-width:90px"></span>'
+          + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
+          + 'min-width:160px;text-align:right">'
+          + refIntensity + ' g/kWh · ' + (refYear ? refYear + ' mean' : 'annual mean')
+          + '</span>'
+          + '</div>';
+        // Conditional divergence note — only when live deviates from the
+        // reference by ≥25%. Small day-to-day swings are noise and would
+        // just add clutter on every render.
+        if (homeIntensity != null && refIntensity > 0) {
+          var dev = (homeIntensity - refIntensity) / refIntensity;
+          if (Math.abs(dev) >= 0.25) {
+            var pctStr = (Math.abs(dev) * 100).toFixed(0) + '%';
+            var dir = dev < 0 ? 'cleaner than' : 'dirtier than';
+            divergenceHtml =
+                '<div style="padding:0.2rem 0.5rem 0.5rem;color:var(--text-3);'
+              + 'font-size:0.72rem;font-style:italic">'
+              + 'Today’s grid is ~' + pctStr + ' ' + dir + ' the '
+              + (refYear ? refYear + ' ' : '') + 'mean for this zone.'
+              + '</div>';
+          }
+        }
+      }
+    }
+
     // Comparison rows + provenance go inside a collapsed <details>.
     var comparisonRows = zones.filter(function(z){ return z !== home; }).map(function(z){
       var s = statics[z] || {};
@@ -446,30 +498,59 @@ _CARBON_JS = """
                + '<span style="color:var(--text);min-width:50px;text-align:right">' + pctStr + '</span>'
                + '</div>';
         }).join('');
+        var mixZone = homeI.zone_label || home;
+        var mixProvider = homeI.provider || 'live';
         mixHtml =
             '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2)">'
           + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
           + 'text-transform:uppercase;margin-bottom:0.3rem">'
-          + 'French grid right now (live, via Eco2mix)</div>'
+          + mixZone + ' grid right now (live, via ' + mixProvider + ')</div>'
           + rows
           + '</div>';
       }
     }
+
+    // Live source explainer — FR has the Eco2mix→ElectricityMaps ladder;
+    // any other home zone uses ElectricityMaps directly. The full live-
+    // source dispatch is a deferred CR; until then this just keeps the
+    // wording correct if HOME_ZONE flips.
+    var homeLabel = (homeI.zone_label || home);
+    var liveExplain = (home === 'FR')
+      ? 'Live (home zone, ' + homeLabel + '): '
+        + '<a href="https://www.rte-france.com/eco2mix" target="_blank" rel="noopener" '
+        + 'style="color:var(--text-3)">Eco2mix</a> — RTE/Etalab official French TSO data, '
+        + 'refreshed every 15 min. Falls back to '
+        + '<a href="https://www.electricitymaps.com" target="_blank" rel="noopener" '
+        + 'style="color:var(--text-3)">ElectricityMaps</a>, then to estimated if both unavailable.'
+      : 'Live (home zone, ' + homeLabel + '): '
+        + '<a href="https://www.electricitymaps.com" target="_blank" rel="noopener" '
+        + 'style="color:var(--text-3)">ElectricityMaps</a> real-time grid intensity. '
+        + 'Falls back to estimated annual mean if unavailable.';
 
     var formulaHtml =
         '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2);'
       + 'color:var(--text-4);font-size:0.7rem;line-height:1.55">'
       + '<div style="margin-bottom:0.25rem"><strong style="color:var(--text-3)">How this is calculated</strong></div>'
       + 'gCO₂e&nbsp;=&nbsp;Wh × (g/kWh) ÷ 1000<br>'
-      + 'Live (home zone, France): <a href="https://www.rte-france.com/eco2mix" target="_blank" rel="noopener" '
-      + 'style="color:var(--text-3)">Eco2mix</a> — RTE/Etalab official French TSO data, refreshed every 15 min. '
-      + 'Falls back to <a href="https://www.electricitymaps.com" target="_blank" rel="noopener" '
-      + 'style="color:var(--text-3)">ElectricityMaps</a>, then to estimated if both unavailable.<br>'
-      + 'Estimated (other zones &amp; fallback): <a href="https://ember-energy.org" target="_blank" rel="noopener" '
-      + 'style="color:var(--text-3)">Ember</a> 2024 annual mean grid carbon intensity. Static so values '
-      + 'do not drift between page loads.<br>'
+      + liveExplain + '<br>'
+      + 'Estimated (reference &amp; comparison zones): '
+      + '<a href="https://ember-energy.org" target="_blank" rel="noopener" '
+      + 'style="color:var(--text-3)">Ember</a> 2024 annual mean grid carbon intensity. '
+      + 'Static so values do not drift between page loads.<br>'
       + 'Raw module status: <a href="/carbon" style="color:var(--text-3)">/carbon</a>'
       + '</div>';
+
+    // Reference-row block: the pinned home-zone EST row + its divergence
+    // note, prefixed with a small heading so visitors read it as
+    // "baseline for the headline above" rather than another comparison.
+    var referenceBlockHtml = referenceRowHtml
+      ? ('<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
+         + 'text-transform:uppercase;margin-bottom:0.3rem">'
+         + 'For reference — typical for this zone</div>'
+         + referenceRowHtml
+         + divergenceHtml
+         + '<div style="height:0.5rem"></div>')
+      : '';
 
     el.innerHTML =
         headlineHtml
@@ -480,6 +561,7 @@ _CARBON_JS = """
       + 'If this had run elsewhere · how this is calculated'
       + '</summary>'
       + '<div style="margin-top:0.5rem">'
+      + referenceBlockHtml
       + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
       + 'text-transform:uppercase;margin-bottom:0.3rem">'
       + 'Same ' + fmtG(wh) + ' Wh, on other grids (Ember 2024 annual means)</div>'
