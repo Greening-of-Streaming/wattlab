@@ -417,7 +417,7 @@ Implementation note: this is the same Ember 2024 number the existing comparison 
 
 ## CR-011 · Staging environment via maintenance-page swap
 
-**Status:** captured 2026-05-01 — pre-conference enabler.
+**Status:** ✅ done 2026-05-03 (Session 18 part 4 — `d622505`; system-side nginx config + `www-data` group applied + smoke-tested same day). Follow-up captured as **CR-015** (auto-lower the maintenance flag on inactivity).
 **Triggered by:** spine-refactor session — every restart-and-test loop currently takes the public service down with no friendly intermediate state, and there's no path for the owner to test a feature branch live before merging.
 
 ### Problem
@@ -558,6 +558,65 @@ const _stripLbl = r.model_label + ' · 3-mode RAG comparison (best of)';
 ```
 
 Uses `Math.min` across the three modes (most efficient mode) — same idiom as `/llm` CPU-vs-GPU which uses the lower of CPU/GPU energy. Inserted between the question line and the per-mode cards.
+
+---
+
+## CR-015 · Auto-lower maintenance flag on inactivity (CR-011 follow-up)
+
+**Status:** captured 2026-05-03 — quality-of-life follow-up to CR-011.
+**Triggered by:** owner observation right after CR-011 shipped: the maintenance flag persists indefinitely until `stage-off` is run. Walking away from the desk leaves public visitors on the maintenance page until the owner remembers to come back. Two real use cases shape the design:
+
+1. **5-minute conference demo** — short, well-defined window. If the owner forgets to lower the flag, public visitors see "Brief maintenance" for hours.
+2. **1-hour testing session** — longer, intermittent activity (read code, fix bug, re-test). The owner is around but not necessarily poking the system every minute.
+
+A naive "auto-lower after N hours" timer doesn't serve both: short enough to protect case 1 will fire mid-test in case 2; long enough to be safe for case 2 leaves a long gap for case 1.
+
+### Design — lower on **inactivity**, not wall-clock
+
+A small watchdog cron (every 1 min) checks: "is the flag file's mtime older than `MAX_IDLE_MINS`?" If yes, run `stage-off`. The owner extends the window simply by **using the staging system** — every Lab-tier request through FastAPI touches `/tmp/owl-maintenance` to bump its mtime.
+
+This piggybacks on the access spine shipped in S17. `audience.tier(request)` already classifies requests as `Anonymous | Member | Lab`. A tiny middleware in `main.py`: when `tier == Lab` AND `/tmp/owl-maintenance` exists, `os.utime(flag, None)`. Zero owner burden — just keep using the LAN URL or SSH tunnel like normal, and the flag stays raised. Stop using it for `MAX_IDLE_MINS`, the watchdog lowers it.
+
+### Mechanism
+
+- **Middleware in `main.py`** (~5 lines): on every request, if `audience.tier(request) == Lab` and the flag file exists, `Path("/tmp/owl-maintenance").touch()`. Cheap (single stat + utime call); inert when the flag isn't raised, so zero cost in normal operation.
+- **`bin/owl-maintenance-watchdog`** (new script): one-shot — checks mtime, runs `stage-off --main` if older than the threshold. Exits cleanly otherwise.
+- **systemd timer** (`/etc/systemd/system/owl-maintenance-watchdog.timer` + `.service`) running the watchdog every minute. Enable/disable via `systemctl enable --now owl-maintenance-watchdog.timer`. Could be a cron entry instead, but systemd timers integrate with `journalctl` for free.
+- **Settings**: `max_idle_mins` (default `30`) — tunable via `settings.json` so the owner can dial it for a known-long testing session without editing code.
+
+### Why 30 minutes as default
+
+- Short enough that a 5-min conference demo + ~20 min of distraction afterwards still recovers automatically before lunch.
+- Long enough that a normal testing session (poke, read logs, think, re-test) doesn't trigger mid-task — most "I'm working on this" gaps are well under 30 min.
+- The owner can lower it to `5` for "I'm definitely doing a quick demo" or raise it to `120` for "I'm head-down on CR-001b for the afternoon." Settings page exposes the dial.
+
+### Open questions
+
+- **Should manual touch suffice as a heartbeat?** I.e. the owner can also just run `touch /tmp/owl-maintenance` to extend without making a request. Probably yes — costs nothing to support and gives a CLI escape hatch. Document in `bin/README.md`.
+- **What counts as Lab-tier activity?** Today: any request from a private-IP source (`audience.tier()` returns `Lab` for 192.168/10/127). When CR-001 lands proper auth, switch to "authenticated owner" or stay with IP. Loose IP detection is fine for CR-015 — it errs on the side of "owner is around."
+- **Shutdown behaviour on `stage-off` from watchdog**: should the auto-`stage-off` use `--main` or stay on the staged branch? Lean toward staying on the current branch (don't surprise the owner with a checkout they didn't ask for); the maintenance page comes down but they're still on the feature branch when they return. Document clearly.
+- **Recovery if the watchdog races with active testing**: if the watchdog fires the moment the owner returns, the public site swings back live mid-keystroke. Acceptable cost — they can `stage-on` again. Not worth a debounce.
+
+### Why not the alternatives
+
+- **Wall-clock timer (auto-off after N hours from `stage-on`):** doesn't differentiate the two use cases above. Fails one or the other.
+- **Manual heartbeat command (e.g. `stage-keepalive`):** owner has to remember it, which defeats the "I forgot" motivation. Activity-driven is the point.
+- **Blocking `stage-on` shell session that lowers the flag on Ctrl-C:** binds staging to a specific terminal session; bad fit for SSH-tunnel testing where the owner might close the laptop. Watchdog is decoupled from any session.
+
+### Implementation order
+
+Half a session, ~1.5 hours:
+
+1. Middleware in `main.py` — ~5 lines, one new import, behind a `flag.exists()` check (10 min).
+2. `bin/owl-maintenance-watchdog` shell script — mtime check + `stage-off` invocation (15 min).
+3. systemd timer + service unit (15 min).
+4. Settings field `max_idle_mins` (10 min).
+5. Test plan: raise flag, verify watchdog leaves it alone while you curl LAN every few seconds; stop curling, verify it lowers after `max_idle_mins`. ~30 min.
+6. Update `bin/README.md` "Things to know" section to reflect the auto-lower behaviour and the manual-touch heartbeat (10 min).
+
+### Pre-conference: nice-to-have, not must-have
+
+The conference is the strongest argument *for* this CR (forgetting to lower the flag during a busy event is the realistic scenario). But CR-001 / CR-001b are higher-leverage for the launch itself. Land CR-015 if there's slack between CR-001b and CR-001 closing, or right after CR-001 ships if not.
 
 ---
 
