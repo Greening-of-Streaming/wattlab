@@ -1,0 +1,7 @@
+{
+  "_comment": "GoS member allowlist for OWL magic-link auth (CR-001). Real list lives in data/members.json (gitignored). Email match is case-insensitive, trimmed.",
+  "members": [
+    "owner@example.org",
+    "first.last@example.org"
+  ]
+}

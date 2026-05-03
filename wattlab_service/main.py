@@ -20,6 +20,8 @@ import settings as cfg
 import carbon
 import queue_control
 import audience
+import auth
+import email_send
 from capabilities import (
     requires, can,
     PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
@@ -40,11 +42,18 @@ async def gate_middleware(request: Request, call_next):
     # /gate is the auth flow itself; /static is public assets (logo, favicon)
     # — neither needs a cookie, otherwise the gate page can't render its own
     # favicon before the user has logged in.
+    # /auth/* is the new CR-001 magic-link flow; it must be reachable so a
+    # member who hasn't been told the gate password can still sign in.
+    # A valid owl_session cookie also bypasses the gate — a signed-in member
+    # shouldn't have to also know the shared password.
     if (not GATE_PASSWORD
             or request.url.path.startswith("/gate")
+            or request.url.path.startswith("/auth")
             or request.url.path.startswith("/static")):
         return await call_next(request)
     if request.cookies.get("wl_auth") == GATE_PASSWORD:
+        return await call_next(request)
+    if auth.member_email_from_request(request) is not None:
         return await call_next(request)
     next_url = request.url.path
     return RedirectResponse(url=f"/gate?next={next_url}", status_code=302)
@@ -96,6 +105,140 @@ async def gate_submit(request: Request, password: str = Form(...), next: str = F
         response.set_cookie("wl_auth", GATE_PASSWORD, max_age=30*24*3600, httponly=True)
         return response
     return RedirectResponse(url=f"/gate?next={next}&error=1", status_code=302)
+
+
+# --- CR-001 magic-link auth -------------------------------------------------
+#
+# Three routes: GET /auth/sign-in (form), POST /auth/sign-in (issue + email),
+# GET /auth/verify (consume token, set session cookie), POST /auth/sign-out.
+#
+# Anti-enumeration: POST /auth/sign-in always returns the same "check your
+# email" page whether or not the address is in the allowlist. Real members
+# get an email; non-members get nothing. Visitors can't probe the member list
+# by submitting addresses one by one.
+
+def _auth_page_shell(title: str, body_html: str) -> str:
+    """Minimal stand-alone styled page for the auth flow. Mirrors the gate
+    page so members signing in for the first time see the OWL palette."""
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+  <title>{title}</title>
+  {_BASE_STYLES}
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:monospace;background:var(--bg);color:var(--text);
+         display:flex;flex-direction:column;align-items:center;
+         justify-content:center;min-height:100vh;gap:0;padding:2rem 1rem}}
+    .wrap{{max-width:480px;width:100%;text-align:center}}
+    h1{{color:var(--accent);font-size:1.4rem;margin-bottom:0.25rem}}
+    p.sub{{color:var(--text-4);font-size:0.8rem;margin-bottom:1.5rem}}
+    p.body{{color:var(--text-2);font-size:0.9rem;line-height:1.5;margin:1rem 0}}
+    p.err{{color:var(--err);font-size:0.85rem;margin-bottom:1rem}}
+    input[type=email]{{background:var(--panel);border:1px solid var(--border-3);
+           color:var(--text);font-family:monospace;font-size:1rem;
+           padding:0.6rem 1rem;width:280px;text-align:center}}
+    input[type=email]:focus{{border-color:var(--accent);outline:none}}
+    button{{background:var(--accent);color:#000;border:none;
+            font-family:monospace;font-size:1rem;padding:0.6rem 2rem;
+            cursor:pointer;margin-top:0.75rem}}
+    button:hover{{background:var(--accent-hover)}}
+    form{{display:flex;flex-direction:column;align-items:center;gap:0}}
+    a{{color:var(--accent)}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>WattLab</h1>
+    <p class="sub">Greening of Streaming · Member sign-in</p>
+    {body_html}
+  </div>
+</body>
+</html>"""
+
+
+@app.get("/auth/sign-in", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def auth_sign_in_page(next: str = "/", error: str = ""):
+    err_html = f'<p class="err">{error}</p>' if error else ''
+    body = f"""
+    {err_html}
+    <p class="body">Enter the email address that's on the GoS member list.
+       We'll send you a one-click sign-in link.</p>
+    <form method="post" action="/auth/sign-in">
+      <input type="hidden" name="next" value="{next}">
+      <input type="email" name="email" placeholder="you@example.org"
+             autocomplete="email" autofocus required>
+      <button type="submit">Send sign-in link</button>
+    </form>
+    <p class="body" style="font-size:0.8rem;color:var(--text-4);margin-top:2rem">
+      Not a GoS member yet?
+      <a href="https://www.greeningofstreaming.org/membership">Join GoS</a> · or
+      <a href="/">browse OWL anonymously</a>.</p>
+    """
+    return _auth_page_shell("Sign in · OWL", body)
+
+
+@app.post("/auth/sign-in", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def auth_sign_in_submit(request: Request, email: str = Form(...), next: str = Form("/")):
+    email_norm = email.strip().lower()
+    # Anti-enumeration: behave identically for member and non-member emails.
+    # Only members get an email; everyone else gets the same UI feedback.
+    if auth.is_member(email_norm):
+        token = auth.issue_magic_token(email_norm)
+        # Build absolute URL for the email body. Honour X-Forwarded-Proto so
+        # nginx-fronted HTTPS works.
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+        host = request.headers.get("x-forwarded-host") or request.url.netloc
+        link = f"{scheme}://{host}/auth/verify?t={token}&next={next}"
+        email_send.send_magic_link(email_norm, link)
+    body = f"""
+    <p class="body">If <strong>{email_norm}</strong> is a registered GoS member,
+       a sign-in link is on its way to that inbox now.</p>
+    <p class="body" style="font-size:0.85rem;color:var(--text-4)">
+       The link is valid for 15 minutes. Check your spam folder if it doesn't
+       arrive within a minute.</p>
+    <p class="body" style="margin-top:2rem">
+      <a href="/auth/sign-in?next={next}">← Try a different email</a> ·
+      <a href="/">Continue to OWL</a></p>
+    """
+    return _auth_page_shell("Check your email · OWL", body)
+
+
+@app.get("/auth/verify", dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def auth_verify(t: str = "", next: str = "/"):
+    email = auth.verify_magic_token(t) if t else None
+    if email is None:
+        return RedirectResponse(
+            url=f"/auth/sign-in?next={next}&error=Sign-in+link+invalid+or+expired.",
+            status_code=302,
+        )
+    if not auth.is_member(email):
+        # Possible if a member was removed from the allowlist between issue
+        # and verify. Fail closed — fresh sign-in won't help, but the user
+        # gets a clean message rather than a silent landing.
+        return RedirectResponse(
+            url=f"/auth/sign-in?next={next}&error=Email+not+on+the+member+list.",
+            status_code=302,
+        )
+    cookie = auth.make_session_cookie_value(email)
+    response = RedirectResponse(url=next or "/", status_code=302)
+    response.set_cookie(
+        auth.SESSION_COOKIE_NAME, cookie,
+        max_age=auth.SESSION_TTL_SECONDS,
+        httponly=True, samesite="lax",
+        secure=False,  # nginx fronts HTTPS; the cookie travels HTTP between nginx and uvicorn
+    )
+    return response
+
+
+@app.post("/auth/sign-out")
+async def auth_sign_out():
+    response = RedirectResponse(url="/", status_code=302)
+    response.delete_cookie(auth.SESSION_COOKIE_NAME)
+    return response
+
+
 jobs = {}
 
 # --- Live telemetry cache ---

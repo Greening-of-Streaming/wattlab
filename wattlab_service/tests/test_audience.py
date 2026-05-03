@@ -28,14 +28,16 @@ from audience import Tier
 class StubRequest:
     headers: dict
     client: SimpleNamespace | None
+    cookies: dict
 
 
-def make_request(x_real_ip: str | None = None, client_host: str | None = None) -> StubRequest:
+def make_request(x_real_ip: str | None = None, client_host: str | None = None,
+                 cookies: dict | None = None) -> StubRequest:
     headers = {}
     if x_real_ip is not None:
         headers["x-real-ip"] = x_real_ip
     client = SimpleNamespace(host=client_host) if client_host is not None else None
-    return StubRequest(headers=headers, client=client)
+    return StubRequest(headers=headers, client=client, cookies=cookies or {})
 
 
 # --- _is_loopback_or_private ------------------------------------------------
@@ -95,7 +97,7 @@ def test_tier_x_real_ip_loopback_overrides_public_client_host():
 
 def test_tier_no_client_falls_back_to_anonymous():
     """Edge case: ASGI scope where request.client is None."""
-    req = StubRequest(headers={}, client=None)
+    req = StubRequest(headers={}, client=None, cookies={})
     assert audience.tier(req) == Tier.Anonymous
 
 
@@ -109,22 +111,60 @@ def test_tier_garbled_header_falls_through_to_client_host():
     assert audience.tier(req) == Tier.Anonymous
 
 
-# --- Member-unreachable invariant -------------------------------------------
+# --- Member tier (CR-001) ---------------------------------------------------
+#
+# Member is reachable iff:
+#   - session cookie validates (signature + expiry)
+#   - the email it carries is on the allowlist (auth.is_member)
+#   - the request didn't already resolve to Lab (Lab beats Member, by design)
 
-def test_member_tier_is_unreachable_until_cr001():
-    """REGRESSION: Until CR-001 ships magic-link auth, tier() must never
-    return Member — that branch is reserved. Sweeping a representative set
-    of inputs catches the case where someone wires Member up prematurely
-    and forgets to delete this test."""
-    cases = [
-        make_request(client_host="127.0.0.1"),    # Lab
-        make_request(client_host="192.168.1.62"), # Lab
-        make_request(client_host="8.8.8.8"),      # Anonymous
-        make_request(x_real_ip="8.8.8.8", client_host="127.0.0.1"),  # Anonymous
-        StubRequest(headers={}, client=None),     # Anonymous
-    ]
-    for req in cases:
-        assert audience.tier(req) != Tier.Member
+
+def _make_session_cookie_for(email: str) -> dict:
+    import auth
+    return {auth.SESSION_COOKIE_NAME: auth.make_session_cookie_value(email)}
+
+
+def test_member_tier_with_valid_cookie_for_allowlisted_email(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "_members", {"member@example.org"})
+    cookies = _make_session_cookie_for("member@example.org")
+    req = make_request(x_real_ip="8.8.8.8", cookies=cookies)
+    assert audience.tier(req) == Tier.Member
+
+
+def test_member_tier_rejects_cookie_for_non_allowlisted_email(monkeypatch):
+    """A previously-issued cookie for someone since-removed from the allowlist
+    must NOT grant Member. Falls back to Anonymous on a public IP."""
+    import auth
+    monkeypatch.setattr(auth, "_members", {"member@example.org"})
+    cookies = _make_session_cookie_for("ex-member@example.org")
+    req = make_request(x_real_ip="8.8.8.8", cookies=cookies)
+    assert audience.tier(req) == Tier.Anonymous
+
+
+def test_member_tier_rejects_tampered_cookie(monkeypatch):
+    import auth
+    monkeypatch.setattr(auth, "_members", {"member@example.org"})
+    cookies = _make_session_cookie_for("member@example.org")
+    cookies[auth.SESSION_COOKIE_NAME] = cookies[auth.SESSION_COOKIE_NAME][:-3] + "AAA"
+    req = make_request(x_real_ip="8.8.8.8", cookies=cookies)
+    assert audience.tier(req) == Tier.Anonymous
+
+
+def test_lab_beats_member(monkeypatch):
+    """A member SSH-tunnelling from outside back to localhost should resolve
+    Lab, not Member, so they keep full Lab privileges without separately
+    signing in. Pinned because it's a deliberate design choice (Lab > Member)."""
+    import auth
+    monkeypatch.setattr(auth, "_members", {"member@example.org"})
+    cookies = _make_session_cookie_for("member@example.org")
+    req = make_request(x_real_ip="127.0.0.1", cookies=cookies)
+    assert audience.tier(req) == Tier.Lab
+
+
+def test_no_cookie_with_public_ip_is_anonymous():
+    req = make_request(x_real_ip="8.8.8.8", cookies={})
+    assert audience.tier(req) == Tier.Anonymous
 
 
 # --- Tier ordering invariant ------------------------------------------------

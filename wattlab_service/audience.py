@@ -49,19 +49,27 @@ def tier(request: Request) -> Tier:
     """Resolve the audience tier for a request.
 
     Order of precedence:
-      1. Member identity — magic-link cookie. Reserved for CR-001; no code
-         path produces Member today.
-      2. Lab — origin IP (X-Real-IP header from nginx, falling back to
-         request.client.host) is loopback or RFC1918 private.
+      1. Lab — origin IP (X-Real-IP header from nginx, falling back to
+         request.client.host) is loopback or RFC1918 private. Lab beats
+         Member: a member SSH-tunnelling to localhost gets the full Lab
+         experience without having to also sign in.
+      2. Member — valid `owl_session` cookie whose email is in the allowlist.
       3. Anonymous — everything else.
     """
-    # CR-001 hook: when magic-link auth ships, check for the member cookie
-    # here and return Tier.Member if valid. Until then, this branch is empty.
-
     ip_str = request.headers.get("x-real-ip") or (
         request.client.host if request.client else ""
     )
     if _is_loopback_or_private(ip_str):
         return Tier.Lab
+
+    # CR-001: signed session cookie + allowlisted email → Member.
+    # auth is imported lazily so a misconfigured auth module can't break
+    # request routing for the Anonymous/Lab paths.
+    try:
+        import auth as _auth
+        if _auth.member_email_from_request(request) is not None:
+            return Tier.Member
+    except Exception:
+        pass
 
     return Tier.Anonymous

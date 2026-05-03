@@ -4,6 +4,11 @@ results/
 __pycache__/
 *.pyc
 
+# CR-001 member-list data — real GoS member emails, source CSVs, etc.
+# Contains personal data, not for the repo. Only the example file is tracked.
+data/*
+!data/*.example.*
+
 # RAG runtime data (vectors regenerable from corpus; corpus is source PDFs
 # we don't want to bloat the repo with — and CR follow-up plans visitor
 # uploads landing here).
