@@ -372,6 +372,7 @@ _CARBON_JS = """
     var homeI   = d.home_intensity || {};
     var zones   = d.comparison_zones || [];
     var statics = d.static_table || {};
+    var history = (d.historical_table || []).filter(function(h){ return h.zone === home; });
 
     // Headline: home-zone gCO2e — the number visitors should walk away with.
     var homeIntensity = homeI.g_per_kwh;
@@ -487,6 +488,54 @@ _CARBON_JS = """
           }
         }
       }
+    }
+
+    // Historical rows for the home zone — same Wh, but on the lifecycle
+    // intensity that prevailed in past months. Curated dates illustrate
+    // the range of grid evolution; same compute_intensity_from_mix
+    // methodology as the live path so all numbers in this widget are
+    // directly comparable. Suppressed for non-FR home zones (no curated
+    // history yet).
+    var historicalRowsHtml = '';
+    if (history.length > 0) {
+      var histRows = history.map(function(h){
+        var grams = (wh / 1000) * h.g_per_kwh;
+        var ratio = (homeGrams && homeGrams > 0) ? (grams / homeGrams) : null;
+        var ratioStr = ratio != null
+          ? (ratio >= 1.5 ? ratio.toFixed(1) + '× now' : ratio.toFixed(2) + '× now')
+          : '';
+        var noteHtml = h.note
+          ? '<div style="color:var(--text-5);font-size:0.68rem;'
+          + 'padding:0 0.4rem 0.3rem 0.4rem;font-style:italic">'
+          + h.note + '</div>'
+          : '';
+        return '<div style="display:flex;align-items:baseline;justify-content:space-between;'
+             + 'gap:0.5rem;padding:0.3rem 0.4rem;font-family:monospace">'
+             + '<span style="color:var(--text-2);flex:1;min-width:140px">' + h.label + '</span>'
+             + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
+             + 'min-width:90px;text-align:right">' + fmtMass(grams) + '</span>'
+             + '<span style="color:var(--text-4);font-size:0.7rem;white-space:nowrap;'
+             + 'min-width:90px;text-align:right">' + ratioStr + '</span>'
+             + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
+             + 'min-width:160px;text-align:right">'
+             + h.g_per_kwh + ' g/kWh · monthly mean'
+             + '</span>'
+             + '</div>'
+             + noteHtml;
+      }).join('');
+      historicalRowsHtml =
+          '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2)">'
+        + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
+        + 'text-transform:uppercase;margin-bottom:0.3rem">'
+        + 'Through history — same ' + fmtG(wh) + ' Wh on this zone’s past grids</div>'
+        + histRows
+        + '<div style="color:var(--text-5);font-size:0.66rem;padding:0.4rem 0.4rem 0;'
+        + 'font-style:italic;line-height:1.5">'
+        + 'Same lifecycle methodology as the live number above (Eco2mix consolidated '
+        + '× IPCC AR6 factors). Curated dates illustrate the range of grid '
+        + 'evolution; not exhaustive.'
+        + '</div>'
+        + '</div>';
     }
 
     // Comparison rows + provenance go inside a collapsed <details>.
@@ -609,7 +658,7 @@ _CARBON_JS = """
       + '<summary style="cursor:pointer;color:var(--text-3);font-size:0.78rem;'
       + 'list-style:none;padding:0.25rem 0;border-top:1px solid var(--border-2)">'
       + '<span style="color:var(--text-4)">▸</span> '
-      + 'If this had run elsewhere · how this is calculated'
+      + 'If this had run elsewhere · or in past years · how this is calculated'
       + '</summary>'
       + '<div style="margin-top:0.5rem">'
       + referenceBlockHtml
@@ -617,6 +666,7 @@ _CARBON_JS = """
       + 'text-transform:uppercase;margin-bottom:0.3rem">'
       + 'Same ' + fmtG(wh) + ' Wh, on other grids (Ember 2024 annual means)</div>'
       + comparisonRows
+      + historicalRowsHtml
       + mixHtml
       + formulaHtml
       + '</div>'
@@ -6056,6 +6106,10 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   </ol>
   <p>Both source and value are recorded in the saved result JSON at measurement time, so any cited figure is traceable back to <em>which</em> intensity number was used. CSV exports include <code>co2e_g</code>, <code>co2e_intensity_g_per_kwh</code>, <code>co2e_source</code>, and <code>co2e_zone</code> columns. The raw module status (live cache, source, age, fallback state) is available at <a href="/carbon" style="color:var(--accent);text-decoration:none">/carbon</a>.</p>
   <p style="color:var(--text-3);font-size:0.85rem">Why &ldquo;estimated&rdquo; sometimes? Comparison cities never go live by design (so they don&rsquo;t drift between page loads). The home zone falls back to estimated if Eco2mix and ElectricityMaps are both unreachable, or if the most recent live reading is older than 30 minutes. The ladder degrades gracefully: numbers stay sensible even when the network does not.</p>
+
+  <h3 style="margin-top:1.25rem">Through history (France)</h3>
+  <p>Each carbon-strip dropdown also shows the same Wh figure on a handful of past months &mdash; e.g. <em>Jun 2020</em>, <em>Jun 2022</em>, <em>Jun 2024</em>. These are computed from the Eco2mix <strong>consolidated</strong> dataset (the same fields as the realtime feed, going back to 2012) using <em>exactly the same lifecycle calculation</em> as the live number. Live and historical are therefore directly comparable; the rows show how France&rsquo;s grid has actually evolved.</p>
+  <p>The selection is curated to illustrate the range, not exhaustive. Five dates were chosen for narrative breadth (pre-Covid winter, Covid summer, energy-crisis-era summer, post-recovery winter, recent summer). The visitor-pickable any-month version is captured as a follow-up CR. The historical numbers are stored statically in <code>carbon.HISTORICAL_INTENSITY</code>; to add or refresh dates, run <code>bin/fetch-historical-mix --year YYYY --month MM</code> and paste the printed value into the table.</p>
 
   <h2 id="open">Open Questions</h2>
 

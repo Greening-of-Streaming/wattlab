@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""
+fetch-historical-mix — one-shot helper to compute the lifecycle gCO2/kWh
+for a given month of French grid history, using the Eco2mix consolidated
+dataset (2012–present) × the IPCC AR6 lifecycle factors already in
+carbon.py.
+
+Why this exists: powers the "if this had run in <date>" rows in the
+carbon comparison strip (CR-018 Tier 1). One-off use — run for the
+dates you want, copy the printed value into carbon.HISTORICAL_INTENSITY.
+There's no cron; adding more dates means re-running this with new
+--year/--month arguments.
+
+For the full-history version (cached JSON + visitor-pickable date) see
+CR-018 Tier 2 in CHANGE_REQUESTS.md.
+
+Usage:
+  bin/fetch-historical-mix --year 2022 --month 6
+  bin/fetch-historical-mix --year 2020 --month 6 --quiet
+"""
+import argparse
+import asyncio
+import calendar
+import sys
+from pathlib import Path
+
+# Reuse the IPCC factors and the same lifecycle math the live path uses
+# (post-CR-016) so historical and live numbers are computed identically.
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE / "wattlab_service"))
+import carbon  # noqa: E402
+
+CONSOLIDATED_URL = (
+    "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/"
+    "eco2mix-national-cons-def/records"
+)
+PAGE_SIZE = 100
+OFFSET_CAP = 9900  # Opendatasoft API hard limit is 10000.
+
+
+async def fetch_month(year: int, month: int, quiet: bool = False) -> dict:
+    import httpx
+
+    last_day = calendar.monthrange(year, month)[1]
+    where = (
+        f"date_heure >= date'{year:04d}-{month:02d}-01' "
+        f"AND date_heure <= date'{year:04d}-{month:02d}-{last_day:02d}' "
+        f"AND nucleaire IS NOT NULL"
+    )
+
+    intensities = []
+    offset = 0
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            r = await client.get(
+                CONSOLIDATED_URL,
+                params={
+                    "where": where,
+                    "limit": PAGE_SIZE,
+                    "offset": offset,
+                    "order_by": "date_heure asc",
+                },
+            )
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
+            data = r.json()
+            records = data.get("results") or []
+            if not records:
+                break
+            for rec in records:
+                mix = {
+                    k: rec.get(k)
+                    for k in carbon.EMISSION_FACTORS.keys()
+                    if rec.get(k) is not None
+                }
+                intensity = carbon.compute_intensity_from_mix(mix)
+                if intensity is not None:
+                    intensities.append(intensity)
+            if not quiet:
+                running = sum(intensities) / len(intensities) if intensities else 0
+                print(
+                    f"  offset={offset:5d}  running mean={running:5.1f} g/kWh  "
+                    f"({len(intensities)} records)",
+                    file=sys.stderr,
+                )
+            if len(records) < PAGE_SIZE:
+                break
+            offset += PAGE_SIZE
+            if offset >= OFFSET_CAP:
+                if not quiet:
+                    print(
+                        f"  reached API offset cap at {offset}, stopping (data may be partial)",
+                        file=sys.stderr,
+                    )
+                break
+
+    if not intensities:
+        return {"error": "no records returned for that month"}
+
+    mean = sum(intensities) / len(intensities)
+    return {
+        "year": year,
+        "month": month,
+        "n_records": len(intensities),
+        "mean_g_per_kwh": round(mean, 1),
+        "min_g_per_kwh": round(min(intensities), 1),
+        "max_g_per_kwh": round(max(intensities), 1),
+    }
+
+
+def main():
+    p = argparse.ArgumentParser(
+        description=(
+            "Compute monthly mean lifecycle gCO2/kWh from Eco2mix consolidated. "
+            "Result is the value to drop into carbon.HISTORICAL_INTENSITY."
+        )
+    )
+    p.add_argument("--year", type=int, required=True)
+    p.add_argument("--month", type=int, required=True, choices=range(1, 13))
+    p.add_argument("--quiet", action="store_true",
+                   help="suppress per-page progress; print only the final line.")
+    args = p.parse_args()
+
+    result = asyncio.run(fetch_month(args.year, args.month, args.quiet))
+    if "error" in result:
+        print(f"Error: {result['error']}", file=sys.stderr)
+        sys.exit(1)
+    print(
+        f"{args.year}-{args.month:02d}: "
+        f"{result['mean_g_per_kwh']} g/kWh  "
+        f"(n={result['n_records']}, range {result['min_g_per_kwh']}–{result['max_g_per_kwh']})"
+    )
+
+
+if __name__ == "__main__":
+    main()

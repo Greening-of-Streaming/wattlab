@@ -105,6 +105,49 @@ STATIC_INTENSITY = {
 }
 STATIC_SOURCE = "Ember 2024 annual mean"
 
+
+# Curated historical France-grid data points (CR-018 Tier 1).
+# Each value is the monthly mean lifecycle gCO2/kWh, computed from the
+# Eco2mix consolidated production mix using `compute_intensity_from_mix`
+# (the same IPCC AR6 factors as the live FR path — so live and historical
+# are directly comparable).
+#
+# To regenerate or extend: `bin/fetch-historical-mix --year YYYY --month MM`
+# and paste the printed value here.
+#
+# Five dates chosen to illustrate the range; not exhaustive. The full-
+# history version (visitor-pickable any month) is captured as CR-018
+# Tier 2.
+HISTORICAL_INTENSITY = [
+    {"key": "FR-2020-01", "zone": "FR", "year": 2020, "month": 1,
+     "g_per_kwh": 65.8, "label": "France · Jan 2020",
+     "note": "Pre-Covid winter."},
+    {"key": "FR-2020-06", "zone": "FR", "year": 2020, "month": 6,
+     "g_per_kwh": 54.6, "label": "France · Jun 2020",
+     "note": "Covid-lockdown summer — industrial demand dipped."},
+    {"key": "FR-2022-06", "zone": "FR", "year": 2022, "month": 6,
+     "g_per_kwh": 59.5, "label": "France · Jun 2022",
+     "note": "Energy-crisis-era summer (nuclear fleet partly offline)."},
+    {"key": "FR-2024-01", "zone": "FR", "year": 2024, "month": 1,
+     "g_per_kwh": 53.4, "label": "France · Jan 2024",
+     "note": "Winter, post-recovery — cleaner than Jan 2020 despite the season."},
+    {"key": "FR-2024-06", "zone": "FR", "year": 2024, "month": 6,
+     "g_per_kwh": 26.9, "label": "France · Jun 2024",
+     "note": "Recent summer — nuclear back, solar buildout reflected."},
+]
+HISTORICAL_SOURCE = (
+    "Eco2mix consolidated dataset (RTE/Etalab) × IPCC AR6 lifecycle factors. "
+    "Same methodology as the live path — directly comparable to today's number."
+)
+
+
+def historical_for_zone(zone: str) -> list:
+    """All curated historical points for a given zone, ordered by date."""
+    pts = [h for h in HISTORICAL_INTENSITY if h["zone"] == zone]
+    pts.sort(key=lambda h: (h["year"], h["month"]))
+    return pts
+
+
 # Live cache: {zone: {"g_per_kwh": float, "fetched_at": epoch_s, "ok": bool}}
 _LIVE: dict = {}
 
@@ -443,6 +486,8 @@ def status() -> dict:
         },
         "static_table": STATIC_INTENSITY,
         "static_source": STATIC_SOURCE,
+        "historical_table": HISTORICAL_INTENSITY,
+        "historical_source": HISTORICAL_SOURCE,
         "live_ttl_s": LIVE_TTL_S,
         "poll_interval_s": POLL_INTERVAL_S,
     }
