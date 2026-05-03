@@ -4549,8 +4549,10 @@ async function showPrevVideo() {{
     const resp = await fetch('/results/video/list');
     const list = await resp.json();
     if (!list || list.length === 0) {{
-      document.getElementById('video-status').innerHTML = '';
+      document.getElementById('video-status').innerHTML =
+        '<p class="progress-note" style="color:var(--text-3)">No previous run on file — run one below, or skip ahead.</p>';
       document.getElementById('video-btns').style.display = 'flex';
+      revealNext(1);
       return;
     }}
     // Load full result for the most recent job
@@ -4563,6 +4565,7 @@ async function showPrevVideo() {{
     document.getElementById('video-btns').style.display = 'flex';
     document.getElementById('video-status').innerHTML =
       '<p class="progress-note" style="color:var(--err)">Error: ' + e + '</p>';
+    revealNext(1);
   }}
 }}
 
@@ -4576,8 +4579,10 @@ async function showPrevLLM() {{
     // (mirrors showPrevRAG's filter-in pattern).
     const llmRuns = (list || []).filter(r => !(r.task || '').startsWith('RAG'));
     if (!llmRuns.length) {{
-      document.getElementById('llm-status').innerHTML = '';
+      document.getElementById('llm-status').innerHTML =
+        '<p class="progress-note" style="color:var(--text-3)">No previous run on file — run one below, or skip ahead.</p>';
       document.getElementById('llm-btns').style.display = 'flex';
+      revealNext(2);
       return;
     }}
     const meta = llmRuns[0];
@@ -4589,6 +4594,7 @@ async function showPrevLLM() {{
     document.getElementById('llm-btns').style.display = 'flex';
     document.getElementById('llm-status').innerHTML =
       '<p class="progress-note" style="color:var(--err)">Error: ' + e + '</p>';
+    revealNext(2);
   }}
 }}
 
@@ -4849,8 +4855,10 @@ async function showPrevRAG() {{
     const list = await resp.json();
     const ragRuns = (list || []).filter(r => r.task === 'RAG compare (3 modes)');
     if (!ragRuns.length) {{
-      document.getElementById('rag-status').innerHTML = '';
+      document.getElementById('rag-status').innerHTML =
+        '<p class="progress-note" style="color:var(--text-3)">No previous 3-mode RAG comparison on file — run one below, or skip ahead.</p>';
       document.getElementById('rag-btns').style.display = 'flex';
+      revealNext(4);
       return;
     }}
     const r2 = await fetch('/results/llm/' + ragRuns[0].job_id + '/download.json');
@@ -4859,6 +4867,9 @@ async function showPrevRAG() {{
     renderRAGResult(full, ragRuns[0].saved_at, true);
   }} catch(e) {{
     document.getElementById('rag-btns').style.display = 'flex';
+    document.getElementById('rag-status').innerHTML =
+      '<p class="progress-note" style="color:var(--err)">Error: ' + e + '</p>';
+    revealNext(4);
   }}
 }}
 
@@ -5008,8 +5019,10 @@ async function showPrevImage() {{
     const resp = await fetch('/results/image/list');
     const list = await resp.json();
     if (!list || list.length === 0) {{
-      document.getElementById('image-status').innerHTML = '';
+      document.getElementById('image-status').innerHTML =
+        '<p class="progress-note" style="color:var(--text-3)">No previous run on file — run one below, or skip ahead.</p>';
       document.getElementById('image-btns').style.display = 'flex';
+      revealNext(3);
       return;
     }}
     const meta = list[0];
@@ -5021,6 +5034,7 @@ async function showPrevImage() {{
     document.getElementById('image-btns').style.display = 'flex';
     document.getElementById('image-status').innerHTML =
       '<p class="progress-note" style="color:var(--err)">Error: ' + e + '</p>';
+    revealNext(3);
   }}
 }}
 
