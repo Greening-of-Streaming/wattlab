@@ -118,3 +118,42 @@ Shipped as part of **CR-018 Tier 1** — see [`CHANGE_REQUESTS.md`](../CHANGE_RE
 - **FR-only.** Eco2mix is RTE's data; for non-FR historical you'd need ElectricityMaps' paid historical API or Ember monthly data — captured as a follow-up consideration in CR-018.
 - **Network and time cost.** A monthly fetch is ~1500 records via the Opendatasoft API; takes 5–15 seconds depending on RTT. Well under the API's 10000-offset cap.
 - **No write side-effects.** The script doesn't touch `carbon.py`, `settings.json`, or any cache file — just prints to stdout. You manually paste the value.
+
+---
+
+## probe-thermal-recovery — post-encode idle recovery diagnostic
+
+Characterise how quickly the GoS1 server's idle-power reading returns to baseline after a CPU encode and after a GPU encode. Used to validate the `variance_cooldown_s` setting is long enough — the recovery curve should flatten well before the configured cooldown.
+
+Shipped as part of **CR-022 / CR-023** investigation in S21. Captured in `CHANGE_REQUESTS.md` as **CR-024** — promote to a queue-aware `/precalibration/run` endpoint with a "▶ Re-run probe" button on the settings panel (deferred; the panel currently renders the latest probe data read-only).
+
+### Usage
+
+```bash
+~/wattlab/bin/probe-thermal-recovery
+~/wattlab/bin/probe-thermal-recovery --distances 0,10,30,60,90,120
+~/wattlab/bin/probe-thermal-recovery --baseline-polls 5 --pre-cool-s 15
+```
+
+**Output:** two CSVs under `results/diagnostics/recovery_<timestamp>{_summary,}.csv`. Summary has one row per (distance, workload); raw has one row per poll. The "More calibration details" dropdown on `/settings` reads the latest `_summary.csv`.
+
+| Flag | Purpose |
+|---|---|
+| `--distances` | Comma-separated seconds. Default `0,2,5,8,12,18,25,35,50,70,95,120` — dense in 0-15s where recovery is steepest, sparse past 30s. |
+| `--baseline-polls` | Idle polls per measurement window. Default = `settings.baseline_polls`. |
+| `--pre-cool-s` | Wait before each encode. Default 30s. The encode itself dominates the post-state; pre-state mostly washes out. |
+| `--out` | Override raw CSV path. Summary path derives from it. |
+
+### When to use it
+
+- **Before a variance calibration** if anything has changed (hardware swap, ambient temp shift, focus-mode exemption added). The recovery curve tells you whether the configured `variance_cooldown_s` is still adequate.
+- **After fixing a measurement bug** like CR-022 / CR-023 — re-confirms the recovery shape is what you expect.
+- **Investigating anomalies** in `variance_idle_pct`. The probe's per-window CV is the floor; calibration's pooled CV must be ≥ probe's mean within-window CV. If they diverge, something's polluting the calibration that the probe doesn't reproduce.
+
+### Things to know
+
+- **Holds visitor-protection flags.** Touches `/tmp/owl-paused` (queue worker stops dispatching new jobs) and `/tmp/gos-measure.lock` (system-busy marker). Both released on clean exit and Ctrl-C. Visitors can still browse and queue jobs during the run; nothing executes until the probe finishes.
+- **Aborts at startup if `LOCK_FILE` already exists.** Wait for any in-flight measurement to finish, or `rm /tmp/gos-measure.lock` if it's stale.
+- **CPU and GPU use different inputs.** CPU runs `variance_cpu_cmd` on the full `meridian_4k.mp4` (172s heavy thermal load — what variance calibration uses). GPU runs the variance template against `meridian_120s.mp4` so CR-022's `-t 30` cap (which `transcode()` applies automatically) keeps the encode cleanly bounded. Asymmetric but representative.
+- **~65 min wall time** for the default 12-distance sweep. The script's own estimate is printed at startup before it begins.
+- **Focus mode** stops 8 timer units (sysstat-collect, anacron, fwupd, apt-daily etc.) for the duration. Restored in `finally` — including on Ctrl-C.

@@ -7,6 +7,110 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 21 — 2026-05-04
+
+### What we did
+
+**Variance-calibration integrity pass.** Owner flagged that overnight calibration produced a `variance_idle_pct` of 11.03% (was 6.66% in S18, 1.79% in S17) and `variance_gpu_pct` of 3.00% (was 0.49%) — surprising on a freshly-rebooted box with the longest cooldown ever used. Investigation surfaced two coupled bugs and a methodology question.
+
+**Diagnostic-first approach: `bin/probe-thermal-recovery`.** Built a 12-distance × CPU+GPU thermal-recovery probe to test the bimodal-idle hypothesis (post-CPU baselines systematically warmer than post-GPU baselines because of asymmetric thermal residual). For each distance d ∈ `[0, 2, 5, 8, 12, 18, 25, 35, 50, 70, 95, 120]` seconds, probe runs one CPU encode (`variance_cpu_cmd` on `meridian_4k.mp4`, 172s) then one GPU encode (`variance_gpu_cmd` capped at `-t 30` on `meridian_120s.mp4`, ~4s), waits exactly d seconds after ffmpeg exit, samples 8 idle polls. Visitor protection via `/tmp/owl-paused` + `/tmp/gos-measure.lock`. Total ~65 min wall time. CSVs land in `results/diagnostics/recovery_<ts>.csv` + `_summary.csv`.
+
+**The bimodal hypothesis was refuted.** From d=5s onward both workloads converge to 53-55W with CV around 1-2.5%. Mean within-window CV across all d≥5 readings: **2.14%**. Pooled CV mimicking calibration's formula: 2.96%. Neither comes near 11%. So the calibration's inflated idle figure was *not* recovery time / bimodality / drift — it was something the probe didn't reproduce. Two bugs fell out of that investigation.
+
+**CR-022 — `scale_vaapi` surface-pool leak.** First smoke test of the probe failed deterministically: the GPU encode crashed at exactly `frame=43076` of the 12-min input. Standalone ffmpeg reproduces it, also fails on `meridian_120s.mp4` at frame 7178. Filter chain `-vf scale_vaapi=w=-2:h=1080:format=nv12` leaks VAAPI surfaces over time and exhausts the pool near end-of-stream. Affects all four VAAPI presets in `PRESETS` plus `variance_gpu_cmd`. Fix: new `gpu_encode_max_s=30` setting + `_maybe_cap_vaapi(cmd)` helper inside `transcode()` that auto-detects VAAPI cmds and injects `-t 30` before `-i`. Single chokepoint covers every dispatch site. Result dict gains `gpu_capped_at_s`. End-to-end smoke confirmed: `variance_gpu_cmd` now completes in 3.7s, returncode 0, empty stderr, 7.34MB output. `extra_hw_frames=64/128` was tried previously (S12) but the leak rate just outruns whatever pool size you set. Step 2 (long-term filter restructuring / Mesa update / `hwupload`-`hwdownload` round-trip) deferred — workaround is sufficient.
+
+**CR-023 — variance calibration silently treated failed encodes as data.** `run_variance_calibration` (video.py:537) called `transcode()` but never checked `transcode_result["success"]`. As long as `readings_gpu` had any polls (and it always does — power polling runs in parallel), the run was treated as a successful data point, with ΔW averaged over the partial-encode duration. Combined with CR-022, this means **every prior calibration with a long-input GPU command silently averaged over crashing partial encodes** — `variance_gpu_pct = 3.00` from last night was 30 partial-encode runs, all crashing near end-of-stream. Fix: capture `transcode_result`, only append ΔW from successful encodes, track `cpu_failed`/`gpu_failed` counters with stderr tails, abort settings update if ≥50% of either side fails. Result JSON gains `cpu_failed`, `gpu_failed`, `failure_stderr`, `abort_reason`. Step 2 (tag failures on single-run paths in `run_single`/`run_both`/`run_all`) deferred — calibration spine is the urgent path.
+
+**UI — "More calibration details" dropdown** on `/settings` (Lab tier only). Below the existing "Run variance calibration" button, a `<details>` block lazy-loads the latest probe data and renders the recovery curve via Chart.js 4.4.0 (matching REM). Stats panel underneath surfaces the settled-idle floor (mean of d≥60s readings) and the first distance at which each workload's mean is within ±1W of that floor — the data-driven "minimum sensible `variance_cooldown_s`". New endpoint `GET /precalibration/data` (Lab tier, gated on `SETTINGS_READ_FULL`) reads the latest `recovery_*_summary.csv` and returns it as JSON.
+
+**Factorisation: `wattlab_service/static/wl-charts.js`.** Shared chart helper so future graphs across `/methodology`, `/queue-status`, result detail pages, etc. share look-and-feel and the underlying tech can be swapped one day. Public surface deliberately narrow: `WlCharts.line({canvas, datasets, xLabel, yLabel, yUnit})` with semantic colour names (`cpu`, `gpu`, `accent`, `warn`, `err`) resolved against the OWL palette. Each call site provides datasets + axis labels; everything else (dark theme, monospace font, axis colours, grid, tooltip) lives in the helper. The settings page's dropdown collapsed from a 30-line inline Chart.js construction to a 12-line `WlCharts.line({...})` call. Swapping Chart.js for uPlot / ECharts later is a one-file change.
+
+**CRs captured:** CR-024 (re-run probe button on the panel — half-day estimate; promote `bin/probe-thermal-recovery` to a `/precalibration/run` endpoint mirroring `/variance/run`, route through `queue_control.enqueue` for visitor protection, expose probe params in settings.json, status polling + auto-refresh chart on the panel).
+
+### Why it matters
+
+The variance framework is the foundation of OWL's confidence labels: every 🟢/🟡/🔴 hinges on `noise_w = variance_pct/100 × w_base`. CR-022 + CR-023 together meant **no calibration since the leak emerged was clean** — every `variance_*_pct` figure was partly partial-encode noise instead of real measurement noise. We didn't know because the calibration loop never noticed.
+
+The probe diagnostic was the seam that exposed all of this: a tool that ran the same workloads as variance calibration but checked `transcode_result["success"]` end-to-end. The first smoke test failed where the calibration would have silently succeeded. Generalisable lesson: **measurement code should fail loudly, not interpolate around brokenness**. CR-023 step 2 (tag failures on single-run paths) extends the same discipline to `/video`, `/llm`, etc.
+
+Side benefit of the probe data: `variance_cooldown_s=90` is ~10× overkill. Recovery is essentially complete by d=8s; even d=15s would be generous. Future calibrations can run in ~1h instead of ~3h with no quality loss. Saved as a recommendation, not auto-applied.
+
+### Open / deferred
+
+- **First post-CR-022/CR-023 calibration** — pending. Needs to land before any new headline finding rests on a confidence label.
+- **CR-022 step 2** — long-term filter restructuring / Mesa update test. Workaround is sufficient; this is housekeeping.
+- **CR-023 step 2** — tag failures on `run_single`/`run_both_measurement`/`run_all_measurement` + UI badge for failed-encode runs. Not urgent now that the calibration spine is gated.
+- **CR-024** — re-run probe button on the panel. Half-day; not done in this session.
+- **Headline findings audit** — `H.265 GPU 14.5s / 0.29 Wh` and friends in CLAUDE.md were measured before CR-022 was patched. Unclear how much they include partial-encode tails. Worth re-running the canonical ABR all-codecs benchmark with the cap in place and updating the headlines (or annotating them).
+
+### Tests / code (morning)
+
+- `wattlab_service/settings.py` — added `gpu_encode_max_s: 30` to DEFAULTS.
+- `wattlab_service/video.py` — `_maybe_cap_vaapi()` helper, `transcode()` now applies it and returns `gpu_capped_at_s`. `run_variance_calibration` now captures `transcode_result`, tracks `cpu_failed`/`gpu_failed`, aborts settings update if ≥50% fail.
+- `wattlab_service/main.py` — new `GET /precalibration/data` endpoint, "More calibration details" `<details>` block on `/settings` (lab-only), Chart.js + wl-charts.js loaded conditionally.
+- `wattlab_service/static/wl-charts.js` — new shared chart helper.
+- `bin/probe-thermal-recovery` — new diagnostic CLI.
+- `results/diagnostics/recovery_20260504_121953.{csv,_summary.csv}` — first clean probe data.
+- 180 tests passing (no regressions; calibration-loop change isn't unit-tested directly — long-async-with-subprocess, would need heavy mocking — but `_maybe_cap_vaapi()` was verified end-to-end against the real `variance_gpu_cmd`).
+
+### Afternoon — team meeting + follow-up
+
+After the morning's measurement-integrity work, ran a team meeting walkthrough; the team raised 33 items spanning bugs, UX, methodology, and infrastructure. Mapped against existing CRs and prior-session captures, the meeting produced:
+
+**6 new CRs, written to scope after one consolidation pass:**
+- **CR-026 Anonymous-tier integrity pass** (route enforcement + hide prior jobs + disable upload + add curated videos + JSON/CSV download policy — bundled because the policy table needs to ship coherently). Highest urgency: public site has live leaks of member-only surfaces.
+- **CR-027 Tier explanation pass** ("Why this matters" prominence + tier copy update — same surface, same review).
+- **CR-028 Confidence model evolution** (Phase 1 = interim 60/20/20 weighting now; Phase 2 = Tania-led unified statistical model later). Phase 2 likely supersedes CR-020.
+- **CR-029 Encoding rigor pass** (document pipeline + validate CPU/GPU params + verify outputs + add apples-to-apples vs. typical-use compare modes + external PQA scoping). Tania workstream.
+- **CR-030 Carbon UI calibration** (shrink CO₂ typography + smarter EV unit selection + µg/mg disambiguation).
+- **CR-031 Deployment portability** (DB-vs-JSON decision + power-source abstraction + containerisation, all under one "off-GoS1" decision frame).
+
+**Folded into existing CRs (no new write-up):**
+- CR-019 extended — resume-job progress widget lifecycle bug (item #6) absorbed into the same-shape unification work.
+- CR-012 extended — thermal-recovery probe history persistence absorbed alongside variance calibration history (same JSONL pattern, same trend page).
+
+**CR-025 upgraded** from exploratory "maybe" to confirmed direction by the team. RT Linux + CPU isolation now on the roadmap.
+
+**CR-020 marked likely-superseded** by CR-028 Phase 2 (the Tania-led model absorbs the per-run baseline-CV gate idea). Kept alive as the smaller incremental fix in case Phase 2 stalls.
+
+**Inline tweaks (not CRs):**
+- `gpu_encode_max_s: 30 → 90` in `settings.json` — addresses the 17.22% GPU CV symptom that turned out to be sample-window-too-short, not a calibration bug.
+- `/settings` page reorganisation — "Tier limits" moved out from between "Confidence thresholds" and "Variance calibration" to its own section after the calibration block. Variance flow now reads as one continuous block.
+- **Negative-carbon bug fix** — sub-baseline ΔE produced negative `co2e.grams` rendering as "-38.78 µg" in the UI. `wh_to_co2e()` now clamps negatives to zero (raw `delta_w` / `delta_e_wh` stay un-clamped in the result JSON for auditability); UI guards `<= 0` instead of `=== 0` for `fmtMass`, `wlCarbonRow`, `fmtEvDistance`. New regression test `test_wh_to_co2e_clamps_negatives_to_zero`.
+- **Methodology page v0.3** — added VAAPI cap callout, calibration-integrity subsection (CR-023), Diagnostics & Pre-calibration section (probe + chart), `gpu_encode_max_s` placeholder, refreshed P110 caveat to mention the cap-vs-poll-count tradeoff.
+
+**Calibration cycle through the afternoon (live data):**
+
+| Run | n | cooldown | cap | idle% | cpu% | gpu% | composite |
+|---|---|---|---|---|---|---|---|
+| Pre-fix | 30 | 90 | — | 11.03 | 2.46 | 3.00 | 5.50 |
+| First post-CR-022/CR-023 | 15 | 30 | 30 | 4.40 | 2.11 | 17.22 | 7.91 |
+| Mid-afternoon | 10 | 70 | 30 | 7.42 | 5.28 | 19.44 | 10.71 |
+| With cap=90 (n=10) | 10 | 70 | 90 | 1.92 | 0.71 | 24.50 | 9.04 |
+| Latest short run | 3 | 30 | 90 | 2.41 | 1.33 | 4.77 | 2.84 |
+
+Idle and CPU CV settled into the 1-3% range — best ever, consistent with the probe's within-window CV (2.14%). GPU CV swung 4.77% (n=3) to 24.5% (n=10) at identical settings — too few samples to disambiguate "real" GPU encode variability from sampling noise. Open question recorded under CR-028.
+
+**Pruning pass** to retire duplication after the meeting CRs landed:
+- CR-020 status updated with "likely superseded by CR-028 Phase 2" note.
+- CR-025 title dropped "(maybe)"; status reflects meeting upgrade.
+- CHANGE_REQUESTS.md "Caught during the session" entries cross-ref CR-028 (confidence multipliers) and CR-029 (codec apples-to-apples) instead of the now-outdated "no new CR" framing.
+- CLAUDE.md deferred list cross-refs CR-028 / CR-029 / CR-031 sub-3 for items now formally captured.
+- Three meeting non-CR items added to the "Caught during the session" list with explicit "from team meeting 2026-05-04" framing: GPU variance settings tweak (done inline), carbon philosophy board agenda, GosOne→OWL doc sweep.
+
+### Tests / code (afternoon)
+
+- `wattlab_service/carbon.py` — `wh_to_co2e()` clamps negative `grams` to zero with explanatory comment.
+- `wattlab_service/main.py` — UI `<= 0` guards in `fmtMass`, `wlCarbonRow`, `fmtEvDistance`; `/settings` Tier-limits section moved; methodology page v0.3 (new placeholders + sections); precalibration endpoint stays on the now-confirmed path.
+- `wattlab_service/tests/test_carbon.py` — `test_wh_to_co2e_clamps_negatives_to_zero` regression test.
+- `CHANGE_REQUESTS.md` — CR-026 through CR-031 added; CR-019 + CR-012 extended; CR-020 + CR-025 + "Caught during the session" updated.
+- `CLAUDE.md` — Session 21 one-liner expanded; deferred list cross-references; CR index updated.
+- `bin/README.md` — `probe-thermal-recovery` section added.
+- `settings.json` — `gpu_encode_max_s: 30 → 90`; calibrations rewrote `variance_*_pct` multiple times.
+- 181 tests passing (the negative-clamp regression brought the count up by 1).
+
+---
+
 ## Session 19 — 2026-05-03
 
 ### What we did

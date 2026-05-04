@@ -37,6 +37,12 @@ DEFAULTS = {
     "h264_bitrate_kbps": 4000,
     "h265_bitrate_kbps": 2000,
     "av1_bitrate_kbps":  1500,
+    # CR-022 — workaround for the scale_vaapi surface-pool leak that crashes
+    # long VAAPI encodes near end-of-stream (~frame 7000+ on 1080p output).
+    # transcode() injects "-t {gpu_encode_max_s}" before "-i" on any cmd
+    # containing "vaapi", capping every GPU encode at this many seconds of
+    # input. 0 disables the cap (use only after the upstream filter is fixed).
+    "gpu_encode_max_s": 30,
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
     # CR-001 part D — per-tier queue caps + Anonymous upload size.

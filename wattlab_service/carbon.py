@@ -396,6 +396,16 @@ def wh_to_co2e(wh: Optional[float], zone: str = HOME_ZONE) -> Optional[dict]:
         return None
     i = intensity(zone)
     grams = (wh_f / 1000.0) * i["g_per_kwh"]
+    # Clamp sub-baseline / negative readings to zero. ΔW < 0 happens on very
+    # short tasks where the few polls during the encode happen to land below
+    # baseline by chance (P110 1Hz × ~1W resolution). The honest read is
+    # identical to ΔW ≈ 0 — the task is below the measurement floor — so we
+    # surface the same "below measurement floor" treatment downstream rather
+    # than display a numeric "negative footprint" that has no physical meaning.
+    # The raw delta_w / delta_e_wh stay un-clamped in the result JSON so the
+    # noise itself remains auditable; only the derived gCO2e is sanitised.
+    if grams < 0:
+        grams = 0
     # Round at nanogram precision — well below the P110 measurement floor.
     # Coarser rounding (3 decimals) silently truncates µg-scale values to 0,
     # which the UI then renders as "0 g". Display-layer formatting (fmtMass

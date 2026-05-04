@@ -217,8 +217,33 @@ def apply_custom_cmd(custom_cmd: str, input_path, output_path) -> list:
     return shlex.split(cmd_str)
 
 
+def _maybe_cap_vaapi(cmd: list) -> tuple[list, int | None]:
+    """CR-022 workaround: scale_vaapi leaks surfaces and crashes near
+    end-of-stream on long inputs (~7000+ frames at 1080p). Cap every VAAPI
+    encode at gpu_encode_max_s seconds of input by injecting -t before -i.
+
+    Detects VAAPI by the presence of "vaapi" in any arg. No-ops if -t is
+    already set (operator override) or gpu_encode_max_s is 0/missing.
+
+    Returns (modified_cmd, cap_applied_or_None).
+    """
+    if not any("vaapi" in str(a) for a in cmd):
+        return cmd, None
+    if "-t" in cmd:
+        return cmd, None
+    cap = int(cfg.load().get("gpu_encode_max_s", 0) or 0)
+    if cap <= 0:
+        return cmd, None
+    try:
+        i_idx = cmd.index("-i")
+    except ValueError:
+        return cmd, None
+    return cmd[:i_idx] + ["-t", str(cap)] + cmd[i_idx:], cap
+
+
 def transcode(cmd: list) -> dict:
     # nice -n -5 gives ffmpeg elevated CPU scheduling priority
+    cmd, gpu_cap = _maybe_cap_vaapi(cmd)
     cmd = ["nice", "-n", "-5"] + cmd
     t_start = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -227,6 +252,7 @@ def transcode(cmd: list) -> dict:
         "success": result.returncode == 0,
         "duration_s": round(t_end - t_start, 1),
         "ffmpeg_cmd": " ".join(cmd),
+        "gpu_capped_at_s": gpu_cap,
         "stderr": result.stderr[-500:] if result.returncode != 0 else ""
     }
 
@@ -553,11 +579,27 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
 
     stopped = focus_mode_enter()
     idle_readings: list[float] = []   # raw P110 watts during all baselines
-    cpu_delta_w: list[float] = []     # ΔW per CPU run
-    gpu_delta_w: list[float] = []     # ΔW per GPU run
+    cpu_delta_w: list[float] = []     # ΔW per CPU run (successful encodes only)
+    gpu_delta_w: list[float] = []     # ΔW per GPU run (successful encodes only)
+    cpu_failed = 0                    # CR-023: failed-encode counter
+    gpu_failed = 0
+    failure_stderr: list[str] = []    # tail of stderr from each failed encode
 
     LOCK_FILE.write_text(job_id)
     try:
+        # Pre-calibration cooldown — let the system settle before the first
+        # baseline. Without this, whatever the operator was doing on the box
+        # immediately before clicking "Run variance calibration" (typing,
+        # browsing, file ops) bleeds into run 1's idle readings and inflates
+        # variance_idle_pct for the whole calibration. Focus mode is already
+        # on at this point, so background timers are already suppressed; this
+        # sleep just gives residual activity time to decay. Reuses
+        # variance_cooldown_s — same scale as the existing inter-run gaps,
+        # so bumping that setting also lengthens this pre-roll.
+        if jobs:
+            jobs[job_id]["stage"] = "pre-calibration cooldown"
+        await asyncio.sleep(cooldown)
+
         for i in range(n_runs):
             run_label = f"{i + 1}/{n_runs}"
 
@@ -581,13 +623,20 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
             _stage("H.264 CPU encode")
             stop_cpu = asyncio.Event()
             poll_cpu = asyncio.create_task(poll_during_task(stop_cpu))
-            await asyncio.get_event_loop().run_in_executor(None, transcode, cmd_cpu)
+            cpu_result = await asyncio.get_event_loop().run_in_executor(
+                None, transcode, cmd_cpu)
             stop_cpu.set()
             readings_cpu = await poll_cpu
             out_cpu.unlink(missing_ok=True)
-            if readings_cpu:
+            # CR-023: only count ΔW from successful encodes. Partial-encode
+            # ΔW polluted the historical variance_*_pct figures (see CR-022
+            # for the scale_vaapi leak that made this matter).
+            if cpu_result.get("success") and readings_cpu:
                 w_task = sum(r["watts"] for r in readings_cpu) / len(readings_cpu)
                 cpu_delta_w.append(round(w_task - w_base_cpu, 3))
+            elif not cpu_result.get("success"):
+                cpu_failed += 1
+                failure_stderr.append(f"run {run_label} cpu: {cpu_result.get('stderr','')[-200:]}")
 
             # --- Cooldown between CPU and GPU ---
             _stage("cooldown")
@@ -609,13 +658,17 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
             _stage("H.265 GPU encode")
             stop_gpu = asyncio.Event()
             poll_gpu = asyncio.create_task(poll_during_task(stop_gpu))
-            await asyncio.get_event_loop().run_in_executor(None, transcode, cmd_gpu)
+            gpu_result = await asyncio.get_event_loop().run_in_executor(
+                None, transcode, cmd_gpu)
             stop_gpu.set()
             readings_gpu = await poll_gpu
             out_gpu.unlink(missing_ok=True)
-            if readings_gpu:
+            if gpu_result.get("success") and readings_gpu:
                 w_task2 = sum(r["watts"] for r in readings_gpu) / len(readings_gpu)
                 gpu_delta_w.append(round(w_task2 - w_base_gpu, 3))
+            elif not gpu_result.get("success"):
+                gpu_failed += 1
+                failure_stderr.append(f"run {run_label} gpu: {gpu_result.get('stderr','')[-200:]}")
 
             # --- Inter-run cooldown (skip after last run) ---
             if i < n_runs - 1:
@@ -636,19 +689,36 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
     available = [v for v in [idle_cv, cpu_cv, gpu_cv] if v is not None]
     mean_cv = round(sum(available) / len(available), 2) if available else None
 
+    # CR-023: half-or-more failures on either side = poisoned data, refuse
+    # to update settings. The result still gets returned for forensics.
+    cpu_fail_rate = cpu_failed / n_runs if n_runs else 0.0
+    gpu_fail_rate = gpu_failed / n_runs if n_runs else 0.0
+    too_many_failed = cpu_fail_rate >= 0.5 or gpu_fail_rate >= 0.5
+
     result = {
         "runs_completed": len(cpu_delta_w),
         "idle_readings_n": len(idle_readings),
         "cpu_delta_w_values": cpu_delta_w,
         "gpu_delta_w_values": gpu_delta_w,
+        "cpu_failed": cpu_failed,
+        "gpu_failed": gpu_failed,
+        "failure_stderr": failure_stderr[:5],   # cap to keep result small
         "variance_idle_pct": idle_cv,
         "variance_cpu_pct":  cpu_cv,
         "variance_gpu_pct":  gpu_cv,
         "variance_mean_pct": mean_cv,
         "variance_updated": False,
+        "abort_reason": None,
     }
 
-    if mean_cv is not None:
+    if too_many_failed:
+        result["abort_reason"] = (
+            f"≥50% encode failures (cpu {cpu_failed}/{n_runs}, "
+            f"gpu {gpu_failed}/{n_runs}); refusing to update settings. "
+            f"See failure_stderr for details. Likely CR-022 (scale_vaapi leak) "
+            f"if gpu failures dominate."
+        )
+    elif mean_cv is not None:
         current = cfg.load()
         current["variance_idle_pct"] = idle_cv
         current["variance_cpu_pct"]  = cpu_cv

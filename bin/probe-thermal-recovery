@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""
+probe-thermal-recovery — diagnostic CLI to characterise the post-encode
+idle recovery curve of the GoS1 server.
+
+For each distance d in the supplied list, runs ONE CPU encode then ONE GPU
+encode (interleaved per distance), waits exactly d seconds after ffmpeg
+exits, and samples N idle polls from the P110 at 1Hz. Writes raw P110
+readings and a per-(distance, workload) summary to two CSVs under
+results/diagnostics/.
+
+The point: validate (or refute) the bimodal-idle hypothesis behind the
+inflated idle CV in the latest variance calibration. With the curve in
+hand we can pick a `variance_cooldown_s` that's actually long enough.
+
+Visitor protection during the run:
+  - Touches /tmp/owl-paused   → queue worker stops dispatching new jobs
+  - Touches /tmp/gos-measure.lock → marker for any code that polls it
+Both are removed on clean exit (and on Ctrl-C via the finally block).
+
+Usage:
+  bin/probe-thermal-recovery
+  bin/probe-thermal-recovery --distances 0,10,30,60,90,120
+  bin/probe-thermal-recovery --baseline-polls 8 --pre-cool-s 30 \
+                             --out results/diagnostics/myrun.csv
+
+Defaults give 25 distances × (CPU + GPU) ≈ 1h 57m wall time.
+"""
+import argparse
+import asyncio
+import csv
+import statistics
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE / "wattlab_service"))
+
+import settings as cfg                            # noqa: E402
+from power import get_power_watts                 # noqa: E402
+from video import (                               # noqa: E402
+    LOCK_FILE,
+    UPLOAD_DIR,
+    apply_custom_cmd,
+    focus_mode_enter,
+    focus_mode_exit,
+    transcode,
+)
+
+PAUSE_FLAG = Path("/tmp/owl-paused")
+INPUT_CPU = Path("/home/gos/wattlab/test_content/meridian_4k.mp4")
+# GPU uses the 120s asset because the production scale_vaapi filter chain
+# leaks surfaces over ~7000 frames and crashes near end-of-stream on the
+# full 12-min asset (frame=43076, "Cannot allocate memory"). On the 120s
+# asset it crashes around frame 7178 (also reproducible). Workaround: cap
+# at -t 30 so the encode completes cleanly. This is a workaround for an
+# upstream bug in variance_gpu_cmd — file separately.
+INPUT_GPU = Path("/home/gos/wattlab/test_content/meridian_120s.mp4")
+GPU_T_LIMIT = 30
+# 12 distances, dense in 0-15s where recovery action lives, sparse past 30s
+DEFAULT_DISTANCES = [0, 2, 5, 8, 12, 18, 25, 35, 50, 70, 95, 120]
+POLL_INTERVAL = 1.0
+
+
+def _gpu_cmd_capped(template: str) -> str:
+    """Inject -t GPU_T_LIMIT before the input arg so the surface-pool
+    leak in scale_vaapi doesn't crash mid-encode. Pure string sub on the
+    settings template — keeps the rest of the encoder flags identical."""
+    if "-i {input}" not in template:
+        return template
+    return template.replace("-i {input}", f"-t {GPU_T_LIMIT} -i {{input}}")
+
+
+def parse_distances(s: str) -> list[int]:
+    out = sorted({int(x.strip()) for x in s.split(",") if x.strip()})
+    if not out or any(d < 0 for d in out):
+        raise argparse.ArgumentTypeError("distances must be non-negative ints")
+    return out
+
+
+async def sample_idle(n: int) -> list[float]:
+    readings = []
+    for _ in range(n):
+        readings.append(await get_power_watts())
+        await asyncio.sleep(POLL_INTERVAL)
+    return readings
+
+
+async def measure_one(workload: str, cmd_tpl: str, input_video: Path,
+                      distance_s: int, n_polls: int, pre_cool_s: int,
+                      run_idx: str, raw_writer, summary_writer):
+    """Pre-cool, encode, wait `distance_s`, sample `n_polls`, write CSV rows."""
+    print(f"  [{workload:3s}] pre-cool {pre_cool_s}s …", flush=True)
+    await asyncio.sleep(pre_cool_s)
+
+    out_path = UPLOAD_DIR / f"probe_{run_idx}_{workload}.mp4"
+    cmd = apply_custom_cmd(cmd_tpl, input_video, out_path)
+
+    print(f"  [{workload:3s}] encode …", flush=True)
+    t0 = time.time()
+    result = await asyncio.get_event_loop().run_in_executor(None, transcode, cmd)
+    encode_s = round(time.time() - t0, 1)
+    out_path.unlink(missing_ok=True)
+    if not result["success"]:
+        print(f"  [{workload:3s}] ENCODE FAILED — skipping sample. stderr tail: "
+              f"{result['stderr']!r}", flush=True)
+        return
+
+    print(f"  [{workload:3s}] encode {encode_s}s · wait {distance_s}s · "
+          f"sample {n_polls}p …", flush=True)
+    if distance_s > 0:
+        await asyncio.sleep(distance_s)
+
+    t_sample_start = time.time()
+    readings = await sample_idle(n_polls)
+    t_sample_end = time.time()
+
+    for i, w in enumerate(readings):
+        raw_writer.writerow({
+            "ts": datetime.fromtimestamp(t_sample_start + i * POLL_INTERVAL)
+                          .isoformat(timespec="seconds"),
+            "distance_s": distance_s,
+            "workload": workload,
+            "poll_idx": i,
+            "watts": round(w, 3),
+        })
+
+    mean_w = round(statistics.mean(readings), 3)
+    std_w = round(statistics.stdev(readings), 3) if len(readings) > 1 else 0.0
+    cv_pct = round(std_w / mean_w * 100, 2) if mean_w else 0.0
+    summary_writer.writerow({
+        "distance_s": distance_s,
+        "workload": workload,
+        "encode_s": encode_s,
+        "n_polls": n_polls,
+        "mean_w": mean_w,
+        "std_w": std_w,
+        "cv_pct": cv_pct,
+        "min_w": round(min(readings), 3),
+        "max_w": round(max(readings), 3),
+        "sample_window_s": round(t_sample_end - t_sample_start, 1),
+    })
+    print(f"  [{workload:3s}] mean={mean_w}W std={std_w}W cv={cv_pct}%",
+          flush=True)
+
+
+async def run(distances: list[int], n_polls: int, pre_cool_s: int,
+              raw_path: Path, summary_path: Path):
+    s = cfg.load()
+    cpu_tpl = s["variance_cpu_cmd"]
+    gpu_tpl = _gpu_cmd_capped(s["variance_gpu_cmd"])
+
+    if LOCK_FILE.exists():
+        print(f"ABORT: {LOCK_FILE} exists — system measurement in progress. "
+              f"Wait for it to finish, or rm the file if stale.", file=sys.stderr)
+        sys.exit(2)
+
+    for label, p in (("CPU", INPUT_CPU), ("GPU", INPUT_GPU)):
+        if not p.exists():
+            print(f"ABORT: {label} input video missing at {p}", file=sys.stderr)
+            sys.exit(2)
+
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_f = raw_path.open("w", newline="")
+    summary_f = summary_path.open("w", newline="")
+    raw_writer = csv.DictWriter(raw_f, fieldnames=[
+        "ts", "distance_s", "workload", "poll_idx", "watts"
+    ])
+    summary_writer = csv.DictWriter(summary_f, fieldnames=[
+        "distance_s", "workload", "encode_s", "n_polls",
+        "mean_w", "std_w", "cv_pct", "min_w", "max_w", "sample_window_s",
+    ])
+    raw_writer.writeheader()
+    summary_writer.writeheader()
+
+    PAUSE_FLAG.touch()
+    LOCK_FILE.write_text("probe-thermal-recovery")
+    stopped = focus_mode_enter()
+    print(f"focus mode: stopped {len(stopped)} timers · "
+          f"PAUSE_FLAG + LOCK_FILE held", flush=True)
+
+    t_start = time.time()
+    try:
+        for i, d in enumerate(distances, 1):
+            elapsed = round((time.time() - t_start) / 60, 1)
+            print(f"\n=== distance {d}s · pair {i}/{len(distances)} · "
+                  f"elapsed {elapsed}min ===", flush=True)
+            run_idx = f"{i:02d}_d{d:03d}"
+            await measure_one("cpu", cpu_tpl, INPUT_CPU, d, n_polls,
+                              pre_cool_s, run_idx, raw_writer, summary_writer)
+            raw_f.flush(); summary_f.flush()
+            await measure_one("gpu", gpu_tpl, INPUT_GPU, d, n_polls,
+                              pre_cool_s, run_idx, raw_writer, summary_writer)
+            raw_f.flush(); summary_f.flush()
+    finally:
+        focus_mode_exit(stopped)
+        LOCK_FILE.unlink(missing_ok=True)
+        PAUSE_FLAG.unlink(missing_ok=True)
+        raw_f.close()
+        summary_f.close()
+        print(f"\nfocus mode: restored · PAUSE_FLAG + LOCK_FILE released")
+        print(f"raw     → {raw_path}")
+        print(f"summary → {summary_path}")
+        print(f"total wall time: {round((time.time() - t_start) / 60, 1)} min")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--distances", type=parse_distances,
+                    default=DEFAULT_DISTANCES,
+                    help=f"comma-separated seconds (default: {DEFAULT_DISTANCES[0]}..{DEFAULT_DISTANCES[-1]} step 5)")
+    ap.add_argument("--baseline-polls", type=int, default=None,
+                    help="idle polls per measurement (default: settings.baseline_polls)")
+    ap.add_argument("--pre-cool-s", type=int, default=30,
+                    help="seconds to wait before each encode (default 30)")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="raw CSV path (default: results/diagnostics/recovery_<ts>.csv)")
+    args = ap.parse_args()
+
+    n_polls = args.baseline_polls if args.baseline_polls is not None \
+              else int(cfg.load()["baseline_polls"])
+    if args.out is None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        raw_path = HERE / "results" / "diagnostics" / f"recovery_{ts}.csv"
+    else:
+        raw_path = args.out
+    summary_path = raw_path.with_name(raw_path.stem + "_summary.csv")
+
+    print(f"distances:     {args.distances}")
+    print(f"baseline_polls: {n_polls}")
+    print(f"pre_cool_s:    {args.pre_cool_s}")
+    print(f"raw output:    {raw_path}")
+    print(f"summary:       {summary_path}")
+    # encode time estimates from the smoke test:
+    # CPU: meridian_4k.mp4 -crf 23 → ~172s wall on Ryzen 9 7900
+    # GPU: meridian_120s.mp4 -t 30 -qp 28 → ~5s wall on RX 7800 XT (VAAPI)
+    cpu_est = 172
+    gpu_est = 5
+    total_s = sum(2 * args.pre_cool_s + cpu_est + gpu_est + 2 * d + 2 * n_polls
+                  for d in args.distances)
+    print(f"estimated wall time: {round(total_s / 60, 1)} min "
+          f"(~{round(total_s / 3600, 2)} h)\n")
+
+    asyncio.run(run(args.distances, n_polls, args.pre_cool_s,
+                    raw_path, summary_path))
+
+
+if __name__ == "__main__":
+    main()

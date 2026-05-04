@@ -91,6 +91,22 @@ def test_wh_to_co2e_handles_none_and_invalid():
     assert carbon.wh_to_co2e(0)["grams"] == 0
 
 
+def test_wh_to_co2e_clamps_negatives_to_zero():
+    """REGRESSION: Sub-baseline ΔE (very short tasks where the few polls
+    during the encode happen to land below baseline by chance) used to
+    propagate as a negative `grams` value, which the UI then rendered as
+    "-38.78 µg". The honest read is identical to ΔE ≈ 0 — below the
+    measurement floor — so the server clamps the derived gCO2e to zero
+    and lets the existing 'below measurement floor' rendering take over.
+    Raw delta_w / delta_e_wh in the result JSON stay un-clamped so the
+    noise itself remains auditable."""
+    out = carbon.wh_to_co2e(-0.0014, "FR")
+    assert out is not None
+    assert out["grams"] == 0
+    out2 = carbon.wh_to_co2e(-1.0, "FR")
+    assert out2["grams"] == 0
+
+
 # --- Live cache freshness ---------------------------------------------------
 
 def test_intensity_uses_live_when_cache_fresh():
