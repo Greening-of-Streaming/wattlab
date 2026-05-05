@@ -436,10 +436,38 @@ _CARBON_JS = """
     if (g == null) return '—';
     if (g <= 0)    return '—';
     var ag = Math.abs(g);
-    if (ag >= 1)        return g.toFixed(2)   + ' g';
+    if (ag >= 1e6)      return (g/1e6).toFixed(2)  + ' t';   // tonnes — large continuous projections
+    if (ag >= 1000)     return (g/1000).toFixed(2) + ' kg';
+    if (ag >= 1)        return g.toFixed(2)        + ' g';
     if (ag >= 0.001)    return (g*1000).toFixed(2) + ' mg';
     if (ag >= 1e-6)     return (g*1e6).toFixed(2)  + ' µg';
     return g.toExponential(2) + ' g';
+  }
+  // Energy formatter — auto-switches Wh/kWh/MWh/GWh so projected runs
+  // (1 day / 1 month / 1 year continuous) don't show as "131400 Wh" when
+  // "131 kWh" is more legible. Returns the value-with-unit as a single
+  // string; callers should NOT append ' Wh' themselves (unlike fmtG).
+  function fmtEnergy(wh){
+    if (wh == null) return '—';
+    var aw = Math.abs(wh);
+    if (aw >= 1e9)   return (wh/1e9).toFixed(2)  + ' GWh';
+    if (aw >= 1e6)   return (wh/1e6).toFixed(2)  + ' MWh';
+    if (aw >= 1e4)   return (wh/1000).toFixed(1) + ' kWh';
+    if (aw >= 1000)  return (wh/1000).toFixed(2) + ' kWh';
+    if (aw >= 100)   return wh.toFixed(1)        + ' Wh';
+    if (aw >= 1)     return wh.toFixed(2)        + ' Wh';
+    return wh.toFixed(3) + ' Wh';
+  }
+  // Tooltip for mass cells. Spells out the unit relationship and shows the
+  // exact value in scientific notation, so visitors can never confuse µg
+  // (microgram, 1e-6 g) with mg (milligram, 1e-3 g) — a 1000× difference
+  // that is easy to misread in speech and at a glance. The U+00B5 µ glyph
+  // is used consistently throughout this widget; the tooltip names it
+  // explicitly so screen readers and copy-paste consumers get the same.
+  function massTitle(g){
+    if (g == null || g <= 0) return '';
+    return 'CO₂e mass · 1 mg = 1000 µg = 1e-3 g · '
+         + 'this value: ' + g.toExponential(3) + ' g';
   }
   // Tooltip attached to "below measurement floor" displays — same wording
   // wherever the floor is hit, single source of truth.
@@ -452,9 +480,14 @@ _CARBON_JS = """
   // intensity on a lifecycle grid mix (Transport & Environment 2024 fleet
   // average). Imprecise on purpose; the point is "give visitors a feel for
   // the magnitude in something they understand."
+  // Floor: below ~10 mm of EV driving the comparator reads as too cute and
+  // undermines credibility — visitors who care about µg-scale carbon read
+  // the µg figure directly. 0.0005 g ÷ 50 g/km = 10 mm.
   var EV_G_PER_KM = 50;
+  var EV_FLOOR_GRAMS = 0.0005;  // 10 mm — below this, suppress the row.
   function fmtEvDistance(grams){
     if (grams == null || grams <= 0) return '';
+    if (grams < EV_FLOOR_GRAMS)      return '';
     var km = grams / EV_G_PER_KM;
     if (km >= 1)     return km.toFixed(2) + ' km';
     if (km >= 0.001) return (km * 1000).toFixed(1) + ' m';
@@ -499,18 +532,58 @@ _CARBON_JS = """
       ? (i.zone_label + ' · ' + i.g_per_kwh + ' g/kWh · ' + fmtAge(i.age_s))
       : (i.zone_label + ' · ' + i.g_per_kwh + ' g/kWh · ' + (i.year ? i.year + ' mean' : 'annual mean'));
     return '<div class="metric"><span>CO₂e (est.)</span>'
-         + '<span class="val">' + fmtMass(c.grams)
+         + '<span class="val" title="' + massTitle(c.grams) + '">' + fmtMass(c.grams)
          + (live ? liveBadge() : estBadge())
          + '<span style="color:var(--text-4);font-size:0.7rem;font-family:monospace;'
          + 'margin-left:0.5rem;font-weight:normal">' + freshness + '</span>'
          + '</span></div>';
   };
 
+  // 24/7 continuous-service projection. When durationS is provided, an
+  // opt-in toggle multiplies the displayed energy + carbon by the ratio of
+  // a chosen window to the run's actual duration. Makes "this single job ×
+  // time" → real-impact intuitions tangible without forcing the visitor to
+  // do the arithmetic. Toggle state lives in the URL hash (#continuous=1d)
+  // so the projection is shareable. Default 'off' = as-measured (×1). The
+  // toggle is hidden when durationS is missing — compare-mode strips don't
+  // pass it (which mode's duration would we project?), so the projection
+  // simply isn't offered there in V1.
+  var CONTINUOUS_SECONDS = {'1h': 3600, '1d': 86400, '1mo': 2628000, '1y': 31536000};
+  var CONTINUOUS_LABELS  = {'off':'as-measured','1h':'1 hour','1d':'1 day','1mo':'1 month','1y':'1 year'};
+  var CONTINUOUS_KEYS    = ['off','1h','1d','1mo','1y'];
+  function continuousMul(key, durationS){
+    if (key === 'off' || !durationS || durationS <= 0) return 1;
+    var s = CONTINUOUS_SECONDS[key];
+    return s ? s / durationS : 1;
+  }
+  function readContinuousHash(){
+    var m = (window.location.hash || '').match(/continuous=(off|1h|1d|1mo|1y)/);
+    return m ? m[1] : 'off';
+  }
+  function writeContinuousHash(key){
+    var h = (window.location.hash || '').replace(/^#/, '');
+    var parts = h.split('&').filter(function(p){ return p && !/^continuous=/.test(p); });
+    if (key && key !== 'off') parts.push('continuous=' + key);
+    var newHash = parts.length ? '#' + parts.join('&') : window.location.pathname;
+    // history.replaceState avoids the scroll-to-anchor jump that direct
+    // location.hash mutation triggers when the strip lives mid-page.
+    var url = window.location.pathname + window.location.search
+            + (parts.length ? '#' + parts.join('&') : '');
+    window.history.replaceState(null, '', url);
+  }
+
   // Comparison strip — one block per report, shows the same Wh figure across
   // home + comparison zones. Home is live (with static fallback); other
   // zones are static so values don't drift between page loads. Returns a
   // placeholder synchronously and fills it in once /carbon resolves.
-  window.wlCarbonStrip = function(wh, label){
+  // Optional durationS enables the 24/7 projection toggle.
+  // Optional savedIntensityG is the home-zone g/kWh that prevailed when
+  // the run was saved (from energy.co2e.intensity.g_per_kwh in the result
+  // JSON). When it diverges materially from the current live intensity,
+  // the strip surfaces a drift note so the visitor understands why the
+  // headline number here can differ from the per-column inline numbers
+  // above (which are frozen at save time).
+  window.wlCarbonStrip = function(wh, label, durationS, savedIntensityG){
     if (wh == null || isNaN(wh)) return '';
     var elId = 'carbon-strip-' + Math.random().toString(36).slice(2,9);
     var html = '<div id="' + elId + '" class="carbon-strip" '
@@ -518,11 +591,15 @@ _CARBON_JS = """
              + 'border:1px solid var(--border-2);font-size:0.78rem">'
              + '<div style="color:var(--text-4);font-size:0.7rem">'
              + 'CO₂e — loading grid intensity…</div></div>';
-    setTimeout(function(){ _renderStrip(elId, parseFloat(wh), label || ''); }, 0);
+    var dur = (durationS != null && !isNaN(durationS) && durationS > 0)
+            ? parseFloat(durationS) : null;
+    var savedG = (savedIntensityG != null && !isNaN(savedIntensityG))
+            ? parseFloat(savedIntensityG) : null;
+    setTimeout(function(){ _renderStrip(elId, parseFloat(wh), label || '', dur, savedG); }, 0);
     return html;
   };
 
-  async function _renderStrip(elId, wh, label){
+  async function _renderStrip(elId, wh, label, durationS, savedIntensityG){
     var el = document.getElementById(elId);
     if (!el) return;
     var d = await loadZones();
@@ -531,6 +608,7 @@ _CARBON_JS = """
                    + 'CO₂e comparison unavailable.</div>';
       return;
     }
+    var canProject = durationS != null && durationS > 0;
     // ΔE rounded to 0 — comparing 0 g across grids is meaningless, so render
     // a clean placeholder instead of a "0 µg" row for every city.
     if (wh === 0) {
@@ -539,7 +617,7 @@ _CARBON_JS = """
         + 'style="display:flex;align-items:baseline;flex-wrap:wrap;gap:0.4rem 0.75rem">'
         + '<span style="color:var(--text-4);font-size:0.7rem;letter-spacing:0.04em;'
         + 'text-transform:uppercase">CO₂e</span>'
-        + '<span style="color:var(--text-3);font-size:1rem;font-weight:bold;'
+        + '<span style="color:var(--text-3);font-size:0.85rem;'
         + 'font-family:monospace;line-height:1">—</span>'
         + '<span style="color:var(--text-4);font-size:0.72rem;font-family:monospace">'
         + 'below P110 measurement floor</span>'
@@ -550,6 +628,14 @@ _CARBON_JS = """
         + '</div>';
       return;
     }
+    // Continuous-service projection state — read from URL hash so links
+    // share the projection. Multiplier scales the displayed Wh + every
+    // grams calc; original `wh` is preserved for the recursive re-render
+    // on toggle change.
+    var continuousKey = canProject ? readContinuousHash() : 'off';
+    var mul           = continuousMul(continuousKey, durationS);
+    var displayWh     = wh * mul;
+
     var home    = d.home_zone;
     var homeI   = d.home_intensity || {};
     var zones   = d.comparison_zones || [];
@@ -558,12 +644,48 @@ _CARBON_JS = """
 
     // Headline: home-zone gCO2e — the number visitors should walk away with.
     var homeIntensity = homeI.g_per_kwh;
-    var homeGrams = (homeIntensity != null) ? (wh / 1000) * homeIntensity : null;
+    var homeGrams = (homeIntensity != null) ? (displayWh / 1000) * homeIntensity : null;
+
+    // Drift note — when the home-zone live intensity at page-load time
+    // differs ≥1% from the intensity that was live when the result was
+    // saved, surface the gap so visitors don't read the strip headline as
+    // contradicting the per-column inline rows above. Both sources of
+    // truth coexist — the inline rows are an audit trail (what was the
+    // grid when we measured?), the strip headline is the "right now"
+    // framing (what does this look like on today's grid?).
+    var driftNoteHtml = '';
+    var _homeIsLive = (homeI.source === 'live');
+    if (_homeIsLive && savedIntensityG != null && homeIntensity != null
+        && homeIntensity > 0 && savedIntensityG > 0) {
+      var driftPct = (homeIntensity - savedIntensityG) / savedIntensityG;
+      if (Math.abs(driftPct) >= 0.01) {
+        var driftDir = driftPct > 0 ? 'up' : 'down';
+        var driftAbs = (Math.abs(driftPct) * 100).toFixed(1) + '%';
+        driftNoteHtml =
+            '<div style="margin-top:0.3rem;color:var(--text-5);font-size:0.66rem;'
+          + 'font-family:monospace;font-style:italic;line-height:1.4" '
+          + 'title="Per-column CO₂e rows above are frozen at the moment '
+          + 'this result was saved. The strip headline here is recomputed '
+          + 'on every page load using current live grid data. Both are '
+          + 'correct for their respective timestamps.">'
+          + 'Grid moved ' + driftAbs + ' ' + driftDir + ' since this run was saved · '
+          + 'saved at ' + savedIntensityG + ' g/kWh, current ' + homeIntensity + ' g/kWh · '
+          + 'rows above show the saved snapshot, headline shows live now'
+          + '</div>';
+      }
+    }
     var homeLive = (homeI.source === 'live');
     var homeFreshness = homeLive
       ? fmtAge(homeI.age_s)
       : (homeI.year ? (homeI.year + ' mean') : 'annual mean');
-    var headlineSubtitle = label ? (label + ' · ' + fmtG(wh) + ' Wh') : (fmtG(wh) + ' Wh');
+    // Projection-aware subtitle. When the toggle is on, prepend a "projected"
+    // marker so visitors don't read the projected Wh as the measured Wh.
+    var projectionPrefix = (continuousKey !== 'off')
+      ? ('Projected over ' + CONTINUOUS_LABELS[continuousKey] + ' continuous · ')
+      : '';
+    var headlineSubtitle = projectionPrefix
+      + (label ? (label + ' · ') : '')
+      + fmtEnergy(displayWh);
 
     // Provider line, only meaningful for LIVE rows.
     var providerStr = '';
@@ -576,13 +698,17 @@ _CARBON_JS = """
     // estimated context. The energy figures above the strip ARE measured;
     // these CO2e numbers are calculated from them × a grid-intensity
     // estimate, useful for comparison with other activities (driving an
-    // EV, etc.) but never the primary measurement claim.
+    // EV, etc.) but never the primary measurement claim. "Use phase"
+    // signals scope — embodied / manufacturing carbon of the hardware is
+    // out of scope here; numbers reflect grid emissions during operation.
     var estimateCaption =
         '<div style="color:var(--text-5);font-size:0.6rem;letter-spacing:0.08em;'
       + 'text-transform:uppercase;margin-bottom:0.4rem"'
-      + ' title="Wh × grid intensity. Energy is measured at the wall; this '
-      + 'block is derived for carbon-accounting comparison.">'
-      + 'High-level CO₂e estimate · for comparison with other activities'
+      + ' title="Wh × grid intensity. Use phase only — embodied carbon of '
+      + 'the hardware (manufacturing, transport, end-of-life) is not '
+      + 'included. Energy is measured at the wall; this block is derived '
+      + 'for carbon-accounting comparison.">'
+      + 'High-level CO₂e estimate · use phase · for comparison with other activities'
       + '</div>';
 
     // EV-distance equivalence — a relatable physical-world comparator.
@@ -601,15 +727,45 @@ _CARBON_JS = """
       }
     }
 
+    // 24/7 continuous-projection toggle. Hidden when no run duration is
+    // known (compare-mode strips). Sits just above the EV line because both
+    // are "what does this mean in tangible terms" affordances; together
+    // they answer "this single run × time = real impact" without the
+    // visitor doing the arithmetic. State persists in the URL hash so a
+    // shared link reproduces the projection.
+    var toggleHtml = '';
+    if (canProject) {
+      var optHtml = CONTINUOUS_KEYS.map(function(k){
+        return '<option value="' + k + '"'
+             + (k === continuousKey ? ' selected' : '')
+             + '>' + CONTINUOUS_LABELS[k] + '</option>';
+      }).join('');
+      toggleHtml =
+          '<div style="margin-top:0.4rem;font-family:monospace;font-size:0.7rem;'
+        + 'color:var(--text-4)" '
+        + 'title="Project this run as if the workload ran continuously for '
+        + 'the chosen window (e.g. live-stream encoding, model serving). '
+        + 'Off = as-measured. Multiplies the displayed Wh + every gCO₂e '
+        + 'figure by window-seconds ÷ run-seconds.">'
+        + 'Continuous projection: '
+        + '<select data-continuous-toggle '
+        + 'style="background:var(--panel);color:var(--text-2);border:1px solid var(--border-3);'
+        + 'font-family:monospace;font-size:0.7rem;padding:0.1rem 0.3rem;margin-left:0.2rem">'
+        + optHtml
+        + '</select>'
+        + '</div>';
+    }
+
     var headlineHtml =
         '<div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:0.4rem 0.75rem;'
       + 'margin-bottom:0.3rem">'
       + '<span style="color:var(--text-4);font-size:0.7rem;letter-spacing:0.04em;'
       + 'text-transform:uppercase">CO₂e</span>'
-      + '<span style="color:var(--accent);font-size:1rem;font-weight:bold;font-family:monospace;'
-      + 'line-height:1">' + (homeGrams != null ? fmtMass(homeGrams) : '—') + '</span>'
+      + '<span style="color:var(--text-3);font-size:0.85rem;font-family:monospace;'
+      + 'line-height:1"' + (homeGrams != null ? ' title="' + massTitle(homeGrams) + '"' : '') + '>'
+      + (homeGrams != null ? fmtMass(homeGrams) : '—') + '</span>'
       + (homeLive ? liveBadge() : estBadge())
-      + '<span style="color:var(--text-3);font-size:0.78rem;font-family:monospace">'
+      + '<span style="color:var(--text-4);font-size:0.72rem;font-family:monospace">'
       + 'in ' + (homeI.zone_label || home) + '</span>'
       + '</div>'
       + '<div style="color:var(--text-4);font-size:0.72rem;font-family:monospace">'
@@ -618,6 +774,8 @@ _CARBON_JS = """
           ? (homeIntensity + ' g/kWh · ' + homeFreshness + providerStr)
           : 'unknown')
       + '</div>'
+      + driftNoteHtml
+      + toggleHtml
       + evHtml;
 
     // Pinned reference row — same zone as the headline, but its static
@@ -635,7 +793,7 @@ _CARBON_JS = """
       if (refIntensity != null) {
         var refYear  = refStatic.year;
         var refLabel = refStatic.label || home;
-        var refGrams = (wh / 1000) * refIntensity;
+        var refGrams = (displayWh / 1000) * refIntensity;
         referenceRowHtml =
             '<div style="display:flex;align-items:baseline;justify-content:space-between;'
           + 'gap:0.5rem;padding:0.35rem 0.4rem;font-family:monospace;'
@@ -646,7 +804,8 @@ _CARBON_JS = """
           + 'padding:0.05rem 0.3rem;border:1px solid var(--border-3);border-radius:2px;'
           + 'margin-left:0.4rem">REF</span></span>'
           + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
-          + 'min-width:90px;text-align:right">' + fmtMass(refGrams) + '</span>'
+          + 'min-width:90px;text-align:right" title="' + massTitle(refGrams) + '">'
+          + fmtMass(refGrams) + '</span>'
           + '<span style="min-width:90px"></span>'
           + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
           + 'min-width:160px;text-align:right">'
@@ -681,7 +840,7 @@ _CARBON_JS = """
     var historicalRowsHtml = '';
     if (history.length > 0) {
       var histRows = history.map(function(h){
-        var grams = (wh / 1000) * h.g_per_kwh;
+        var grams = (displayWh / 1000) * h.g_per_kwh;
         var ratio = (homeGrams && homeGrams > 0) ? (grams / homeGrams) : null;
         var ratioStr = ratio != null
           ? (ratio >= 1.5 ? ratio.toFixed(1) + '× now' : ratio.toFixed(2) + '× now')
@@ -695,7 +854,8 @@ _CARBON_JS = """
              + 'gap:0.5rem;padding:0.3rem 0.4rem;font-family:monospace">'
              + '<span style="color:var(--text-2);flex:1;min-width:140px">' + h.label + '</span>'
              + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
-             + 'min-width:90px;text-align:right">' + fmtMass(grams) + '</span>'
+             + 'min-width:90px;text-align:right" title="' + massTitle(grams) + '">'
+             + fmtMass(grams) + '</span>'
              + '<span style="color:var(--text-4);font-size:0.7rem;white-space:nowrap;'
              + 'min-width:90px;text-align:right">' + ratioStr + '</span>'
              + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
@@ -709,7 +869,7 @@ _CARBON_JS = """
           '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2)">'
         + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
         + 'text-transform:uppercase;margin-bottom:0.3rem">'
-        + 'Through history — same ' + fmtG(wh) + ' Wh on this zone’s past grids</div>'
+        + 'Through history — same ' + fmtEnergy(displayWh) + ' on this zone’s past grids</div>'
         + histRows
         + '<div style="color:var(--text-5);font-size:0.66rem;padding:0.4rem 0.4rem 0;'
         + 'font-style:italic;line-height:1.5">'
@@ -727,7 +887,7 @@ _CARBON_JS = """
       var year      = s.year;
       var label_    = s.label || z;
       if (intensity == null) return '';
-      var grams = (wh / 1000) * intensity;
+      var grams = (displayWh / 1000) * intensity;
       var ratio = (homeGrams && homeGrams > 0) ? (grams / homeGrams) : null;
       var ratioStr = ratio != null
         ? (ratio >= 1.5 ? ratio.toFixed(1) + '× home' : ratio.toFixed(2) + '× home')
@@ -736,7 +896,8 @@ _CARBON_JS = """
            + 'gap:0.5rem;padding:0.3rem 0.4rem;font-family:monospace">'
            + '<span style="color:var(--text-2);flex:1;min-width:140px">' + label_ + '</span>'
            + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
-           + 'min-width:90px;text-align:right">' + fmtMass(grams) + '</span>'
+           + 'min-width:90px;text-align:right" title="' + massTitle(grams) + '">'
+           + fmtMass(grams) + '</span>'
            + '<span style="color:var(--text-4);font-size:0.7rem;white-space:nowrap;'
            + 'min-width:90px;text-align:right">' + ratioStr + '</span>'
            + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
@@ -809,6 +970,9 @@ _CARBON_JS = """
       + 'color:var(--text-4);font-size:0.7rem;line-height:1.55">'
       + '<div style="margin-bottom:0.25rem"><strong style="color:var(--text-3)">How this is calculated</strong></div>'
       + 'gCO₂e&nbsp;=&nbsp;Wh × (g/kWh) ÷ 1000<br>'
+      + '<span style="color:var(--text-3)">Scope: use phase only.</span> '
+      + 'Energy drawn at the wall × grid intensity. Embodied carbon of the '
+      + 'hardware — manufacturing, transport, end-of-life — is not included.<br>'
       + liveExplain + '<br>'
       + 'Estimated (reference &amp; comparison zones): '
       + '<a href="https://ember-energy.org" target="_blank" rel="noopener" '
@@ -846,13 +1010,27 @@ _CARBON_JS = """
       + referenceBlockHtml
       + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
       + 'text-transform:uppercase;margin-bottom:0.3rem">'
-      + 'Same ' + fmtG(wh) + ' Wh, on other grids (Ember 2024 annual means)</div>'
+      + 'Same ' + fmtEnergy(displayWh) + ', on other grids (Ember 2024 annual means)</div>'
       + comparisonRows
       + historicalRowsHtml
       + mixHtml
       + formulaHtml
       + '</div>'
       + '</details>';
+
+    // Wire the continuous-projection toggle. Change handler writes the
+    // new state to the URL hash and re-renders. The recursive call reads
+    // the hash on entry, so all strips on the page that share the hash
+    // (in practice: just one per result page today) update consistently.
+    if (canProject) {
+      var sel = el.querySelector('[data-continuous-toggle]');
+      if (sel) {
+        sel.addEventListener('change', function(){
+          writeContinuousHash(sel.value);
+          _renderStrip(elId, wh, label, durationS, savedIntensityG);
+        });
+      }
+    }
   }
 })();
 </script>
@@ -1700,7 +1878,7 @@ async def video_page(request: Request):
             ${{pptNote}}
             <div class="conf-badge" style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
             ${{e.confidence.hint ? '<div style="margin-top:0.35rem;color:var(--text-3);font-size:0.72rem">' + e.confidence.hint + '</div>' : ''}}
-            ${{wlCarbonStrip(e.delta_e_wh, r.preset_label)}}
+            ${{wlCarbonStrip(e.delta_e_wh, r.preset_label, e.delta_t_s, e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)}}
         </div>`;
     }}
 
@@ -1759,9 +1937,26 @@ async def video_page(request: Request):
         const stripWh = (cpuWh != null && gpuWh != null)
             ? Math.min(cpuWh, gpuWh)
             : (cpuWh != null ? cpuWh : gpuWh);
-        const stripLbl = (cpuWh != null && gpuWh != null && cpuWh <= gpuWh) ? cpu.preset_label
-                       : (cpuWh != null && gpuWh != null) ? gpu.preset_label
-                       : (cpuWh != null ? cpu.preset_label : gpu.preset_label);
+        // Label is the *winner's* preset, but explicitly framed as "best of
+        // CPU vs GPU" so the visitor reads the carbon number as the most-
+        // efficient mode of a comparison rather than the only mode tested.
+        // The page above the strip already lists both per-device columns;
+        // this just stops the strip from misleading on its own.
+        const _winnerLbl = (cpuWh != null && gpuWh != null)
+            ? (cpuWh <= gpuWh ? cpu.preset_label : gpu.preset_label)
+            : (cpuWh != null ? cpu.preset_label : gpu.preset_label);
+        const stripLbl = (cpuWh != null && gpuWh != null)
+            ? (_winnerLbl + ' · best of CPU vs GPU')
+            : _winnerLbl;
+        // Saved intensity for the drift note — pull from the winning
+        // side's energy.co2e block. Both sides share the same /carbon
+        // snapshot at save time, so either would work.
+        const _winnerE = (cpuWh != null && gpuWh != null)
+            ? (cpuWh <= gpuWh ? cpu.energy : gpu.energy)
+            : (cpuWh != null ? cpu.energy : gpu.energy);
+        const _stripSavedG = _winnerE && _winnerE.co2e && _winnerE.co2e.intensity
+            ? _winnerE.co2e.intensity.g_per_kwh : null;
+        const _stripDur = _winnerE ? _winnerE.delta_t_s : null;
         return `
         <div class="report">
             <h2>Comparison Report</h2>
@@ -1774,7 +1969,7 @@ async def video_page(request: Request):
                 ${{col(cpu)}}
                 ${{col(gpu)}}
             </div>
-            ${{wlCarbonStrip(stripWh, stripLbl)}}
+            ${{wlCarbonStrip(stripWh, stripLbl, _stripDur, _stripSavedG)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -1847,8 +2042,23 @@ async def video_page(request: Request):
         }}).join('');
 
         // Strip uses the most-efficient codec/device's energy as the headline.
+        // Label explicitly frames it as "most efficient of all codecs" so the
+        // visitor can't read the carbon figure as if it were the only codec
+        // tested — the matrix above the strip lists every codec/device pair.
         const stripWh = bestE && bestE.delta_e_wh != null ? bestE.delta_e_wh : null;
-        const stripLbl = bestE ? bestE.label : 'Most efficient codec';
+        const stripLbl = bestE
+            ? (bestE.label + ' · most efficient codec across all comparisons')
+            : 'Most efficient codec';
+        // Winner's energy block — used for duration and saved-intensity drift
+        // note. bestE carries codec/side; the full energy block lives in
+        // r.codecs[codec][side].energy. All sub-runs share the same /carbon
+        // snapshot at save time, so any of them would do for savedG.
+        const _winE = (bestE && r.codecs && r.codecs[bestE.codec]
+                       && r.codecs[bestE.codec][bestE.side])
+            ? r.codecs[bestE.codec][bestE.side].energy : null;
+        const _stripDur = _winE ? _winE.delta_t_s : null;
+        const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
+            ? _winE.co2e.intensity.g_per_kwh : null;
         return `
         <div class="report">
             <h2>All Codecs — Energy &amp; Speed Matrix</h2>
@@ -1869,7 +2079,7 @@ async def video_page(request: Request):
             ${{highlights}}
             <div style="margin-top:1rem;color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Per-codec detail</div>
             ${{details}}
-            ${{wlCarbonStrip(stripWh, stripLbl)}}
+            ${{wlCarbonStrip(stripWh, stripLbl, _stripDur, _stripSavedG)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -2601,7 +2811,7 @@ async def llm_page(request: Request):
                 <div class="conf-badge" style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
                 <div class="section-title">Response preview</div>
                 <div class="response-box">${{i.response}}</div>
-                ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + r.task_label)}}
+                ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + r.task_label, e.delta_t_s, e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)}}
                 <div class="scope-note">${{r.scope}}</div>
             </div>`;
     }}
@@ -2675,6 +2885,13 @@ async def llm_page(request: Request):
             : (ce.delta_e_wh != null ? ce.delta_e_wh : ge.delta_e_wh);
         const _stripLbl = r.model_label + ' · ' + r.task_label
             + ' (' + (a.energy_winner ? a.energy_winner + ' wins' : 'best of CPU/GPU') + ')';
+        // Winner's energy block — drift note + duration for the strip.
+        const _winE = (ce.delta_e_wh != null && ge.delta_e_wh != null)
+            ? (ce.delta_e_wh <= ge.delta_e_wh ? ce : ge)
+            : (ce.delta_e_wh != null ? ce : ge);
+        const _stripDur = _winE ? _winE.delta_t_s : null;
+        const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
+            ? _winE.co2e.intensity.g_per_kwh : null;
         return `<div class="result-box">
             <h2>CPU vs GPU — ${{r.model_label}} · ${{r.task_label}}</h2>
             <div style="background:#0d1a0d;border:1px solid #00ff9933;
@@ -2711,7 +2928,7 @@ async def llm_page(request: Request):
             </div>
             <div class="section-title">GPU response preview</div>
             <div class="response-box">${{gi.response}}</div>
-            ${{wlCarbonStrip(_stripWh, _stripLbl)}}
+            ${{wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -3456,7 +3673,7 @@ async def rag_page(request: Request):
                     <span class="val conf-badge">${{conf.flag||'—'}} ${{conf.label||''}}</span></div>
                 <div class="section-title">Answer</div>
                 <div class="response-box">${{inf.response}}</div>
-                ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + (ragModeLabels[r.rag_mode] || r.rag_mode))}}
+                ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + (ragModeLabels[r.rag_mode] || r.rag_mode), e.delta_t_s, e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)}}
                 <div class="scope-note">${{r.scope}}</div>
                 <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
                     <a href="/results/llm/${{jobId}}/download.json" download
@@ -3606,12 +3823,24 @@ async def rag_page(request: Request):
             .filter(v => v != null);
         const _stripWh = _stripWhArr.length ? Math.min.apply(null, _stripWhArr) : null;
         const _stripLbl = r.model_label + ' \xb7 3-mode RAG comparison (best of)';
+        // Find the winning mode's energy block for drift note + duration.
+        let _winE = null;
+        let _winWh = Infinity;
+        MODES.forEach(m => {{
+            const me = (r.results||{{}})[m] && r.results[m].energy;
+            if (me && me.delta_e_wh != null && me.delta_e_wh < _winWh) {{
+                _winE = me; _winWh = me.delta_e_wh;
+            }}
+        }});
+        const _stripDur = _winE ? _winE.delta_t_s : null;
+        const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
+            ? _winE.co2e.intensity.g_per_kwh : null;
         document.getElementById('status').innerHTML =
             '<div style="border:1px solid var(--border);padding:1.5rem">'
             + '<div style="color:var(--accent);font-size:1.1rem;margin-bottom:0.25rem">Comparison \u2014 ' + r.model_label + '</div>'
             + '<div style="color:var(--text-3);font-size:0.82rem;margin-bottom:1rem">' + r.question + '</div>'
             + cards
-            + wlCarbonStrip(_stripWh, _stripLbl)
+            + wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG)
             + '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.75rem">' + (r.scope||'') + '</div>'
             + '<div style="display:flex;gap:0.5rem;margin-top:0.75rem">'
             + '<a href="/results/llm/' + jobId + '/download.json" download style="color:var(--text-3);font-size:0.75rem;text-decoration:none">\u2193 JSON</a>'
@@ -5887,6 +6116,12 @@ function renderImageBoth(r) {{
   const _stripWh = (r.cpu && r.cpu.energy && r.gpu && r.gpu.energy)
     ? Math.min(r.cpu.energy.delta_e_wh, r.gpu.energy.delta_e_wh)
     : ((r.cpu && r.cpu.energy && r.cpu.energy.delta_e_wh) || (r.gpu && r.gpu.energy && r.gpu.energy.delta_e_wh));
+  const _winE = (r.cpu && r.cpu.energy && r.gpu && r.gpu.energy)
+    ? (r.cpu.energy.delta_e_wh <= r.gpu.energy.delta_e_wh ? r.cpu.energy : r.gpu.energy)
+    : ((r.cpu && r.cpu.energy) || (r.gpu && r.gpu.energy));
+  const _stripDur = _winE ? _winE.delta_t_s : null;
+  const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
+    ? _winE.co2e.intensity.g_per_kwh : null;
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>CPU vs GPU — Image Generation</h2>
@@ -5900,7 +6135,7 @@ function renderImageBoth(r) {{
       <div style="font-size:0.75rem;color:var(--text-4);margin-top:0.5rem">
         Prompt: "${{r.full_prompt}}" · modifier: <em>${{r.modifier}}</em>
       </div>
-      ${{wlCarbonStrip(_stripWh, 'Image gen · most efficient device')}}
+      ${{wlCarbonStrip(_stripWh, 'Image gen · most efficient device', _stripDur, _stripSavedG)}}
       <p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
@@ -5930,6 +6165,12 @@ function renderCompareModels(r) {{
   const _stripWh = (r.small && r.small.energy && r.large && r.large.energy)
     ? Math.min(r.small.energy.delta_e_wh, r.large.energy.delta_e_wh)
     : ((r.small && r.small.energy && r.small.energy.delta_e_wh) || (r.large && r.large.energy && r.large.energy.delta_e_wh));
+  const _winE = (r.small && r.small.energy && r.large && r.large.energy)
+    ? (r.small.energy.delta_e_wh <= r.large.energy.delta_e_wh ? r.small.energy : r.large.energy)
+    : ((r.small && r.small.energy) || (r.large && r.large.energy));
+  const _stripDur = _winE ? _winE.delta_t_s : null;
+  const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
+    ? _winE.co2e.intensity.g_per_kwh : null;
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>SD-Turbo vs SDXL-Turbo — Same Prompt + Seed</h2>
@@ -5947,7 +6188,7 @@ function renderCompareModels(r) {{
         Quality is subjective. Judge the visual output above — is the larger model's image worth
         ${{a.energy_ratio_large_over_small}}× the energy for this prompt?
       </div>
-      ${{wlCarbonStrip(_stripWh, 'Image gen · smaller of the two models')}}
+      ${{wlCarbonStrip(_stripWh, 'Image gen · smaller of the two models', _stripDur, _stripSavedG)}}
       <p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
@@ -5993,7 +6234,7 @@ function renderResult(r) {{
       <div class="modifier-note" style="color:var(--text-4);font-size:0.75rem;margin-top:0.75rem">
         Modifier applied this run: "<em>${{r.modifier}}</em>"
       </div>
-      ${{wlCarbonStrip(e.delta_e_wh, 'Image generation total run')}}
+      ${{wlCarbonStrip(e.delta_e_wh, 'Image generation total run', e.delta_t_s, e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)}}
       <p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}

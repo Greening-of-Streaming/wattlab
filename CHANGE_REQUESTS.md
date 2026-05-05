@@ -303,62 +303,6 @@ The conference is the strongest argument *for* this CR (forgetting to lower the 
 
 ---
 
-## CR-017 · 24/7 projection on the carbon strip (workload-aware "if this ran continuously")
-
-**Status:** captured 2026-05-03 — sibling to the EV-distance equivalence (shipped in Session 18 part 11). Owner request: make CO2e more meaningful by showing not just "this single job's footprint" but also "what happens if this workload runs continuously."
-**Triggered by:** CO2e numbers for individual jobs are honestly tiny (a single image gen is mm-scale of EV driving). The magnitude only starts to matter for streaming when you multiply by time × volume. A "if this ran 24/7" line in the carbon strip would make the scale leap visible without arithmetic.
-
-### The opportunity
-
-For a long-running or always-on workload — live-stream encoding, an LLM model serving requests, an image-generation API — the natural framing is rate × time:
-
-```
-This image generation: 156 µg CO2e (≈ 3 mm EV)
-Continuous (24h × 365): ~75 g CO2e/year (≈ 1.5 km EV)
-```
-
-That's the thinking the EV equivalence line *almost* gets to but stops short of.
-
-### Why this is more nuanced than EV equivalence
-
-The EV line works on every workload because every workload has a known total energy. The 24/7 projection only makes physical sense for workloads that could plausibly run continuously:
-
-- **Yes:** live-stream encoding, LLM model serving, embedding generation pipeline, image generation API endpoint, RAG retrieval service.
-- **No, or only with framing:** a single one-off video transcode (no one runs the same transcode in a loop), a one-shot image prompt (creative workflow, not a service), a single batch run (it's a measurement, not a service).
-
-If we project 24/7 on every result, "if this image gen ran 24/7 = X" reads as silly because no one does that. If we project only on certain workloads, we need either a workload classifier or a UI toggle.
-
-### Design candidates
-
-1. **Always-on toggle on the result page** ("Show as continuous service: [off / 1h / 1day / 1month / 1year]"). Visitor opts in. Multiplies the displayed CO2e (and EV-distance) by the chosen multiplier. Universally applicable, no per-workload heuristics needed. Probably the cleanest first version.
-2. **Workload-aware projection** — only show 24/7 on jobs that pass a "naturally continuous" filter (LLM serving, RAG, live-stream encode benchmarks). Cleaner UX (no toggle to discover) but requires the classifier and is harder to extend.
-3. **Both** — workload-aware projection appears by default on continuous-natured workloads, but the toggle is always present so visitors can override. Best UX, most code.
-
-Lean: ship #1 first. Add #2 layered on top later if visitors are hitting it. #3 is the eventual right answer but earns its keep only after #1 has been used in anger.
-
-### Open questions
-
-- **Where does the toggle live in the UI?** Inside the carbon strip's collapsed `<details>`? As a sibling control above the strip? On the top-of-page "results filter" if we ever add one? Lean: inside the carbon strip, just above the EV line, since that's the section the projection modifies.
-- **What multipliers?** 1h / 1day / 1month / 1year is the obvious set. Could also include "1B requests" for serving workloads — but that's a different framing (volume not time). Defer.
-- **Should the 24/7 default state be "off" or "on" for naturally-continuous workloads?** "On" is more impactful for LLM serving demos; "off" is safer (visitor sees the as-measured value first). Lean: off, but auto-suggest the toggle on continuous workloads.
-- **Pricing the projection in a different currency** (e.g. "≈ X round-trip flights LON–PAR" alongside or instead of EV-km) — separate CR, not bundled here. EV is the universal-comparator default; flights / homes / etc. are bigger framings worth their own design.
-
-### Implementation order
-
-Half a session, ~2 hours for the toggle-only version (#1):
-
-1. Add a small toggle UI inside the carbon strip — radio or compact dropdown (15 min).
-2. Wire the multiplier into the headline + EV line + reference row + comparison rows. Every grams display gets `× multiplier` (45 min).
-3. State persistence in the URL hash (`#continuous=1d`) so visitors can share a "look at this serving footprint" link (20 min).
-4. Tooltip explaining "this is the same workload assumed to run continuously" (10 min).
-5. Capture per-workload-type defaults as a follow-up if usage warrants (#2 later).
-
-### Pre-conference: nice-to-have
-
-CR-017 strengthens the streaming-impact story (which is the conference headline) by making "single job × volume = real impact" tangible without forcing the visitor to do the arithmetic. But it's not on the critical path for CR-001 / CR-001b (auth + demo lock are launch blockers). Land it after CR-001b if there's time, or post-launch if not.
-
----
-
 ## CR-018 · Historical CO₂e comparison — full coverage upgrade (Tier 2 + Tier 3)
 
 **Status:** Tier 1 ✅ done 2026-05-03 (Session 18 part 14 — `bf462c3`); Tier 2 + Tier 3 captured for later.
@@ -963,51 +907,6 @@ Leverage is high: this is the work that turns OWL's video numbers from "interest
 
 ---
 
-## CR-030 · Carbon UI calibration pass
-
-**Status:** captured 2026-05-04 (post-meeting). Medium priority. Bundles items 24 + 26 + 27 — three small UI/copy items on the carbon strip widget.
-**Triggered by:** team meeting 2026-05-04 — feedback that the CO₂e overlay draws too much attention relative to core energy measurement (#24); EV-equivalence at very small scales reads oddly ("25 mm of EV driving" is striking but maybe too cute, #26); µg vs mg distinction can be misread (#27).
-
-### Problem
-
-The carbon strip currently lives at the bottom of every result with explicit "HIGH-LEVEL CO₂e ESTIMATE" framing (S18 work), but the visual weight + the EV-equivalence wording still pull focus from the energy figures. The team's framing is: *OWL measures energy; carbon is a derived view. The hierarchy should reflect that.* µg vs mg is a separate but adjacent issue — fmtMass auto-switches but the unit symbols can blur in spoken / printed contexts.
-
-### Agreed direction
-
-**Three changes; one pass through `_CARBON_JS` and the relevant CSS.**
-
-1. **Shrink/de-emphasize the carbon block typography.** Headline number was already shrunk in S18 (1.5rem → 1rem); take it further — drop to 0.85rem, lighter colour weight (text-3 instead of text-1), align it visually as a *footnote* to the energy block rather than a peer. The "HIGH-LEVEL CO₂e ESTIMATE" caption stays, possibly bolder relative to the number to maintain framing.
-2. **Smarter EV equivalence unit selection.** Current `fmtEvDistance` switches km / m / mm purely on magnitude. Add upper-bound sanity: anything below ~10 mm reads as too cute and undermines credibility. Two options:
-   - **Option A (suppress):** below a threshold (e.g. `grams < 0.01`, equivalent to ~200 µm of EV driving), skip the EV row entirely.
-   - **Option B (rephrase):** below threshold, show "less than 1 metre of EV driving" or similar — keep the comparator but in human-meaningful terms.
-   Lean toward A — visitors who care about µg-scale carbon are reading the µg figure directly; the EV comparator's job is intuition for *legible* magnitudes.
-3. **µg vs mg disambiguation.** Two specific fixes:
-   - Spell out the unit on hover: tooltip on every mass cell that says "1 mg = 1000 µg" plus the exact value in scientific notation.
-   - Audit the rendered glyphs: ensure µ (U+00B5) is consistent everywhere; µg vs mg never appear side-by-side without visual separation.
-
-### Cost / leverage
-
-~2 hours total. All three changes are in `_CARBON_JS` (`main.py:~430`) and adjacent CSS. Leverage is credibility — getting the visual hierarchy right means OWL reads as an energy-measurement tool that *also* shows carbon, rather than a carbon calculator.
-
-### Watch-outs
-
-- **Don't lose the carbon framing.** "HIGH-LEVEL ESTIMATE" + lifecycle caveat + source provenance are all load-bearing for credibility (S16/S18 work). Shrinking the typography must not strip the framing.
-- **Don't break the comparison strip.** The "if this had run in <date>" rows + "live FR mix" dropdown are separate widgets that share the same CSS context. Test all three rendering states.
-- **Spoken context matters too.** The team session highlighted µg/mg confusion in *speech*. While we can't fix that in code, the on-screen label should give a confident speaker something unambiguous to read aloud.
-
-### Not in scope
-
-- Carbon philosophy / scoping decision (item 25) — that's a board agenda item, not engineering. See "not new CRs" section.
-- Time-of-day / historical interactive UI — captured as CR-018 T2/T3.
-- 24/7-projection toggle — captured as CR-017.
-
-### Open questions
-
-- **What's the EV-equivalence floor threshold?** Provisional 10 mm; might be 100 mm, depends on what the team thinks reads sensibly. Decide during implementation by trying both on a few representative low-energy results.
-- **Should µg/mg disambiguation extend to CSV exports?** Probably yes (a downstream consumer reading a CSV doesn't see UI tooltips). Add the unit explicitly as a column header note.
-
----
-
 ## CR-031 · Deployment portability (DB / power source / containerisation)
 
 **Status:** captured 2026-05-04 (post-meeting). Medium priority. Bundles items 29, 31, 32 because all three answer the same underlying question: *what does it take to run OWL somewhere other than GoS1?* Three sub-sections rather than three CRs because they share a single decision frame and will be designed together.
@@ -1077,6 +976,45 @@ Leverage: Sub 2 is pure win, ship anytime. Sub 1 is a strategic decision that ot
 
 - **DB choice if we migrate.** SQLite is the obvious starting point (file-based, no extra service). Postgres if multi-deployment merge becomes near-term. Don't pre-decide; the answer falls out of Sub 1's criteria.
 - **Synthetic power source as a first-class testing tool?** Cleanly written, it'd let us run integration tests with deterministic measurement responses — useful far beyond this CR. Capture as a follow-up if Sub 2 ships.
+
+---
+
+## CR-032 · Per-mode CO₂e rows inside the carbon strip details
+
+**Status:** captured 2026-05-05 (Session 22 part 2). Medium priority — UX clarification, not a credibility blocker. CR-030's bonus label fix ("best of CPU vs GPU" / "most efficient codec") is the V1 patch that stops the strip from misleading on its own; CR-032 is the next step that makes the strip *self-contained* for compare results.
+**Triggered by:** owner observation during Bundle 2 visual verification — for compare-mode results the strip headline shows the most-efficient mode's mass with explicit "best of N" framing, but the other modes' CO₂e footprints aren't visible inside the strip itself. Visitors who want to compare per-mode CO₂e have to scroll up to the per-column inline rows. The strip should answer "where does this number come from" without forcing the eye elsewhere.
+
+### Problem
+
+Today's compare-mode strips (video CPU/GPU, video all_codecs, LLM CPU/GPU, image CPU/GPU, image small/large, RAG 3-mode) all use `Math.min` to pick the most-efficient sub-run's energy and label that mode as the headline. The strip's `<details>` block then shows comparison rows for *other zones / other dates / live mix / formula* — but never the *other sub-runs of this same comparison*. The data exists (each sub-run has its own `energy.co2e.grams`), it's just not surfaced in the strip.
+
+### Agreed direction
+
+Inside the strip's `<details>` block, when the result is a compare mode, render one row per sub-mode showing each mode's individual CO₂e at the saved home intensity (consistent with the per-column inline rows that visitors see above). Sits alongside the existing reference row, comparison rows, historical rows, and live-mix breakdown. Gated on the strip being passed enough context to know it's a compare result.
+
+Mechanically: extend `wlCarbonStrip` signature with an optional `subRuns` array — `[{label, grams, deltaWh}, ...]` — and have the strip render a "Per-mode breakdown" sub-section in the details block when present. Existing single-run call sites pass `null` and behave unchanged. Compare-mode call sites construct the array from their per-mode energy blocks. Keeps single-run scope unchanged; opt-in for compare modes.
+
+### Cost / leverage
+
+~half a day:
+- Extend strip signature (~10 min)
+- Render the new sub-section inside `<details>` (~30 min)
+- Update 5 compare-mode call sites to construct the array (~1 hour)
+- Visual verification on each (~1 hour)
+- Tests / sanity checks (~30 min)
+
+Leverage: closes the "what about the others?" gap on every compare-mode result page. Especially valuable for `all_codecs` (6 sub-runs) where the strip currently elides 5/6 of the work the visitor just ran.
+
+### Watch-outs
+
+- **Don't bloat the headline.** Per-mode rows live inside the dropdown, not above. The headline stays "best of N" with the most-efficient mass — that's the right takeaway number.
+- **Use saved intensity for consistency.** Per-mode rows should compute mass from each sub-run's `energy.co2e.grams` (already saved at /carbon snapshot time), so they agree with the per-column inline rows above. Don't recompute from current live intensity — that diverges, and CR-030's drift-note already covers that case for the headline.
+- **Sort order.** Most-efficient first (matches the headline framing) or stable-by-mode (matches the page order above)? Lean: most-efficient first, since the strip is the carbon-perspective rendering — sorting by carbon footprint is internally consistent.
+
+### Open questions
+
+- Should the per-mode rows also show the projected (24/7 toggle) values when the toggle is on? Probably yes — the projection multiplier is page-wide via the URL hash, so applying it consistently across all rows is the least-surprise behaviour.
+- Should non-compare strips (single-run) get any analogue? Not in scope; the inline `wlCarbonRow` above already shows the per-run CO₂e for single results.
 
 ---
 

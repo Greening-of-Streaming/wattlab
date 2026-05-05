@@ -314,6 +314,41 @@ This was a credibility fix masquerading as a small bug. Publishing carbon number
 
 ---
 
+## CR-017 · 24/7 continuous-service projection on the carbon strip
+
+**Status:** ✅ shipped 2026-05-05 (Session 22 part 2 — Bundle 2). Toggle-only V1 per the captured plan; workload-aware defaults (V2) deferred to a future session if real visitor demand emerges.
+**Originally captured:** 2026-05-03 (Session 18) as a sibling to the EV-distance equivalence shipped same session. Owner request: make CO2e more meaningful by showing not just "this single job's footprint" but also "what happens if this workload runs continuously."
+
+### Problem (preserved for context)
+
+CO2e numbers for individual jobs are honestly tiny — a single image gen is mm-scale of EV driving. The magnitude only starts to matter for streaming when you multiply by time × volume. A "if this ran 24/7" line in the carbon strip makes the scale leap visible without arithmetic, particularly for naturally-continuous workloads (live-stream encoding, model serving, embedding pipeline, RAG retrieval).
+
+### Direction shipped — V1 toggle
+
+`wlCarbonStrip(wh, label, durationS, savedIntensityG)` gained two optional args. When `durationS > 0`, an opt-in toggle inside the strip multiplies the displayed energy + every grams figure by `windowSeconds / durationS`:
+
+- **as-measured** (default) — ×1.
+- **1 hour / 1 day / 1 month / 1 year** — projected continuous service.
+
+Multiplier wires through:
+- Headline mass + Wh subtitle (+ projection prefix when on)
+- EV-distance equivalence
+- Pinned home-zone reference row + divergence note
+- Comparison-zone rows
+- Historical-zone rows
+- "Same X on other grids" caption + "Through history — same X" caption
+
+State persists in the URL hash (`#continuous=1d`) via `history.replaceState` so a shared link reproduces the projection without scrolling the page on hash-change. Toggle hidden when no `durationS` is passed (compare-mode strips that compute Math.min over multiple sub-runs — picking one mode's duration is ambiguous, V1 just doesn't offer the projection there). Single-run video, LLM, RAG, image all pass `e.delta_t_s`.
+
+Energy and mass formatters extended for sane projections — `fmtEnergy(wh)` auto-switches Wh / kWh / MWh / GWh; `fmtMass(g)` extends upward to kg / t. So "1 year continuous" of even a tiny image gen lands at "131 kWh · 2.6 kg" rather than "131400 Wh · 2628000 mg".
+
+### Watch-outs (still relevant)
+
+- **Don't lose the projected framing.** When toggle is on, the headline subtitle is prefixed with "Projected over <window> continuous · " so visitors can't read the projected number as the measured number.
+- **The projection is hypothetical.** "If this ran continuously" makes physical sense for some workloads (model serving, RAG service, live-stream encoder) and is silly for others (one-off transcode, single image prompt). V1 doesn't classify; visitors opt in. V2 (workload-aware defaults + auto-suggest the toggle on continuous workloads) is captured as a deferred CR-017 V2 if usage warrants.
+
+---
+
 ## CR-022 · `scale_vaapi` surface-pool leak corrupts long GPU encodes
 
 **Status:** ✅ shipped 2026-05-04 (Session 21 — `aae9af4`). Step 1 (workaround in `transcode()`) landed: new `gpu_encode_max_s=30` setting + `_maybe_cap_vaapi()` helper auto-injects `-t 30` before `-i` on any VAAPI cmd. End-to-end smoke confirmed `variance_gpu_cmd` now completes in 3.7s with empty stderr. **Residual scope:** Step 2 (long-term filter restructuring — test alternative filter graphs / Mesa version updates / pipeline restructuring) deferred until a Mesa/driver update is tested. Promote to a fresh CR if/when a Mesa update is available to test against.
@@ -410,3 +445,37 @@ Two compounding effects:
 - **Don't ship CR-023 alone** — if we'd started refusing to persist calibrations with failed GPU encodes *before* fixing CR-022, no calibration could ever complete. They shipped together in S21.
 - **Audit historical results.** Worth a one-off scan of `results/video/*.json` for any GPU result where the encode duration is suspiciously close to the input duration but the file size doesn't add up. That's CR-022 + CR-023 in the wild. Not in scope for the fix itself; flag in a separate audit task if/when a published headline is questioned.
 - **Don't auto-delete partial results.** Annotate them, don't remove them — they may have post-hoc diagnostic value (as CR-023 itself just demonstrated).
+
+---
+
+## CR-030 · Carbon UI calibration pass
+
+**Status:** ✅ shipped 2026-05-05 (Session 22 part 2 — Bundle 2). All four sub-changes landed; #4 was added during Bundle 2 visual verification when the owner spotted a related divergence.
+**Originally captured:** 2026-05-04 (post-meeting). Bundles items 24 + 26 + 27 — three small UI/copy items on the carbon strip widget. Sub-#4 added 2026-05-05 to address a saved-vs-live divergence surfaced by visual review of #1.
+
+### Problem
+
+The carbon strip lived at the bottom of every result with explicit "HIGH-LEVEL CO₂e ESTIMATE" framing (S18 work), but the visual weight + the EV-equivalence wording still pulled focus from the energy figures. The team's framing is: *OWL measures energy; carbon is a derived view. The hierarchy should reflect that.* µg vs mg was a separate but adjacent issue — `fmtMass` auto-switches but the unit symbols can blur in spoken / printed contexts. After the typography shrink visual review surfaced a fourth issue: the strip headline (recomputed from live `/carbon` at page load) can read 1–10% different from the per-column inline rows (frozen in the result JSON at save time). Both correct for their respective timestamps; reading them on the same page without explanation is confusing.
+
+### Direction shipped — four changes; one pass through `_CARBON_JS`
+
+1. **Typography shrunk + colour weight reduced.** Headline mass: `1rem → 0.85rem`, `var(--accent) → var(--text-3)`. The "HIGH-LEVEL CO₂e ESTIMATE" caption stays as-is for framing; the headline now reads as a footnote to the energy block rather than a peer. "in <zone>" subtitle moved from text-3/0.78rem to text-4/0.72rem to maintain the visual hierarchy.
+
+2. **EV-equivalence floor.** `fmtEvDistance` now suppresses the row below `EV_FLOOR_GRAMS = 0.0005 g` (≈ 10 mm of EV driving). Below threshold the comparator reads as too cute and undermines credibility — visitors who care about µg-scale carbon read the µg figure directly.
+
+3. **µg/mg disambiguation.** New `massTitle(g)` helper returns a tooltip string like *"CO₂e mass · 1 mg = 1000 µg = 1e-3 g · this value: 1.234e-3 g"*. Wired into `wlCarbonRow` and every mass cell in the strip — reference row, historical rows, comparison rows. µ glyph (U+00B5) audited for consistency.
+
+4. **Drift note for saved-vs-live home intensity.** `wlCarbonStrip` signature gained an optional 4th arg `savedIntensityG`. When the home-zone live intensity at page-load time differs ≥1% from the result's saved intensity, the strip renders a small italic note explaining the divergence: *"Grid moved X.X% up/down since this run was saved · saved at A g/kWh, current B g/kWh · rows above show the saved snapshot, headline shows live now"*. Tooltip on the note re-explains: per-column rows are an audit trail, strip headline is "right now". Wired into 4 single-run sites (video, LLM, RAG, image) and 5 compare-mode sites (video CPU/GPU + all_codecs, LLM CPU/GPU, image CPU/GPU + small/large, RAG 3-mode); LLM batch-mean and T3-long pass null since aggregates have no single saved intensity.
+
+### Bonus shipped (related credibility fix)
+
+Two video compare-mode strips (CPU/GPU and all_codecs) had labels that read like single-result labels ("H.264 GPU"). Updated to "best of CPU vs GPU" / "most efficient codec across all comparisons" — same convention the LLM, image, and RAG compare strips already used. Closes a "this looks like the only result" misreading the owner spotted during Bundle 2 visual review.
+
+### Why this matters
+
+Getting the visual hierarchy right means OWL reads as an energy-measurement tool that *also* shows carbon, rather than a carbon calculator. The drift note is the harder credibility lift: visitors comparing a strip headline to a column inline row would otherwise quietly conclude one is wrong. Both are correct; the note teaches the visitor that carbon estimates are time-stamped.
+
+### Not shipped (captured for follow-up)
+
+- **CSV export µg/mg disambiguation.** Open question on the original CR — probably yes. Add unit explicitly as a column header note for downstream CSV consumers who don't see UI tooltips. Captured as a deferred quick-fix.
+- **Per-mode CO₂e expansion in the strip's details block.** When a result is a compare mode, currently only the most-efficient mode's CO₂e is shown in the strip headline; visitors who want per-mode carbon footprints have to scroll up to the per-column inline rows. Promoted to **CR-032** during Bundle 2.
