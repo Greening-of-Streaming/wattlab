@@ -1,6 +1,6 @@
 # GoS1 Infrastructure & Backup Context
 # Companion to CLAUDE.md (which covers WattLab project specifics)
-# Last updated: 2026-04-09
+# Last updated: 2026-05-05
 
 ## Owner
 Ben Schwarz (bs@ctoic.net / EURL CTO INNOVATION CONSULTING / SIREN 508109337)
@@ -69,9 +69,23 @@ Location: `nextcloud:GoS1-backup/`
 - Root-owned /etc files fail with permission denied under gos user — expected
 
 **TODO:**
-- [x] Cron job for recurring backup — `/etc/cron.d/wattlab-results-backup`, runs 03:30 daily, syncs `results/` to `nextcloud:GoS1-backup/wattlab-results/`, logs to `/var/log/wattlab-backup.log`
+- [x] Cron job for recurring backup — `/etc/cron.d/wattlab-results-backup`, runs 03:30 daily, syncs `results/` to `nextcloud:GoS1-backup/wattlab-results/`, logs to `/home/gos/.cache/wattlab-backup.log`
 - [ ] Consider `rclone crypt` overlay for encryption before upload
 - [ ] Replace raw /etc folder with selective tarball of key configs
+- [ ] Add a "backup last-success ≤ 26h" health check (file mtime monitor or a result-listing sanity check) — see "Silent failure incident" below; without it, this class of bug recurs invisibly.
+
+### Silent failure incident — 2026-04-10 → 2026-05-05 (24 nights)
+
+The cron line as originally configured wrote its log to `/var/log/wattlab-backup.log`, but `gos` does not have write permission to `/var/log/`. rclone failed to open its log file on every nightly run and exited *before* doing any sync work; cron's stderr went to the local mail spool nobody reads, so the failure was invisible. Discovered 2026-05-05 during a routine "what's been backed up?" check: local file count 106, remote file count 8, last successful remote write 2026-04-10 (the manual one-shot that established the directory).
+
+**Catch-up sync 2026-05-05 00:02:** all 98 missing files (~10 MiB) pushed via manual `rclone sync` with `--log-file=/home/gos/.cache/wattlab-backup.log`. Remote and local now both at 106 files / 11.4 MiB.
+
+**Fix to the cron line** (run by operator with sudo): point `--log-file` at `/home/gos/.cache/wattlab-backup.log` (writable by `gos`). One sed:
+```bash
+sudo sed -i 's|/var/log/wattlab-backup.log|/home/gos/.cache/wattlab-backup.log|' /etc/cron.d/wattlab-results-backup
+```
+
+**Lesson worth keeping:** failure modes that produce no signal are the worst kind. Any silent operation (cron, systemd timer, background task) needs either (a) a heartbeat / last-success check that *visibly* breaks if the operation stops, or (b) error output routed somewhere a human will actually see. The mail spool isn't that place.
 
 ## Nextcloud — Other Uses
 - 1,031 deduplicated contacts (imported from contacts_final.vcf)
