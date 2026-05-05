@@ -1,0 +1,412 @@
+# OWL Change Requests — Closed
+
+Archive of fully-shipped CRs. Active work lives in `CHANGE_REQUESTS.md`.
+
+Each entry preserves the original problem statement and agreed direction; the **Status** line records when it landed and which commit closed it. Where a CR's headline scope shipped but a follow-up step was deferred, the Status line names the residual item — promote to a new active CR if/when it becomes urgent.
+
+Ordered by CR number.
+
+---
+
+## CR-001 · Two-tier OWL: anonymous public + authenticated members
+
+**Status:** ✅ shipped 2026-05-03 on `feature/cr-001-two-tier`. All parts (A, B/1, B/2, C1, C2a, C2b, C2c, D, task #10) landed across S19 + S20. Closed in commit `11ecbd0` (S20 part 4 — docs tidy). Ready to merge to `main`.
+**Triggered by:** demo on 2026-05-01 — discussion of opening OWL to the wider streaming community.
+**Refined 2026-05-01:** anonymous tier explicitly *can* upload (capped at 100 MB, 1 concurrent job per visitor); LAN/SSH-tunnel auto-detection already implements the Lab tier today; quotas restated below.
+
+### Shipped in S19 (commits on `feature/cr-001-two-tier`)
+
+- **Part A** (3b05152) — magic-link auth: `auth.py`, `email_send.py`, `/auth/sign-in /verify /sign-out`. Member allowlist `data/members.json`. `audience.tier()` returns Member from cookie. Gate middleware bypasses `/auth/*` and any valid session cookie.
+- **Part B/1** (e8bc5f0) — tier-aware routing on `/`. Anonymous → 302 `/demo`; Member/Lab → nav grid. Sign-in/Sign-out/Lab chip top-right.
+- **Part B/2** (b187c92) — capability matrix on `/demo` Findings step. 7-row Public-vs-GoS-member table + Join-GoS CTA + sign-in CTA. The locks are the membership pitch.
+- **Part C1** (8e9fe56) — Member-tier capability constants in `capabilities.py`: `CUSTOM_PROMPT`, `BATCH_COMPARE`, `RAG_CORPUS_UPLOAD`, `RESULTS_EXPORT_CSV`. Snapshot test pinned. 21 new tests.
+- **Part C2a** (d6d3482) — `capabilities.gate(request, *caps)` imperative helper. Retag `/llm/run-all` → BATCH_COMPARE; `/rag/build-index` → RAG_CORPUS_UPLOAD. Inline `gate()` on `/llm/run` (prompt set, repeats>1, device='both'), `/video/use-source` + `/video/upload` (preset='all_codecs', custom_cmd*), `/image/start` (device in {both, compare_models}).
+- **Part C2b** (680e4ac) — `curated.py` (CANONICAL_IMAGE_PROMPT, CANONICAL_RAG_QUESTION, CANONICAL_RAG_MODEL). `/image/start`, `/rag/run`, `/rag/run-compare` made `prompt`/`question` optional; absent → server uses curated; present → gate(CUSTOM_PROMPT or BATCH_COMPARE). `/demo` JS dropped the hardcoded prompt/question params on image and RAG.
+
+### Shipped in S20
+
+- **Part C2c** (8bdc4cb) — `_LOCK_STYLES` + `_lock_badge_html()` + `_lock_class()` + `_disabled_attr()` helpers. Applied across `/llm` (prompt editor, Both, repeats>1, Run All), `/video` (all-codecs preset, custom-cmd textarea now keys on CUSTOM_PROMPT so Members get edit too), `/image` (prompt textarea, Both, Compare Models), `/rag` (question, 3-mode compare, Build/Rebuild). JS on each page reads `CAN_CUSTOM_PROMPT` / `CAN_BATCH_COMPARE` flags from server and skips the corresponding form params for Anonymous so the runtime gate doesn't trip on pre-filled defaults.
+- **Part D** (1d15857) — per-tier concurrent-job caps and per-tier upload size caps. `queue_control._visitor_key()` resolves Anonymous to `a:<ip>`, Member to `m:<email>`, Lab to None (uncapped). `enqueue()` rejects (returns None → 429) when at cap; the worker publishes `current_visitor_key`. Settings keys: `queue_anonymous_cap=1`, `queue_member_cap=4`, `upload_size_anonymous_mb=100`, `upload_size_member_mb=1024`. `/video/upload` Content-Length pre-check returns 413 before reading the body. 12 new queue_control tests. `/settings` page renders a "Tier limits" section.
+- **Task #10** (5d7897c) — `WATTLAB_GATE_PASSWORD` and the gate middleware fully removed. The shared-password gate was the wrong shape once magic-link + per-tier caps shipped: it gated everyone equally and conflated Anonymous identity with password possession. CLAUDE.md, TESTING.md, bin/README.md, bin/stage-on, bin/stage-off all updated to drop the cookie. 77 lines removed from main.py; loopback `/live` now resolves Lab tier directly.
+
+180 tests passing.
+
+### Factorisation contract (held throughout S19, must keep holding)
+
+- **Capability table is the policy.** `capabilities._REQUIRED_TIER` is the single source of truth. New rule = one row edit.
+- **Routes only declare or call the helpers.** `Depends(requires(CAP))` (decorator) or `gate(request, CAP)` (imperative). Grep `audience.tier(request) ==` in route files = 0.
+- **Business modules know nothing about auth.** Grep `import audience` / `import capabilities` in `video.py`/`llm.py`/`image_gen.py`/`rag.py` = 0.
+- **No runtime "is this default?" detection.** Capability is decided by *presence/absence of free-form input* (curated wrapper pattern in C2b) or by *enum value* (preset='all_codecs' in C2a).
+- **Curated content lives in `curated.py`.** Adding pre-baked content to the Anonymous path = one row edit there; no policy change.
+
+### Problem
+
+OWL is currently single-tier: one shared password (`WATTLAB_GATE_PASSWORD`) gates everything. Two pressures:
+
+1. **Conference / public visitors** may not have the technical background for the full UI's depth (settings, calibration, custom ffmpeg commands, CSV export, etc.). The first public showing should be approachable.
+2. **GoS membership needs a value proposition.** If the public version is identical to what members get, there's no incentive to join. Membership should unlock real benefits.
+3. **Security posture differs.** A public-facing version needs much harder limits (rate-limit, no uploads, no custom commands) than the trusted-member version.
+
+But also:
+- We do *not* want to fork the codebase (double maintenance, guaranteed drift).
+- We do *not* want to gate the *measurement* itself behind auth — the whole GoS mission is making energy / CO₂e visible. If a casual visitor can't run a workload, the project fails its mission.
+- A GoS member showing OWL to a colleague at a conference booth shouldn't have to "find the password" — auth should be optional, additive, low-friction.
+
+### Strategic intent — OWL as a GoS membership funnel
+
+OWL has a **dual purpose**, and the two reinforce each other:
+
+1. **Technical mission (always was):** make the energy and CO₂e cost of streaming workloads visible, on real hardware, against real grid data — earning streaming-industry credibility for GoS. *"Not eco-warriors. Just people who dislike waste."*
+2. **Recruitment mission (now explicit with two-tier):** OWL is **a sales tool for GoS itself.** Every public visitor sees not only what OWL measures but also — through the locked rows in the capability matrix — what becomes possible if they join GoS. The capability matrix is **product copy first, security model second.** The locks are the pitch, not the punishment.
+
+**Implications that flow from "OWL is a sales channel":**
+
+- **Conversion design matters.** "Want to Join GoS" CTA copy, placement, and click-through destination (presumably `greeningofstreaming.org/join` or equivalent) is a deliberate design decision, not an afterthought.
+- **Friction on the public side is strategic, not regrettable.** The point of locking custom-upload, calibration, etc. behind membership is not "to keep visitors out" — it's to give them a reason to join. Public capabilities should be **genuinely useful** (measurements are credible, results citable) so visitors form a positive impression *before* they hit a lock.
+- **Public usefulness is the recruitment funnel's top-of-funnel.** A weak public version means fewer visitors → fewer membership clicks. This argues for keeping pre-baked content rich enough to demonstrate real insight (Meridian transcode + LLM tasks + image gen + RAG, all the same workloads members get), and never gating *measurement quality* — only inputs and bookkeeping.
+- **Worth instrumenting.** The change request should include a basic conversion metric: count "Members only · Join GoS" CTA clicks per week. That's the lagging indicator of whether OWL is actually working as a funnel.
+
+The line that holds against feature creep — *public sees results, members shape inputs* — is also the line that keeps the membership pitch credible. If everything's available publicly, "join GoS" has no answer to "why?".
+
+### Agreed direction
+
+**One deployment, one hostname, three capability tiers** gated at the route layer:
+
+| Tier | How identified | Default landing |
+|---|---|---|
+| **Anonymous** | No auth cookie | Public landing page (= today's `/demo` Guided Tour, promoted) |
+| **Member** | Signed in via magic-link email or GitHub OAuth | Same landing page; "Sign in" affordance flips to member view |
+| **Lab** | Request from LAN IP (existing `_is_local()` check) | Full settings + calibration access |
+
+**Key UX framing — a single landing page everyone sees:**
+- Anonymous and members arrive at the same page.
+- Locked features are *visible* with a "Members only · Join GoS" affordance — the capability matrix becomes the GoS sales pitch.
+- Members don't *have* to sign in to demo OWL to a colleague — they get the public experience by default, sign in only when they want a member-only feature.
+- Conference / booth demos: zero auth friction.
+
+### Capability matrix (locked = sales pitch for joining GoS)
+
+Measurement quality is identical across tiers — only inputs and bookkeeping differ.
+
+| Capability | Anonymous | Member | Lab |
+|---|---|---|---|
+| Pre-baked workloads (Meridian, fixed prompts, sample image gens) | ✓ | ✓ | ✓ |
+| Live wall-power, CO₂e, comparison strip | ✓ | ✓ | ✓ |
+| Guided tour, methodology, Eco2mix mix breakdown | ✓ | ✓ | ✓ |
+| Browse public recent runs (anonymised) | ✓ | ✓ | ✓ |
+| Custom video upload | ✓ (≤100 MB, 1 concurrent job) | ✓ (no size cap, programmatic / scheduled allowed) | ✓ |
+| Custom prompts / custom ffmpeg commands | — | ✓ | ✓ |
+| All-codecs / batch / compare-modes | — | ✓ | ✓ |
+| RAG corpus upload | — | ✓ | ✓ |
+| CSV / JSON export of own runs | — | ✓ | ✓ |
+| Per-user run history, named presets | — | ✓ | ✓ |
+| `/settings`, variance calibration | — | — | ✓ |
+
+**Anonymous upload rationale:** 10 MB was floated and rejected — too small, jobs run too fast to lift power above the P110 measurement floor and produce a usable green-light reading. 100 MB sized to give a 1080p clip ~30 s+ of transcode wall-time, comparable to the bundled `meridian_120s` test asset (~123 MB).
+
+The line that holds against feature creep: **public sees results, members shape inputs.**
+
+### Architecture
+
+- **One systemd unit, one nginx vhost, one cert.** Don't fork.
+- **`audience.py` module** — single source of truth. `audience.tier(request)` returns one of `Anonymous | Member | Lab`. Every route declares the tier it needs (`@requires(Member)` or similar). The grep target `requires(` is the security audit.
+- **Auth: magic-link email** (libraries like `mailauth`, `magic-link-auth`) preferred over GitHub OAuth — no "create account" step, single click from email. Member email allowlist is a small JSON file (~tens of GoS members, no DB needed).
+- **Replace `WATTLAB_GATE_PASSWORD`** entirely. The shared-password gate is the wrong shape for this model.
+- **Per-tier rate limiting and queue caps** (must, since same hostname):
+  - **Anonymous:** 1 concurrent job per visitor (single slot in the queue at a time — no parallel anonymous runs from the same browser session). 100 MB upload cap. nginx-level backstop ~1 measurement/5min per IP.
+  - **Member:** relaxed per-user pool — programmatic / scripted / scheduled-weekend runs explicitly allowed (this is part of the membership pitch).
+  - **Lab:** uncapped. **Already implemented today** via `_is_local()` — a member SSH-tunneling from outside back to localhost is auto-detected as Lab tier. CR-001 just generalises the existing carve-out into a named tier.
+  - Conference-day spike from anonymous can't drain the queue and starve members.
+- **Public-side hardening:**
+  - Upload route reachable for Anonymous, but capped at 100 MB and gated through `queue_control.enqueue_for(request, …)` so the 1-concurrent-job-per-visitor limit is enforced at the single chokepoint.
+  - Length caps on any free-text input (RAG question, prompt).
+  - Strict CSP, no `eval`, etc.
+  - Aggressive nginx rate limits as a backstop to in-app caps.
+
+---
+
+## CR-001b · Demo lock (sub-feature of CR-001)
+
+**Status:** ✅ resolved 2026-05-03 by CR-011 + CR-015. No code shipped under this CR's name. Marked resolved in commit `d5867c4` (S19 part 1).
+**Triggered by:** owner running important demos and needing exclusive control of the queue.
+
+### How CR-011 covers the intent
+
+- `bin/stage-on` raises `/tmp/owl-maintenance`, which nginx honours with a static maintenance page (HTTP 503) for everyone hitting the public hostname.
+- The owner accesses OWL via LAN (`http://192.168.1.62:8000`) or SSH tunnel (`localhost:8000`) — both bypass nginx, so the owner has full, exclusive use of the queue while the maintenance flag is up.
+- This delivers the headline guarantee CR-001b was capturing ("only the owner can run jobs during a demo") without a new flag, new banner, or new auth concept.
+- The "I forgot to unlock" failure mode is handled by CR-015 (auto-lower the maintenance flag on Lab-tier inactivity), captured 2026-05-03 as a CR-011 follow-up.
+
+### What this loses vs. the original CR-001b design
+
+- No "demo in progress, ends 13:42" friendly UI for blocked users — public sees the generic maintenance page instead. Acceptable: the maintenance page is already on-brand and the messaging is clear.
+- No `🔒 demo` pill on the floating telemetry badge for the owner — owner already knows because they ran `stage-on`.
+- No fixed expiry timer with `[extend]/[end now]` controls — replaced by the activity-driven CR-015 watchdog, which is a better fit (extends when the owner is using the system, lowers when they walk away).
+
+If a future demo format genuinely needs the in-app banner / extend-button UX, re-open this CR. For now the cheaper path covers the use case.
+
+### Original problem statement (preserved for context)
+
+For high-stakes live demos (conference stage, sponsor pitch, press), the owner needs **exclusive write access** to the OWL queue — only they can run jobs. Anyone else hitting "Run" sees a clear "demo in progress" message. The risk we wanted to avoid: forgetting to turn the lock off after the demo. Q&A or hallway conversation can stretch an hour, and by the time the owner remembers, the system has been silently unusable for users in the meantime.
+
+The original design (now superseded) was a `/tmp/owl-demo-lock` flag mirroring the existing pause-flag idiom, with auto-expiry and an in-app banner for blocked users. CR-011's maintenance-page swap covers the same use case more cheaply.
+
+---
+
+## CR-002 · Methodology page accuracy pass
+
+**Status:** ✅ done 2026-05-02 (Session 17 follow-up). Original three issues shipped in S16 (`994e380`); extended scope (popover + Guided Tour drift) shipped in `6bb80c2` (S17 part 5).
+**Triggered by:** training-prep walkthrough of the methodology page (transcript ~T+790s) + owner notes.
+
+### Problem
+
+Three inaccuracies on `/methodology` need fixing before the page is shown to a public audience:
+
+1. **P110 power resolution stated as "1 W" — incomplete and misleading.** The Tapo P110 reports power at **1 W resolution via its public API** (which is what we currently poll), but **1 mW resolution via direct device read** (the underlying instrument is far better than the API exposes). The page should state both numbers and be explicit about which one this deployment uses.
+2. **`baseline_polls` hard-coded as `10` in the prose, but `settings.json` defaults to `5`** — disconnect between docs and behaviour. Either render the setting at request time (preferred — single source of truth) or at minimum drop the hard number and refer the reader to `/settings`.
+3. **"From energy to CO₂e" section names ElectricityMaps as the only live source** — Eco2mix was added later as the primary live source for France, with ElectricityMaps now a backup. Section needs updating to reflect the actual fallback ladder: **Eco2mix (RTE/Etalab) → ElectricityMaps → Ember 2024 static**. (The result-card formula footer was updated; the methodology page copy was missed.)
+
+### Done
+
+- **S16 (994e380):** `/methodology` page rewritten — P110 1W/1mW resolution stated correctly, Eco2mix → ElectricityMaps → Ember fallback ladder named, `baseline_polls` / `video_cooldown_s` / confidence-multiplier / poll-count placeholders injected at request time from `settings.json`.
+- **S17 follow-up (6bb80c2):** extended scope — verified that the *spirit* of CR-002 (no copy contradicting running config) was leaking outside the methodology page. Fixed:
+  - **Popover content (`_CONF_HELP_WIDGET`)** — was still using the **pre-S11 fixed-watt framework** ("ΔW > 5W and ≥ 10 polls"), directly contradicting the methodology page. Rewritten to qualitative, framework-correct copy + link to `/methodology` for the formal numbers. Avoids plumbing live settings into 5 frozen page templates.
+  - **Guided Tour video step + confidence step** — same pattern as `/methodology`: placeholder tokens (`{BASELINE_POLLS}`, `{VIDEO_COOLDOWN_S}`, `{CONF_GREEN_X}`, `{CONF_GREEN_POLLS}`, `{CONF_YELLOW_X}`, `{CONF_YELLOW_POLLS}`) replaced at request time in `demo_page()`. Tour now agrees with `/methodology` on every threshold.
+  - **Popover positioning bug** (root cause of "click does nothing" reports) — widget script set `pop.style.top = r.bottom + 6 + window.scrollY`, but the popover is `position:fixed` (viewport-relative). The `+window.scrollY` pushed it offscreen below the visible area whenever the user had scrolled to see the badge. Fixed: drop the scroll offset.
+  - **Missing `class="conf-badge"` on fresh-run badges** — ~13 badge sites across `/video`, `/llm`, `/image`, plus a few shared helpers, rendered the flag in plain `<div>`/`<td>`/inline interpolation without the class. Click handler's `e.target.closest(".conf-badge")` returned null → handler silently skipped. Class added in batch via Python script with strict-count assertions.
+  - **Prev-run badges wrapped in `<span class="conf-badge">`** — the "Previous runs" panels on `/video`, `/llm`, `/rag`, `/image` flattened the confidence flag into a one-line summary string with no wrapping element. Wrapped the flag emoji (and label where present) so prev-run badges fire the popover too. `/image`'s prev-rendering is server-side Python f-string and got the same treatment. Made CR-013 visible (rows themselves should drill into stored detail).
+  - **Net effect:** popover now fires uniformly across `/video`, `/llm`, `/rag`, `/image`, `/demo` on both fresh-run and prev-run badges, with framework-correct copy that matches `/methodology` exactly.
+
+---
+
+## CR-006 · Move AI workloads (LLM, RAG, image-gen) to a "beta / skunkworks" area
+
+**Status:** ✅ done 2026-05-03 (Session 18 part 2 — `4c0b496`). Landing nav re-framed, h1 chips on `/llm` `/rag` `/image`, Demo Tour entering-beta band on steps 2/3/4. `_BETA_CHIP` constant introduced as single source of truth so the framing copy stays consistent.
+**Triggered by:** Dom (transcript ~T+2516s; owner agreed).
+
+### Problem
+
+OWL's home page presented Video / Image / LLM / RAG as equal first-class workloads. The video work is mature, repeatable, and on-mission for GoS (streaming impact). The AI workloads are exploratory, sometimes below the P110 measurement floor (TinyLlama short-task), and at risk of diluting GoS's streaming focus when shown to a streaming-industry audience.
+
+### Direction taken
+
+Restructured the navigation so:
+- **Primary, prominent:** Video (transcoding) — the main GoS story.
+- **Beta / Skunkworks (visually de-emphasised, separate section):** LLM, RAG, Image generation. Still fully accessible, but framed as "exploratory work, energy/quality/faithfulness tradeoffs we're investigating" rather than "here's our authoritative answer."
+
+Affected:
+- Home page nav structure (AI links moved into a labelled "Beta · exploratory" group with a short explainer).
+- Each AI-workload nav button gets a small BETA tag.
+- `/llm` `/rag` `/image`: BETA chip next to the h1.
+- Guided Tour: new "Entering beta · exploratory" framing band at the bottom of step 1 (after the video result), warning visitors that the next three steps are exploratory and inviting them to stop here if they only wanted the streaming-impact story. Steps 2/3/4 (LLM, image, RAG) get BETA chips on their h1s via a `{BETA_CHIP}` placeholder substitution at render time.
+
+No measurement code touched; pure framing/copy work.
+
+---
+
+## CR-010 · France historical reference in "how this is calculated" comparison strip
+
+**Status:** ✅ done 2026-05-03 (Session 18 part 1 — `63d38fc`). Adds a pinned reference row inside the carbon comparison `<details>` on every result page: same home zone as the live headline, but its Ember 2024 annual mean alongside today's live value. Side fix carried in the same hunks: zone-aware live-source explainer (was hard-coded to France/Eco2mix; now dispatches on HOME_ZONE so the copy stays correct if the server ever moves zones).
+**Triggered by:** owner notes during spine-refactor session — concern that LIVE French intensity (~11 g/kWh, dominated by nuclear) can read very differently from the long-run average, leading viewers to draw the wrong conclusion when they compare FR-LIVE against UK/DE/PL annual means.
+
+### Problem
+
+The "If this had run elsewhere · how this is calculated" dropdown showed:
+- Home zone (France) at the **live** intensity (Eco2mix or ElectricityMaps, badged LIVE).
+- Comparison cities (Warsaw / London / Berlin / …) at **annual mean** intensity (Ember 2024, badged EST).
+
+This is internally consistent but visually misleading: France looks unusually clean simply because it's currently low-carbon, and viewers can't see how *typical* that is. A visitor doing a back-of-envelope comparison may conclude "France beats Germany by 10×" when in fact the live snapshot is at the cleanest end of France's own distribution.
+
+### Direction taken
+
+Added **France 2024 annual mean** as an extra row in the comparison strip dropdown, badged distinctly so viewers can do an apples-to-apples comparison both ways:
+- France LIVE (today's grid right now) — badged **LIVE**, accent colour.
+- France HISTORICAL (2024 annual mean) — badged **EST · REF**, muted, with a small note like *"Historical reference — France's 2024 annual mean. Compare against this for a like-for-like view of the other countries below."*
+- Other zones at annual mean — badged **EST**, unchanged.
+
+When the live intensity diverges ≥25% from the static mean, a one-line note flags whether today's grid is "cleaner than" or "dirtier than" the year's mean. Suppressed when the headline itself is EST (no value duplicating the same number). Sharpens CR-007's "live grid varies" thesis without code complexity — visitors see three numbers in the same widget: live now, annual mean for this zone, and the divergence between them.
+
+Implementation lived in `_CARBON_JS` in `main.py` — the comparison-strip rendering block.
+
+---
+
+## CR-011 · Staging environment via maintenance-page swap
+
+**Status:** ✅ done 2026-05-03 (Session 18 part 4 — `d622505`; system-side nginx config + `www-data` group applied + smoke-tested same day). Follow-up captured as **CR-015** (auto-lower the maintenance flag on inactivity).
+**Triggered by:** spine-refactor session — every restart-and-test loop currently takes the public service down with no friendly intermediate state, and there's no path for the owner to test a feature branch live before merging.
+
+### Problem
+
+OWL is a single systemd unit on a single port, behind nginx + cert at `wattlab.greeningofstreaming.org`. Testing any change required either (a) testing locally without the production wiring (misses real-world behaviour), or (b) restarting prod and hoping no public visitor hits a connection error during the window. Neither was acceptable for the conference runway, when visitors may arrive at any time.
+
+### Constraint that shaped the design
+
+GoS1 has **one Tapo P110 plug measuring the whole machine** and **one GPU**. Two OWL processes running measurement workloads simultaneously corrupt each other's readings — they both see each other's energy as part of their own ΔW. So a "staging" environment that runs measurements alongside prod is not a real option without buying a second plug + isolating GPU access; a side-by-side instance would only be safe for UI / route / docs work.
+
+### Direction taken — single-service swap with maintenance page
+
+The owner's actual workflow is short manual test windows (5–15 min) on a feature branch, not parallel staging. So:
+
+1. **One service, swap branches in place.** No second systemd unit, no second port, no env-var split, no worktree. `git checkout <feature-branch> && sudo systemctl restart wattlab`, manually test, `git checkout main && sudo systemctl restart wattlab`.
+2. **Maintenance page at the nginx layer** during the swap window. Triggered by a flag file (`/tmp/owl-maintenance`); when the file exists, nginx returns a static `maintenance.html` instead of proxying to FastAPI. Works even while wattlab is stopped — that's the whole point.
+3. **Staging access bypasses nginx.** Owner accesses `http://192.168.1.62:8000` (LAN) or `localhost:8000` via SSH tunnel — both routes don't traverse nginx, so the maintenance flag has no effect on them.
+
+### Mechanism
+
+- **`maintenance.html`** (static, lives at `/var/www/maintenance.html` or similar): re-uses `_BASE_STYLES` palette, owl mark, GoS bug, link to greeningofstreaming.org. Reusable for any planned downtime (cert renewal, reboots, demo prep).
+- **nginx config** for `wattlab.greeningofstreaming.org`: `if (-f /tmp/owl-maintenance)` block returns the static page with HTTP 503. ~10 lines.
+- **`bin/stage-on`** shell script: optionally drains the queue (checks `queue_control.depth()` via `/queue` JSON; waits up to N seconds), touches `/tmp/owl-maintenance`, restarts wattlab. Optionally takes a branch name and does the checkout.
+- **`bin/stage-off`** shell script: opposite — checkout main, restart, remove flag.
+
+### Why not the alternatives
+
+- **Two systemd units on different ports:** ~half-day to build, requires env-driven config split (results dirs, DBs, ports), still has P110/GPU contention for measurement work. Pays off only if staging runs for hours-days at a time, which is not the workflow.
+- **Docker-isolated staging:** same P110/GPU contention; ROCm-in-container is non-trivial; only earns its keep when GoS1 hosts other projects. Tracked separately under CR-031 (deployment portability).
+- **Different machine entirely:** can't validate measurement code paths since hardware differs. Misses the point.
+
+---
+
+## CR-014 · RAG compare-3-modes missing carbon strip
+
+**Status:** ✅ done 2026-05-02 (Session 17 follow-up — fixed inline alongside CR-002 closure in commit `6bb80c2`).
+**Triggered by:** owner notes during CR-002 verification — `/rag` single-mode results show the "If this had run elsewhere · how this is calculated" comparison strip, but the compare-3-modes report was missing it entirely. Visitors using compare-3-modes (the more interesting view) saw no cross-grid comparison and no live French production-mix breakdown.
+
+### Root cause
+
+`/llm` CPU-vs-GPU calls `wlCarbonStrip(_stripWh, _stripLbl)` at the top of the comparison report (main.py:2177). `/rag` single-mode does the equivalent at line 2899. The compare-3-modes path (`renderCompareResult` around line 3024) was built later and never wired up the strip — it only renders per-mode KPI cards.
+
+### Fix
+
+Added the strip at the top of the compare-3-modes report:
+
+```javascript
+const _stripWhArr = MODES
+    .map(m => (r.results||{})[m] && r.results[m].energy ? r.results[m].energy.delta_e_wh : null)
+    .filter(v => v != null);
+const _stripWh = _stripWhArr.length ? Math.min.apply(null, _stripWhArr) : null;
+const _stripLbl = r.model_label + ' · 3-mode RAG comparison (best of)';
+```
+
+Uses `Math.min` across the three modes (most efficient mode) — same idiom as `/llm` CPU-vs-GPU which uses the lower of CPU/GPU energy. Inserted between the question line and the per-mode cards.
+
+---
+
+## CR-016 · Live + static CO₂e on the same lifecycle boundary
+
+**Status:** ✅ done 2026-05-03 (Session 18 part 10 — `c8c2316`; methodology copy follow-up in `6d06a81`). Was never given its own CR section in `CHANGE_REQUESTS.md` — captured and closed within the same session as a credibility fix.
+**Triggered by:** owner — investigating a spurious ~4× live-vs-static gap on nuclear-heavy hours that didn't match physical reality. Turned out to be a methodology artefact, not real grid variance.
+
+### Problem
+
+Live FR carbon intensity was driven by Eco2mix's pre-computed `taux_co2` field, which is **direct combustion only** (nuclear ~0, gas counts only the smokestack). The Ember 2024 static reference table is **lifecycle** (nuclear fuel cycle, plant construction, methane upstream leaks, etc.). Mixing the two on the same UI surface produced a ~4× gap during nuclear-heavy hours that read as real diurnal variance — but was almost entirely a boundary mismatch.
+
+### Direction taken
+
+Live FR intensity now derives from Eco2mix's **production mix** (MW per source) × IPCC AR6 lifecycle factors, the same lifecycle math the static path already used. Live and static now sit on the same boundary and are directly comparable.
+
+The infrastructure was already mostly there: `compute_intensity_from_mix` existed as a fallback for missing `taux_co2`, and Eco2mix already returned the production mix in MW. The fix was one path-flip in `_fetch_eco2mix` plus dropping the `computed` flag (every value is now derived from mix; the distinction is gone). Eco2mix's own `taux_co2` is preserved as `g_per_kwh_direct` in the response for transparency in the JSON audit trail, just no longer driving the UI.
+
+After the fix, the live-vs-static gap is in the 1.0–1.5× range and reflects real diurnal variation (nuclear-heavy weekend afternoons cleaner than coal-heavy winter evenings). Two regression tests added (`test_eco2mix_response_returns_lifecycle_not_taux_co2`, `test_eco2mix_returns_none_when_mix_unusable`) so the boundary contract can't silently regress later.
+
+### Why this matters more than it looks
+
+This was a credibility fix masquerading as a small bug. Publishing carbon numbers where the live and reference values use different boundaries means every cross-grid comparison on every result page is silently wrong. CR-016 puts both on the same boundary; everything downstream (CR-010's home-zone reference row, CR-018's historical comparison) only works because of this fix.
+
+---
+
+## CR-022 · `scale_vaapi` surface-pool leak corrupts long GPU encodes
+
+**Status:** ✅ shipped 2026-05-04 (Session 21 — `aae9af4`). Step 1 (workaround in `transcode()`) landed: new `gpu_encode_max_s=30` setting + `_maybe_cap_vaapi()` helper auto-injects `-t 30` before `-i` on any VAAPI cmd. End-to-end smoke confirmed `variance_gpu_cmd` now completes in 3.7s with empty stderr. **Residual scope:** Step 2 (long-term filter restructuring — test alternative filter graphs / Mesa version updates / pipeline restructuring) deferred until a Mesa/driver update is tested. Promote to a fresh CR if/when a Mesa update is available to test against.
+**Originally captured:** 2026-05-04 (Session 21). Real bug, reproducible in standalone ffmpeg, root cause upstream.
+**Triggered by:** owner — surfaced while building `bin/probe-thermal-recovery` (Session 21 thermal-recovery diagnostic). The probe's GPU encode failed deterministically on the first smoke test. Standalone ffmpeg reproduction confirmed the bug isn't probe-specific — it's in the production VAAPI pipeline.
+
+### Problem
+
+The VAAPI filter chain `-vf scale_vaapi=w=-2:h=1080:format=nv12` leaks surfaces over time and exhausts the pool around frame ~7000-43000 (variable, but always near end-of-stream on long inputs). Symptom on the standalone command:
+
+```
+[vf#0:0 @ 0x...] Error while filtering: Cannot allocate memory
+Failed to inject frame into filter network: Cannot allocate memory
+Conversion failed!
+```
+
+ffmpeg returncode=1, but only after most of the stream has already been processed.
+
+**Affected commands** (all use the same filter chain):
+- `settings.variance_gpu_cmd` — H.265 GPU calibration encode
+- `PRESETS["h265_gpu"]` — production /video preset
+- `PRESETS["av1_gpu"]` — production /video preset
+- `PRESETS["gpu"]` (H.264 GPU) — production /video preset
+
+Reproduces on both `meridian_4k.mp4` (12 min, fails ~frame 43076) and `meridian_120s.mp4` (2 min, fails ~frame 7178). Adding `-extra_hw_frames 64` was tried previously (S12 fix) and is no longer sufficient — the leak rate just outruns whatever pool size you set.
+
+### Why it mattered more than it looked
+
+1. The headline finding **"H.265 GPU 14.5s / 0.29 Wh"** in CLAUDE.md was measured on the 120s asset where the encode runs *most* of the way before crashing — but `transcode()` returns `success=False` on the failed encodes and downstream consumers don't all check that field (see CR-023). So the reported figure may include partial-encode data depending on which path produced it.
+2. CR-023 was the much bigger consequence: variance calibration silently treats failed encodes as successful, polluting `variance_gpu_pct` with partial-encode ΔW.
+
+### Workarounds tried
+
+- `-t 30` cap on the encode → completes cleanly, ~5s wall time. **Now used by `transcode()` automatically via `_maybe_cap_vaapi()`.**
+- `-extra_hw_frames 64` / `128` → delays the crash but doesn't prevent it on long streams.
+- Pipeline restructure (no `scale_vaapi`, swap to CPU scaling then re-upload) — not tested; would change the energy profile and defeat the "full VAAPI pipeline" framing. Captured as Step 2.
+
+### Direction shipped
+
+**Two-step fix; Step 1 done.**
+
+1. **(Done)** Short-term workaround in PRESETS + variance_gpu_cmd. `gpu_encode_max_s` setting (default 30, bumped to 90 inline post-S21 once it became the variance-calibration sample window). Result JSON tagged with `gpu_capped_at_s` so we can audit which results were affected.
+2. **(Deferred)** Long-term: investigate filter alternatives. Test whether a different filter graph (e.g. `hwupload`/`hwdownload` round-trip, or `scale=` on CPU before VAAPI encode) avoids the leak while keeping the energy profile honest. Document findings in METHODOLOGY.md regardless of outcome.
+
+### Watch-outs (still relevant)
+
+- **Capping changes the energy profile** — a 30s GPU encode draws less total energy than a 12-min encode. The cap means our "GPU energy per encode" headline figures will be smaller than they would be uncapped. The mWh-per-frame and ΔW figures stay valid; the per-encode totals scale with duration.
+- **The canonical ABR all-codecs benchmark** in CLAUDE.md was run on the (failing) full-length GPU command before the cap shipped. Re-running it under the cap will produce different absolute numbers. Re-run + headline update is open work captured under CR-029.
+
+---
+
+## CR-023 · Variance calibration silently uses partial-encode data on ffmpeg failure
+
+**Status:** ✅ calibration-loop fix shipped 2026-05-04 (Session 21 — `aae9af4`). `run_variance_calibration` now captures `transcode_result`, only appends ΔW from successful encodes, tracks `cpu_failed`/`gpu_failed` counters with stderr tails, and aborts the settings update if ≥50% of either side fails. Result JSON gains `cpu_failed`, `gpu_failed`, `failure_stderr`, `abort_reason` fields. **Residual scope:** Step 2 (tag failures on single-run paths in `run_single`/`run_both`/`run_all`) deferred — not urgent now that the calibration spine is gated. Promote to a fresh CR if/when a confused operator demands UI badges on partial-encode results.
+**Originally captured:** 2026-05-04 (Session 21). Confirmed bug — overnight calibration produced bogus `variance_gpu_pct` because of this.
+**Triggered by:** owner — investigating why the latest variance calibration jumped `variance_idle_pct` 6.66 → 11.03 and `variance_gpu_pct` 0.49 → 3.00. Root cause for the GPU number turned out to be CR-022 (scale_vaapi leak) crashing every GPU encode near end-of-stream — but the calibration didn't *notice* the crashes, and persisted ΔW figures computed over the partial encode duration.
+
+### Problem
+
+`run_variance_calibration` (`wattlab_service/video.py:537`) ran each encode like this:
+
+```python
+await asyncio.get_event_loop().run_in_executor(None, transcode, cmd_gpu)
+stop_gpu.set()
+readings_gpu = await poll_gpu
+out_gpu.unlink(missing_ok=True)
+if readings_gpu:
+    w_task2 = sum(r["watts"] for r in readings_gpu) / len(readings_gpu)
+    gpu_delta_w.append(round(w_task2 - w_base_gpu, 3))
+```
+
+`transcode()` *did* return `{"success": False, ...}` when ffmpeg exited non-zero, but the calibration loop never checked it. As long as `readings_gpu` had any polls in it (which it always will — power polling runs in parallel with the encode), the run was treated as a successful data point. The ΔW got averaged over however long the encode ran before crashing — which for the historical `variance_gpu_cmd` + `meridian_4k.mp4` was ~84s of partial encode every time (frame=43076 of ~43200).
+
+**Confirmed concrete impact:** the polluted calibration's `variance_gpu_pct = 3.00` was computed from 30 partial-encode runs that all crashed near end-of-stream. The figure was not measurement variance — it was a mixture of that plus encoder-failure-state variance. Same applies to any prior calibration where `variance_gpu_cmd` ran on a long input.
+
+The same pattern existed in the production single-encode path (`run_single`, `video.py:235`) and `run_both_measurement` / `run_all_measurement` — none of them gated their result on `transcode_result["success"]`. CR-022 was what made this dangerous in practice; CR-023 was the failure of the surrounding code to *notice*.
+
+### Direction shipped
+
+**Two changes — small, surgical.**
+
+1. **(Done)** Calibration loop gates on `success`. In `run_variance_calibration`, capture the `transcode_result` from the executor call and skip the ΔW append if `success=False`. Increment a `failed_runs` counter that lands on the result JSON. If `failed_runs >= n_runs / 2`, refuse to update settings — abort with an error explaining which command failed and pointing at the result JSON for forensics.
+2. **(Deferred)** Single-run path tags failures. `run_single`, `run_both_measurement`, `run_all_measurement` all need to record `encode_success: bool` and `encode_stderr_tail: str` on the result JSON, and the result detail UI needs to badge failed-encode runs distinctly so they can't be confused with clean measurements. Don't drop the result entirely — the partial readings are still informative for some questions (e.g. CR-022's leak rate) — just label them.
+
+### Why this mattered
+
+Two compounding effects:
+
+- The variance framework is built on the assumption that `variance_pct` (specifically `variance_idle_pct`) reflects measurement-noise reality. CR-023 meant the GPU contribution to that figure was *partially encoder-failure noise*, not measurement noise. Every confidence label on every GPU result inherited that distortion via `noise_w = variance_pct/100 × w_base`.
+- Combined with CR-022 (leak in scale_vaapi) it meant **we hadn't had a clean GPU calibration since the leak emerged**, and didn't know.
+
+### Watch-outs (sequencing notes preserved for posterity)
+
+- **Don't ship CR-023 alone** — if we'd started refusing to persist calibrations with failed GPU encodes *before* fixing CR-022, no calibration could ever complete. They shipped together in S21.
+- **Audit historical results.** Worth a one-off scan of `results/video/*.json` for any GPU result where the encode duration is suspiciously close to the input duration but the file size doesn't add up. That's CR-022 + CR-023 in the wild. Not in scope for the fix itself; flag in a separate audit task if/when a published headline is questioned.
+- **Don't auto-delete partial results.** Annotate them, don't remove them — they may have post-hoc diagnostic value (as CR-023 itself just demonstrated).

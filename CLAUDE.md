@@ -1,10 +1,11 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current.
-# Last updated: 2026-05-04 (Session 21)
+# Last updated: 2026-05-05 (Session 22 — docs tidy)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also: GOS1_INFRA.md — server infrastructure, Nextcloud backup, personal stack context
 # See also: TESTING.md — three-tier testing strategy
-# See also: CHANGE_REQUESTS.md — open CRs. **CR-001 ✅ shipped on `feature/cr-001-two-tier` — ready to merge.** CR-001b resolved by CR-011+CR-015. CR-002, CR-006, CR-010, CR-011, CR-014, CR-016, CR-018-T1, CR-022, CR-023 done. CR-003…CR-009, CR-012/013, CR-015, CR-017, CR-018-T2/T3, CR-019, CR-020, CR-021, CR-024, CR-026…CR-031 open. CR-025 = exploratory ("maybe") on real-time Linux migration. CR-026 (anonymous-tier integrity) is highest urgency from team meeting 2026-05-04.
+# See also: CHANGE_REQUESTS.md — active CRs only. **CR-001 ✅ shipped on `feature/cr-001-two-tier` — ready to merge.** Active list: CR-003…CR-005, CR-007…CR-009, CR-012/013, CR-015, CR-017, CR-018 (T2/T3), CR-019, CR-020, CR-021, CR-024…CR-031. CR-025 = exploratory on real-time Linux migration. CR-026 (anonymous-tier integrity) is highest urgency from team meeting 2026-05-04. CR-028 Phase 2 + CR-020 + the 5×/2× confidence-multiplier deferred item all park until Tania session 2026-05-07.
+# See also: CHANGE_REQUESTS_CLOSED.md — shipped CRs archive (CR-001, CR-001b, CR-002, CR-006, CR-010, CR-011, CR-014, CR-016, CR-022, CR-023). Each entry preserves the original problem statement and direction; Status line names the closing commit.
 # See also: AUDIT_BRIEF.md + AUDIT_RESPONSE.md — pre-CR-001 architecture audit + recommendations
 # See also: JOURNAL.md — session-by-session change log (full detail; not auto-loaded)
 # See also: REM/CLAUDE.md — sibling project (distributed fleet via Tapo P110 + TP-Link cloud); repo at dom-robinson/stats. OWL = bench, REM = meter on the building.
@@ -135,7 +136,7 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 
 **Phases 1–8 shipped:** research integrity (persistence + export), measurement quality (LLM batched/warm-cold/streaming, H.265+AV1), settings & lab config, demo mode + GoS visual identity, image generation (SD-Turbo CPU/GPU + SDXL-Turbo), public access (nginx + cert + IP-gate), guided tour + credibility (confidence popover, resume), RAG energy test (Chroma + compare-3-modes).
 
-**Active CRs:** see `CHANGE_REQUESTS.md` (CR-001 two-tier OWL, CR-001b demo lock, CR-002…CR-009).
+**Active CRs:** see `CHANGE_REQUESTS.md` (22 entries — CR-003 iso-energy, CR-004 graphing, CR-005 fan control, CR-007 carbon variance, CR-008 REM↔OWL, CR-009 web client, CR-012 calibration history, CR-013 prev-run drilldown, CR-015 staging watchdog, CR-017 24/7 carbon, CR-018 T2/T3 historical, CR-019 progress widget, CR-020 baseline gate, CR-021 sign-in chip, CR-024 probe button, CR-025 RT Linux, CR-026 anon-tier integrity, CR-027 tier copy, CR-028 confidence model, CR-029 encoding rigor, CR-030 carbon UI, CR-031 portability). Closed CRs in `CHANGE_REQUESTS_CLOSED.md`.
 
 ### Recent sessions (one-line summary; full detail in JOURNAL.md + git log)
 - **S10 (2026-04-07):** centralised power cache, ffmpeg cmd in result JSON, GPU PPT note, home nav restructure.
@@ -161,8 +162,8 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 - [ ] **Guided Tour Findings step** — currently echoes session run; redesign to aggregate across all stored results to surface body-of-evidence learnings (see Key Findings).
 - [ ] **RAG visitor upload + corpus PDF view** — see `CHANGE_REQUESTS.md` follow-ups.
 - [ ] **Power-user/visitor UX watch** — progressive-disclosure pilot is live across test pages; revisit if a visible density toggle becomes needed.
-- [ ] **Confirm GPU variance with a long-run calibration** — multiple short calibrations on 2026-05-04 produced GPU CV in the 5-25% range; n=3 sample was inconclusive (statistical lucky / unlucky). Run one calibration at `variance_runs ≥ 15, gpu_encode_max_s = 90, variance_cooldown_s = 30` to settle the GPU-CV question. ETA ~1h. Open question recorded under CR-028.
-- [ ] **`scale_vaapi` long-term fix** — see **CR-022 step 2** (test alternative filter graphs / Mesa version updates / pipeline restructuring; step 1 workaround `-t {gpu_encode_max_s}` cap shipped S21).
+- [x] **Confirm GPU variance with a long-run calibration** — done 2026-05-05 overnight at `variance_runs=24, variance_cooldown_s=90, gpu_encode_max_s=90`: idle 2.41% / cpu 1.33% / **gpu 4.77%** (`variance_pct=2.84`). Statistically real at n=24 (SE ~14% of value). GPU lands near the bottom of Tania's 3–5% expectation. Clean number ready for CR-028 Phase 2 design session 2026-05-07.
+- [ ] **`scale_vaapi` long-term fix** — CR-022 closed (step 1 cap shipped S21); residual step 2 (test alternative filter graphs / Mesa version updates / pipeline restructuring) noted on the CR-022 entry in `CHANGE_REQUESTS_CLOSED.md`. Promote to a fresh CR if/when a Mesa update is available to test against.
 
 ## Key Findings to Date
 
