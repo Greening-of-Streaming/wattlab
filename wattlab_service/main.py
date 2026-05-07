@@ -1214,6 +1214,14 @@ function wlStageList(stages, cur) {
              + '<span style="color:' + col + '">' + lbl + '</span></div>';
     }).join('');
 }
+// CR-019 \u2014 widget targets default to '#status' for back-compat with the
+// main pages (/video /llm /image /rag), but accept opts.target so /demo
+// can route the same widget to its per-step containers (#video-status,
+// #llm-status, #image-status, #rag-status).
+function _wlTarget(opts) {
+    var id = (opts && opts.target) || 'status';
+    return document.getElementById(id);
+}
 function wlRenderProgress(opts) {
     var w = opts.watts;
     var wHtml = w != null
@@ -1224,7 +1232,9 @@ function wlRenderProgress(opts) {
     var elHtml = opts.elapsed != null
         ? '<div style="color:var(--text-4);font-size:0.78rem;margin-top:0.4rem">Elapsed: ' + wlFormatElapsed(opts.elapsed) + '</div>'
         : '';
-    document.getElementById('status').innerHTML =
+    var t = _wlTarget(opts);
+    if (!t) return;
+    t.innerHTML =
         '<div style="border:1px solid var(--border);padding:1.5rem">'
         + '<div style="color:var(--warn);font-size:0.9rem;margin-bottom:0.75rem">'
         + (opts.header || 'Measuring \u2014 do not close this tab') + '</div>'
@@ -1233,13 +1243,21 @@ function wlRenderProgress(opts) {
         + (opts.extraHtml || '')
         + '</div>';
 }
-function wlRenderQueued(pos) {
-    document.getElementById('status').innerHTML =
+function wlRenderQueued(pos, opts) {
+    var t = _wlTarget(opts);
+    if (!t) return;
+    t.innerHTML =
         '<div style="border:1px solid var(--border-3);padding:1.5rem">'
         + '<div style="color:var(--warn);font-size:0.9rem;margin-bottom:0.75rem">\u23f1 Queued \u2014 position ' + pos + '</div>'
         + '<div style="color:var(--text-3);font-size:0.82rem">Another measurement is running. Your job will start automatically.</div>'
         + '</div>';
 }
+// Shared per-workload stage labels \u2014 referenced from main pages and
+// from /demo's poll loops, so the stage list can't drift between them.
+var WL_VIDEO_STAGES = ['Baseline', 'Encoding', 'Cooldown', 'Complete'];
+var WL_LLM_STAGES   = ['Baseline', 'Inference running', 'Complete'];
+var WL_IMAGE_STAGES = ['Baseline', 'Generating image', 'Complete'];
+var WL_RAG_STAGES   = ['Baseline poll', 'Inference running', 'Complete'];
 </script>"""
 
 # --- Home ---
@@ -3303,17 +3321,27 @@ async def llm_run_all(
     return {"job_id": job_id, "queue_position": position}
 
 
+# CR-019 — every job-status response carries the live wall-power reading
+# alongside the worker-state fields. The shared `wlRenderProgress` widget
+# consumes `data.watts` to drive the big 2.5rem live readout, which is
+# the proof-of-reality moment for the visitor on /demo. Injected once
+# here so all four job-status endpoints stay symmetric.
+def _job_status(job_id: str) -> dict:
+    return {**jobs.get(job_id, {"status": "not_found"}),
+            "watts": _power_cache["watts"]}
+
+
 @app.get("/llm/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def llm_job_status(job_id: str):
-    return jobs.get(job_id, {"status": "not_found"})
+    return _job_status(job_id)
 
 @app.get("/video/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def job_status(job_id: str):
-    return jobs.get(job_id, {"status": "not_found"})
+    return _job_status(job_id)
 
 @app.get("/image/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def image_job_status(job_id: str):
-    return jobs.get(job_id, {"status": "not_found"})
+    return _job_status(job_id)
 
 @app.get("/queue", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_status_endpoint():
@@ -4026,7 +4054,7 @@ async def rag_run(
 
 @app.get("/rag/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def rag_job_status(job_id: str):
-    return jobs.get(job_id, {"status": "not_found"})
+    return _job_status(job_id)
 
 
 async def run_rag_compare_job(job_id: str, model_key: str, question: str):
@@ -5161,20 +5189,17 @@ function showVideoError(msg) {{
     '<p class="progress-note" style="color:var(--err)">Error: ' + msg + '</p>';
 }}
 
-const VIDEO_STAGE_LABELS = {{
-  'starting': 'Initialising…',
-  'baseline': 'Measuring baseline (10s)…',
-  'cpu_encode': 'CPU encoding — measuring power…',
-  'rest': 'Thermal cooldown (60s)…',
-  'baseline_2': 'Measuring GPU baseline…',
-  'gpu_encode': 'GPU encoding — measuring power…',
-  'done': 'Complete',
+// CR-019 — /demo's poll loops use the shared wlRenderProgress widget
+// (with opts.target → per-step status div) so visitors see the same
+// big live wall-power readout and stage list as the main pages.
+const VIDEO_STAGE_IDX = {{
+  starting: 0, baseline: 0, baseline_2: 0,
+  cpu_encode: 1, gpu_encode: 1,
+  rest: 2,
+  done: 3,
 }};
 
 function pollVideo(jobId, t0) {{
-  const elapsed = Math.floor((Date.now()-t0)/1000);
-  const m = Math.floor(elapsed/60), s = elapsed%60;
-  const eStr = m > 0 ? m+'m '+s+'s' : s+'s';
   fetch('/video/job/' + jobId).then(r=>r.json()).then(data => {{
     if (data.status === 'done') {{
       videoResult = data.result;
@@ -5182,10 +5207,13 @@ function pollVideo(jobId, t0) {{
     }} else if (data.status === 'error') {{
       showVideoError(data.error);
     }} else {{
-      const label = VIDEO_STAGE_LABELS[data.stage] || data.stage || '…';
-      document.getElementById('video-status').innerHTML =
-        '<p class="progress-note">▶ ' + label + '</p>' +
-        '<p class="dim mono" style="font-size:0.78rem;margin-top:0.4rem">Elapsed: ' + eStr + '</p>';
+      const idx = VIDEO_STAGE_IDX[data.stage] ?? 0;
+      wlRenderProgress({{
+        target: 'video-status',
+        stagesHtml: wlStageList(WL_VIDEO_STAGES, idx),
+        watts: data.watts,
+        elapsed: Date.now() - t0,
+      }});
       setTimeout(() => pollVideo(jobId, t0), 5000);
     }}
   }}).catch(() => setTimeout(() => pollVideo(jobId, t0), 5000));
@@ -5220,9 +5248,6 @@ function showLLMError(msg) {{
 }}
 
 function pollLLM(jobId, t0) {{
-  const elapsed = Math.floor((Date.now()-t0)/1000);
-  const m = Math.floor(elapsed/60), s = elapsed%60;
-  const eStr = m > 0 ? m+'m '+s+'s' : s+'s';
   fetch('/llm/job/' + jobId).then(r=>r.json()).then(data => {{
     if (data.status === 'done') {{
       if (streamTimer) {{ clearTimeout(streamTimer); streamTimer = null; }}
@@ -5233,13 +5258,17 @@ function pollLLM(jobId, t0) {{
       showLLMError(data.error);
     }} else {{
       const stage = data.stage || '';
-      const stageLabel = stage === 'baseline' ? 'Measuring baseline…' :
-                         stage.startsWith('inference') ? 'Running inference…' : stage + '…';
-      document.getElementById('llm-status').innerHTML =
-        '<p class="progress-note">▶ ' + stageLabel + '</p>' +
-        '<p class="dim mono" style="font-size:0.78rem;margin-top:0.4rem">Elapsed: ' + eStr + '</p>' +
-        '<div class="stream-box" id="stream-box">' +
-          (data.partial_response || '') + '</div>';
+      const idx = stage === 'baseline' ? 0 : stage.startsWith('inference') ? 1 : 0;
+      const partial = data.partial_response || '';
+      const streamHtml = '<div class="stream-box" id="stream-box" style="margin-top:0.75rem">'
+                       + partial + '</div>';
+      wlRenderProgress({{
+        target: 'llm-status',
+        stagesHtml: wlStageList(WL_LLM_STAGES, idx),
+        watts: data.watts,
+        elapsed: Date.now() - t0,
+        extraHtml: streamHtml,
+      }});
       const delay = stage.startsWith('inference') ? 500 : 3000;
       streamTimer = setTimeout(() => pollLLM(jobId, t0), delay);
     }}
@@ -5431,9 +5460,6 @@ async function runDemoRAG() {{
 }}
 
 function pollDemoRAG(jobId, t0) {{
-  const elapsed = Math.floor((Date.now()-t0)/1000);
-  const m = Math.floor(elapsed/60), s = elapsed%60;
-  const eStr = m > 0 ? m+'m '+s+'s' : s+'s';
   fetch('/rag/job/' + jobId).then(r=>r.json()).then(data => {{
     if (data.stage === 'done' && data.result) {{
       ragResult = data.result;
@@ -5444,11 +5470,19 @@ function pollDemoRAG(jobId, t0) {{
       document.getElementById('rag-btns').style.display = 'flex';
     }} else {{
       const stage = data.stage || '';
-      const lbl = stage.startsWith('baseline') ? 'Measuring baseline…' :
-                  stage.startsWith('inference') ? 'Running ' + stage + '…' : stage || '…';
-      document.getElementById('rag-status').innerHTML =
-        '<p class="progress-note">▶ ' + lbl + '</p>' +
-        '<p class="dim mono" style="font-size:0.78rem;margin-top:0.4rem">Elapsed: ' + eStr + '</p>';
+      const idx = stage.startsWith('baseline') ? 0 : stage.startsWith('inference') ? 1 : 0;
+      // Show which mode is running mid-3-mode-compare ("baseline of rag_large", etc.)
+      // as extra context under the stage list.
+      const modeLine = stage.startsWith('inference') || stage.startsWith('baseline')
+        ? '<div style="color:var(--text-3);font-size:0.78rem;margin-top:0.6rem">' + stage + '</div>'
+        : '';
+      wlRenderProgress({{
+        target: 'rag-status',
+        stagesHtml: wlStageList(WL_RAG_STAGES, idx),
+        watts: data.watts,
+        elapsed: Date.now() - t0,
+        extraHtml: modeLine,
+      }});
       setTimeout(() => pollDemoRAG(jobId, t0), 3000);
     }}
   }}).catch(() => setTimeout(() => pollDemoRAG(jobId, t0), 5000));
@@ -5522,31 +5556,35 @@ async function runDemoImage() {{
 }}
 
 async function pollDemoImage(jobId) {{
+  if (!pollDemoImage._t0) pollDemoImage._t0 = Date.now();
   try {{
     const r = await fetch('/image/job/' + jobId);
     const j = await r.json();
     if (j.stage === 'queued') {{
-      document.getElementById('image-status').innerHTML =
-        '<p class="progress-note">⏱ Queued — position ' + j.queue_position +
-        '. Will start automatically.</p>';
+      wlRenderQueued(j.queue_position, {{target: 'image-status'}});
       imageTimer = setTimeout(() => pollDemoImage(jobId), 3000);
       return;
     }}
     if (j.stage === 'done' && j.result) {{
       imageResult = j.result;
+      pollDemoImage._t0 = null;
       renderDemoImageResult(j.result);
       return;
     }}
     if (j.error) {{
+      pollDemoImage._t0 = null;
       document.getElementById('image-status').innerHTML =
         '<p class="progress-note" style="color:var(--err)">Error: ' + j.error + '</p>';
       document.getElementById('image-btns').style.display = 'flex';
       return;
     }}
-    const stageLabel = j.stage === 'generating' ? 'Generating image…' :
-                       j.stage === 'baseline' ? 'Measuring baseline…' : j.stage;
-    document.getElementById('image-status').innerHTML =
-      '<p class="progress-note">⚡ ' + stageLabel + '</p>';
+    const idx = j.stage === 'generating' ? 1 : 0;
+    wlRenderProgress({{
+      target: 'image-status',
+      stagesHtml: wlStageList(WL_IMAGE_STAGES, idx),
+      watts: j.watts,
+      elapsed: Date.now() - pollDemoImage._t0,
+    }});
     imageTimer = setTimeout(() => pollDemoImage(jobId), 2000);
   }} catch(e) {{
     imageTimer = setTimeout(() => pollDemoImage(jobId), 3000);
@@ -6452,7 +6490,7 @@ async function load() {
 }
 load();
 </script>
-""" + _FOOTER + """
+""" + _FOOTER + _PROGRESS_JS + """
 </body>
 </html>"""
 

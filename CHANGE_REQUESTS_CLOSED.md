@@ -374,6 +374,35 @@ Energy and mass formatters extended for sane projections — `fmtEnergy(wh)` aut
 
 ---
 
+## CR-019 · Unify the in-progress widget across `/demo` and the main pages
+
+**Status:** ✅ shipped 2026-05-07 (Session 23 part 5). Headline scope (widget unification) done. **Resume-job progress fix deferred** — captured as a follow-up CR; the widget-unification work was the 80% of the user-visible win, the resume-job hook is a separate lifecycle problem worth its own design pass.
+**Originally captured:** 2026-05-03 (Session 19), scope extended 2026-05-04 to fold in resume-job. Triggered by owner running 3-mode RAG from `/demo` step 4 on mobile and noticing the in-progress UI was much less informative than `/rag`'s for the same workload (no stage list, no live watts, no extras slot).
+
+### What shipped
+
+- **`wlRenderProgress(opts)` and `wlRenderQueued(pos, opts)`** accept `opts.target` (default `'status'` for back-compat). `/demo`'s four poll loops pass `'video-status'` / `'llm-status'` / `'image-status'` / `'rag-status'` and reuse the same widget the main pages have used since CR-001.
+- **Shared stage arrays** in `_PROGRESS_JS`: `WL_VIDEO_STAGES`, `WL_LLM_STAGES`, `WL_IMAGE_STAGES`, `WL_RAG_STAGES`. Stages can't drift between `/demo` and the main pages because they reference the same source.
+- **`_PROGRESS_JS` injected into `_DEMO_HTML`.** Previously the demo template assembled `_FOOTER` only; now it appends `_PROGRESS_JS` so `wlRenderProgress` is in scope.
+- **Live wall-power threading.** New `_job_status(job_id)` helper injects `_power_cache["watts"]` into every job-status response. All four endpoints (`/llm/job/{id}`, `/video/job/{id}`, `/image/job/{id}`, `/rag/job/{id}`) now return `data.watts`, which flows through to the 2.5 rem live readout on the widget — the proof-of-reality moment that `/demo` was previously missing.
+- **/demo poll loops migrated**: `pollVideo`, `pollLLM`, `pollDemoRAG`, `pollDemoImage` all dropped their bespoke `<p class="progress-note">` markup. LLM keeps its stream-box partial output via `opts.extraHtml`; RAG shows the active sub-mode (e.g. "inference of rag_large") in the extras slot.
+
+### Resume-job progress fix — deferred
+
+Out of scope for this PR; captured as a follow-up CR. The agreed direction (per the original CR-019 doc): a `?job=<id>` query-param hook that re-attaches `wlRenderProgress` to an in-flight job on page load. Needs a small design pass on URL state and browser history — too much surface to fold into a "widget unification" PR without spilling.
+
+### Why this matters
+
+`/demo` is the conference narrative and the highest-traffic public surface. The big live wall-power readout *is* the proof-of-reality moment ("there's a real power meter, this isn't a slideshow"). Hiding it during the in-progress phase was exactly the wrong moment to drop it.
+
+### Watch-outs (still relevant)
+
+- **Stages drift.** If a workload module gains a new stage (e.g. RAG cooldown), update `WL_*_STAGES` in `_PROGRESS_JS` rather than redefining inline somewhere.
+- **`data.watts` consumers must tolerate `null`.** The live cache initialises to `None` before the first poll cycle; `wlRenderProgress` already handles that branch (only renders the watts block when non-null).
+- **Resume-job follow-up CR will need to fold in URL state.** When it lands, `?job=<id>` becomes the canonical pattern; current `pollX(jobId)` callers should become `pollX(jobId, {resume: true})` or similar so the widget knows whether it's re-attaching or starting fresh.
+
+---
+
 ## CR-020 · Baseline-variance gate on confidence
 
 **Status:** ✅ closed 2026-05-07 — **superseded by CR-028 Phase 2.** The per-run baseline-CV gate described here is absorbed into Tania's unified statistical model: §9 of `docs/wattlab_traffic_light_confidence.md` computes `SE_per_run` from the actual baseline + task samples on each run, replacing the static `variance_pct × w_base` denominator that CR-020 was designed to retrofit. Once CR-028 Phase 2 ships, the per-run noise check is in the math by default — no separate gate needed. Storage piece (persist raw `baseline_samples_w` / `task_samples_w` per result) folded into CR-028 Phase 2 scope.
