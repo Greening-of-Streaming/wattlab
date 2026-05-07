@@ -4152,11 +4152,23 @@ async def results_list(job_type: str, request: Request):
 # results, redacted shape, or a `is_demo` flag).
 @app.get("/demo/last/{job_type}", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def demo_last_result(job_type: str, task_eq: str | None = None):
+    """Latest persisted result for /demo's prev-runs panels, unfiltered
+    by visitor (deliberate CR-026 carve-out for the demo surface).
+
+    `job_type='llm'` defaults to *plain* LLM runs — RAG records that
+    persist under results/llm/ (mode='rag', 'rag_compare') are excluded
+    unless the caller passes `task_eq='RAG …'`. This is what makes
+    /demo's LLM step show an actual LLM result instead of accidentally
+    rendering a RAG compare in the wrong widget shape.
+    """
     if job_type not in ("video", "llm", "image"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
     runs = list_results(job_type, limit=20, visitor_key=None)
     if task_eq:
         runs = [r for r in runs if r.get("task") == task_eq]
+    elif job_type == "llm":
+        # Plain-LLM default: exclude RAG (rag, rag_compare) records.
+        runs = [r for r in runs if not (r.get("task") or "").startswith("RAG")]
     if not runs:
         return JSONResponse({"error": "no result"}, status_code=404)
     full = load_result(job_type, runs[0]["job_id"], visitor_key=None)
@@ -5211,16 +5223,19 @@ async function showPrevLLM() {{
 // AV1 CPU vs GPU) for visitors who want to compare codec families.
 async function runDemoVideo() {{
   document.getElementById('video-btns').style.display = 'none';
-  // Show the progress widget immediately rather than a stale "Starting…"
-  // line — pollVideo's first response is up to 5s away, so the empty
-  // shell tells the visitor "yes, something is happening" right away.
-  wlRenderProgress({{
-    target: 'video-status',
-    header: 'Submitting video job…',
-    stagesHtml: wlStageList(WL_VIDEO_STAGES, 0),
-    elapsed: 0,
-  }});
   try {{
+    // Show the progress widget immediately rather than a stale "Starting…"
+    // line — pollVideo's first response is up to 5s away, so the empty
+    // shell tells the visitor "yes, something is happening" right away.
+    // Inside the try so that if wlRenderProgress (or any prerequisite
+    // global) is undefined, the failure surfaces via showVideoError
+    // instead of silently leaving the button hidden + page blank.
+    wlRenderProgress({{
+      target: 'video-status',
+      header: 'Submitting video job…',
+      stagesHtml: wlStageList(WL_VIDEO_STAGES, 0),
+      elapsed: 0,
+    }});
     const form = new FormData();
     form.append('source_key', 'meridian_120s');
     form.append('preset', 'h265_both');
@@ -5273,17 +5288,19 @@ function pollVideo(jobId, t0) {{
 // ─── Run new LLM measurement ──────────────────────────────────────────────────
 async function runDemoLLM() {{
   document.getElementById('llm-btns').style.display = 'none';
-  // Render the progress widget immediately so the visitor sees the
-  // shell rather than a stale text line during the up-to-5s gap before
-  // pollLLM's first response.
-  wlRenderProgress({{
-    target: 'llm-status',
-    header: 'Submitting LLM job…',
-    stagesHtml: wlStageList(WL_LLM_STAGES, 0),
-    elapsed: 0,
-    extraHtml: '<div class="stream-box" id="stream-box" style="margin-top:0.75rem"></div>',
-  }});
   try {{
+    // Render the progress widget immediately so the visitor sees the
+    // shell rather than a stale text line during the up-to-5s gap before
+    // pollLLM's first response. Inside the try so widget-render
+    // failure surfaces via showLLMError rather than silently leaving
+    // the button hidden + page blank.
+    wlRenderProgress({{
+      target: 'llm-status',
+      header: 'Submitting LLM job…',
+      stagesHtml: wlStageList(WL_LLM_STAGES, 0),
+      elapsed: 0,
+      extraHtml: '<div class="stream-box" id="stream-box" style="margin-top:0.75rem"></div>',
+    }});
     const form = new FormData();
     form.append('model_key', 'mistral');
     form.append('task_key', 'T3');
@@ -5500,13 +5517,13 @@ async function showPrevRAG() {{
 
 async function runDemoRAG() {{
   document.getElementById('rag-btns').style.display = 'none';
-  wlRenderProgress({{
-    target: 'rag-status',
-    header: 'Submitting RAG comparison…',
-    stagesHtml: wlStageList(WL_RAG_STAGES, 0),
-    elapsed: 0,
-  }});
   try {{
+    wlRenderProgress({{
+      target: 'rag-status',
+      header: 'Submitting RAG comparison…',
+      stagesHtml: wlStageList(WL_RAG_STAGES, 0),
+      elapsed: 0,
+    }});
     const form = new FormData();
     form.append('model_key', 'mistral');
     // No `question` field — server uses curated.CANONICAL_RAG_QUESTION,
@@ -5600,27 +5617,33 @@ function renderRAGResult(r, savedAt, isPrev) {{
 // ─── Image ────────────────────────────────────────────────────────────────────
 async function runDemoImage() {{
   document.getElementById('image-btns').style.display = 'none';
-  wlRenderProgress({{
-    target: 'image-status',
-    header: 'Submitting image job…',
-    stagesHtml: wlStageList(WL_IMAGE_STAGES, 0),
-    elapsed: 0,
-  }});
-  // No `prompt` field — server uses curated.CANONICAL_IMAGE_PROMPT, which
-  // keeps the call Anonymous-OK (CR-001 capability dispatch).
-  const resp = await fetch('/image/start', {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
-    body: '',
-  }});
-  const data = await resp.json();
-  if (data.error) {{
+  try {{
+    wlRenderProgress({{
+      target: 'image-status',
+      header: 'Submitting image job…',
+      stagesHtml: wlStageList(WL_IMAGE_STAGES, 0),
+      elapsed: 0,
+    }});
+    // No `prompt` field — server uses curated.CANONICAL_IMAGE_PROMPT, which
+    // keeps the call Anonymous-OK (CR-001 capability dispatch).
+    const resp = await fetch('/image/start', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+      body: '',
+    }});
+    const data = await resp.json();
+    if (data.error) {{
+      document.getElementById('image-btns').style.display = 'flex';
+      document.getElementById('image-status').innerHTML =
+        '<p class="progress-note" style="color:var(--err)">' + data.error + '</p>';
+      return;
+    }}
+    pollDemoImage(data.job_id);
+  }} catch(e) {{
     document.getElementById('image-btns').style.display = 'flex';
     document.getElementById('image-status').innerHTML =
-      '<p class="progress-note" style="color:var(--err)">' + data.error + '</p>';
-    return;
+      '<p class="progress-note" style="color:var(--err)">Error: ' + e + '</p>';
   }}
-  pollDemoImage(data.job_id);
 }}
 
 async function pollDemoImage(jobId) {{
