@@ -249,8 +249,11 @@ def test_required_tier_table_snapshot():
         "llm_run":             Tier.Anonymous,
         "image_run":           Tier.Anonymous,
         "rag_run":             Tier.Anonymous,
-        "custom_upload":       Tier.Anonymous,
-        # Member — "members shape inputs" (CR-001 part C1)
+        # Member — "members shape inputs" (CR-001 part C1) +
+        # custom_upload (CR-026 — anonymous-tier integrity pass) +
+        # working_nav (CR-026 — home page nav grid for Member/Lab; Anonymous is redirected to /demo)
+        "custom_upload":       Tier.Member,
+        "working_nav":         Tier.Member,
         "custom_prompt":       Tier.Member,
         "batch_compare":       Tier.Member,
         "rag_corpus_upload":   Tier.Member,
@@ -261,3 +264,100 @@ def test_required_tier_table_snapshot():
         "variance_run":        Tier.Lab,
     }
     assert capabilities._REQUIRED_TIER == expected
+
+
+# --- CR-026: regressions on the integrity-pass changes ----------------------
+
+
+def test_anonymous_cannot_upload():
+    """CR-026 step 1 — CUSTOM_UPLOAD moved Anonymous → Member."""
+    assert capabilities.can(Tier.Anonymous, capabilities.CUSTOM_UPLOAD) is False
+    assert capabilities.can(Tier.Member,    capabilities.CUSTOM_UPLOAD) is True
+    assert capabilities.can(Tier.Lab,       capabilities.CUSTOM_UPLOAD) is True
+
+
+def test_anonymous_does_not_get_working_nav():
+    """CR-026 step 5 — home page splits on WORKING_NAV cap (not raw tier).
+    Anonymous redirects to /demo; Member/Lab see the work nav grid."""
+    assert capabilities.can(Tier.Anonymous, capabilities.WORKING_NAV) is False
+    assert capabilities.can(Tier.Member,    capabilities.WORKING_NAV) is True
+    assert capabilities.can(Tier.Lab,       capabilities.WORKING_NAV) is True
+
+
+# --- CR-026 step 5 — every FastAPI route must declare a cap or be waived ----
+
+
+# Routes that legitimately need no cap.
+_ROUTE_WAIVERS = {
+    # Sign-out: any tier can sign out.
+    ("/auth/sign-out", "POST"),
+    # FastAPI auto-injected schema docs. Not data; the OpenAPI surface is
+    # internal-only on the GoS1 deployment via nginx (LAN only). If/when
+    # we expose the public app at greeningofstreaming.org, consider
+    # disabling these via FastAPI(docs_url=None, redoc_url=None,
+    # openapi_url=None) for production.
+    ("/docs",                 "GET"),
+    ("/docs/oauth2-redirect", "GET"),
+    ("/redoc",                "GET"),
+    ("/openapi.json",         "GET"),
+}
+
+
+def _route_caps(route) -> list[str]:
+    """Pull capability strings out of a route's `Depends(requires(...))`
+    dependencies. Empty list if none declared."""
+    caps = []
+    for dep in getattr(route, "dependencies", []) or []:
+        # `Depends(requires(X))` evaluates `requires(X)` at decorator time
+        # and wraps it; the inner function's __closure__ holds X.
+        call = getattr(dep, "dependency", None)
+        if call is None:
+            continue
+        closure = getattr(call, "__closure__", None) or ()
+        for cell in closure:
+            v = cell.cell_contents
+            if isinstance(v, str) and v in capabilities._REQUIRED_TIER:
+                caps.append(v)
+    return caps
+
+
+def test_every_route_declares_capability_or_is_waived():
+    """Walk every registered FastAPI route. Each must either declare a
+    capability via Depends(requires(...)) or appear in _ROUTE_WAIVERS.
+
+    This catches the class of mistake that landed CR-026 in the first
+    place: a new endpoint shipped without a cap, silently exposing data
+    to whichever tier could reach it.
+    """
+    # main.py mounts /static relative to cwd, so chdir into the package
+    # dir before import. (conftest.py adds the dir to sys.path; cwd is
+    # separate.)
+    import os
+    from pathlib import Path
+    pkg_dir = Path(__file__).parent.parent
+    prev_cwd = os.getcwd()
+    os.chdir(pkg_dir)
+    try:
+        import main as _main  # imports the FastAPI app
+    finally:
+        os.chdir(prev_cwd)
+    untagged = []
+    for route in _main.app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None) or set()
+        if not path or not methods:
+            continue
+        # Ignore the StaticFiles mount and other internal routes
+        if path.startswith("/static"):
+            continue
+        for method in methods:
+            if method == "HEAD":  # FastAPI auto-adds HEAD for GET routes
+                continue
+            if (path, method) in _ROUTE_WAIVERS:
+                continue
+            if not _route_caps(route):
+                untagged.append(f"{method} {path}")
+    assert not untagged, (
+        f"Routes missing Depends(requires(...)) and not in _ROUTE_WAIVERS:\n"
+        + "\n".join(sorted(untagged))
+    )

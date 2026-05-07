@@ -26,7 +26,7 @@ current_visitor_key: Optional[str] = None  # visitor of the running job, for cap
 MAX_QUEUE_DEPTH = 8             # total queued + running; 429 beyond this
 
 
-def _visitor_key(request) -> Optional[str]:
+def visitor_key(request) -> Optional[str]:
     """Identity for per-tier cap accounting.
 
     - Lab tier      → None (uncapped).
@@ -126,9 +126,9 @@ def enqueue(job_id: str, job_type: str, label: str, coro_fn,
     (default 1, IP-keyed); Members to queue_member_cap (default 4,
     email-keyed); Lab is uncapped. Tests pass request=None to opt out.
     """
-    visitor_key = _visitor_key(request)
-    cap = _visitor_cap(visitor_key)
-    if cap is not None and _visitor_in_flight(visitor_key) >= cap:
+    vk = visitor_key(request)
+    cap = _visitor_cap(vk)
+    if cap is not None and _visitor_in_flight(vk) >= cap:
         return None
     total = len(pending_queue) + (1 if current_job_id else 0)
     if total >= MAX_QUEUE_DEPTH:
@@ -142,7 +142,7 @@ def enqueue(job_id: str, job_type: str, label: str, coro_fn,
     pending_queue.append({
         "job_id": job_id, "type": job_type,
         "label": label, "coro_fn": coro_fn,
-        "visitor_key": visitor_key,
+        "visitor_key": vk,
     })
     queue_event.set()
     return position

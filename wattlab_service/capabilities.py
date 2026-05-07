@@ -42,7 +42,8 @@ VIDEO_RUN          = "video_run"          # codec preset run (Meridian or other 
 LLM_RUN            = "llm_run"            # curated task_key (T1/T2/T3) with the bundled prompt
 IMAGE_RUN          = "image_run"          # curated seed prompt
 RAG_RUN            = "rag_run"            # curated single-mode RAG question
-CUSTOM_UPLOAD      = "custom_upload"      # video upload — Anonymous OK but quota-capped (see quotas module, CR-001 part D)
+WORKING_NAV        = "working_nav"        # member home page (work nav grid) — Anonymous gets the guided tour at /demo instead
+CUSTOM_UPLOAD      = "custom_upload"      # video upload — Member+ (CR-026); pre-CR-026 was Anonymous-with-quota
 
 # Member-tier — the "members shape inputs" half of the CR-001 capability matrix
 CUSTOM_PROMPT      = "custom_prompt"      # free-form LLM/image prompt OR custom ffmpeg args
@@ -70,9 +71,13 @@ _REQUIRED_TIER: dict[str, Tier] = {
     LLM_RUN:            Tier.Anonymous,
     IMAGE_RUN:          Tier.Anonymous,
     RAG_RUN:            Tier.Anonymous,
-    CUSTOM_UPLOAD:      Tier.Anonymous,
 
     # Member — "members shape inputs"
+    # CR-026: CUSTOM_UPLOAD moved from Anonymous to Member as part of the
+    # anonymous-tier integrity pass (team meeting 2026-05-04). Anonymous
+    # visitors run curated sources only; uploads require sign-in.
+    CUSTOM_UPLOAD:      Tier.Member,
+    WORKING_NAV:        Tier.Member,
     CUSTOM_PROMPT:      Tier.Member,
     BATCH_COMPARE:      Tier.Member,
     RAG_CORPUS_UPLOAD:  Tier.Member,

@@ -27,7 +27,7 @@ import email_send
 from capabilities import (
     requires, can, gate,
     PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
-    VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD,
+    VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD, WORKING_NAV,
     CUSTOM_PROMPT, BATCH_COMPARE, RAG_CORPUS_UPLOAD, RESULTS_EXPORT_CSV,
     SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN,
 )
@@ -1199,7 +1199,9 @@ async def index(request: Request):
     # capability matrix as the GoS sales pitch. Member/Lab land on the
     # working nav grid. Same URL, two distinct experiences. /demo already
     # exists as the visitor environment, so this is a single redirect.
-    if audience.tier(request) == audience.Tier.Anonymous:
+    # CR-026: gates on the WORKING_NAV cap rather than a raw tier compare,
+    # so the home-page UX branch follows the cap-table-as-policy contract.
+    if not can(audience.tier(request), WORKING_NAV):
         return RedirectResponse(url="/demo", status_code=302)
 
     watts = _power_cache["watts"]
@@ -1349,10 +1351,14 @@ async def video_page(request: Request):
     # Anonymous with a "Members only · Join GoS" badge.
     can_custom_cmd    = can(audience.tier(request), CUSTOM_PROMPT)
     can_batch_compare = can(audience.tier(request), BATCH_COMPARE)
+    can_upload        = can(audience.tier(request), CUSTOM_UPLOAD)
     lk_cmd_class      = _lock_class(request, CUSTOM_PROMPT)
     lk_cmd_badge      = _lock_badge_html(request, CUSTOM_PROMPT, "Custom ffmpeg — Members only")
     lk_batch_class    = _lock_class(request, BATCH_COMPARE)
     lk_batch_badge    = _lock_badge_html(request, BATCH_COMPARE, "All-codecs sweep — Members only")
+    lk_upload_class   = _lock_class(request, CUSTOM_UPLOAD)
+    lk_upload_badge   = _lock_badge_html(request, CUSTOM_UPLOAD, "Upload — Members only")
+    upload_disabled   = _disabled_attr(request, CUSTOM_UPLOAD)
     queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
@@ -1584,10 +1590,15 @@ async def video_page(request: Request):
         <div id="cmd-preview-box"></div>
     </div>
 
-    <div id="upload-area">
-        <input type="file" id="fileInput" accept=".mp4,.mov,.mkv,.avi,.webm,.ts">
+    <div id="upload-area" class="{lk_upload_class}">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem">
+            <div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;
+                        letter-spacing:0.05em">Upload your own</div>
+            <div>{lk_upload_badge}</div>
+        </div>
+        <input type="file" id="fileInput" accept=".mp4,.mov,.mkv,.avi,.webm,.ts"{upload_disabled}>
     </div>
-    <button id="runBtn" onclick="uploadAndRun()">Upload & Measure</button>
+    <button id="runBtn" onclick="uploadAndRun()"{upload_disabled}>Upload & Measure</button>
 
     <div id="status"></div>
     <div id="prev-runs" style="margin-top:2rem;border-top:1px solid var(--panel);padding-top:1.5rem"></div>
@@ -2261,14 +2272,15 @@ async def upload_video(
     if suffix not in allowed:
         return JSONResponse({"error": f"File type {suffix} not allowed"}, status_code=400)
 
-    # CR-001 part D — per-tier upload size cap. Anonymous = 100 MB to keep
-    # the public surface bounded; Member/Lab = 1 GB. Pre-check via
-    # Content-Length so we 413 before reading the body when nginx hands
-    # us the header; fall back to length-after-read otherwise.
+    # CR-001 part D / CR-026 — upload size cap. CR-026 moved CUSTOM_UPLOAD
+    # to Member tier, so Anonymous can't reach this code path; the per-tier
+    # branch collapses to the Member cap. The `upload_size_anonymous_mb`
+    # setting is left in place for future scope (e.g. re-enabling bounded
+    # Anonymous uploads with a different policy).
+    # Pre-check via Content-Length so we 413 before reading the body when
+    # nginx hands us the header; fall back to length-after-read otherwise.
     s = cfg.load()
-    max_mb = (s["upload_size_anonymous_mb"]
-              if audience.tier(request) == audience.Tier.Anonymous
-              else s["upload_size_member_mb"])
+    max_mb = s["upload_size_member_mb"]
     max_bytes = max_mb * 1024 * 1024
     cl = request.headers.get("content-length")
     if cl and cl.isdigit() and int(cl) > max_bytes:
@@ -4036,16 +4048,17 @@ async def rag_run_compare(
 # --- Results: list, JSON download, CSV download ---
 
 @app.get("/results/{job_type}/list", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def results_list(job_type: str):
+async def results_list(job_type: str, request: Request):
     if job_type not in ("video", "llm", "image"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
-    return list_results(job_type)
+    # CR-026: own-jobs scope for non-Lab. Lab passes None → unfiltered.
+    return list_results(job_type, visitor_key=queue_control.visitor_key(request))
 
 @app.get("/results/{job_type}/{job_id}/download.json", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def results_download_json(job_type: str, job_id: str):
+async def results_download_json(job_type: str, job_id: str, request: Request):
     if job_type not in ("video", "llm", "image"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
-    data = load_result(job_type, job_id)
+    data = load_result(job_type, job_id, visitor_key=queue_control.visitor_key(request))
     if not data:
         return JSONResponse({"error": "Not found"}, status_code=404)
     content = json.dumps(data, indent=2)
@@ -4056,10 +4069,10 @@ async def results_download_json(job_type: str, job_id: str):
     )
 
 @app.get("/results/{job_type}/{job_id}/download.csv", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def results_download_csv(job_type: str, job_id: str):
+async def results_download_csv(job_type: str, job_id: str, request: Request):
     if job_type not in ("video", "llm", "image"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
-    data = load_result(job_type, job_id)
+    data = load_result(job_type, job_id, visitor_key=queue_control.visitor_key(request))
     if not data:
         return JSONResponse({"error": "Not found"}, status_code=404)
     content = to_csv(job_type, data)
@@ -5716,7 +5729,9 @@ async def image_page(request: Request):
                    f'yours will be added and run automatically.</div>') \
         if queue_depth > 0 else ""
 
-    prev_runs = list_results("image", limit=5)
+    # CR-026: scope to own-jobs for non-Lab. Lab passes None → unfiltered.
+    prev_runs = list_results("image", limit=5,
+                             visitor_key=queue_control.visitor_key(request))
     prev_html = ""
     if prev_runs:
         prev_html = '<div class="prev-runs"><h3>Previous runs</h3>'

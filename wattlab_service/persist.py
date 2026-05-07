@@ -9,26 +9,63 @@ import carbon
 RESULTS_DIR = Path("/home/gos/wattlab/results")
 
 
-def save_result(job_type: str, job_id: str, data: dict) -> Path:
+def save_result(job_type: str, job_id: str, data: dict,
+                visitor_key: str | None = None) -> Path:
     """Write a completed job result to results/{job_type}/{date}_{job_id}.json.
 
     Single insertion point for CO2e enrichment: walks the result tree and
     attaches a `co2e` block to every nested `energy` dict (see carbon.py).
     The intensity in use at save time is recorded inline so historical
     results stay accurate even if the live grid mix changes later.
+
+    `visitor_key` (CR-026) — Anonymous → 'a:<ip>', Member → 'm:<email>',
+    Lab → None. Persisted so list_results / load_result can scope to
+    own-jobs for non-Lab visitors. Pre-CR-026 results have no key and
+    are invisible to non-Lab listings.
+
+    If `visitor_key` is not passed, falls back to queue_control's
+    current_visitor_key — set by the worker before each job's coroutine
+    runs, so save_result inside a workload module picks it up without
+    needing to thread it through every call site.
     """
+    if visitor_key is None:
+        try:
+            import queue_control as _qc
+            visitor_key = _qc.current_visitor_key
+        except Exception:
+            visitor_key = None
     out_dir = RESULTS_DIR / job_type
     out_dir.mkdir(parents=True, exist_ok=True)
     date_str = datetime.now().strftime("%Y-%m-%d")
     path = out_dir / f"{date_str}_{job_id}.json"
-    payload = {"job_id": job_id, "saved_at": datetime.now().isoformat(), **data}
+    payload = {
+        "job_id": job_id,
+        "saved_at": datetime.now().isoformat(),
+        "visitor_key": visitor_key,
+        **data,
+    }
     carbon.walk_and_enrich(payload)
     path.write_text(json.dumps(payload, indent=2))
     return path
 
 
-def list_results(job_type: str, limit: int = 10) -> list:
-    """Return summary metadata for last N results, newest first."""
+def _visitor_match(data: dict, visitor_key: str | None) -> bool:
+    """True if this record is visible to a caller with `visitor_key`.
+
+    None caller (Lab) → everything visible.
+    Non-None caller (Anonymous/Member) → only records with matching key.
+    """
+    if visitor_key is None:
+        return True
+    return data.get("visitor_key") == visitor_key
+
+
+def list_results(job_type: str, limit: int = 10,
+                 visitor_key: str | None = None) -> list:
+    """Return summary metadata for last N results, newest first.
+
+    `visitor_key` filters to own-jobs (CR-026) — None = unfiltered (Lab).
+    """
     out_dir = RESULTS_DIR / job_type
     if not out_dir.exists():
         return []
@@ -37,6 +74,8 @@ def list_results(job_type: str, limit: int = 10) -> list:
     for f in files:
         try:
             data = json.loads(f.read_text())
+            if not _visitor_match(data, visitor_key):
+                continue
             results.append(_summarise(job_type, data))
         except Exception:
             pass
@@ -44,15 +83,24 @@ def list_results(job_type: str, limit: int = 10) -> list:
     return results[:limit]
 
 
-def load_result(job_type: str, job_id: str) -> dict | None:
-    """Load full result for a job_id."""
+def load_result(job_type: str, job_id: str,
+                visitor_key: str | None = None) -> dict | None:
+    """Load full result for a job_id.
+
+    `visitor_key` filters to own-jobs (CR-026) — None = unfiltered (Lab).
+    Returns None on mismatch (same shape as a not-found, so callers don't
+    leak existence to a non-owner).
+    """
     out_dir = RESULTS_DIR / job_type
     if not out_dir.exists():
         return None
     matches = list(out_dir.glob(f"*_{job_id}.json"))
     if not matches:
         return None
-    return json.loads(matches[0].read_text())
+    data = json.loads(matches[0].read_text())
+    if not _visitor_match(data, visitor_key):
+        return None
+    return data
 
 
 def to_csv(job_type: str, data: dict) -> str:
