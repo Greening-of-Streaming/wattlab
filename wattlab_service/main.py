@@ -5288,12 +5288,30 @@ function pollVideo(jobId, t0) {{
     }} else if (data.status === 'error') {{
       showVideoError(data.error);
     }} else {{
-      const idx = VIDEO_STAGE_IDX[data.stage] ?? 0;
+      const stage = data.stage || '';
+      const idx = VIDEO_STAGE_IDX[stage] ?? 0;
+      // For *_both presets the four stages cycle once for CPU then again
+      // for GPU (baseline → encode → rest → baseline_2 → encode again).
+      // Without an explicit side label, the visitor sees the bar "go
+      // around twice" with no idea why. This banner names which side is
+      // currently running, mirroring the RAG mode-of-3 banner.
+      const sideLabels = {{
+        baseline:    'Side 1 of 2 — CPU encode (measuring baseline)',
+        cpu_encode:  'Side 1 of 2 — CPU encode',
+        rest:        'Cooldown — letting thermals settle before GPU',
+        baseline_2:  'Side 2 of 2 — GPU encode (measuring baseline)',
+        gpu_encode:  'Side 2 of 2 — GPU encode',
+      }};
+      const lbl = sideLabels[stage] || '';
+      const sideLine = lbl
+        ? '<div style="color:var(--accent);font-size:0.82rem;margin-top:0.6rem;font-weight:bold">' + lbl + '</div>'
+        : '';
       wlRenderProgress({{
         target: 'video-status',
         stagesHtml: wlStageList(WL_VIDEO_STAGES, idx),
         watts: data.watts,
         elapsed: Date.now() - t0,
+        extraHtml: sideLine,
       }});
       setTimeout(() => pollVideo(jobId, t0), 5000);
     }}
@@ -5373,6 +5391,11 @@ function renderVideoResult(r, savedAt, isPrev) {{
     const cpu = r.cpu, gpu = r.gpu, a = r.analysis;
     const ce = cpu.energy, ge = gpu.energy;
     const winner = a.energy_winner;
+    // Most efficient side for the carbon strip headline (CR-030 framing).
+    const bestE = (ce.delta_e_wh <= ge.delta_e_wh) ? ce : ge;
+    const bestSide = (ce.delta_e_wh <= ge.delta_e_wh) ? 'CPU' : 'GPU';
+    const bestSavedG = bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
+    const stripLabel = (cpu.preset_label || 'Video transcode') + ' · best of CPU vs GPU (' + bestSide + ')';
     html += `<div class="result-card">
       <p class="headline">${{a.finding}}</p>
       <div class="kpi-row">
@@ -5390,11 +5413,13 @@ function renderVideoResult(r, savedAt, isPrev) {{
         </div>
       </div>
       <div class="conf-badge">${{ce.confidence.flag}} CPU · ${{ge.confidence.flag}} GPU · ${{a.confidence_note}}</div>
+      ${{wlCarbonStrip(bestE.delta_e_wh, stripLabel, bestE.delta_t_s, bestSavedG)}}
       <p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>
     </div>`;
   }} else {{
     const res = r.result || r;
     const e = res.energy;
+    const savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
     html += `<div class="result-card">
       <p class="headline">${{res.preset_label}}: ${{e.delta_e_wh}} Wh · ${{e.delta_t_s}}s</p>
       <div class="kpi-row">
@@ -5403,6 +5428,7 @@ function renderVideoResult(r, savedAt, isPrev) {{
         <div class="kpi"><div class="val">${{e.delta_t_s}}s</div><div class="lbl">Duration</div></div>
       </div>
       <div class="conf-badge">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+      ${{wlCarbonStrip(e.delta_e_wh, res.preset_label || 'Video transcode', e.delta_t_s, savedG)}}
     </div>`;
   }}
   document.getElementById('video-status').innerHTML = html;
