@@ -73,18 +73,23 @@ These exclusions are deliberate. Scope statements appear on every result.
 
 ## Access
 
-**Guided Tour** (public, read-only settings):
-```
-http://wattlab.greeningofstreaming.org
-```
+Three tiers, one URL — `https://wattlab.greeningofstreaming.org`. The same page renders different controls depending on who's looking:
 
-**Lab mode** (full controls, SSH tunnel required):
+| Tier | Who | How | What's unlocked |
+|---|---|---|---|
+| **Anonymous** | Public visitors | Just open the URL — Anonymous tier resolves automatically | Curated workloads, full guided tour at `/demo`, prev-result panels populated from curated demo runs |
+| **Member** | GoS members on the allowlist | Sign in via the magic-link form on `/auth/sign-in` (email-based) | Custom prompts / ffmpeg commands, all-codecs sweeps, RAG corpus uploads, video uploads ≤ 1 GB, CSV/JSON bulk export |
+| **Lab** | Operators on GoS1 | LAN address (`192.168.x.x`) or SSH tunnel | Full settings, variance calibration, thermal-recovery probe, all jobs unscoped |
+
+**Anonymous quick-look:** `https://wattlab.greeningofstreaming.org/demo` — the seven-step Guided Tour with predetermined demo jobs (H.265 CPU vs GPU, Mistral 7B T3, SD-Turbo, RAG 3-mode).
+
+**Lab via SSH tunnel:**
 ```
 ssh -p 2222 -L 8000:localhost:8000 user@gos1.duckdns.org
 # then open http://localhost:8000
 ```
 
-Settings are read-only from public URLs and fully editable only from the LAN or SSH tunnel.
+The capability matrix is product copy on `/demo` step 6, and lives in code at `wattlab_service/capabilities.py` (one row per capability). All routes gate on capabilities, not raw tier compares.
 
 ---
 
@@ -105,8 +110,14 @@ The service runs as a systemd unit on GoS1 (`systemctl status wattlab`).
 
 ## Documentation
 
-- [`WATTLAB_SPEC.md`](WATTLAB_SPEC.md) — full product spec, measurement protocol, roadmap
+- [`WATTLAB_SPEC.md`](WATTLAB_SPEC.md) — original v0.2 product spec (April 2026, mostly delivered; current architecture in `CLAUDE.md`)
 - [`JOURNAL.md`](JOURNAL.md) — session-by-session build log with findings
+- [`TESTING.md`](TESTING.md) — three-tier testing strategy (smoke / integration / manual)
 - [`STAGING.md`](STAGING.md) — staging mode (swap onto a feature branch with a maintenance page)
-- [`bin/README.md`](bin/README.md) — operator-facing shell scripts (`stage-on`, `stage-off`, …)
+- [`bin/README.md`](bin/README.md) — operator-facing shell scripts (`stage-on`, `stage-off`, `probe-thermal-recovery`, `owl-maintenance-watchdog`)
+- [`systemd/README.md`](systemd/README.md) — systemd unit files for OWL services
+- [`CHANGE_REQUESTS.md`](CHANGE_REQUESTS.md) — active design / change requests
+- [`CHANGE_REQUESTS_CLOSED.md`](CHANGE_REQUESTS_CLOSED.md) — shipped CRs archive
+- [`docs/wattlab_traffic_light_confidence.md`](docs/wattlab_traffic_light_confidence.md) — Tania's statistical framework for the confidence flag (CR-028 Phase 2 spec)
+- [`docs/wattlab_parameters_audit.md`](docs/wattlab_parameters_audit.md) — every settings parameter classified and the path to principled values
 - [`CLAUDE.md`](CLAUDE.md) — project context for Claude Code (AI assistant config)

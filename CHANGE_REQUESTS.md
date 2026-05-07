@@ -212,38 +212,6 @@ The probe already writes per-run CSVs under `results/diagnostics/recovery_<ts>{,
 
 ---
 
-## CR-013 · Previous-result rows clickable for full stored detail
-
-**Status:** captured 2026-05-02 — medium priority.
-**Triggered by:** owner notes during CR-002 verification — once the confidence popover started firing on prev-run badges, it became obvious that the rows themselves carry only a one-line summary (date, model, mWh/tok, confidence flag). All the rich detail sits in the stored result JSON, but the only path to it today is downloading the JSON and reading raw fields.
-
-### Problem
-
-Today, "Previous runs" panels on `/video`, `/llm`, `/rag`, `/image`, and `/queue-status` show one terse line per run plus JSON / CSV download links. Anything beyond the summary line — the actual ΔW trace, thermals, ffmpeg command, response text, retrieval sources, generated image, full CO₂e block — is invisible without downloading. For a visitor giving OWL a serious look, that's a dead end. For Lab repetitive work, it's also a friction point (can't quickly re-inspect yesterday's run without round-tripping through JSON).
-
-### Agreed direction (rough)
-
-Make each prev-run row click-to-expand-or-load-full-card. Two competing design constraints:
-
-1. **Public visitors:** want everything visible — the same rich result card they'd see for a fresh run, just labelled "↩ Previous run · 2 hours ago" (the `prevNote` line that already exists in `/image`'s `renderImageBoth` etc.).
-2. **Lab repetitive work:** dozens of runs in a session; expanding inline would clutter the page; collapse-by-default with a click-to-expand affordance is right.
-
-Default lean: **collapsed by default, click row to expand inline below the row**, fetching the full result via the existing `/results/{type}/{job_id}` GET path and rendering through the same per-page render function used for fresh runs (`renderResult`, `renderLLMSingle`, etc.). A second click collapses. Multiple rows can be open at once for side-by-side compare. Lab tier could optionally get an "expand all" toggle.
-
-### Where it lives
-
-Each page's `renderPrevRuns` JS function (one per route — see line numbers in main.py: `/video` ~1504, `/llm` ~2377, `/rag` ~3090, `/image` server-side ~4700, `/queue-status` similar). Render functions for fresh runs are already structured to take a result object and produce a card — re-use them.
-
-### Open questions
-
-- Lazy-load JSON on click vs. preload all when prev-runs list renders? Lazy-load is right at scale (tens to hundreds of runs in `results/`).
-- Image previews on `/image` already inline-render thumbnails server-side — interaction with the click-to-expand pattern needs thought (probably: click thumbnail → open full result; the row stays as-is).
-- Prev-run cards should reuse the corrected confidence popover (which now fires on the wrapped flag spans — landed today as part of CR-002 follow-up).
-
-### Pre-conference: medium priority. Worth doing if there's a quiet half-day; the popover work today made the gap visible.
-
----
-
 ## CR-018 · Historical CO₂e comparison — full coverage upgrade (Tier 2 + Tier 3)
 
 **Status:** Tier 1 ✅ done 2026-05-03 (Session 18 part 14 — `bf462c3`); Tier 2 + Tier 3 captured for later.
@@ -766,39 +734,54 @@ Tiny — a chip-row UI on `/demo` step 1, two `runDemoVideo()` variants (or one 
 
 ---
 
-## CR-034 · Unified results card across `/demo` and the main pages
+## CR-034 · Unified results card (lift renderers + click-to-expand prev rows)
 
-**Status:** captured 2026-05-08 (Session 23 part 6). Follow-up to CR-019 (widget unification) covering the *result* phase rather than the *in-progress* phase.
-**Triggered by:** owner observation during anonymous-tier testing — `/demo`'s `renderVideoResult` / `renderLLMResult` / `renderRAGResult` / `renderDemoImageResult` are bespoke compact cards that don't include the polished elements that ship on the main pages: the CO₂e strip (S16/S18/S22), the EV-distance equivalence (S18), the 24/7 projection toggle (CR-017), the home-zone drift note (CR-030 sub-#4), the use-phase scope clarifier. Result: visitors on the guided tour see substantively different numbers and framing than visitors who navigate to `/video` / `/llm` / `/rag` / `/image` directly.
+**Status:** captured 2026-05-08 (Session 23 part 6). **Absorbs CR-013** (2026-05-02 capture, "previous-result rows clickable for full stored detail") — both touch the result-rendering surface and CR-034's structural lift naturally enables CR-013's expand-to-full-card affordance, so they ship together as Phase A + Phase B.
+**Triggered by:** two converging observations: (i) `/demo`'s `renderVideoResult` / `renderLLMResult` / `renderRAGResult` / `renderDemoImageResult` are bespoke compact cards that don't include the polished elements that ship on the main pages (carbon strip, EV-distance equivalence, 24/7 projection toggle, drift note, use-phase scope clarifier — visitors on the guided tour saw substantively different framing than direct-URL visitors); (ii) prev-run rows on `/video` / `/llm` / `/rag` / `/image` / `/queue-status` show only a one-line summary (date, model, key metric, confidence flag), and there's no path to the rich detail short of downloading the JSON.
 
 ### Problem
 
-Two parallel result-rendering paths exist today, mirror-image of the situation CR-019 fixed for the in-progress phase:
+Two parallel result-rendering paths exist today (mirror-image of the situation CR-019 fixed for the in-progress phase):
 
 - **Main pages** assemble a result card with `wlCarbonStrip(wh, label, durationS, savedIntensityG)` injected at the bottom of every result, scope clarifier in the header, EV equivalence and historical comparison rows in the strip's `<details>` block.
-- **`/demo`** renders a compact card with energy + confidence + scope-note only. None of the carbon work is visible.
+- **`/demo`** renders a compact card with energy + confidence + scope-note only. Until Session 23 part 10 it had no carbon strip at all; after that part the renderers gained the strip + prompt blockquote inline, but they're still bespoke per surface.
 
-Same drift-bug class as CR-019 — when CR-030's drift note shipped, it landed on /image /video /llm /rag but not /demo. Visitors on the guided tour are missing the most credibility-building parts of OWL.
+Same drift-bug class as CR-019 — when CR-030's drift note shipped, it landed on /image /video /llm /rag but not /demo. The Session 23 part 10 patch was a partial fix (visible-to-visitor wins without the full lift); this CR is the structural cleanup.
 
-### Agreed direction (rough)
+Independently, prev-row drilldown is broken in shape: clicking a row gives JSON / CSV download links, not an inline expansion to the rich card visitors saw the first time they ran the job. For Lab repetitive work, that's a friction point (can't quickly re-inspect yesterday's run); for public visitors browsing curated demo runs, it's a dead end after the first impression.
 
-Single render shape across all five surfaces. Likely path:
+### Agreed direction
 
-1. Lift the per-page render functions (e.g. `renderResult` on `/image`, equivalents on others) into shared helpers in `_BASE_STYLES` or a sibling `_RESULT_JS` block.
-2. `/demo`'s `renderVideoResult` etc. become thin wrappers that call the shared helper with the appropriate target.
-3. Result cards include: headline KPI row + confidence badge + carbon strip (with the full `<details>` block: comparison rows, historical rows, drift note, EV equivalence, projection toggle) + scope clarifier.
+Two phases, one PR. Phase A makes the renderers shared; Phase B makes the prev-rows expand to call them.
 
-Mirror of CR-019's contract: stages reuse + opts.target. The result-card equivalent is opts.target + opts.kpis + opts.modeKey + opts.savedIntensity.
+#### Phase A — Lift renderers into a shared helper
+
+1. Lift the per-page render functions (`renderResult` on `/image`, equivalents on others) into shared helpers in `_BASE_STYLES` or a sibling `_RESULT_JS` block.
+2. `/demo`'s `renderVideoResult` / `renderLLMResult` / `renderRAGResult` / `renderDemoImageResult` become thin wrappers that call the shared helper with the appropriate target.
+3. Result cards include: headline KPI row + prompt/question blockquote (where applicable) + confidence badge + carbon strip (with the full `<details>` block: comparison rows, historical rows, drift note, EV equivalence, projection toggle) + scope clarifier.
+
+Mirror of CR-019's contract: stages reuse + `opts.target`. The result-card equivalent is `opts.target` + `opts.kpis` + `opts.modeKey` + `opts.savedIntensity`.
+
+#### Phase B — Prev-row click-to-expand
+
+Each prev-run row becomes click-to-expand: collapsed by default; click to fetch the full result via `/results/{type}/{job_id}` and render through the shared helper from Phase A; second click collapses; multiple rows can be open at once for side-by-side compare. Lab tier optionally gets an "expand all" toggle.
+
+Two design constraints to balance:
+
+1. **Public visitors:** want everything visible — same rich card they'd see for a fresh run, just labelled "↩ Previous run · 2 hours ago" (the `prevNote` line that already exists in `/image`'s `renderImageBoth` etc.).
+2. **Lab repetitive work:** dozens of runs in a session; expanding inline would clutter — collapse-by-default with click-to-expand is right.
 
 ### Cost / leverage
 
-Larger than CR-019 — result rendering has more variation per workload (single vs both vs all_codecs vs RAG-3-mode vs image-compare) than progress rendering. Estimate: ~1 day for the lift + retrofit + visual verification across all 5 result paths × 2-4 modes each. Leverage: closes the same drift-bug class CR-019 closed for progress, on the side where the actual numbers live.
+Phase A alone is ~1 day (the lift + retrofit + visual verification across 5 result paths × 2–4 modes each). Phase B is another ~½ day on top once the shared renderer exists. Both together ~1.5 days. Leverage: closes the same drift-bug class CR-019 closed for progress, on the side where the actual numbers live; turns prev-runs panels from terse summaries into a real history surface.
 
 ### Watch-outs
 
-- **Don't break the carbon-strip URL hash state.** CR-017's projection toggle uses `history.replaceState(#continuous=1d)`. If the strip renders multiple times on a single page (e.g. the visitor runs a new job after seeing a prev-run), the hash needs to track only the *active* strip.
-- **`/demo`'s render functions read several fields the main pages don't** (e.g. inline image previews from `b64_png`). Lift those *into* the shared helper rather than special-casing /demo.
+- **Don't break the carbon-strip URL hash state.** CR-017's projection toggle uses `history.replaceState(#continuous=1d)`. If the strip renders multiple times on a single page (e.g. the visitor runs a new job after seeing a prev-run, or expands two prev-rows), the hash needs to track only the *active* strip.
+- **`/demo`'s renderers read several fields the main pages don't** (e.g. inline image previews from `b64_png`). Lift those *into* the shared helper rather than special-casing /demo.
 - **Result-card unification might re-surface the resume-job lifecycle bug** that CR-019 deferred — the result card is the natural landing point after a resumed job. Pair the two if/when both ship.
+- **Lazy-load JSON on click** for prev-row expansion — don't preload all when the prev-runs list renders. At scale (tens to hundreds of runs in `results/`) preloading kills the page.
+- **Image previews already inline-render thumbnails server-side** on `/image` — interaction with the click-to-expand pattern needs thought (probably: click thumbnail → open full result; the row stays as-is).
 
 ### Pre-conference: medium priority
 
@@ -887,3 +870,79 @@ For the record, several items came up that don't warrant new CR entries:
 - **GPU variance broken at calibration time** (item 10, originally tagged Bug Medium) — turned out to be a settings tweak, not a bug: `gpu_encode_max_s` was set too short for the variance calibration's sampling window. Bumped from 30 to 90 inline. Not a CR. *Resolved 2026-05-05: overnight n=24 calibration confirmed GPU CV at 4.77% (clean, statistically real); idle 2.41%, cpu 1.33%. CR-028 open question closed; Phase 2 design session with Tania has a clean number as input.*
 - **Carbon philosophy / scoping board agenda** (item 25) — strategic discussion item, not engineering work. Belongs on a board agenda, not in CRs.
 - **GosOne → OWL name pass** (item 33) — doc/comment audit. Trivial sweep across stale references; do inline whenever convenient. Not a CR.
+
+---
+
+## Groupings & dependencies (added 2026-05-08, S23 close-out review)
+
+The 18 active CRs cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
+
+### Track A — Storage / persistence (Tania-elevated 2026-05-07)
+
+Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a lot of really interesting statistics on that"* — turned storage from quality-of-life into the gating decision for the analytics layer. Three CRs sit on this track:
+
+- **CR-012** persist variance calibration + thermal-recovery probe history *(small, well-scoped)*
+- **CR-031** sub-section 1 (DB choice with REM coherence — "I don't want five different databases")
+- **CR-003** iso-energy bitrate sweep *(downstream — the analytics use-case)*
+- **CR-007** carbon variance over time-of-day / season / location *(downstream — also analytics)*
+
+**Recommendation:** before implementing CR-012 in isolation, hold a brief design pass that decides the DB family for both OWL and REM. CR-012's persistence shape should drop into whatever container that pass chooses, not invent a third format. CR-003 and CR-007 inherit the same shape automatically.
+
+### Track B — Confidence model (CR-028 Phase 2)
+
+- **CR-028 Phase 2** is the spec — Tania's `wattlab_traffic_light_confidence.md` §9. Awaiting her reply on the units question (sent 2026-05-07).
+- **CR-029** encoding rigor *partially* depends on Phase 2: apples-to-apples encode comparisons get more credible once confidence flags rest on a unified statistical model.
+- The CR-020 retirement absorbed the per-run baseline-CV gate into Phase 2's `SE_per_run`. Storage of raw `baseline_samples_w` + `task_samples_w` is folded into Phase 2 scope so historical results can be re-flagged after the formula change.
+
+**Recommendation:** Phase 2 is the longest-pole item on this track. Wait for Tania's v2 doc; do not start CR-029 implementation before then or the encode-parameter changes will be re-validated against a moving target.
+
+### Track C — Widget / progress extensions (post-CR-019)
+
+All three touch `wlRenderProgress` but the work is independent:
+
+- **CR-019 deferred (resume-job hook)** — client-side lifecycle, URL `?job=<id>`, browser history.
+- **CR-024** re-run probe button — server-side endpoint promotion (`bin/probe-thermal-recovery` → `precalibration.py`) routed through `queue_control.enqueue`.
+- **CR-035** encode progress bar — `ffmpeg -progress pipe:1` parsing + new `progress_pct` / `eta_s` fields surfaced through `_job_status()`.
+
+**Recommendation:** ship in this order — CR-035 first (highest visitor value, especially Member-tier long uploads), CR-024 next (operator quality-of-life), resume-job last (lifecycle is the hardest to design for cleanly without spilling).
+
+### Track D — Result-rendering coherence
+
+- **CR-034** unified result card (Phase A lift + Phase B prev-row click-to-expand, absorbed CR-013 in S23 part 12)
+- **CR-032** per-mode CO₂e rows in carbon-strip details — natural sub-task once CR-034 has the shared renderer
+- **CR-027** tier explanation copy — pairs with CR-026 to land the access story coherently
+
+**Recommendation:** Do CR-034 Phase A first; CR-032 becomes a 1-hour add-on once the strip is shared; CR-027 can run in parallel since it's mostly UX copy.
+
+### Track E — Pre-conference polish (small, independent)
+
+- **CR-005** software fan-speed control during tests *(measurement quality)*
+- **CR-007** carbon variance study *(also Track A downstream)*
+
+**Recommendation:** these are nice-to-haves, no dependencies. Slot whenever Track A–D are blocked.
+
+### Track F — Strategic / exploratory (out of session scope)
+
+- **CR-008** REM ↔ OWL integration *(post-conference)*
+- **CR-009** cross-platform web client test bay *(post-conference)*
+- **CR-018 Tier 2/3** historical CO₂e visitor-pickable any-month *(Tier 1 shipped; T2/T3 are gold-plating)*
+- **CR-025** real-time Linux kernel migration *(exploratory; team meeting upgraded direction but not yet started)*
+
+**Recommendation:** keep captured. Not for active session work until the pre-conference Track A–D items are mostly resolved.
+
+### Cross-track dependencies summary
+
+```
+CR-031 storage decision  ─┬─→  CR-012  (calibration history persistence)
+                         └─→  Track A analytics: CR-003, CR-007
+
+Tania §9 v2  ─────────→  CR-028 Phase 2  ─→  CR-029 (encoding rigor)
+                                          ─→  retire CR-020 fully
+
+CR-034 (Phase A)  ─────→  CR-032  (per-mode CO₂e rows)
+                  ─────→  CR-013  [absorbed]
+
+CR-026 ✅  ─→  CR-027  (tier explanation pairs with the access story)
+```
+
+If you can only ship one thing per week, the priority order is roughly: **CR-029 prep work → Track D (CR-034 + CR-027 + CR-032) → Track C (CR-035 → CR-024) → Track A (CR-012 inside the storage design pass)**.

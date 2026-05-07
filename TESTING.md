@@ -146,8 +146,11 @@ echo 'INTEGRATION OK'
 - [ ] Open https://wattlab.greeningofstreaming.org on desktop **and** phone
 - [ ] Owl + "WattLab ← Home" wordmark at top of every page (except the `/auth/*` flow)
 - [ ] Sub-labels readable on phone (no `#555` ghost text)
-- [ ] `/methodology` shows owl + GoS logo in topbar
-- [ ] `/queue-status` shows the owl wordmark via `_BACK`
+- [ ] `/methodology` shows owl + GoS logo in topbar **and** the auth chip top-right (CR-021)
+- [ ] `/queue-status` shows the owl wordmark via `_BACK` **and** the auth chip top-right
+- [ ] Footer on every page shows the **Methodology →** link and the GitHub-issues link
+- [ ] Anonymous tier: sign-in chip is the prominent CTA variant (filled accent background, ⚿ glyph, 0.85rem)
+- [ ] Member/Lab: chip is the recessive status pill
 - [ ] Browser console clean (Cmd+Opt+J on Chrome) — no JS errors
 
 ### Video flow (1.5 min)
@@ -172,11 +175,26 @@ echo 'INTEGRATION OK'
 - [ ] No negative `mWh/tok` values in any mode (would indicate cooldown bug regression)
 - [ ] Phi-4 single run → answer mentions GoS streaming workflows (encoder, origin, packager, telco)
 
-### Guided Tour (1 min)
+### Guided Tour (2 min)
 - [ ] `/demo` → step through Welcome → Findings (7 steps)
+- [ ] Welcome step: "→ Read the full measurement methodology" link below the two `<details>` blocks (CR-021 sibling)
+- [ ] Each step's prev-runs panel populates from the `/demo/last/{type}` carve-out endpoint, not from visitor-scoped `/results/{type}/list`
+- [ ] Run-button labels are explicit: "Run a standard transcode", "Run a standard LLM generation", "Run a standard image generation", "Run a standard RAG energy test" (each names model + duration)
+- [ ] Click "Run a standard transcode" — accent banner under the stage list cycles **Side 1 of 2 — CPU encode → Cooldown — letting thermals settle before GPU → Side 2 of 2 — GPU encode**
+- [ ] LLM result card shows the prompt as an italic blockquote at the top; carbon strip below the response preview
+- [ ] Image result card shows the prompt and a carbon strip
+- [ ] RAG progress: accent banner shows **Mode 1 of 3 — No retrieval (control) → Mode 2 of 3 — RAG (small corpus) → Mode 3 of 3 — RAG Large (full corpus)**
+- [ ] RAG result card shows the question as an italic blockquote and a carbon strip with "best of 3 modes (X)" headline
 - [ ] Findings step: video transcoding section is the visual headline (not a row in a table)
 - [ ] LLM / Image / RAG sections appear as collapsible `<details>` blocks below
 - [ ] All numbers populate (no "—" placeholders for workloads that ran)
+
+### CR-026 anonymous-tier integrity (1 min)
+- [ ] Anonymous: `/` → 302 redirect to `/demo` (not the work nav grid)
+- [ ] Anonymous: `/video` upload form shows "Members only" lock badge + disabled file input
+- [ ] Anonymous: `POST /video/upload` returns 403 (curl-test, no cookie)
+- [ ] Anonymous: `GET /results/{type}/{other-job-id}/download.json` returns 404 (must not leak)
+- [ ] Member sign-in via magic link: chip turns into `<email> · Sign out` form; upload unlocks; own-jobs visible in prev-runs panels
 
 ---
 

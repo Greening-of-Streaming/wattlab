@@ -7,6 +7,87 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 23 — 2026-05-07 / 2026-05-08
+
+### What we did
+
+A long polish + closure session. Twelve commits on `main` covering: CR-022 fully resolved, parameters audit doc for Tania, CR-026 anonymous-tier integrity pass, three smaller CRs closed, /demo refactored to share the main-page progress widget, four new CRs captured, plus a doc-and-CR re-prune.
+
+**CR-022 fully resolved (`9e1d076`).** Upstream ffmpeg master fixes the `scale_vaapi` surface-pool leak; the `-t 30` workaround can come out. New `ffmpeg_bin` setting (default `/usr/local/bin/ffmpeg-master`) routed through `_ffmpeg_bin()` across all 6 PRESETS and `apply_custom_cmd` (latter rewrites a leading bare `ffmpeg` token so calibration templates pick up the upgraded binary). `_maybe_cap_vaapi()` and `gpu_encode_max_s` deleted; `transcode()` no longer injects `-t` and the result dict reports `ffmpeg_version` instead of `gpu_capped_at_s`. First post-resolution n=6 verification calibration: idle 2.41% → 2.26%, cpu 1.33% → 0.66%, gpu 4.77% → 0.95% — confirming S22's GPU CV was inflated by the cap producing only ~30 polls per run.
+
+**Parameters audit for Tania (`6d14f1e`).** New `docs/wattlab_parameters_audit.md` classifies every settings.json + in-code parameter as Arbitrary / Empirical / Calibrated / Constrained, with a "path to principled" column for each arbitrary value. Responds to Tania's meeting question on `baseline_polls=8` ("how should I think about these versions?"). Lives alongside her `wattlab_traffic_light_confidence.md` and `wattlab_service_overview.md`.
+
+**CR-026 anonymous-tier integrity pass (`caa025b`).** Five coordinated changes from the team meeting 2026-05-04 leak:
+- **Phase A:** `save_result()` records `visitor_key` on every result JSON; reads `queue_control.current_visitor_key` as ambient fallback so workload modules pick it up without per-call-site changes. `list_results()` / `load_result()` accept a `visitor_key` filter (None = unfiltered, for Lab). Pre-CR-026 records have no key and are invisible to non-Lab callers — own-jobs scope inherited automatically. `/results/{type}/list` and `/results/{type}/{id}/download.{json,csv}` resolve `visitor_key` from the request.
+- **Phase B:** `CUSTOM_UPLOAD: Tier.Anonymous → Tier.Member`; the `/video` upload form gets a "Members only" lock badge + disabled attr.
+- **Phase C:** new `WORKING_NAV` cap retires the raw tier compare on the home redirect; `/video/upload` size cap simplifies to `s["upload_size_member_mb"]` since the route now requires Member+.
+- **Phase D:** new test walks every registered FastAPI route and asserts `Depends(requires(...))` or explicit waiver. Catches "shipped a new endpoint without a gate." 10 visitor-scope persistence tests + 3 cap-table regressions.
+- Renames `_visitor_key` → `visitor_key` (public) in `queue_control` since `main.py` needs it for request scoping.
+
+**Quick-wins bundle (`2db2cbd`):**
+- **CR-021:** sign-in chip CTA variant (`.auth-chip.cta`): filled accent background, 0.85rem font, `⚿` glyph for Anonymous; Member/Lab keep the recessive status pill. Renders on every page including `/queue-status` and `/methodology` after the `_HEADER` factorisation that landed alongside.
+- **`_HEADER` factorisation:** `_HEADER_STYLES` + `_header_html(request)` helper; `/queue-status` and `/methodology` adopt it for consistent chrome.
+- **CR-015:** auto-lower maintenance flag on Lab-tier inactivity. Lab middleware in `main.py` touches `/tmp/owl-maintenance` on every request (gated on `can(tier, SETTINGS_WRITE)` — cap-table contract, no raw tier compare). New `bin/owl-maintenance-watchdog` one-shot script + `systemd/owl-maintenance-watchdog.{service,timer}` units. `max_idle_mins` settings field (default 30).
+
+**CR-019 widget unification across /demo (`2484599`).** `/demo`'s four poll loops drop their bespoke `<p class="progress-note">` markup and call the same `wlRenderProgress` widget the main pages use. `wlRenderProgress(opts)` and `wlRenderQueued(pos, opts)` accept `opts.target` (default `'status'` for back-compat). Shared stage arrays (`WL_VIDEO_STAGES`, `WL_LLM_STAGES`, `WL_IMAGE_STAGES`, `WL_RAG_STAGES`) defined once in `_PROGRESS_JS`. New `_job_status(job_id)` helper injects `_power_cache["watts"]` into every job-status response. Resume-job hook deferred (CR-019 follow-up).
+
+**/demo polish (`c68f4ac`, `b1356b1`, `5e7a653`, `f95aef9`, `3a81d0b`, `e76824d`).** Iterative polish across six commits as visitors test from anonymous tiers (iPad on cellular):
+- Predetermined demo job switched from full Meridian + H.264 both (10–15 min) to `meridian_120s` + `h265_both` (~3 min).
+- `/demo/last/{type}` carve-out endpoint serves the latest persisted result regardless of visitor key (the prev-runs panels were empty under CR-026's correct-but-strict scoping). Plain-LLM defaults to excluding RAG records server-side.
+- `_PROGRESS_JS` finally appended to `_DEMO_HTML` (CR-019's edit had landed in `queue_page()` instead — the ReferenceError this caused was masked until the run-handler try/catch wrap surfaced it).
+- Run-handler error visibility: `wlRenderProgress` calls moved inside `try/catch` in all four handlers so any failure surfaces via `showXError`.
+- All four button labels rewritten from "Run again" / "Run new measurement" to "Run a standard transcode/LLM generation/image generation/RAG energy test" with model + duration spelled out.
+- Methodology link in `_FOOTER` (universal) + a styled inline link on `/demo` Welcome step.
+- LLM/RAG/image/video result cards gain a prompt/question blockquote at the top + `wlCarbonStrip` at the bottom (partial CR-034 — covers the visible-to-visitor wins without the full lift).
+- RAG progress banner: `Mode 1 of 3 — No retrieval (control)` / `Mode 2 of 3 — RAG (small corpus)` / `Mode 3 of 3 — RAG Large (full corpus)` / `Cooldown between modes`.
+- Video progress banner: `Side 1 of 2 — CPU encode` / `Cooldown — letting thermals settle before GPU` / `Side 2 of 2 — GPU encode`.
+
+**Doc + CR re-prune (`f2796aa`).** CR-026 + CR-020 (superseded by CR-028 Phase 2) moved to closed. CR-022 closed entry updated to reflect full resolution. CLAUDE.md cross-refs + deferred items list updated. CHANGE_REQUESTS.md trimmed 1036 → 916 lines.
+
+**CRs captured:**
+- **CR-033** — curated demo video job selection (1–2 chip-row options).
+- **CR-034** — unified results card across `/demo` and main pages (mirror of CR-019 for the result phase).
+- **CR-035** — encode progress bar for long video jobs (parse `ffmpeg -progress pipe:1`, surface percent + ETA + speed via existing job-state payload, render a thin progress bar in the widget).
+
+### Why it matters
+
+CR-026 closes a real public-site leak (logged-out visitors could see other visitors' jobs and parameters). CR-019 + the /demo polish makes the highest-traffic public surface (`/demo`) finally feel as polished as the main pages — same widget, same result card. CR-022 fully resolved means full-length GPU encodes are back; calibrations now produce representative numbers (gpu CV 0.95% — clean and at the bottom of Tania's 3–5% expectation). The parameters audit gives Tania the artefact she asked for at the meeting and primes CR-028 Phase 2 implementation.
+
+Active CR count over the session: 21 → 19 → 17 → 16 (after CR-019 close) → 18 (CR-033/034 added) → 19 (CR-035 added).
+
+### Open / deferred
+
+- **CR-019 resume-job query-param hook** — folded out of CR-019's headline scope; needs URL state + browser history design pass.
+- **Wattlab service restart required** for the iPad to pick up CR-026 + CR-019 + CR-021 + CR-015 middleware + /demo polish — owner-only (sudoers).
+- **systemd unit install for CR-015 watchdog** — `sudo cp + daemon-reload + enable --now` on GoS1, one-time.
+- **Tania's reply on CR-028 Phase 2** — units-shape email sent 2026-05-07; her response expected as v2 of `wattlab_traffic_light_confidence.md` rather than a one-liner pick.
+
+---
+
+## Session 22 — 2026-05-05
+
+### What we did
+
+Bundle 2 — carbon-strip calibration + 24/7 projection. Two commits.
+
+**Part 1 (`68529de`) — variance integrity + CR archive split.** Confirmed n=24 / cooldown=90 calibration yielded clean idle 2.41% / cpu 1.33% / gpu 4.77% (`variance_pct=2.84`); statistically real at n=24 (SE ~14% of value). GPU lands near the bottom of Tania's 3–5% expectation. Created `CHANGE_REQUESTS_CLOSED.md` with 10 fully-shipped CRs (CR-001/001b/002/006/010/011/014/016/022/023). Slimmed `CHANGE_REQUESTS.md` 1582 → 1098 lines; CLAUDE.md cross-refs updated. Branched off main onto `feature/bundle-2-carbon-ui` after merging `feature/cr-001-two-tier` to local main.
+
+**Part 2 (`9fccde9`) — Bundle 2.** Closed CR-030 (carbon UI calibration) and CR-017 (24/7 projection toggle).
+
+- **CR-030:** typography shrink 1rem → 0.85rem accent → text-3, EV-equivalence floor at 0.0005 g, `massTitle` µg/mg disambiguation tooltip with scientific notation across every mass cell. Plus a new sub-#4 added during visual review — drift note when home-zone live grid intensity differs ≥1% from the run's saved intensity, surfaces the saved-vs-live temporal mismatch on 9 call sites.
+- **CR-017:** 24/7 continuous-service projection toggle. V1 toggle-only with `as-measured / 1h / 1d / 1mo / 1y`. Multiplier wires through headline + EV + reference + comparison + historical rows. URL hash state via `history.replaceState`. Hidden when no `durationS`. `fmtEnergy` auto-switches Wh / kWh / MWh / GWh and `fmtMass` extended upward to kg / t for sane projection display.
+- **Bonus:** video compare-mode label fix ("best of CPU vs GPU" / "most efficient codec across all comparisons"). Use-phase scope clarifier: caption now reads "HIGH-LEVEL CO₂e ESTIMATE · USE PHASE · for comparison with other activities" with tooltip + formula `<details>` line spelling out manufacturing/embodied carbon are not included.
+
+**CRs captured:** CR-032 (per-mode CO₂e rows inside the carbon strip details for compare results — half-day; deferred).
+
+### Why it matters
+
+Variance calibration confirmed ready for CR-028 Phase 2 design session with Tania (clean GPU number = clean confidence math). CR-030 is the credibility polish that lets the carbon strip carry weight in front of CTOs at the conference. CR-017 turns single-job CO₂e from "tiny mm of EV driving" into a meaningful "kg of CO₂ per year of continuous service" — the framing that connects measurement to operational decisions.
+
+181 tests passing throughout.
+
+---
+
 ## Session 21 — 2026-05-04
 
 ### What we did
@@ -108,6 +189,23 @@ Idle and CPU CV settled into the 1-3% range — best ever, consistent with the p
 - `bin/README.md` — `probe-thermal-recovery` section added.
 - `settings.json` — `gpu_encode_max_s: 30 → 90`; calibrations rewrote `variance_*_pct` multiple times.
 - 181 tests passing (the negative-clamp regression brought the count up by 1).
+
+---
+
+## Session 20 — 2026-05-03
+
+### What we did
+
+**CR-001 close-out.** Three commits on `feature/cr-001-two-tier` finished what S19 started.
+
+- **Part C2c** (`8bdc4cb`): `_LOCK_STYLES` + `_lock_badge_html()` + `_lock_class()` + `_disabled_attr()` helpers in main.py. Applied across `/llm` (prompt editor, Both, repeats>1, Run All), `/video` (all-codecs preset; the custom-cmd textarea predicate moves SETTINGS_READ_FULL → CUSTOM_PROMPT so Members get edit too), `/image` (prompt textarea, Both, Compare Models), `/rag` (question, 3-mode compare, Build/Rebuild). Per-page JS reads `CAN_CUSTOM_PROMPT` / `CAN_BATCH_COMPARE` flags from server and skips locked form params for Anonymous so the runtime gate doesn't trip on pre-filled defaults.
+- **Part D** (`1d15857`): per-tier concurrent-job caps + per-tier upload size cap, enforced at the single chokepoint (`queue_control.enqueue`). `_visitor_key()` resolves Anonymous → `a:<ip>`, Member → `m:<email>`, Lab → None (uncapped). 12 new queue tests. Settings: `queue_anonymous_cap=1`, `queue_member_cap=4`, `upload_size_anonymous_mb=100`, `upload_size_member_mb=1024`. `/video/upload` Content-Length pre-check returns 413 before reading the body. `/settings` page renders a "Tier limits" section.
+- **Task #10** (`5d7897c`): `WATTLAB_GATE_PASSWORD` retired. Middleware + GET/POST `/gate` removed (77 lines from main.py). `bin/stage-on/stage-off/bin/README.md` drop the gate cookie. `CLAUDE.md/TESTING.md` updated. Loopback `/live` is now Lab tier directly.
+- **Docs tidy** (`11ecbd0`): mark CR-001 closed in `CHANGE_REQUESTS.md`. 180 tests passing.
+
+### Why it matters
+
+CR-001 was the largest single CR: ~3 weeks of design + implementation across S17-S20. With Part D + Task #10, the policy table is the one source of truth for who can do what. Routes never compare tiers — they `requires(...)` or `gate(...)`. Two-tier UX delivered: Anonymous gets the guided tour, Member gets the workshop. Lab gets everything.
 
 ---
 
