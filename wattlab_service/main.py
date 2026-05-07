@@ -4738,7 +4738,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     <div id="video-action">
       <div class="btn-row" id="video-btns" style="display:none">
         <button class="btn btn-primary" id="btn-run-video" onclick="runDemoVideo()">
-          Run new measurement (~5 min)</button>
+          Run a standard transcode (H.265 CPU vs GPU on Meridian 2&thinsp;min · ~3&thinsp;min)</button>
       </div>
       <div id="video-status"></div>
     </div>
@@ -4762,7 +4762,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="goStep(0)">← Welcome</button>
       <button class="btn btn-primary" onclick="goStep(2)">Next: LLM inference →</button>
-      <button class="btn btn-secondary" onclick="resetVideoStep()">Run again</button>
+      <button class="btn btn-secondary" onclick="resetVideoStep()">Run a fresh transcode</button>
     </div>
   </div>
 </div>
@@ -4805,7 +4805,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     <div id="llm-action">
       <div class="btn-row" id="llm-btns" style="display:none">
         <button class="btn btn-primary" id="btn-run-llm" onclick="runDemoLLM()">
-          Run new measurement (~3 min)</button>
+          Run a standard LLM generation (Mistral 7B · cold · T3 prompt · ~3&thinsp;min)</button>
       </div>
       <div id="llm-status"></div>
     </div>
@@ -4817,7 +4817,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="goStep(1)">← Video</button>
       <button class="btn btn-primary" onclick="goStep(3)">Next: Image generation →</button>
-      <button class="btn btn-secondary" onclick="resetLLMStep()">Run again</button>
+      <button class="btn btn-secondary" onclick="resetLLMStep()">Run a fresh LLM generation</button>
     </div>
   </div>
 </div>
@@ -4852,7 +4852,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   <div>
     <div class="band-label">Result</div>
     <div id="image-btns" class="btn-row" style="display:none">
-      <button class="btn btn-primary" onclick="runDemoImage()">Generate &amp; measure</button>
+      <button class="btn btn-primary" onclick="runDemoImage()">Run a standard image generation (SD-Turbo · 512&times;512 · ~30&thinsp;s)</button>
     </div>
     <div id="image-status"></div>
     <p class="limitation">Scope: device layer only (GoS1). Network and storage excluded.
@@ -4863,7 +4863,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="goStep(2)">← LLM</button>
       <button class="btn btn-primary" onclick="goStep(4)">Next: RAG →</button>
-      <button class="btn btn-secondary" onclick="resetImageStep()">Run again</button>
+      <button class="btn btn-secondary" onclick="resetImageStep()">Run a fresh image generation</button>
     </div>
   </div>
 </div>
@@ -4899,7 +4899,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   <div>
     <div class="band-label">Result</div>
     <div id="rag-btns" class="btn-row" style="display:none">
-      <button class="btn btn-primary" onclick="runDemoRAG()">Run 3-mode comparison (~10 min)</button>
+      <button class="btn btn-primary" onclick="runDemoRAG()">Run a standard RAG energy test (Mistral 7B · 3-mode · ~10&thinsp;min)</button>
     </div>
     <div id="rag-status"></div>
     <p class="limitation">Scope: device layer only (GoS1). Network excluded.
@@ -4910,7 +4910,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="goStep(3)">← Image</button>
       <button class="btn btn-primary" onclick="goStep(5)">Next: How we flag confidence →</button>
-      <button class="btn btn-secondary" onclick="resetRAGStep()">Run again</button>
+      <button class="btn btn-secondary" onclick="resetRAGStep()">Run a fresh RAG energy test</button>
     </div>
   </div>
 </div>
@@ -5878,6 +5878,7 @@ function buildSummary() {{
     </p>`;
 }}
 </script>
+    {_PROGRESS_JS}
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
