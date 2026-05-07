@@ -157,3 +157,37 @@ Shipped as part of **CR-022 / CR-023** investigation in S21. Captured in `CHANGE
 - **CPU and GPU use different inputs.** CPU runs `variance_cpu_cmd` on the full `meridian_4k.mp4` (172s heavy thermal load — what variance calibration uses). GPU runs the variance template against `meridian_120s.mp4` so CR-022's `-t 30` cap (which `transcode()` applies automatically) keeps the encode cleanly bounded. Asymmetric but representative.
 - **~65 min wall time** for the default 12-distance sweep. The script's own estimate is printed at startup before it begins.
 - **Focus mode** stops 8 timer units (sysstat-collect, anacron, fwupd, apt-daily etc.) for the duration. Restored in `finally` — including on Ctrl-C.
+
+---
+
+## owl-maintenance-watchdog — auto-lower the staging flag
+
+CR-015. One-shot script, designed to be invoked by `systemd/owl-maintenance-watchdog.timer` (every minute). Closes the "I forgot to run `stage-off`" failure mode of CR-011 staging.
+
+```bash
+~/wattlab/bin/owl-maintenance-watchdog
+```
+
+**What it does, in order:**
+
+1. Exits immediately if `/tmp/owl-maintenance` doesn't exist.
+2. Reads `max_idle_mins` from `settings.json` (default 30 if missing).
+3. Compares the flag's mtime against `max_idle_mins × 60s`. If younger, exits — the operator is active (the Lab-tier middleware in `main.py` touches the flag on every request).
+4. If older, `exec`s `bin/stage-off` (no `--main` — preserves the currently-checked-out branch).
+
+### Tuning
+
+`max_idle_mins` is editable in `/settings` (Lab tier) or directly in `settings.json`. No restart needed — the watchdog re-reads on every fire.
+
+| Scenario | Suggested value |
+|---|---|
+| 5-minute conference demo | `5` |
+| Normal testing session | `30` (default) |
+| Head-down for the afternoon | `120` |
+
+### Things to know
+
+- **Cron alternative.** A `* * * * * /home/gos/wattlab/bin/owl-maintenance-watchdog` cron entry works identically; the systemd timer is preferred only for `journalctl` integration.
+- **Manual heartbeat works too.** `touch /tmp/owl-maintenance` from a shell extends the window without making an HTTP request — useful when SSH'd in but not actively browsing.
+- **The watchdog only writes when it actually fires.** The journal stays quiet during normal operation; expect a single line per stage-off event.
+- **Disable temporarily.** `sudo systemctl stop owl-maintenance-watchdog.timer` — useful if the timer fires mid-test and you want to debug without the rug pulled.

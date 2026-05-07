@@ -291,6 +291,31 @@ Uses `Math.min` across the three modes (most efficient mode) — same idiom as `
 
 ---
 
+## CR-015 · Auto-lower maintenance flag on inactivity (CR-011 follow-up)
+
+**Status:** ✅ shipped 2026-05-07 (Session 23 part 4). Activity-driven, not wall-clock. Three pieces: middleware in `main.py` that touches `/tmp/owl-maintenance` on every Lab-tier request, new `bin/owl-maintenance-watchdog` one-shot script, and `systemd/owl-maintenance-watchdog.{service,timer}` units that fire the script every minute. Settings field `max_idle_mins` (default 30) tunable from `/settings`. systemd install is owner-only — see `systemd/README.md`.
+**Originally captured:** 2026-05-03 (Session 18) right after CR-011 shipped — owner observation that the maintenance flag persists indefinitely until `stage-off` is run, leaving public visitors on the maintenance page if the operator walks away.
+
+### What shipped
+
+- **Lab-tier middleware** (`main.py`) bumps `/tmp/owl-maintenance` mtime on every Lab request. Cap-table-only contract: gates on `SETTINGS_WRITE` rather than a raw tier compare. Wrapped in try/except so a touch failure can never crash the request.
+- **`bin/owl-maintenance-watchdog`** — one-shot bash script. Exits immediately if the flag isn't raised; reads `max_idle_mins` from `settings.json` (default 30 if missing or `jq` unavailable); compares against the flag's mtime; `exec`s `bin/stage-off` (no `--main` — preserves the staged branch) when the threshold is exceeded.
+- **systemd timer + service** (`systemd/owl-maintenance-watchdog.{service,timer}`) fire the script every minute starting 2 min after boot. Output captured in `journalctl -u owl-maintenance-watchdog.service`.
+- **Settings UI** — `max_idle_mins` shown in the `/settings` "Staging" section (Lab tier).
+- **Docs** — `bin/README.md` gains a `## owl-maintenance-watchdog` section; `systemd/README.md` documents the install; `STAGING.md` cross-refs the auto-lower behaviour.
+
+### Why activity-driven, not wall-clock
+
+A naive "auto-off after N hours from `stage-on`" timer doesn't serve the two real use cases: 5-minute conference demo (short — wall-clock that's safe for it fires mid-test in the second case) vs 1-hour testing session (intermittent activity, owner is around but not poking the system every minute). Activity-driven via mtime + middleware-touch covers both — the operator extends the window simply by *using* the system.
+
+### Watch-outs
+
+- **systemd install is owner-only.** Files are in the repo but `sudo cp + daemon-reload + enable --now` has to happen on GoS1 by hand (one-time).
+- **Don't auto-`stage-off --main`.** The watchdog deliberately preserves the currently-checked-out branch; surprising the operator with a checkout they didn't ask for is worse than letting them stay on the staged branch.
+- **Cron alternative works.** A `* * * * * /home/gos/wattlab/bin/owl-maintenance-watchdog` cron entry is functionally identical; systemd is preferred only for `journalctl` integration.
+
+---
+
 ## CR-016 · Live + static CO₂e on the same lifecycle boundary
 
 **Status:** ✅ done 2026-05-03 (Session 18 part 10 — `c8c2316`; methodology copy follow-up in `6d06a81`). Was never given its own CR section in `CHANGE_REQUESTS.md` — captured and closed within the same session as a credibility fix.
@@ -357,6 +382,21 @@ Energy and mass formatters extended for sane projections — `fmtEnergy(wh)` aut
 ### Problem (preserved for context)
 
 `confidence(delta_w, poll_count, w_base)` in all four modules compares `delta_w` against `(variance_pct/100) × w_base`. The denominator was *yesterday's* idle CV from calibration, not *this run's* baseline noise. If today's baseline polls themselves swung far more than calibrated variance suggests, every downstream confidence label was built on sand — and the existing 🟢/🟡/🔴 logic didn't notice. CR-020's plan was a single-purpose `variance_gate_x` setting that would force 🔴 when in-run baseline CV diverged materially from `variance_idle_pct`. CR-028 Phase 2's combined-CI approach achieves the same outcome with a single statistical claim instead of an ad-hoc gate, so the gate doesn't need to ship as a separate piece.
+
+---
+
+## CR-021 · Sign-in chip more prominent on large screens
+
+**Status:** ✅ shipped 2026-05-07 (Session 23 part 4). Anonymous chip gets a CTA variant (`.auth-chip.cta`): filled accent background, 0.85 rem font, `⚿` glyph next to "Sign in", inverted text colour. Member/Lab keep the recessive status-pill look. Renders on every page including `/queue-status` and `/methodology` after the `_HEADER` factorisation that landed alongside.
+**Originally captured:** 2026-05-03 (Session 20). Tagged "trivial."
+
+### What shipped
+
+Single CSS rule + one-line variant in `_auth_chip_html()`. New `.auth-chip.cta` block in `_AUTH_CHIP_STYLES`. Plus a tiny refactor — `_header_html(request)` returns chip + back link as one helper, used by `/queue-status` and `/methodology` so they render the same chrome as standard pages (also closes the "Factorise `_HEADER` constant" deferred item from CLAUDE.md).
+
+### Why this matters
+
+CR-001 made all member-tier features visible-but-locked on the public surface ("the locks ARE the membership pitch"). The Sign-in chip is the affordance that turns those locks into unlocked features. At 0.72 rem in the corner it under-converted; the CTA variant pulls the eye on wide displays without crowding the page.
 
 ---
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=OWL maintenance-flag auto-lower watchdog (CR-015)
+Documentation=https://github.com/greeningofstreaming/wattlab/blob/main/CHANGE_REQUESTS_CLOSED.md
+After=wattlab.service
+
+[Service]
+Type=oneshot
+User=gos
+ExecStart=/home/gos/wattlab/bin/owl-maintenance-watchdog
+# Keep stdout/stderr in journalctl for visibility — the script only
+# writes when it actually lowers the flag, so volume is low.
+StandardOutput=journal
+StandardError=journal

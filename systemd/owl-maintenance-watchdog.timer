@@ -1,0 +1,15 @@
+[Unit]
+Description=Run owl-maintenance-watchdog every minute (CR-015)
+Documentation=https://github.com/greeningofstreaming/wattlab/blob/main/CHANGE_REQUESTS_CLOSED.md
+
+[Timer]
+# Fire every minute. The watchdog itself is cheap — exits immediately
+# if the flag isn't raised; only does real work after max_idle_mins
+# of inactivity.
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=owl-maintenance-watchdog.service
+
+[Install]
+WantedBy=timers.target

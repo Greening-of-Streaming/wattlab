@@ -45,6 +45,13 @@ DEFAULTS = {
     "ffmpeg_bin": "/usr/local/bin/ffmpeg-master",
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
+    # CR-015 — auto-lower the maintenance flag after this many minutes of
+    # Lab-tier inactivity. The owl-maintenance-watchdog systemd timer fires
+    # every minute and runs `stage-off` if the flag's mtime is older than
+    # this threshold. The Lab-tier middleware in main.py touches the flag
+    # on every request, so the window stays open as long as the operator
+    # is using the LAN URL or SSH tunnel.
+    "max_idle_mins": 30,
     # CR-001 part D — per-tier queue caps + Anonymous upload size.
     # Concurrent (queued + running) jobs per visitor; Lab is uncapped.
     # Anonymous = keyed by client IP; Member = keyed by allowlisted email.

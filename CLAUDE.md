@@ -4,8 +4,8 @@
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also: GOS1_INFRA.md — server infrastructure, Nextcloud backup, personal stack context
 # See also: TESTING.md — three-tier testing strategy
-# See also: CHANGE_REQUESTS.md — active CRs only. Active list: CR-003…CR-005, CR-007…CR-009, CR-012/013, CR-015, CR-018 (T2/T3), CR-019, CR-021, CR-024, CR-025, CR-027…CR-029, CR-031, CR-032. CR-025 = exploratory on real-time Linux migration. CR-028 Phase 2 awaits Tania's reply (units-shape email sent 2026-05-07). CR-029 (encoding rigor) is highest active priority by tag.
-# See also: CHANGE_REQUESTS_CLOSED.md — shipped CRs archive (CR-001, CR-001b, CR-002, CR-006, CR-010, CR-011, CR-014, CR-016, CR-017, CR-020, CR-022, CR-023, CR-026, CR-030). Each entry preserves the original problem statement and direction; Status line names the closing commit.
+# See also: CHANGE_REQUESTS.md — active CRs only. Active list: CR-003…CR-005, CR-007…CR-009, CR-012/013, CR-018 (T2/T3), CR-019, CR-024, CR-025, CR-027…CR-029, CR-031, CR-032. CR-025 = exploratory on real-time Linux migration. CR-028 Phase 2 awaits Tania's reply (units-shape email sent 2026-05-07). CR-029 (encoding rigor) is highest active priority by tag.
+# See also: CHANGE_REQUESTS_CLOSED.md — shipped CRs archive (CR-001, CR-001b, CR-002, CR-006, CR-010, CR-011, CR-014, CR-015, CR-016, CR-017, CR-020, CR-021, CR-022, CR-023, CR-026, CR-030). Each entry preserves the original problem statement and direction; Status line names the closing commit.
 # See also: docs/wattlab_traffic_light_confidence.md — Tania's §9 statistical framework for the confidence flag (CR-028 Phase 2 spec). docs/wattlab_parameters_audit.md — every settings parameter classified Arbitrary / Empirical / Calibrated / Constrained, with paths to principled derivation.
 # See also: AUDIT_BRIEF.md + AUDIT_RESPONSE.md — pre-CR-001 architecture audit + recommendations
 # See also: JOURNAL.md — session-by-session change log (full detail; not auto-loaded)
@@ -137,7 +137,7 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 
 **Phases 1–8 shipped:** research integrity (persistence + export), measurement quality (LLM batched/warm-cold/streaming, H.265+AV1), settings & lab config, demo mode + GoS visual identity, image generation (SD-Turbo CPU/GPU + SDXL-Turbo), public access (nginx + cert + IP-gate), guided tour + credibility (confidence popover, resume), RAG energy test (Chroma + compare-3-modes).
 
-**Active CRs:** see `CHANGE_REQUESTS.md` (19 entries — CR-003 iso-energy, CR-004 graphing, CR-005 fan control, CR-007 carbon variance, CR-008 REM↔OWL, CR-009 web client, CR-012 calibration history, CR-013 prev-run drilldown, CR-015 staging watchdog, CR-018 T2/T3 historical, CR-019 progress widget, CR-021 sign-in chip, CR-024 probe button, CR-025 RT Linux, CR-027 tier copy, CR-028 confidence model, CR-029 encoding rigor, CR-031 portability, CR-032 per-mode CO₂e rows). Closed CRs in `CHANGE_REQUESTS_CLOSED.md`.
+**Active CRs:** see `CHANGE_REQUESTS.md` (17 entries — CR-003 iso-energy, CR-004 graphing, CR-005 fan control, CR-007 carbon variance, CR-008 REM↔OWL, CR-009 web client, CR-012 calibration history, CR-013 prev-run drilldown, CR-018 T2/T3 historical, CR-019 progress widget, CR-024 probe button, CR-025 RT Linux, CR-027 tier copy, CR-028 confidence model, CR-029 encoding rigor, CR-031 portability, CR-032 per-mode CO₂e rows). Closed CRs in `CHANGE_REQUESTS_CLOSED.md`.
 
 ### Recent sessions (one-line summary; full detail in JOURNAL.md + git log)
 - **S10 (2026-04-07):** centralised power cache, ffmpeg cmd in result JSON, GPU PPT note, home nav restructure.
@@ -161,7 +161,7 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 - [ ] **Benchmark 2** — codec-natural rate control (CRF/QP) alongside Benchmark 1 (ABR). Add to `WATTLAB_SPEC.md`. *Distinct from CR-029: CR-029 normalises the existing ABR benchmark; Benchmark 2 is a sibling family.*
 - [x] **Access spine refactor** (audit's #1 recommendation) — `audience.py` + `capabilities.py` + `queue_control.py` shipped S17 parts A/3 + B/3 + C/3. Spine seam (`enqueue(request=None)`) ready for CR-001b.
 - [ ] **Dockerize OWL** — see **CR-031** sub-section 3 (containerisation readiness, two-stage plan: FastAPI+VAAPI, then ROCm).
-- [ ] **Factorise `_HEADER` constant** — mirror `_FOOTER` so `/methodology` and `/queue-status` use the same shape as standard pages.
+- [x] **Factorise `_HEADER` constant** — done 2026-05-07 (Session 23 part 4 alongside CR-021). `_HEADER_STYLES` + `_header_html(request)` helper; `/queue-status` and `/methodology` now render the same auth chip + back link as standard pages.
 - [ ] **Guided Tour Findings step** — currently echoes session run; redesign to aggregate across all stored results to surface body-of-evidence learnings (see Key Findings).
 - [ ] **RAG visitor upload + corpus PDF view** — see `CHANGE_REQUESTS.md` follow-ups.
 - [ ] **Power-user/visitor UX watch** — progressive-disclosure pilot is live across test pages; revisit if a visible density toggle becomes needed.

@@ -38,6 +38,32 @@ app = FastAPI()
 # Serve bundled assets (owl logo, favicon) from wattlab_service/static/.
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
+# CR-015 — auto-lower maintenance flag on Lab-tier inactivity.
+# When `/tmp/owl-maintenance` exists (staging mode raised by `stage-on`),
+# any Lab-tier request bumps the flag's mtime. The owl-maintenance-watchdog
+# systemd timer fires every minute and runs `stage-off` if the mtime is
+# older than `max_idle_mins`. This way the operator extends the window
+# simply by *using* the LAN URL or SSH tunnel — no manual heartbeat
+# command required.
+#
+# Cap-table-only contract: gates on SETTINGS_WRITE rather than a raw tier
+# compare. The two are equivalent today (Lab-only) but will track if the
+# policy ever moves.
+_MAINTENANCE_FLAG = Path("/tmp/owl-maintenance")
+
+
+@app.middleware("http")
+async def _maintenance_keepalive(request: Request, call_next):
+    if _MAINTENANCE_FLAG.exists():
+        try:
+            if can(audience.tier(request), SETTINGS_WRITE):
+                _MAINTENANCE_FLAG.touch()
+        except Exception:
+            # Never let the keepalive crash a real request.
+            pass
+    return await call_next(request)
+
 # --- CR-001 magic-link auth -------------------------------------------------
 #
 # Three routes: GET /auth/sign-in (form), POST /auth/sign-in (issue + email),
@@ -195,6 +221,17 @@ _AUTH_CHIP_STYLES = (
     ".auth-chip a:hover,.auth-chip button:hover{text-decoration:underline}"
     ".auth-chip .auth-email{color:var(--text-3)}"
     ".auth-chip.lab{border-color:var(--accent);color:var(--accent)}"
+    # CR-021 — Anonymous CTA variant. The chip is a status indicator for
+    # Member/Lab but a sign-up *call to action* for Anonymous. On wide
+    # displays (conference booths) the recessive 0.72 rem chip was easy
+    # to miss; this variant reads as a button: filled accent background,
+    # 0.85 rem font, key glyph for affordance. Member/Lab keep the
+    # recessive look. The link inside inherits the inverted colour so
+    # it doesn't double-style.
+    ".auth-chip.cta{background:var(--accent);border-color:var(--accent);"
+    "color:var(--bg);font-size:0.85rem;padding:0.4rem 0.85rem}"
+    ".auth-chip.cta a{color:var(--bg);font-weight:bold}"
+    ".auth-chip.cta a:hover{text-decoration:underline}"
 )
 
 
@@ -215,8 +252,22 @@ def _auth_chip_html(request: Request) -> str:
             '</form>'
             '</div>'
         )
-    # Anonymous
-    return '<div class="auth-chip"><a href="/auth/sign-in">Sign in</a></div>'
+    # Anonymous — CR-021 prominent CTA variant. Members-only features
+    # are visible-but-locked across the surface; the chip is the entry
+    # point that turns those locks into unlocked features.
+    return '<div class="auth-chip cta"><a href="/auth/sign-in">⚿ Sign in</a></div>'
+
+
+# Page chrome — auth chip + back link. Mirrors `_FOOTER` so any page can
+# concatenate `_HEADER_STYLES` into its <style> block and call
+# `_header_html(request)` near the top of <body>. Standard pages already
+# inline the chip and back link individually; `/queue-status` and
+# `/methodology` use this helper directly.
+_HEADER_STYLES = _AUTH_CHIP_STYLES
+
+
+def _header_html(request: Request) -> str:
+    return _auth_chip_html(request) + _BACK
 
 
 # CR-001 part C2c — capability lock badge + dim treatment.
@@ -4207,6 +4258,9 @@ async def settings_page(request: Request):
     {field("llm_rest_s",        s['llm_rest_s'],        5,  120, "s",      "pause between runs in batch mode")}
     {field("llm_unload_settle_s", s['llm_unload_settle_s'], 1, 30, "s",   "wait after model unload before baseline")}
 
+    <div class="section">Staging</div>
+    {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
+
     <div class="section">Encoding targets</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
       ABR target bitrate applied to both CPU and GPU presets for each codec — ensures apples-to-apples energy comparison. Custom ffmpeg commands on the video page override these.
@@ -6319,7 +6373,7 @@ async def image_start(request: Request,
 
 
 @app.get("/queue-status", response_class=HTMLResponse, dependencies=[Depends(requires(QUEUE_VIEW))])
-async def queue_page():
+async def queue_page(request: Request):
     return """<!DOCTYPE html>
 <html>
 <head>
@@ -6347,10 +6401,11 @@ async def queue_page():
         .back:hover { color: var(--accent); }
         .depth { font-size: 2.5rem; color: var(--accent); font-weight: bold; }
         .depth-lbl { color: var(--text-4); font-size: 0.75rem; margin-bottom: 2rem; }
+""" + _HEADER_STYLES + """
     </style>
 </head>
 <body>
-""" + _BACK + """
+""" + _header_html(request) + """
     <h1>Queue</h1>
     <div class="sub">Auto-refreshes every 4s</div>
     <div id="pause-banner"></div>
@@ -6732,9 +6787,11 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     .protocol-steps li { padding-left: 44px; }
     .hw-table td:first-child { width: 120px; }
   }
+{AUTH_CHIP_STYLES}
 </style>
 </head>
 <body>
+{AUTH_CHIP}
 
 <!-- Top bar -->
 <div class="topbar">
@@ -7020,7 +7077,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
 
 @app.get("/methodology", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def methodology_page():
+async def methodology_page(request: Request):
     # Inject live settings into placeholder fields so the methodology page
     # can never silently drift from the actual configuration in settings.json.
     # See CR-002 for context — `baseline_polls`, `video_cooldown_s`, and the
@@ -7029,6 +7086,8 @@ async def methodology_page():
     # running config any time settings were changed.
     s = cfg.load()
     return (_METHODOLOGY_HTML
+            .replace("{AUTH_CHIP_STYLES}",   _AUTH_CHIP_STYLES)
+            .replace("{AUTH_CHIP}",          _auth_chip_html(request))
             .replace("{BASELINE_POLLS}",     str(s.get("baseline_polls",     "—")))
             .replace("{VIDEO_COOLDOWN_S}",   str(s.get("video_cooldown_s",   "—")))
             .replace("{CONF_GREEN_X}",       str(s.get("variance_green_x",   "—")))

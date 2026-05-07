@@ -49,12 +49,20 @@ If conference traffic ever makes this trade-off bite, the captured follow-up is 
 
 If the service fails to come up, the flag is *not* removed and `stage-off` exits non-zero. Public visitors keep seeing the maintenance page until the next successful `stage-off`.
 
+## Auto-lower on inactivity (CR-015)
+
+A systemd timer (`owl-maintenance-watchdog.timer`) fires every minute and lowers the flag automatically once it goes stale. Stale = mtime older than `max_idle_mins` (default 30, in `settings.json`). The Lab-tier middleware in `main.py` touches the flag on every request, so the window stays open as long as the operator is using the LAN URL or SSH tunnel — no manual heartbeat required. Manual `touch /tmp/owl-maintenance` also extends the window.
+
+See `bin/README.md` (`## owl-maintenance-watchdog`) and `systemd/README.md` for install + tuning.
+
 ## Files
 
 | Path | What | Owner |
 |---|---|---|
 | `bin/stage-on` | Raise flag + restart on (optionally) a feature branch | gos (repo) |
 | `bin/stage-off` | Wait-for-up + lower flag + restart on (optionally) main | gos (repo) |
+| `bin/owl-maintenance-watchdog` | One-shot CR-015 auto-lower watchdog | gos (repo) |
+| `systemd/owl-maintenance-watchdog.{service,timer}` | Timer + service that drive the watchdog | gos (repo) |
 | `wattlab_service/static/maintenance.html` | The page nginx serves while flag is up | gos (repo) |
 | `/etc/nginx/sites-available/wattlab` | Vhost with maintenance-flag block (see below) | root |
 | `/tmp/owl-maintenance` | The flag itself — touched by stage-on, removed by stage-off | gos |
