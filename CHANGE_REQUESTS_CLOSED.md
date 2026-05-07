@@ -349,9 +349,20 @@ Energy and mass formatters extended for sane projections — `fmtEnergy(wh)` aut
 
 ---
 
+## CR-020 · Baseline-variance gate on confidence
+
+**Status:** ✅ closed 2026-05-07 — **superseded by CR-028 Phase 2.** The per-run baseline-CV gate described here is absorbed into Tania's unified statistical model: §9 of `docs/wattlab_traffic_light_confidence.md` computes `SE_per_run` from the actual baseline + task samples on each run, replacing the static `variance_pct × w_base` denominator that CR-020 was designed to retrofit. Once CR-028 Phase 2 ships, the per-run noise check is in the math by default — no separate gate needed. Storage piece (persist raw `baseline_samples_w` / `task_samples_w` per result) folded into CR-028 Phase 2 scope.
+**Originally captured:** 2026-05-03 (Session 20). Marked "likely superseded" on capture day; confirmed superseded after Tania's §9 doc landed 2026-05-07.
+
+### Problem (preserved for context)
+
+`confidence(delta_w, poll_count, w_base)` in all four modules compares `delta_w` against `(variance_pct/100) × w_base`. The denominator was *yesterday's* idle CV from calibration, not *this run's* baseline noise. If today's baseline polls themselves swung far more than calibrated variance suggests, every downstream confidence label was built on sand — and the existing 🟢/🟡/🔴 logic didn't notice. CR-020's plan was a single-purpose `variance_gate_x` setting that would force 🔴 when in-run baseline CV diverged materially from `variance_idle_pct`. CR-028 Phase 2's combined-CI approach achieves the same outcome with a single statistical claim instead of an ad-hoc gate, so the gate doesn't need to ship as a separate piece.
+
+---
+
 ## CR-022 · `scale_vaapi` surface-pool leak corrupts long GPU encodes
 
-**Status:** ✅ shipped 2026-05-04 (Session 21 — `aae9af4`). Step 1 (workaround in `transcode()`) landed: new `gpu_encode_max_s=30` setting + `_maybe_cap_vaapi()` helper auto-injects `-t 30` before `-i` on any VAAPI cmd. End-to-end smoke confirmed `variance_gpu_cmd` now completes in 3.7s with empty stderr. **Residual scope:** Step 2 (long-term filter restructuring — test alternative filter graphs / Mesa version updates / pipeline restructuring) deferred until a Mesa/driver update is tested. Promote to a fresh CR if/when a Mesa update is available to test against.
+**Status:** ✅ fully shipped 2026-05-07 (Session 23 part 1 — `9e1d076`). Closed in two steps. **Step 1** (Session 21, `aae9af4`): `_maybe_cap_vaapi()` workaround injected `-t 30` before `-i` on any VAAPI cmd; new `gpu_encode_max_s` setting. **Step 2** (Session 23 part 1): upgraded to ffmpeg master build at `/usr/local/bin/ffmpeg-master`, which fixes the `scale_vaapi` leak at source. The `-t` cap was deleted (`_maybe_cap_vaapi` removed; `gpu_encode_max_s` removed; result dict no longer reports `gpu_capped_at_s`). New `ffmpeg_bin` setting routes every preset, custom command, and calibration template through the upgraded binary. First post-resolution n=24 calibration confirmed full encodes complete cleanly: idle 2.41% → 2.26%, gpu 4.77% → 0.95%.
 **Originally captured:** 2026-05-04 (Session 21). Real bug, reproducible in standalone ffmpeg, root cause upstream.
 **Triggered by:** owner — surfaced while building `bin/probe-thermal-recovery` (Session 21 thermal-recovery diagnostic). The probe's GPU encode failed deterministically on the first smoke test. Standalone ffmpeg reproduction confirmed the bug isn't probe-specific — it's in the production VAAPI pipeline.
 
@@ -445,6 +456,37 @@ Two compounding effects:
 - **Don't ship CR-023 alone** — if we'd started refusing to persist calibrations with failed GPU encodes *before* fixing CR-022, no calibration could ever complete. They shipped together in S21.
 - **Audit historical results.** Worth a one-off scan of `results/video/*.json` for any GPU result where the encode duration is suspiciously close to the input duration but the file size doesn't add up. That's CR-022 + CR-023 in the wild. Not in scope for the fix itself; flag in a separate audit task if/when a published headline is questioned.
 - **Don't auto-delete partial results.** Annotate them, don't remove them — they may have post-hoc diagnostic value (as CR-023 itself just demonstrated).
+
+---
+
+## CR-026 · Anonymous-tier integrity pass
+
+**Status:** ✅ shipped 2026-05-07 (Session 23 part 2 — `caa025b`). Five coordinated changes from the team meeting 2026-05-04 leak. Phase E (curated content expansion — add more pre-loaded videos) deferred to a follow-up CR; the existing `meridian_4k` + `meridian_120s` already cover the demo, so it's variety not coverage.
+**Originally captured:** 2026-05-04 (post-meeting). Tania surfaced the leak (logged-out, she could see other visitors' jobs and parameters on the public site).
+
+### Problem (preserved for context)
+
+CR-001 introduced the three-tier model and gated the *workload* spine through `capabilities.requires(...)` / `gate(...)`. The 2026-05-04 meeting found gaps in surfaces that aren't workload routes: result-history endpoints, JSON downloads, the upload form, and at least some HTML pages were rendering content for tiers that shouldn't see it. The pattern was: when a route was "read a result" or "list jobs", it didn't get the cap-table treatment that workload routes did.
+
+### What shipped
+
+**Phase A — Persistence + visitor scope:** `save_result()` records `visitor_key` on every result JSON; reads `queue_control.current_visitor_key` as ambient fallback so workload modules pick it up without per-call-site changes. `list_results()` / `load_result()` accept a `visitor_key` filter (None = unfiltered, for Lab). Pre-CR-026 records have no key and are invisible to non-Lab callers — own-jobs scope inherited automatically. `/results/{type}/list` and `/results/{type}/{id}/download.{json,csv}` resolve `visitor_key` from the request. The `/image` page's server-side `list_results()` does the same.
+
+**Phase B — Disable Anonymous upload:** `CUSTOM_UPLOAD: Tier.Anonymous → Tier.Member` in `capabilities.py`. The `/video` upload form gets a "Members only" lock badge + disabled attr via the existing `_lock_class` / `_disabled_attr` predicates.
+
+**Phase C — Anti-pattern cleanup (cap-table-only contract):** New `WORKING_NAV` cap (Member+) replaces the raw tier compare on the home redirect (Anonymous → `/demo`, Member/Lab → work nav). `/video/upload` size cap simplified to `s["upload_size_member_mb"]` since the route now requires Member+ (Anonymous can't reach it).
+
+**Phase D — Defence in depth:** New test walks every registered FastAPI route and asserts each has `Depends(requires(...))` or appears in `_ROUTE_WAIVERS` (auto-injected `/docs`, `/redoc`, `/openapi.json`, plus `/auth/sign-out`). Catches "shipped a new endpoint without a gate" — the class of mistake that landed CR-026 in the first place. 10 visitor-scope persistence tests + 3 cap-table regressions. Renames `_visitor_key` → `visitor_key` in `queue_control` (now public, since `main.py` needs it for request scoping; test stubs updated).
+
+### Watch-outs (still relevant)
+
+- **Pre-CR-026 historical records are invisible to non-Lab callers.** Intended — they have no `visitor_key` field, so `_visitor_match` rejects them for any non-Lab visitor. Lab still sees everything. If a visitor reports "I can't see my old runs," they pre-date the cap.
+- **Member onboarding has no visible-edit-mode confirmation today.** Tania noticed at the meeting — she'd SSH'd in but didn't see edit mode in the browser without an explicit walkthrough. CR-027 territory.
+
+### Not in scope (deferred to follow-ups)
+
+- **Phase E (curated content expansion).** Add a head-and-shoulders 1080p clip + a high-motion sports clip to `sources.PRELOADED` for Anonymous demo variety. Existing two assets already cover the demo functionally; the new clips are variety, not coverage. Captured for a follow-up CR.
+- **FastAPI `/docs` / `/redoc` / `/openapi.json` policy.** Currently waived (internal-only on GoS1 via nginx). If/when the public surface at greeningofstreaming.org should hide these, set `FastAPI(docs_url=None, redoc_url=None, openapi_url=None)` in production.
 
 ---
 
