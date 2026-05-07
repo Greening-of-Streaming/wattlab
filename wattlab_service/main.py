@@ -5419,8 +5419,17 @@ function renderLLMResult(r, savedAt, isPrev) {{
     const ce = r.cpu && r.cpu.energy, ge = r.gpu && r.gpu.energy;
     const ci = r.cpu && r.cpu.inference, gi = r.gpu && r.gpu.inference;
     const a = r.analysis || {{}};
+    // Most efficient side for the carbon strip headline (matches the
+    // "best of N" framing CR-030 standardised on compare modes).
+    const bestE = (ce && ge)
+      ? (ce.delta_e_wh <= ge.delta_e_wh ? ce : ge)
+      : (ce || ge);
+    const bestSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
     html += `<div class="result-card">
       <p class="headline">${{a.finding || ''}}</p>
+      ${{r.prompt ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:0.85rem;border-left:2px solid var(--border-2);padding-left:0.7rem">' +
+                    (r.task_label ? '<span style="color:var(--text-4);font-style:normal">' + r.task_label + ':</span> ' : '') +
+                    '"' + r.prompt + '"</div>' : ''}}
       <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1rem">
         <div style="flex:1;min-width:180px">
           <div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem">CPU</div>
@@ -5438,6 +5447,7 @@ function renderLLMResult(r, savedAt, isPrev) {{
         </div>
       </div>
       <div class="conf-badge">${{ce ? ce.confidence.flag : ''}} CPU · ${{ge ? ge.confidence.flag : ''}} GPU · ${{r.model_label}}</div>
+      ${{bestE ? wlCarbonStrip(bestE.delta_e_wh, r.model_label + ' · best of CPU vs GPU', bestE.delta_t_s, bestSavedG) : ''}}
       <p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>
     </div>`;
   }} else {{
@@ -5451,7 +5461,7 @@ function renderLLMResult(r, savedAt, isPrev) {{
     if (!e && r.summary) {{
       // batch summary only — reconstruct a minimal e object
       e = {{ mwh_per_token: r.summary.mwh_per_token_mean, delta_e_wh: r.summary.delta_e_wh_mean,
-             confidence: {{flag:'—',label:'see runs'}}, delta_w: null }};
+             confidence: {{flag:'—',label:'see runs'}}, delta_w: null, delta_t_s: null }};
       inf = {{ tokens_per_sec: r.summary.tokens_per_sec_mean, output_tokens: '—', response: '' }};
     }}
     if (!e) {{
@@ -5460,7 +5470,12 @@ function renderLLMResult(r, savedAt, isPrev) {{
       return;
     }}
     const modeNote = r.warm ? '🌡 Warm' : '❄ Cold';
+    const savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
+    const stripLabel = r.model_label + (r.task_label ? ' · ' + r.task_label : '');
     html += `<div class="result-card">
+      ${{r.prompt ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:0.85rem;border-left:2px solid var(--border-2);padding-left:0.7rem">' +
+                    (r.task_label ? '<span style="color:var(--text-4);font-style:normal">' + r.task_label + ':</span> ' : '') +
+                    '"' + r.prompt + '"</div>' : ''}}
       <div class="kpi-row">
         <div class="kpi"><div class="val">${{fmt(e.mwh_per_token,4)}}</div><div class="lbl">mWh / token</div></div>
         <div class="kpi"><div class="val">${{fmt(inf && inf.tokens_per_sec,1)}}</div><div class="lbl">tokens / sec</div></div>
@@ -5469,6 +5484,7 @@ function renderLLMResult(r, savedAt, isPrev) {{
       </div>
       <div class="conf-badge">${{e.confidence.flag}} ${{e.confidence.label}} · ${{r.model_label}} · ${{modeNote}}</div>
       ${{inf && inf.response ? '<div class="response-preview">' + inf.response + '</div>' : ''}}
+      ${{wlCarbonStrip(e.delta_e_wh, stripLabel, e.delta_t_s, savedG)}}
       <p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>
     </div>`;
   }}
@@ -5567,10 +5583,20 @@ function pollDemoRAG(jobId, t0) {{
     }} else {{
       const stage = data.stage || '';
       const idx = stage.startsWith('baseline') ? 0 : stage.startsWith('inference') ? 1 : 0;
-      // Show which mode is running mid-3-mode-compare ("baseline of rag_large", etc.)
-      // as extra context under the stage list.
-      const modeLine = stage.startsWith('inference') || stage.startsWith('baseline')
-        ? '<div style="color:var(--text-3);font-size:0.78rem;margin-top:0.6rem">' + stage + '</div>'
+      // Friendly mode label so visitors see "No retrieval / RAG / RAG Large"
+      // rolling through, plus a "1 of 3" position indicator. The server
+      // sets jobs[id].current_mode to baseline|rag|rag_large|cooldown and
+      // jobs[id].mode_index to 0|1|2 (set in run_rag_compare_job).
+      const modeLabels = {{
+        baseline: 'Mode 1 of 3 — No retrieval (control)',
+        rag: 'Mode 2 of 3 — RAG (small corpus)',
+        rag_large: 'Mode 3 of 3 — RAG Large (full corpus)',
+        cooldown: 'Cooldown between modes — letting thermals settle',
+      }};
+      const cm = data.current_mode || '';
+      const lbl = modeLabels[cm] || (cm ? cm : '');
+      const modeLine = lbl
+        ? '<div style="color:var(--accent);font-size:0.82rem;margin-top:0.6rem;font-weight:bold">' + lbl + '</div>'
         : '';
       wlRenderProgress({{
         target: 'rag-status',
@@ -5590,10 +5616,17 @@ function renderRAGResult(r, savedAt, isPrev) {{
   const labels = {{'baseline': 'No retrieval', 'rag': 'RAG', 'rag_large': 'RAG Large'}};
   const results = r.results || {{}};
   const modelLine = r.model_label
-    ? `<div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:1rem">
+    ? `<div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:0.6rem">
          Model: ${{r.model_label}}${{r.model_params ? ' · ' + r.model_params : ''}}</div>`
     : '';
+  const questionLine = r.question
+    ? `<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:1rem;border-left:2px solid var(--border-2);padding-left:0.7rem">
+         <span style="color:var(--text-4);font-style:normal">Question:</span> "${{r.question}}"</div>`
+    : '';
   let cols = '';
+  // Pick the most-efficient sub-run for the carbon strip headline (matches
+  // CR-030's "best of N" framing for compare-mode strips).
+  let bestE = null, bestLbl = null;
   modes.forEach(m => {{
     const res = results[m];
     if (!res) return;
@@ -5601,6 +5634,9 @@ function renderRAGResult(r, savedAt, isPrev) {{
     const inTok = inf.input_tokens != null ? inf.input_tokens : '—';
     const outTok = inf.output_tokens != null ? inf.output_tokens : '—';
     const retMs = res.retrieval_ms > 0 ? fmt(res.retrieval_ms, 0) + ' ms retrieval' : 'no retrieval';
+    if (e.delta_e_wh != null && (bestE == null || e.delta_e_wh < bestE.delta_e_wh)) {{
+      bestE = e; bestLbl = labels[m];
+    }}
     cols += `<div style="flex:1;min-width:130px;border-left:2px solid #1a1a1a;padding-left:0.75rem">
       <div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:0.5rem">${{labels[m]}}</div>
       <div class="kpi" style="margin-bottom:0.4rem">
@@ -5615,10 +5651,16 @@ function renderRAGResult(r, savedAt, isPrev) {{
       </div>
     </div>`;
   }});
+  const stripSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
+  const stripHtml = bestE
+    ? wlCarbonStrip(bestE.delta_e_wh, (r.model_label || 'RAG') + ' · best of 3 modes (' + bestLbl + ')', bestE.delta_t_s, stripSavedG)
+    : '';
   document.getElementById('rag-status').innerHTML = prevNote +
     `<div class="result-card">
        ${{modelLine}}
+       ${{questionLine}}
        <div style="display:flex;gap:1rem;flex-wrap:wrap">${{cols}}</div>
+       ${{stripHtml}}
        <p class="scope-note" style="margin-top:1rem">
          Input tokens show how much context the model processes per mode —
          retrieval grows the prompt significantly.<br>
@@ -5727,6 +5769,11 @@ function renderDemoImageResult(r) {{
     const a = r.analysis || {{}};
     const cpuWh = ce && (ce.wh_per_image || ce.delta_e_wh);
     const gpuWh = ge && (ge.wh_per_image || ge.delta_e_wh);
+    // Most efficient side for the carbon strip headline.
+    const bestE = (ce && ge && ce.delta_e_wh != null && ge.delta_e_wh != null)
+      ? (ce.delta_e_wh <= ge.delta_e_wh ? ce : ge)
+      : (ce || ge);
+    const bestSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
     let imgs = '';
     if (cg && cg.b64_png) imgs += '<div style="flex:1;min-width:150px"><div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">CPU</div>' +
       '<img src="data:image/png;base64,' + cg.b64_png + '" style="max-width:100%;border:1px solid var(--border);display:block"></div>';
@@ -5734,6 +5781,7 @@ function renderDemoImageResult(r) {{
       '<img src="data:image/png;base64,' + gg.b64_png + '" style="max-width:100%;border:1px solid var(--border);display:block"></div>';
     html = '<div class="result-card">' +
       '<p class="headline">' + (a.finding || '') + '</p>' +
+      (r.full_prompt ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:0.85rem;border-left:2px solid var(--border-2);padding-left:0.7rem"><span style="color:var(--text-4);font-style:normal">Prompt:</span> "' + r.full_prompt + '"</div>' : '') +
       '<div class="kpi-row">' +
       '<div class="kpi"><div class="val">' + fmt(cpuWh,4) + ' Wh</div><div class="lbl">CPU / image</div></div>' +
       '<div class="kpi"><div class="val">' + fmt(gpuWh,4) + ' Wh</div><div class="lbl">GPU / image</div></div>' +
@@ -5741,6 +5789,7 @@ function renderDemoImageResult(r) {{
       '</div>' +
       (ce ? '<div class="conf-badge">' + ce.confidence.flag + ' CPU · ' + (ge ? ge.confidence.flag + ' GPU' : '') + '</div>' : '') +
       '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem">' + imgs + '</div>' +
+      (bestE ? wlCarbonStrip(bestE.delta_e_wh, 'Image · best of CPU vs GPU', bestE.delta_t_s, bestSavedG) : '') +
       '</div>';
   }} else {{
     const e = r.energy;
@@ -5751,20 +5800,25 @@ function renderDemoImageResult(r) {{
       return;
     }}
     const wh = e.wh_per_image || e.delta_e_wh;
+    const savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
     const imgHtml = gen && gen.b64_png
       ? '<img src="data:image/png;base64,' + gen.b64_png +
-        '" style="max-width:100%;border:1px solid var(--border);display:block;margin-top:1rem">' +
-        '<div style="color:var(--text-4);font-size:0.75rem;margin-top:0.5rem;font-style:italic">"' +
-        (r.full_prompt || '') + '"</div>'
+        '" style="max-width:100%;border:1px solid var(--border);display:block;margin-top:1rem">'
+      : '';
+    const promptLine = r.full_prompt
+      ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:0.85rem;border-left:2px solid var(--border-2);padding-left:0.7rem"><span style="color:var(--text-4);font-style:normal">Prompt:</span> "' + r.full_prompt + '"</div>'
       : '';
     html = '<div class="result-card">' +
+      promptLine +
       '<div class="kpi-row">' +
       '<div class="kpi"><div class="val">' + fmt(wh,4) + ' Wh</div><div class="lbl">energy / image</div></div>' +
       '<div class="kpi"><div class="val">' + fmt(gen && gen.total_s,1) + 's</div><div class="lbl">generation time</div></div>' +
       '<div class="kpi"><div class="val">' + fmt(e.delta_w,1) + ' W</div><div class="lbl">delta above idle</div></div>' +
       '</div>' +
       '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</div>' +
-      imgHtml + '</div>';
+      imgHtml +
+      wlCarbonStrip(wh, (r.model_label || 'Image generation') + ' · single', e.delta_t_s, savedG) +
+      '</div>';
   }}
   document.getElementById('image-status').innerHTML = html;
   document.getElementById('image-btns').style.display = 'none';
