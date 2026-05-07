@@ -1097,7 +1097,16 @@ _BETA_CHIP = (
     'font-family:monospace">BETA</span>'
 )
 
-# "Report an issue" link in every page footer — points to GitHub issue tracker.
+# Footer links — methodology + GitHub issue tracker. Methodology added 2026-05-08
+# for universal access from every page; was previously only reachable via the
+# /demo Confidence step or by typing /methodology directly.
+_METHODOLOGY_LINK = (
+    '<div style="margin-top:0.75rem;font-family:monospace;font-size:0.72rem;color:var(--text-5)">'
+    'Full measurement protocol &middot; confidence framework &middot; scope statements: '
+    '<a href="/methodology" '
+    'style="color:var(--text-3);text-decoration:none;border-bottom:1px solid var(--border)">'
+    'Methodology &rarr;</a></div>'
+)
 _ISSUES_LINK = (
     '<div style="margin-top:0.75rem;font-family:monospace;font-size:0.72rem;color:var(--text-5)">'
     'Spotted a bug or have a feature request? '
@@ -1150,7 +1159,7 @@ _BASE_STYLES = (
 _FOOTER = (
     f'{_BASE_STYLES}'
     f'<footer style="margin-top:3rem;padding-top:1rem;border-top:1px solid var(--panel)">'
-    f'{_LOGO}{_ISSUES_LINK}</footer>'
+    f'{_LOGO}{_METHODOLOGY_LINK}{_ISSUES_LINK}</footer>'
     f'{_QUEUE_BADGE}{_LIVE_JS}{_CARBON_JS}'
 )
 
@@ -4697,6 +4706,12 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     WattLab produces primary measurement data that operators and researchers
     can reproduce and cite.</p>
   </details>
+
+  <p style="margin-top:1.25rem;font-size:0.85rem;color:var(--text-3)">
+    <a href="/methodology" style="color:var(--accent);text-decoration:none;border-bottom:1px solid var(--border-2);padding-bottom:1px">
+      &rarr; Read the full measurement methodology</a>
+    <span style="color:var(--text-5);margin-left:0.5rem">protocol, confidence framework, scope statements, calibration</span>
+  </p>
 
   <div class="btn-row">
     <button class="btn btn-primary" onclick="goStep(1)">Start Tour →</button>
