@@ -4133,6 +4133,37 @@ async def results_list(job_type: str, request: Request):
     # CR-026: own-jobs scope for non-Lab. Lab passes None → unfiltered.
     return list_results(job_type, visitor_key=queue_control.visitor_key(request))
 
+
+# CR-026 carve-out for /demo's "show last result" panel.
+#
+# /demo's guided tour pre-loads the most recent persisted result for each
+# workload so visitors land on a populated card rather than an empty page.
+# CR-026's visitor scoping correctly hides cross-visitor jobs from
+# Anonymous, but for /demo specifically we want the latest result to be
+# visible regardless of who ran it — that's the whole point of the
+# pre-loaded panel. This endpoint is the deliberate exception to the
+# CR-026 default: returns the FULL latest result for the requested type
+# (and optional task filter), unfiltered by visitor.
+#
+# Privacy note: the rendered /demo cards use energy figures, model
+# labels, generated text, and produced images — all already meant to
+# be illustrative. If a future Member workflow ever runs anything
+# personally identifying, revisit the model (curated demo-pinned
+# results, redacted shape, or a `is_demo` flag).
+@app.get("/demo/last/{job_type}", dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def demo_last_result(job_type: str, task_eq: str | None = None):
+    if job_type not in ("video", "llm", "image"):
+        return JSONResponse({"error": "Invalid type"}, status_code=400)
+    runs = list_results(job_type, limit=20, visitor_key=None)
+    if task_eq:
+        runs = [r for r in runs if r.get("task") == task_eq]
+    if not runs:
+        return JSONResponse({"error": "no result"}, status_code=404)
+    full = load_result(job_type, runs[0]["job_id"], visitor_key=None)
+    if full is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return full
+
 @app.get("/results/{job_type}/{job_id}/download.json", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def results_download_json(job_type: str, job_id: str, request: Request):
     if job_type not in ("video", "llm", "image"):
@@ -5108,24 +5139,24 @@ function timeAgo(isoStr) {{
 function fmt(v, dec=2) {{ return v != null ? Number(v).toFixed(dec) : '—'; }}
 
 // ─── Previous run ─────────────────────────────────────────────────────────────
+// CR-026 carve-out: /demo loads the latest result regardless of visitor
+// via the dedicated /demo/last/{type} endpoint. Without this carve-out,
+// Anonymous visitors land on an empty guided tour because their session
+// has never produced a run.
 async function showPrevVideo() {{
   document.getElementById('video-btns').style.display = 'none';
   try {{
-    const resp = await fetch('/results/video/list');
-    const list = await resp.json();
-    if (!list || list.length === 0) {{
+    const resp = await fetch('/demo/last/video');
+    if (resp.status === 404) {{
       document.getElementById('video-status').innerHTML =
         '<p class="progress-note" style="color:var(--text-3)">No previous run on file — run one below, or skip ahead.</p>';
       document.getElementById('video-btns').style.display = 'flex';
       revealNext(1);
       return;
     }}
-    // Load full result for the most recent job
-    const meta = list[0];
-    const r2 = await fetch('/results/video/' + meta.job_id + '/download.json');
-    const full = await r2.json();
+    const full = await resp.json();
     videoResult = full;
-    renderVideoResult(full, meta.saved_at, true);
+    renderVideoResult(full, full.saved_at, true);
   }} catch(e) {{
     document.getElementById('video-btns').style.display = 'flex';
     document.getElementById('video-status').innerHTML =
@@ -5137,24 +5168,28 @@ async function showPrevVideo() {{
 async function showPrevLLM() {{
   document.getElementById('llm-btns').style.display = 'none';
   try {{
-    const resp = await fetch('/results/llm/list');
-    const list = await resp.json();
-    // RAG results persist under results/llm/ too; exclude them so the LLM
-    // step doesn't try to render a rag_compare result it can't parse
-    // (mirrors showPrevRAG's filter-in pattern).
-    const llmRuns = (list || []).filter(r => !(r.task || '').startsWith('RAG'));
-    if (!llmRuns.length) {{
+    // RAG runs persist under results/llm/ too; exclude them server-side
+    // by listing and filtering. The /demo/last/{type} endpoint returns
+    // the first run that doesn't have task starting with "RAG".
+    const resp = await fetch('/demo/last/llm');
+    if (resp.status === 404) {{
       document.getElementById('llm-status').innerHTML =
         '<p class="progress-note" style="color:var(--text-3)">No previous run on file — run one below, or skip ahead.</p>';
       document.getElementById('llm-btns').style.display = 'flex';
       revealNext(2);
       return;
     }}
-    const meta = llmRuns[0];
-    const r2 = await fetch('/results/llm/' + meta.job_id + '/download.json');
-    const full = await r2.json();
+    const full = await resp.json();
+    if ((full.task || '').startsWith('RAG')) {{
+      // Most recent llm/ entry is a RAG run — fall back to "no run".
+      document.getElementById('llm-status').innerHTML =
+        '<p class="progress-note" style="color:var(--text-3)">No previous LLM run on file — run one below, or skip ahead.</p>';
+      document.getElementById('llm-btns').style.display = 'flex';
+      revealNext(2);
+      return;
+    }}
     llmResult = full;
-    renderLLMResult(full, meta.saved_at, true);
+    renderLLMResult(full, full.saved_at, true);
   }} catch(e) {{
     document.getElementById('llm-btns').style.display = 'flex';
     document.getElementById('llm-status').innerHTML =
@@ -5165,14 +5200,30 @@ async function showPrevLLM() {{
 
 
 // ─── Run new video measurement ────────────────────────────────────────────────
+//
+// Predetermined demo job: H.265 CPU vs GPU on the 2-minute Meridian sample.
+// Bounded (~2-3 min wall time including baselines + cooldowns), demonstrates
+// the GPU advantage cleanly, and lets the visitor get to the result card
+// while the demo session is still fresh in their head. The full-Meridian +
+// both-codecs run that lived here previously was a 10-15 minute commitment,
+// which broke the guided-tour flow on the public surface. CR-033 captures
+// follow-up: offer a small set of curated demo jobs (e.g. H.265 CPU vs GPU,
+// AV1 CPU vs GPU) for visitors who want to compare codec families.
 async function runDemoVideo() {{
   document.getElementById('video-btns').style.display = 'none';
-  document.getElementById('video-status').innerHTML =
-    '<p class="progress-note">▶ Starting measurement…</p>';
+  // Show the progress widget immediately rather than a stale "Starting…"
+  // line — pollVideo's first response is up to 5s away, so the empty
+  // shell tells the visitor "yes, something is happening" right away.
+  wlRenderProgress({{
+    target: 'video-status',
+    header: 'Submitting video job…',
+    stagesHtml: wlStageList(WL_VIDEO_STAGES, 0),
+    elapsed: 0,
+  }});
   try {{
     const form = new FormData();
-    form.append('source_key', 'meridian_4k');
-    form.append('preset', 'both');
+    form.append('source_key', 'meridian_120s');
+    form.append('preset', 'h265_both');
     const resp = await fetch('/video/use-source', {{method:'POST', body:form}});
     const data = await resp.json();
     if (data.job_id) {{
@@ -5222,9 +5273,16 @@ function pollVideo(jobId, t0) {{
 // ─── Run new LLM measurement ──────────────────────────────────────────────────
 async function runDemoLLM() {{
   document.getElementById('llm-btns').style.display = 'none';
-  document.getElementById('llm-status').innerHTML =
-    '<p class="progress-note">▶ Starting measurement…</p>' +
-    '<div class="stream-box" id="stream-box"></div>';
+  // Render the progress widget immediately so the visitor sees the
+  // shell rather than a stale text line during the up-to-5s gap before
+  // pollLLM's first response.
+  wlRenderProgress({{
+    target: 'llm-status',
+    header: 'Submitting LLM job…',
+    stagesHtml: wlStageList(WL_LLM_STAGES, 0),
+    elapsed: 0,
+    extraHtml: '<div class="stream-box" id="stream-box" style="margin-top:0.75rem"></div>',
+  }});
   try {{
     const form = new FormData();
     form.append('model_key', 'mistral');
@@ -5417,20 +5475,21 @@ function resetRAGStep() {{
 async function showPrevRAG() {{
   document.getElementById('rag-btns').style.display = 'none';
   try {{
-    const resp = await fetch('/results/llm/list');
-    const list = await resp.json();
-    const ragRuns = (list || []).filter(r => r.task === 'RAG compare (3 modes)');
-    if (!ragRuns.length) {{
+    // Filter on the task field so we get the latest 3-mode-compare RAG
+    // run, not just the latest llm/ entry (which might be a single LLM
+    // inference). Same /demo carve-out endpoint as the other steps.
+    const resp = await fetch('/demo/last/llm?task_eq=' +
+      encodeURIComponent('RAG compare (3 modes)'));
+    if (resp.status === 404) {{
       document.getElementById('rag-status').innerHTML =
         '<p class="progress-note" style="color:var(--text-3)">No previous 3-mode RAG comparison on file — run one below, or skip ahead.</p>';
       document.getElementById('rag-btns').style.display = 'flex';
       revealNext(4);
       return;
     }}
-    const r2 = await fetch('/results/llm/' + ragRuns[0].job_id + '/download.json');
-    const full = await r2.json();
+    const full = await resp.json();
     ragResult = full;
-    renderRAGResult(full, ragRuns[0].saved_at, true);
+    renderRAGResult(full, full.saved_at, true);
   }} catch(e) {{
     document.getElementById('rag-btns').style.display = 'flex';
     document.getElementById('rag-status').innerHTML =
@@ -5441,7 +5500,12 @@ async function showPrevRAG() {{
 
 async function runDemoRAG() {{
   document.getElementById('rag-btns').style.display = 'none';
-  document.getElementById('rag-status').innerHTML = '<p class="progress-note">▶ Starting RAG comparison…</p>';
+  wlRenderProgress({{
+    target: 'rag-status',
+    header: 'Submitting RAG comparison…',
+    stagesHtml: wlStageList(WL_RAG_STAGES, 0),
+    elapsed: 0,
+  }});
   try {{
     const form = new FormData();
     form.append('model_key', 'mistral');
@@ -5536,8 +5600,12 @@ function renderRAGResult(r, savedAt, isPrev) {{
 // ─── Image ────────────────────────────────────────────────────────────────────
 async function runDemoImage() {{
   document.getElementById('image-btns').style.display = 'none';
-  document.getElementById('image-status').innerHTML =
-    '<p class="progress-note">Submitting…</p>';
+  wlRenderProgress({{
+    target: 'image-status',
+    header: 'Submitting image job…',
+    stagesHtml: wlStageList(WL_IMAGE_STAGES, 0),
+    elapsed: 0,
+  }});
   // No `prompt` field — server uses curated.CANONICAL_IMAGE_PROMPT, which
   // keeps the call Anonymous-OK (CR-001 capability dispatch).
   const resp = await fetch('/image/start', {{
@@ -5594,18 +5662,15 @@ async function pollDemoImage(jobId) {{
 async function showPrevImage() {{
   document.getElementById('image-btns').style.display = 'none';
   try {{
-    const resp = await fetch('/results/image/list');
-    const list = await resp.json();
-    if (!list || list.length === 0) {{
+    const resp = await fetch('/demo/last/image');
+    if (resp.status === 404) {{
       document.getElementById('image-status').innerHTML =
         '<p class="progress-note" style="color:var(--text-3)">No previous run on file — run one below, or skip ahead.</p>';
       document.getElementById('image-btns').style.display = 'flex';
       revealNext(3);
       return;
     }}
-    const meta = list[0];
-    const r2 = await fetch('/results/image/' + meta.job_id + '/download.json');
-    const full = await r2.json();
+    const full = await resp.json();
     imageResult = full;
     renderDemoImageResult(full);
   }} catch(e) {{

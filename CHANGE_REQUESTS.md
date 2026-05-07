@@ -735,6 +735,77 @@ Leverage: closes the "what about the others?" gap on every compare-mode result p
 
 ---
 
+## CR-033 · Curated demo video job selection (1–2 options)
+
+**Status:** captured 2026-05-08 (Session 23 part 6). Follow-up to today's `/demo` video step quick-fix.
+**Triggered by:** owner observation during anonymous-tier testing — `/demo` step 1's video job was hardcoded to `source=meridian_4k` + `preset=both` (full 12-minute Meridian + H.264 CPU+GPU compare = ~10–15 min wall time). For the guided tour that's a flow-breaker: visitors can't realistically wait that long, and the result card lands long after the demo session is fresh in their head. Quick-fix in Session 23 part 6 changed it to `source=meridian_120s` + `preset=h265_both` (~2–3 min, shows GPU advantage cleanly). CR-033 is the next step.
+
+### Problem
+
+A single hardcoded demo job is a UX compromise: the guided tour either picks one codec family (today: H.265) and silently skips the others, or grows toward the long-job problem we just retired. Visitors who care about codec-family comparisons (H.264 vs H.265 vs AV1 — exactly the population we want to hook for membership) get less information than the canonical Key Findings table on the methodology page.
+
+### Agreed direction (rough)
+
+Two curated demo jobs, selectable via a small chip row on `/demo` step 1:
+
+1. **H.265 CPU vs GPU on `meridian_120s`** — current default. Demonstrates the GPU advantage on a modern codec.
+2. **AV1 CPU vs GPU on `meridian_120s`** — sibling option. AV1 is the most efficient codec in the canonical findings; the demo should show it.
+
+Each runs the same `*_both` shape so renderVideoResult can stay codec-agnostic. Two chips above the run button, the second one disabled-with-lock-badge for now if we want to phase it in (or both available from day one).
+
+Out of scope for V1: AV1 GPU vs H.265 GPU side-by-side, all_codecs sweep on `/demo`, custom source selection. Those are CR-029 / CR-031 territory.
+
+### Cost / leverage
+
+Tiny — a chip-row UI on `/demo` step 1, two `runDemoVideo()` variants (or one parametrised), plus a one-line label change. Half-day including visual verification. Leverage: the demo shows a *family* of comparisons rather than a single codec, which is more useful framing for the conference visitor.
+
+### Open questions
+
+- **Default selection.** If we ship two chips, which one is on by default? H.265 (current) is safer (more familiar codec to most operators) but AV1 makes the GoS environmental story better (most efficient).
+- **Chip persistence.** Should the choice persist across the visitor's session (localStorage) or reset each load? Lean: reset — the demo is meant to be a fresh first-impression each time.
+
+---
+
+## CR-034 · Unified results card across `/demo` and the main pages
+
+**Status:** captured 2026-05-08 (Session 23 part 6). Follow-up to CR-019 (widget unification) covering the *result* phase rather than the *in-progress* phase.
+**Triggered by:** owner observation during anonymous-tier testing — `/demo`'s `renderVideoResult` / `renderLLMResult` / `renderRAGResult` / `renderDemoImageResult` are bespoke compact cards that don't include the polished elements that ship on the main pages: the CO₂e strip (S16/S18/S22), the EV-distance equivalence (S18), the 24/7 projection toggle (CR-017), the home-zone drift note (CR-030 sub-#4), the use-phase scope clarifier. Result: visitors on the guided tour see substantively different numbers and framing than visitors who navigate to `/video` / `/llm` / `/rag` / `/image` directly.
+
+### Problem
+
+Two parallel result-rendering paths exist today, mirror-image of the situation CR-019 fixed for the in-progress phase:
+
+- **Main pages** assemble a result card with `wlCarbonStrip(wh, label, durationS, savedIntensityG)` injected at the bottom of every result, scope clarifier in the header, EV equivalence and historical comparison rows in the strip's `<details>` block.
+- **`/demo`** renders a compact card with energy + confidence + scope-note only. None of the carbon work is visible.
+
+Same drift-bug class as CR-019 — when CR-030's drift note shipped, it landed on /image /video /llm /rag but not /demo. Visitors on the guided tour are missing the most credibility-building parts of OWL.
+
+### Agreed direction (rough)
+
+Single render shape across all five surfaces. Likely path:
+
+1. Lift the per-page render functions (e.g. `renderResult` on `/image`, equivalents on others) into shared helpers in `_BASE_STYLES` or a sibling `_RESULT_JS` block.
+2. `/demo`'s `renderVideoResult` etc. become thin wrappers that call the shared helper with the appropriate target.
+3. Result cards include: headline KPI row + confidence badge + carbon strip (with the full `<details>` block: comparison rows, historical rows, drift note, EV equivalence, projection toggle) + scope clarifier.
+
+Mirror of CR-019's contract: stages reuse + opts.target. The result-card equivalent is opts.target + opts.kpis + opts.modeKey + opts.savedIntensity.
+
+### Cost / leverage
+
+Larger than CR-019 — result rendering has more variation per workload (single vs both vs all_codecs vs RAG-3-mode vs image-compare) than progress rendering. Estimate: ~1 day for the lift + retrofit + visual verification across all 5 result paths × 2-4 modes each. Leverage: closes the same drift-bug class CR-019 closed for progress, on the side where the actual numbers live.
+
+### Watch-outs
+
+- **Don't break the carbon-strip URL hash state.** CR-017's projection toggle uses `history.replaceState(#continuous=1d)`. If the strip renders multiple times on a single page (e.g. the visitor runs a new job after seeing a prev-run), the hash needs to track only the *active* strip.
+- **`/demo`'s render functions read several fields the main pages don't** (e.g. inline image previews from `b64_png`). Lift those *into* the shared helper rather than special-casing /demo.
+- **Result-card unification might re-surface the resume-job lifecycle bug** that CR-019 deferred — the result card is the natural landing point after a resumed job. Pair the two if/when both ship.
+
+### Pre-conference: medium priority
+
+The /demo guided tour is the highest-traffic surface and currently the *least* polished result-rendering path. Unifying it gets the carbon framing in front of every visitor on the public funnel. Land before CR-029 (encoding rigor); the CR-029 work will need this card to display the apples-to-apples result correctly.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
