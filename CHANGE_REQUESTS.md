@@ -806,6 +806,71 @@ The /demo guided tour is the highest-traffic surface and currently the *least* p
 
 ---
 
+## CR-035 · Encode progress bar for long video jobs
+
+**Status:** captured 2026-05-08 (Session 23 part 6). Sibling to the deferred CR-019 resume-job piece — both touch `wlRenderProgress`, both are widget extensions, but the work is genuinely separable so they ship independently.
+**Triggered by:** owner — uploaded a 650 MB / ~1 hr video via Member-tier `/video/upload`. The widget shows stage + elapsed + live watts, but no "% through the encode" indicator. For an hour-long input the "Encoding" stage stays active for tens of minutes with nothing to look at except the watts ticking. Visitors on `/demo` never hit this scope (predetermined 2-min clip), but Lab and Member operators routinely do.
+
+### Problem
+
+`wlRenderProgress` displays the right *categorical* state — which stage, how many seconds elapsed, current power draw — but not the *progress through the active stage*. ffmpeg already knows: it logs `frame=…`, `time=HH:MM:SS.cc`, `speed=2.5x` to stderr on every frame. With ffprobe knowing the input duration up front, the percent-complete is one division. Today none of that flows out of `transcode()`.
+
+The same widget is the natural surface for the bar — same target, same render call, just one extra optional field.
+
+### Agreed direction (rough)
+
+**Server side — `video.py`:**
+
+1. **Read input duration once** via `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 <input>`. Cache on `jobs[job_id]["input_duration_s"]` so the UI can format the "X of Y" label without a second probe.
+2. **Switch `transcode()` from `subprocess.run` to `Popen`** with `-progress pipe:1 -nostats` appended to the cmd. ffmpeg writes structured key=value progress lines to stdout (`out_time_ms=`, `total_size=`, `speed=2.5x`, `progress=continue|end`). Read line-by-line in a worker thread.
+3. **Update job state on every progress line.** Compute:
+   - `progress_pct = (out_time_ms / 1000) / input_duration_s × 100`
+   - `encode_speed = "2.5x"` (verbatim from ffmpeg)
+   - `eta_s = (input_duration_s - out_time_ms / 1000) / float(speed)` — moving-average smoothed over the last ~30 s of samples to dampen jitter
+   Write all three to `jobs[job_id]`.
+4. **`_job_status()` already passes the full job dict to clients** (CR-019 helper), so `data.progress_pct`, `data.eta_s`, `data.encode_speed` flow through automatically — no endpoint changes needed.
+
+**Client side — `_PROGRESS_JS`:**
+
+1. **`wlRenderProgress` gains `opts.progressPct`, `opts.etaS`, `opts.encodeSpeed`.** Pure CSS thin coloured bar above the stage list when `progressPct != null`. Optional ETA + speed line below the watts readout.
+2. **The four poll loops** (main pages + `/demo`'s `pollVideo`) thread the new fields through. One-line addition per call site.
+
+### Setting shape
+
+No new settings — the parsing is operational. Optional later: a `progress_smoothing_window_s` if jitter complaints come in (default 30 s).
+
+### Cost / leverage
+
+Half-day:
+- ~1h: `transcode()` Popen rewrite + stdout/stderr split + worker thread for the progress reader.
+- ~30m: ffprobe duration helper + cache.
+- ~1h: widget progress-bar CSS + `opts.progressPct/etaS/encodeSpeed` plumbing.
+- ~30m: parse-tests (unit-test the `out_time_ms=` parser against a recorded ffmpeg progress fixture).
+- ~30m: ETA computation + smoothing.
+- ~30m: visual verification across `/video` and `/demo`.
+
+Leverage: removes the dead-end feel of long encodes on the Member surface. Especially valuable for `/video/upload` Members hitting the 1024 MB cap with hour-scale inputs (CR-001 part D's whole point).
+
+### Watch-outs
+
+- **Compare modes (CPU+GPU `*_both`) need two progress contexts.** Cleanest: one bar at a time, with a "1 of 2" label in the header. Two side-by-side bars is more polish than the v1 needs.
+- **Encode `speed=` is wall-clock-relative; jittery on a busy machine.** ETA based on a single sample will be unstable — moving average is essential, not optional.
+- **`-progress pipe:1` requires ffmpeg ≥ 3.x.** ffmpeg-master (CR-022 closure) is fine. The system `/usr/bin/ffmpeg` 6.1.1 also fine. Worth asserting `_ffmpeg_version()` is recent enough at startup; fall back to the existing no-progress path if not.
+- **all_codecs sweep runs 6 encodes back-to-back.** The bar should reset cleanly between encodes (ffmpeg writes `progress=end` then re-opens for the next).
+- **Don't lose stderr.** Today `transcode()` captures stderr for the failure-detection message. With Popen, capture both streams; only display stderr on failure.
+
+### Open questions
+
+- **Progress bar on non-video workloads?** LLM has its own per-token streaming; image gen typically completes in seconds. Probably no — but the `opts.progressPct` field is workload-agnostic so future modules could opt in.
+- **What happens on `kill -9` mid-encode?** The progress reader thread should join on Popen exit and not block the worker. Unit-test the cancellation path.
+- **ETA display threshold.** Show ETA only when `progress_pct > 5%` to avoid wildly wrong early estimates? Or always show with a wide error bar early?
+
+### Pre-conference: medium priority
+
+Not strictly blocking but a real polish item for Members operating long encodes during the launch window. Pair with CR-034 (unified results card) — the result card lands at progress=100% and benefits from the same widget context. CR-019's deferred resume-job piece is its sibling on the lifecycle side; CR-035 lives on the information side.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
