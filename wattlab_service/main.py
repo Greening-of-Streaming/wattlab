@@ -6935,10 +6935,6 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <strong>Open item (narrower than before):</strong> With ABR, the bitrate target is now equal across devices. GOP structure and profile level are not yet explicitly controlled and may differ between CPU and GPU encoder defaults &mdash; a working session with the measurement team is planned to confirm apples-to-apples output at the profile/GOP level. A second benchmark family at each codec&rsquo;s natural operating point (CRF for CPU, QP for GPU) is also on the roadmap.
   </div>
 
-  <div class="callout">
-    <strong>VAAPI surface-pool leak workaround.</strong> The VAAPI <code>scale_vaapi</code> filter chain leaks GPU surfaces over time and crashes near end-of-stream on long inputs (~7&thinsp;000+ frames at 1080p). This is reproducible in standalone <code>ffmpeg</code>; the bug is upstream. To prevent silent partial-encode contamination, every GPU command is automatically capped at <code>{GPU_ENCODE_MAX_S}</code>&thinsp;seconds of input via a <code>-t&nbsp;N</code> flag injected by <code>transcode()</code>. The cap value is configurable in Settings (<code>gpu_encode_max_s</code>) and is recorded on every result JSON as <code>gpu_capped_at_s</code> for full traceability. CPU encodes are unaffected. There is a deliberate trade-off here: too short, and the wall-time encode produces too few P110 polls (1&thinsp;Hz polling) to characterise &Delta;W reliably; too long, and the surface pool exhausts and the encode fails. The current value is set comfortably below the leak threshold while leaving room for a representative sampling window.
-  </div>
-
   <h3>LLM inference</h3>
   <p>Run a language model on a fixed prompt and measure energy per token. Three model sizes are available spanning small to large: <strong>TinyLlama 1.1B</strong>, <strong>Mistral 7B</strong>, <strong>Gemma 3 12B</strong>. Supports cold inference (model unloaded before each run, measuring load + inference cost) and warm inference (model pre-loaded, measuring steady-state cost). Batch mode runs the prompt multiple times in sequence, with a configurable rest period between iterations, and reports the aggregate. CPU vs GPU comparison is also available.</p>
   <p>Prompts are editable and saved in the result JSON. Streaming output is displayed word-by-word as proof that inference is happening live. The mWh/token metric divides total energy by total tokens generated.</p>
@@ -6956,7 +6952,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <h2 id="limits">Known Limitations</h2>
 
-  <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 temporal resolution.</strong> 1-second polling means tasks shorter than ~5 seconds produce few data points. Very fast models (e.g., TinyLlama single inference at 1&ndash;4 seconds) are at the edge of measurability. Batching mitigates this but changes what&rsquo;s being measured (batch cost, not single-inference cost). The same constraint sets the lower bound on <code>gpu_encode_max_s</code>: a cap so short that the GPU encode finishes in 3&ndash;4 seconds yields only 3&ndash;4 P110 polls per run, and the resulting per-run &Delta;W mean becomes noisy enough to inflate the GPU coefficient of variation independently of any real measurement issue.</span></div>
+  <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 temporal resolution.</strong> 1-second polling means tasks shorter than ~5 seconds produce few data points. Very fast models (e.g., TinyLlama single inference at 1&ndash;4 seconds) are at the edge of measurability. Batching mitigates this but changes what&rsquo;s being measured (batch cost, not single-inference cost). The same constraint puts a floor on any artificially-shortened encode: a workload that finishes in 3&ndash;4 seconds yields only 3&ndash;4 P110 polls, and the resulting per-run &Delta;W mean becomes noisy enough to inflate the coefficient of variation independently of any real measurement issue.</span></div>
 
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 power resolution.</strong> The Tapo P110 instrument itself reports at <strong>1&nbsp;mW</strong> resolution via direct device read, but its <strong>public HTTP API exposes only 1&nbsp;W</strong> &mdash; and the public API is what this deployment polls. The effective ~&plusmn;1&nbsp;W noise floor is therefore an API-shape limit, not a hardware limit: low-delta tasks (e.g., idle audio processing, lightweight network operations) cannot be reliably measured against it. A future direct-device path would unlock ~1000&times; finer resolution from the same plug.</span></div>
 
@@ -7024,6 +7020,5 @@ async def methodology_page():
             .replace("{CONF_YELLOW_X}",      str(s.get("variance_yellow_x",  "—")))
             .replace("{CONF_GREEN_POLLS}",   str(s.get("conf_green_polls",   "—")))
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
-            .replace("{GPU_ENCODE_MAX_S}",   str(s.get("gpu_encode_max_s",   "—")))
             .replace("{VARIANCE_RUNS}",      str(s.get("variance_runs",      "—")))
             .replace("{VARIANCE_COOLDOWN_S}",str(s.get("variance_cooldown_s","—"))))

@@ -44,13 +44,27 @@ def focus_mode_exit(stopped: list):
     with concurrent.futures.ThreadPoolExecutor() as ex:
         list(ex.map(start_unit, stopped))
 
+
+def _ffmpeg_bin() -> str:
+    return cfg.load().get("ffmpeg_bin", "ffmpeg")
+
+
+def _ffmpeg_version() -> str:
+    try:
+        out = subprocess.run([_ffmpeg_bin(), "-version"],
+                             capture_output=True, text=True, timeout=5)
+        return out.stdout.split("\n", 1)[0]
+    except Exception:
+        return "unknown"
+
+
 PRESETS = {
     "cpu": {
         "label": "H.264 CPU",
         "bitrate_key": "h264_bitrate_kbps",
         "detail_fn": lambda bps: f"libx264 · {bps} kbps ABR · 1080p · 24 cores",
         "cmd_fn": lambda i, o, bps: [
-            "ffmpeg", "-y", "-i", str(i),
+            _ffmpeg_bin(), "-y", "-i", str(i),
             "-c:v", "libx264", "-b:v", f"{bps}k",
             "-vf", "scale=-2:1080",
             "-c:a", "aac", "-b:a", "128k",
@@ -62,7 +76,7 @@ PRESETS = {
         "bitrate_key": "h264_bitrate_kbps",
         "detail_fn": lambda bps: f"h264_vaapi · {bps} kbps ABR · 1080p · full pipeline",
         "cmd_fn": lambda i, o, bps: [
-            "ffmpeg", "-y",
+            _ffmpeg_bin(), "-y",
             "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
             "-extra_hw_frames", "32",
             "-vaapi_device", "/dev/dri/renderD128",
@@ -78,7 +92,7 @@ PRESETS = {
         "bitrate_key": "h265_bitrate_kbps",
         "detail_fn": lambda bps: f"libx265 · {bps} kbps ABR · 1080p · 24 cores",
         "cmd_fn": lambda i, o, bps: [
-            "ffmpeg", "-y", "-i", str(i),
+            _ffmpeg_bin(), "-y", "-i", str(i),
             "-c:v", "libx265", "-b:v", f"{bps}k",
             "-vf", "scale=-2:1080",
             "-c:a", "aac", "-b:a", "128k",
@@ -90,7 +104,7 @@ PRESETS = {
         "bitrate_key": "h265_bitrate_kbps",
         "detail_fn": lambda bps: f"hevc_vaapi · {bps} kbps ABR · 1080p · full pipeline",
         "cmd_fn": lambda i, o, bps: [
-            "ffmpeg", "-y",
+            _ffmpeg_bin(), "-y",
             "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
             "-extra_hw_frames", "32",
             "-vaapi_device", "/dev/dri/renderD128",
@@ -106,7 +120,7 @@ PRESETS = {
         "bitrate_key": "av1_bitrate_kbps",
         "detail_fn": lambda bps: f"libsvtav1 · {bps} kbps ABR · 1080p · 24 cores",
         "cmd_fn": lambda i, o, bps: [
-            "ffmpeg", "-y", "-i", str(i),
+            _ffmpeg_bin(), "-y", "-i", str(i),
             "-c:v", "libsvtav1", "-b:v", f"{bps}k",
             "-vf", "scale=-2:1080",
             "-c:a", "aac", "-b:a", "128k",
@@ -118,7 +132,7 @@ PRESETS = {
         "bitrate_key": "av1_bitrate_kbps",
         "detail_fn": lambda bps: f"av1_vaapi · {bps} kbps ABR · 1080p · full pipeline",
         "cmd_fn": lambda i, o, bps: [
-            "ffmpeg", "-y",
+            _ffmpeg_bin(), "-y",
             "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
             "-extra_hw_frames", "32",
             "-vaapi_device", "/dev/dri/renderD128",
@@ -212,38 +226,20 @@ def build_preset_cmd(preset_key: str, input_path, output_path) -> list:
 
 
 def apply_custom_cmd(custom_cmd: str, input_path, output_path) -> list:
-    """Substitute {input}/{output} placeholders and shlex-split a custom command string."""
+    """Substitute {input}/{output} placeholders, shlex-split, and route a
+    leading bare `ffmpeg` token through the configured `ffmpeg_bin` so
+    custom commands and the variance calibration templates pick up the
+    same binary as the presets. Explicit absolute paths in the user's
+    string (e.g. `/usr/bin/ffmpeg`) are honoured as-is."""
     cmd_str = custom_cmd.replace("{input}", str(input_path)).replace("{output}", str(output_path))
-    return shlex.split(cmd_str)
-
-
-def _maybe_cap_vaapi(cmd: list) -> tuple[list, int | None]:
-    """CR-022 workaround: scale_vaapi leaks surfaces and crashes near
-    end-of-stream on long inputs (~7000+ frames at 1080p). Cap every VAAPI
-    encode at gpu_encode_max_s seconds of input by injecting -t before -i.
-
-    Detects VAAPI by the presence of "vaapi" in any arg. No-ops if -t is
-    already set (operator override) or gpu_encode_max_s is 0/missing.
-
-    Returns (modified_cmd, cap_applied_or_None).
-    """
-    if not any("vaapi" in str(a) for a in cmd):
-        return cmd, None
-    if "-t" in cmd:
-        return cmd, None
-    cap = int(cfg.load().get("gpu_encode_max_s", 0) or 0)
-    if cap <= 0:
-        return cmd, None
-    try:
-        i_idx = cmd.index("-i")
-    except ValueError:
-        return cmd, None
-    return cmd[:i_idx] + ["-t", str(cap)] + cmd[i_idx:], cap
+    parts = shlex.split(cmd_str)
+    if parts and parts[0] == "ffmpeg":
+        parts[0] = _ffmpeg_bin()
+    return parts
 
 
 def transcode(cmd: list) -> dict:
     # nice -n -5 gives ffmpeg elevated CPU scheduling priority
-    cmd, gpu_cap = _maybe_cap_vaapi(cmd)
     cmd = ["nice", "-n", "-5"] + cmd
     t_start = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -252,7 +248,7 @@ def transcode(cmd: list) -> dict:
         "success": result.returncode == 0,
         "duration_s": round(t_end - t_start, 1),
         "ffmpeg_cmd": " ".join(cmd),
-        "gpu_capped_at_s": gpu_cap,
+        "ffmpeg_version": _ffmpeg_version(),
         "stderr": result.stderr[-500:] if result.returncode != 0 else ""
     }
 
