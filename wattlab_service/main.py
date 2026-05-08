@@ -270,6 +270,59 @@ def _header_html(request: Request) -> str:
     return _auth_chip_html(request) + _BACK
 
 
+# CR-027 — early tier framing on /demo Welcome step.
+#
+# The /demo Findings step already shows the full Public/Member/Lab matrix
+# (capability table, CR-001 part B/2 + this CR's three-column refresh), but
+# visitors complete most of the tour before they get there. This indicator
+# answers "what tier am I?" up front, in plain language, with a link to
+# either upgrade (Anonymous) or read the full matrix (Member/Lab).
+#
+# Server-rendered, no JS. Different surface from the corner auth chip:
+# the chip is a status indicator + sign-in button; this is a one-line
+# explanation embedded inline in the Welcome step's reading flow.
+def _tier_indicator_html(request: Request) -> str:
+    t = audience.tier(request)
+    base_style = (
+        'display:inline-block;font-family:monospace;font-size:0.78rem;'
+        'padding:0.4rem 0.85rem;margin-bottom:1.25rem;'
+        'border:1px solid var(--border-2);background:var(--panel-2);'
+        'color:var(--text-3);line-height:1.5'
+    )
+    if t == audience.Tier.Lab:
+        return (
+            f'<div style="{base_style};border-color:var(--accent);color:var(--accent)">'
+            "▣ You're on the GoS1 lab network — "
+            '<span style="color:var(--text-3)">'
+            'Lab tier · all access (settings, calibration, custom inputs)</span>'
+            '</div>'
+        )
+    if t == audience.Tier.Member:
+        return (
+            f'<div style="{base_style}">'
+            '◆ <span style="color:var(--accent)">Signed in as a GoS member</span> · '
+            'you can drive the engine with custom prompts, custom ffmpeg commands, '
+            'all-codecs sweeps, your own corpus and uploads. '
+            '<a href="#step-6" onclick="goStep(6);return false;" '
+            'style="color:var(--text-3);border-bottom:1px solid var(--border)">'
+            'See the full capability matrix &rarr;</a></div>'
+        )
+    # Anonymous — frame the tour as the public surface, with a clear path
+    # to unlock the rest.
+    return (
+        f'<div style="{base_style}">'
+        '○ <span style="color:var(--text-2)">You\'re browsing as Anonymous</span> · '
+        'curated demo runs, live measurement, full methodology — same numbers '
+        'as members see. '
+        '<a href="/auth/sign-in" style="color:var(--accent);'
+        'border-bottom:1px solid var(--accent)">Sign in</a> '
+        'to unlock custom inputs and uploads, or '
+        '<a href="#step-6" onclick="goStep(6);return false;" '
+        'style="color:var(--text-3);border-bottom:1px solid var(--border)">'
+        'see what changes &rarr;</a></div>'
+    )
+
+
 # CR-001 part C2c — capability lock badge + dim treatment.
 #
 # Member-tier inputs (custom prompts, custom ffmpeg, all-codecs sweeps,
@@ -634,7 +687,15 @@ _CARBON_JS = """
   // the strip surfaces a drift note so the visitor understands why the
   // headline number here can differ from the per-column inline numbers
   // above (which are frozen at save time).
-  window.wlCarbonStrip = function(wh, label, durationS, savedIntensityG){
+  // CR-032: optional `subRuns` argument for compare-mode strips.
+  //   subRuns = [{label, grams, deltaWh, durationS}, ...]
+  //   - grams       : saved-snapshot CO2e (energy.co2e.grams)
+  //   - deltaWh     : per-sub-run measured Wh (energy.delta_e_wh)
+  //   - durationS   : per-sub-run wall-time (energy.delta_t_s) — used so
+  //                   the 24/7 projection multiplier scales each sub-run by
+  //                   its own duration, not the headline's
+  // Single-run callers pass null/undefined and behave unchanged.
+  window.wlCarbonStrip = function(wh, label, durationS, savedIntensityG, subRuns){
     if (wh == null || isNaN(wh)) return '';
     var elId = 'carbon-strip-' + Math.random().toString(36).slice(2,9);
     var html = '<div id="' + elId + '" class="carbon-strip" '
@@ -646,11 +707,15 @@ _CARBON_JS = """
             ? parseFloat(durationS) : null;
     var savedG = (savedIntensityG != null && !isNaN(savedIntensityG))
             ? parseFloat(savedIntensityG) : null;
-    setTimeout(function(){ _renderStrip(elId, parseFloat(wh), label || '', dur, savedG); }, 0);
+    var subs = Array.isArray(subRuns) ? subRuns.filter(function(s){
+      return s && s.label != null && s.grams != null && !isNaN(s.grams);
+    }) : null;
+    if (subs && subs.length === 0) subs = null;
+    setTimeout(function(){ _renderStrip(elId, parseFloat(wh), label || '', dur, savedG, subs); }, 0);
     return html;
   };
 
-  async function _renderStrip(elId, wh, label, durationS, savedIntensityG){
+  async function _renderStrip(elId, wh, label, durationS, savedIntensityG, subRuns){
     var el = document.getElementById(elId);
     if (!el) return;
     var d = await loadZones();
@@ -829,134 +894,419 @@ _CARBON_JS = """
       + toggleHtml
       + evHtml;
 
-    // Pinned reference row — same zone as the headline, but its static
-    // annual mean. When the headline is LIVE this gives visitors a baseline
-    // to judge whether today's grid is unusually clean or dirty for the
-    // zone. Suppressed when the headline is itself EST (no value in
-    // duplicating the same number) or if no static is configured for home.
-    // Auto-follows HOME_ZONE — if the server moves, label/intensity/year
-    // come from /carbon's static_table[home] without code changes here.
-    var referenceRowHtml = '';
-    var divergenceHtml = '';
-    if (homeLive) {
-      var refStatic = statics[home];
-      var refIntensity = refStatic && refStatic.g_per_kwh;
-      if (refIntensity != null) {
-        var refYear  = refStatic.year;
-        var refLabel = refStatic.label || home;
-        var refGrams = (displayWh / 1000) * refIntensity;
-        referenceRowHtml =
-            '<div style="display:flex;align-items:baseline;justify-content:space-between;'
-          + 'gap:0.5rem;padding:0.35rem 0.4rem;font-family:monospace;'
-          + 'background:var(--panel);border-left:2px solid var(--border-3)">'
-          + '<span style="color:var(--text-2);flex:1;min-width:140px">' + refLabel
-          + '<span title="Ember annual mean — reference baseline for the home zone" '
-          + 'style="color:var(--text-4);font-size:0.6rem;font-family:monospace;letter-spacing:0.06em;'
-          + 'padding:0.05rem 0.3rem;border:1px solid var(--border-3);border-radius:2px;'
-          + 'margin-left:0.4rem">REF</span></span>'
-          + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
-          + 'min-width:90px;text-align:right" title="' + massTitle(refGrams) + '">'
-          + fmtMass(refGrams) + '</span>'
-          + '<span style="min-width:90px"></span>'
-          + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
-          + 'min-width:160px;text-align:right">'
-          + refIntensity + ' g/kWh · ' + (refYear ? refYear + ' mean' : 'annual mean')
-          + '</span>'
+    // CR-032 (two-column variant, refined) — for compare-mode strips:
+    //   * Header + reference row (per-side data) render in side-by-side
+    //     columns at the top of <details>, where each column is narrow but
+    //     the data per side genuinely differs.
+    //   * Comparison rows ("on other grids") and historical rows render
+    //     full-width below — the intensities are the same for both sides,
+    //     only the gram totals differ, so we render one row per zone with
+    //     two mass cells side-by-side. Avoids the truncation problem of
+    //     fitting full row content into a 280-px column.
+    //
+    // For single-run, one block with all sections — back-compat.
+    //
+    // buildSideBlock now takes `compactMode`: when true, emits only the
+    // header + reference (compare-mode column); when false (single-run),
+    // emits the full set including comparison + historical.
+    function buildSideBlock(sideDisplayWh, sideLabel, isWinner, includeHeader, compactMode) {
+      var sideHomeGrams = (homeIntensity != null)
+        ? (sideDisplayWh / 1000) * homeIntensity : null;
+
+      // ── Mini per-side header (compare-mode only) ──
+      var sideHeader = '';
+      if (includeHeader) {
+        var bestTag = isWinner
+          ? '<span style="margin-left:0.4rem;font-size:0.6rem;letter-spacing:0.06em;'
+            + 'padding:0.05rem 0.3rem;border:1px solid var(--accent);color:var(--accent);'
+            + 'border-radius:2px;font-family:monospace">BEST</span>'
+          : '';
+        sideHeader =
+            '<div style="margin-bottom:0.4rem;padding-bottom:0.4rem;'
+          + 'border-bottom:1px solid var(--border-2)">'
+          + '<div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:0.4rem 0.6rem">'
+          + '<span style="color:var(--text);font-size:0.85rem;font-family:monospace;'
+          + 'font-weight:bold"' + (sideHomeGrams != null ? ' title="' + massTitle(sideHomeGrams) + '"' : '') + '>'
+          + (sideHomeGrams != null ? fmtMass(sideHomeGrams) : '—') + '</span>'
+          + bestTag
+          + '</div>'
+          + '<div style="color:var(--text-3);font-size:0.72rem;font-family:monospace;'
+          + 'margin-top:0.15rem">' + sideLabel + ' · ' + fmtEnergy(sideDisplayWh) + '</div>'
           + '</div>';
-        // Conditional divergence note — only when live deviates from the
-        // reference by ≥25%. Small day-to-day swings are noise and would
-        // just add clutter on every render.
-        if (homeIntensity != null && refIntensity > 0) {
-          var dev = (homeIntensity - refIntensity) / refIntensity;
-          if (Math.abs(dev) >= 0.25) {
-            var pctStr = (Math.abs(dev) * 100).toFixed(0) + '%';
-            var dir = dev < 0 ? 'cleaner than' : 'dirtier than';
-            divergenceHtml =
-                '<div style="padding:0.2rem 0.5rem 0.5rem;color:var(--text-3);'
-              + 'font-size:0.72rem;font-style:italic">'
-              + 'Today’s grid is ~' + pctStr + ' ' + dir + ' the '
-              + (refYear ? refYear + ' ' : '') + 'mean for this zone.'
-              + '</div>';
+      }
+
+      // ── Per-side reference row (FR REF) ──
+      // Row layout: label · mass · intensity. Trailing "·  YYYY mean" is
+      // dropped — the section heading above already says "Ember 2024
+      // annual means" so the suffix is redundant and was forcing the row
+      // wider than the parent column could accommodate.
+      var sideRefRow = '';
+      var sideDivergence = '';
+      if (homeLive) {
+        var refStaticS = statics[home];
+        var refIntensityS = refStaticS && refStaticS.g_per_kwh;
+        if (refIntensityS != null) {
+          var refYearS  = refStaticS.year;
+          var refLabelS = refStaticS.label || home;
+          var refGramsS = (sideDisplayWh / 1000) * refIntensityS;
+          sideRefRow =
+              '<div style="display:flex;align-items:baseline;justify-content:space-between;'
+            + 'gap:0.5rem;padding:0.35rem 0.4rem;font-family:monospace;'
+            + 'background:var(--panel);border-left:2px solid var(--border-3)">'
+            + '<span style="color:var(--text-2);flex:1;min-width:0;overflow:hidden;'
+            + 'text-overflow:ellipsis">' + refLabelS
+            + '<span title="Ember annual mean — reference baseline for the home zone" '
+            + 'style="color:var(--text-4);font-size:0.6rem;font-family:monospace;letter-spacing:0.06em;'
+            + 'padding:0.05rem 0.3rem;border:1px solid var(--border-3);border-radius:2px;'
+            + 'margin-left:0.4rem">REF</span></span>'
+            + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
+            + 'min-width:70px;text-align:right" title="' + massTitle(refGramsS) + '">'
+            + fmtMass(refGramsS) + '</span>'
+            + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
+            + 'min-width:60px;text-align:right" '
+            + 'title="' + refIntensityS + ' g/kWh · ' + (refYearS ? refYearS + ' annual mean' : 'annual mean') + '">'
+            + refIntensityS + ' g/kWh'
+            + '</span>'
+            + '</div>';
+          if (homeIntensity != null && refIntensityS > 0) {
+            var devS = (homeIntensity - refIntensityS) / refIntensityS;
+            if (Math.abs(devS) >= 0.25) {
+              var pctStrS = (Math.abs(devS) * 100).toFixed(0) + '%';
+              var dirS = devS < 0 ? 'cleaner than' : 'dirtier than';
+              sideDivergence =
+                  '<div style="padding:0.2rem 0.5rem 0.5rem;color:var(--text-3);'
+                + 'font-size:0.72rem;font-style:italic">'
+                + 'Today’s grid is ~' + pctStrS + ' ' + dirS + ' the '
+                + (refYearS ? refYearS + ' ' : '') + 'mean for this zone.'
+                + '</div>';
+            }
           }
         }
       }
-    }
+      var sideRefBlock = sideRefRow
+        ? ('<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
+           + 'text-transform:uppercase;margin-bottom:0.3rem">'
+           + 'For reference — typical for this zone</div>'
+           + sideRefRow + sideDivergence + '<div style="height:0.5rem"></div>')
+        : '';
 
-    // Historical rows for the home zone — same Wh, but on the lifecycle
-    // intensity that prevailed in past months. Curated dates illustrate
-    // the range of grid evolution; same compute_intensity_from_mix
-    // methodology as the live path so all numbers in this widget are
-    // directly comparable. Suppressed for non-FR home zones (no curated
-    // history yet).
-    var historicalRowsHtml = '';
-    if (history.length > 0) {
-      var histRows = history.map(function(h){
-        var grams = (displayWh / 1000) * h.g_per_kwh;
-        var ratio = (homeGrams && homeGrams > 0) ? (grams / homeGrams) : null;
+      // ── Other-grids comparison rows (per-side) ──
+      // "× home" suffix is shortened to "×" + the section heading below
+      // ("Same X kWh, on other grids (Ember 2024 annual means)") provides
+      // the year context, so the trailing "· 2024 mean" per row is dropped.
+      // Full text is preserved in tooltips for accessibility.
+      var sideComparisonRows = zones.filter(function(z){ return z !== home; }).map(function(z){
+        var s2 = statics[z] || {};
+        var intensity = s2.g_per_kwh;
+        var year      = s2.year;
+        var label_    = s2.label || z;
+        if (intensity == null) return '';
+        var grams = (sideDisplayWh / 1000) * intensity;
+        var ratio = (sideHomeGrams && sideHomeGrams > 0) ? (grams / sideHomeGrams) : null;
         var ratioStr = ratio != null
-          ? (ratio >= 1.5 ? ratio.toFixed(1) + '× now' : ratio.toFixed(2) + '× now')
+          ? (ratio >= 1.5 ? ratio.toFixed(1) + '×' : ratio.toFixed(2) + '×')
           : '';
-        var noteHtml = h.note
-          ? '<div style="color:var(--text-5);font-size:0.68rem;'
-          + 'padding:0 0.4rem 0.3rem 0.4rem;font-style:italic">'
-          + h.note + '</div>'
+        var ratioTitle = ratio != null
+          ? (ratio.toFixed(2) + '× the home-zone CO₂e for the same energy')
           : '';
         return '<div style="display:flex;align-items:baseline;justify-content:space-between;'
-             + 'gap:0.5rem;padding:0.3rem 0.4rem;font-family:monospace">'
-             + '<span style="color:var(--text-2);flex:1;min-width:140px">' + h.label + '</span>'
+             + 'gap:0.4rem;padding:0.3rem 0.4rem;font-family:monospace">'
+             + '<span style="color:var(--text-2);flex:1;min-width:0;overflow:hidden;'
+             + 'text-overflow:ellipsis;white-space:nowrap" title="' + label_ + '">' + label_ + '</span>'
              + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
-             + 'min-width:90px;text-align:right" title="' + massTitle(grams) + '">'
+             + 'min-width:70px;text-align:right" title="' + massTitle(grams) + '">'
              + fmtMass(grams) + '</span>'
              + '<span style="color:var(--text-4);font-size:0.7rem;white-space:nowrap;'
-             + 'min-width:90px;text-align:right">' + ratioStr + '</span>'
+             + 'min-width:42px;text-align:right" title="' + ratioTitle + '">' + ratioStr + '</span>'
              + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
-             + 'min-width:160px;text-align:right">'
-             + h.g_per_kwh + ' g/kWh · monthly mean'
+             + 'min-width:60px;text-align:right" '
+             + 'title="' + intensity + ' g/kWh · ' + (year ? year + ' annual mean' : 'annual mean') + '">'
+             + intensity + ' g/kWh'
+             + '</span>'
+             + '</div>';
+      }).join('');
+      var sideComparisonBlock =
+          '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
+        + 'text-transform:uppercase;margin-bottom:0.3rem">'
+        + 'Same ' + fmtEnergy(sideDisplayWh) + ', on other grids (Ember 2024 annual means)</div>'
+        + sideComparisonRows;
+
+      // ── Historical rows (per-side, FR-only) ──
+      // "· monthly mean" suffix dropped — the section heading already says
+      // "monthly means". Per-row label is the date itself which carries the
+      // temporal context.
+      var sideHistoricalRows = '';
+      if (history.length > 0) {
+        var sideHistRows = history.map(function(h){
+          var grams = (sideDisplayWh / 1000) * h.g_per_kwh;
+          var ratio = (sideHomeGrams && sideHomeGrams > 0) ? (grams / sideHomeGrams) : null;
+          var ratioStr = ratio != null
+            ? (ratio >= 1.5 ? ratio.toFixed(1) + '×' : ratio.toFixed(2) + '×')
+            : '';
+          var ratioTitle = ratio != null
+            ? (ratio.toFixed(2) + '× today\\'s home-zone CO₂e for the same energy')
+            : '';
+          var noteHtml = h.note
+            ? '<div style="color:var(--text-5);font-size:0.68rem;'
+            + 'padding:0 0.4rem 0.3rem 0.4rem;font-style:italic">'
+            + h.note + '</div>'
+            : '';
+          return '<div style="display:flex;align-items:baseline;justify-content:space-between;'
+               + 'gap:0.4rem;padding:0.3rem 0.4rem;font-family:monospace">'
+               + '<span style="color:var(--text-2);flex:1;min-width:0;overflow:hidden;'
+               + 'text-overflow:ellipsis;white-space:nowrap" title="' + h.label + '">' + h.label + '</span>'
+               + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
+               + 'min-width:70px;text-align:right" title="' + massTitle(grams) + '">'
+               + fmtMass(grams) + '</span>'
+               + '<span style="color:var(--text-4);font-size:0.7rem;white-space:nowrap;'
+               + 'min-width:42px;text-align:right" title="' + ratioTitle + '">' + ratioStr + '</span>'
+               + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
+               + 'min-width:60px;text-align:right" '
+               + 'title="' + h.g_per_kwh + ' g/kWh · monthly mean">'
+               + h.g_per_kwh + ' g/kWh'
+               + '</span>'
+               + '</div>'
+               + noteHtml;
+        }).join('');
+        sideHistoricalRows =
+            '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2)">'
+          + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
+          + 'text-transform:uppercase;margin-bottom:0.3rem">'
+          + 'Through history — same ' + fmtEnergy(sideDisplayWh) + ' on this zone’s past grids</div>'
+          + sideHistRows
+          + '<div style="color:var(--text-5);font-size:0.66rem;padding:0.4rem 0.4rem 0;'
+          + 'font-style:italic;line-height:1.5">'
+          + 'Same lifecycle methodology as the live number above (Eco2mix consolidated '
+          + '× IPCC AR6 factors). Curated dates illustrate the range of grid '
+          + 'evolution; not exhaustive.'
+          + '</div>'
+          + '</div>';
+      }
+
+      // In compactMode (compare-mode columns), only the per-side bits
+      // (header + reference). The shared comparison + historical sections
+      // render full-width below the columns via buildSharedRows.
+      if (compactMode) return sideHeader + sideRefBlock;
+      return sideHeader + sideRefBlock + sideComparisonBlock + sideHistoricalRows;
+    }
+
+    // ── Shared comparison + historical rows for compare-mode ──
+    // Renders one row per zone (or date) with N mass cells side-by-side —
+    // one per sub-run. Intensities are identical for both sides, so they
+    // appear once at the right; mass cells are stacked left-to-right and
+    // each tagged with which side it belongs to via tooltip + small caption.
+    function buildSharedRows(sortedSubsRaw, zonesList, isHistorical) {
+      // Compute each sub-run's projected Wh + label up front.
+      var subs = sortedSubsRaw.map(function(s){
+        var sDur = (s.durationS != null && !isNaN(s.durationS) && s.durationS > 0)
+                   ? parseFloat(s.durationS) : null;
+        var sMul = (sDur != null) ? continuousMul(continuousKey, sDur) : 1;
+        var sideWh = (s.deltaWh != null && !isNaN(s.deltaWh))
+                     ? parseFloat(s.deltaWh) * sMul : 0;
+        return {label: s.label, displayWh: sideWh};
+      });
+      // Column-header row above the data — labels each mass cell so
+      // visitors don't have to remember which side is which.
+      var headerCells = subs.map(function(s){
+        return '<span style="flex:0 0 80px;text-align:right;color:var(--text-5);'
+             + 'font-size:0.62rem;letter-spacing:0.06em;text-transform:uppercase">'
+             + s.label.split('·')[0].trim().split(' ')[0] // first token, e.g. "SDXL-Turbo" or "CPU"
+             + '</span>';
+      }).join('');
+      var headerRow =
+          '<div style="display:flex;align-items:baseline;gap:0.4rem;padding:0 0.4rem 0.25rem">'
+        + '<span style="flex:1;min-width:0"></span>'
+        + headerCells
+        + '<span style="flex:0 0 42px"></span>'
+        + '<span style="flex:0 0 60px"></span>'
+        + '</div>';
+      // Per-zone (or per-date) row.
+      var rows = zonesList.map(function(item){
+        var intensity = item.intensity;
+        var label_    = item.label;
+        var note      = item.note || '';
+        if (intensity == null) return '';
+        // One mass cell per sub-run.
+        var massCells = subs.map(function(s){
+          var grams = (s.displayWh / 1000) * intensity;
+          return '<span title="' + s.label + ': ' + massTitle(grams) + '" '
+               + 'style="flex:0 0 80px;text-align:right;color:var(--text);'
+               + 'white-space:nowrap;font-weight:bold">'
+               + fmtMass(grams) + '</span>';
+        }).join('');
+        // Ratio is the same for every sub-run (mass_x / mass_home reduces
+        // to intensity_x / intensity_home), so render once.
+        var ratioBase = isHistorical ? homeIntensity : homeIntensity;
+        var ratio = (ratioBase > 0 && intensity != null) ? (intensity / ratioBase) : null;
+        var ratioStr = ratio != null
+          ? (ratio >= 1.5 ? ratio.toFixed(1) + '×' : ratio.toFixed(2) + '×')
+          : '';
+        var ratioTitle = ratio != null
+          ? (isHistorical
+              ? (ratio.toFixed(2) + '× the current home-zone intensity')
+              : (ratio.toFixed(2) + '× the home-zone intensity'))
+          : '';
+        var noteHtml = note
+          ? '<div style="color:var(--text-5);font-size:0.68rem;'
+          + 'padding:0 0.4rem 0.3rem 0.4rem;font-style:italic">' + note + '</div>'
+          : '';
+        return '<div style="display:flex;align-items:baseline;gap:0.4rem;'
+             + 'padding:0.3rem 0.4rem;font-family:monospace">'
+             + '<span style="color:var(--text-2);flex:1;min-width:0;'
+             + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap" '
+             + 'title="' + label_ + '">' + label_ + '</span>'
+             + massCells
+             + '<span style="color:var(--text-4);font-size:0.7rem;'
+             + 'flex:0 0 42px;text-align:right" title="' + ratioTitle + '">' + ratioStr + '</span>'
+             + '<span style="color:var(--text-5);font-size:0.7rem;'
+             + 'flex:0 0 60px;text-align:right" '
+             + 'title="' + intensity + ' g/kWh">'
+             + intensity + ' g/kWh'
              + '</span>'
              + '</div>'
              + noteHtml;
       }).join('');
-      historicalRowsHtml =
-          '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2)">'
-        + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
-        + 'text-transform:uppercase;margin-bottom:0.3rem">'
-        + 'Through history — same ' + fmtEnergy(displayWh) + ' on this zone’s past grids</div>'
-        + histRows
-        + '<div style="color:var(--text-5);font-size:0.66rem;padding:0.4rem 0.4rem 0;'
-        + 'font-style:italic;line-height:1.5">'
-        + 'Same lifecycle methodology as the live number above (Eco2mix consolidated '
-        + '× IPCC AR6 factors). Curated dates illustrate the range of grid '
-        + 'evolution; not exhaustive.'
-        + '</div>'
-        + '</div>';
+      return headerRow + rows;
     }
 
-    // Comparison rows + provenance go inside a collapsed <details>.
-    var comparisonRows = zones.filter(function(z){ return z !== home; }).map(function(z){
-      var s = statics[z] || {};
-      var intensity = s.g_per_kwh;
-      var year      = s.year;
-      var label_    = s.label || z;
-      if (intensity == null) return '';
-      var grams = (displayWh / 1000) * intensity;
-      var ratio = (homeGrams && homeGrams > 0) ? (grams / homeGrams) : null;
-      var ratioStr = ratio != null
-        ? (ratio >= 1.5 ? ratio.toFixed(1) + '× home' : ratio.toFixed(2) + '× home')
-        : '';
-      return '<div style="display:flex;align-items:baseline;justify-content:space-between;'
-           + 'gap:0.5rem;padding:0.3rem 0.4rem;font-family:monospace">'
-           + '<span style="color:var(--text-2);flex:1;min-width:140px">' + label_ + '</span>'
-           + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
-           + 'min-width:90px;text-align:right" title="' + massTitle(grams) + '">'
-           + fmtMass(grams) + '</span>'
-           + '<span style="color:var(--text-4);font-size:0.7rem;white-space:nowrap;'
-           + 'min-width:90px;text-align:right">' + ratioStr + '</span>'
-           + '<span style="color:var(--text-5);font-size:0.7rem;white-space:nowrap;'
-           + 'min-width:160px;text-align:right">'
-           + intensity + ' g/kWh · ' + (year ? year + ' mean' : 'annual mean')
-           + '</span>'
-           + '</div>';
-    }).join('');
+    // Compare-mode detection. Two distinct layouts:
+    //   * N=2 (CPU vs GPU, small vs large): two narrow side columns
+    //     (header + reference) + shared two-mass rows below.
+    //   * N≥3 (all_codecs sweep): a single per-mode breakdown ladder,
+    //     plus a single comparison + historical section against the
+    //     winner's energy. The two-mass-cell row layout doesn't scale
+    //     past 2 sub-runs — six mass cells per row eats the city label
+    //     and confuses the codec-side header (H.265/AV1/H.264 each
+    //     appear twice for CPU and GPU, with no easy way to disambiguate).
+    var compareMode = Array.isArray(subRuns) && subRuns.length >= 2;
+    var detailsContent;
+    if (compareMode) {
+      // Sort sub-runs by saved grams so the winner lands first.
+      var sortedSubs = subRuns.slice().sort(function(a, b){
+        return parseFloat(a.grams) - parseFloat(b.grams);
+      });
+
+      if (sortedSubs.length === 2) {
+        // ── Two-sub-run layout: side columns + shared two-mass rows ──
+        var sideColumnsHtml = sortedSubs.map(function(s, i){
+          var sDur = (s.durationS != null && !isNaN(s.durationS) && s.durationS > 0)
+                     ? parseFloat(s.durationS) : null;
+          var sMul = (sDur != null) ? continuousMul(continuousKey, sDur) : 1;
+          var sideWh = (s.deltaWh != null && !isNaN(s.deltaWh))
+                       ? parseFloat(s.deltaWh) * sMul : 0;
+          var blockHtml = buildSideBlock(sideWh, s.label, /*isWinner=*/i === 0,
+                                         /*includeHeader=*/true, /*compactMode=*/true);
+          return '<div style="flex:1;min-width:240px;padding:0.5rem 0.6rem;'
+               + 'border:1px solid var(--border-2);background:var(--panel)">'
+               + blockHtml + '</div>';
+        }).join('');
+        var compZones = zones.filter(function(z){ return z !== home; }).map(function(z){
+          var s2 = statics[z] || {};
+          return {label: s2.label || z, intensity: s2.g_per_kwh, year: s2.year};
+        });
+        var sharedComparison = buildSharedRows(sortedSubs, compZones, false);
+        var sharedHistoricalRows = '';
+        if (history.length > 0) {
+          var histItems = history.map(function(h){
+            return {label: h.label, intensity: h.g_per_kwh, note: h.note};
+          });
+          sharedHistoricalRows = buildSharedRows(sortedSubs, histItems, true);
+        }
+        var subWhSummary = sortedSubs.map(function(s){
+          var sDur = (s.durationS != null && !isNaN(s.durationS) && s.durationS > 0)
+                     ? parseFloat(s.durationS) : null;
+          var sMul = (sDur != null) ? continuousMul(continuousKey, sDur) : 1;
+          var sideWh = (s.deltaWh != null && !isNaN(s.deltaWh))
+                       ? parseFloat(s.deltaWh) * sMul : 0;
+          return fmtEnergy(sideWh) + ' (' + s.label.split('·')[0].trim().split(' ')[0] + ')';
+        }).join(' / ');
+        var compHeading =
+            '<div style="margin-top:0.6rem;color:var(--text-5);font-size:0.65rem;'
+          + 'letter-spacing:0.04em;text-transform:uppercase;margin-bottom:0.3rem">'
+          + 'Same energy (' + subWhSummary + '), on other grids (Ember 2024 annual means)'
+          + '</div>';
+        var histHeading = sharedHistoricalRows
+          ? ('<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2);'
+             + 'color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
+             + 'text-transform:uppercase;margin-bottom:0.3rem">'
+             + 'Through history — same energy on this zone’s past grids</div>')
+          : '';
+        var histCaption = sharedHistoricalRows
+          ? ('<div style="color:var(--text-5);font-size:0.66rem;padding:0.4rem 0.4rem 0;'
+             + 'font-style:italic;line-height:1.5">'
+             + 'Same lifecycle methodology as the live number above (Eco2mix consolidated '
+             + '× IPCC AR6 factors). Curated dates illustrate the range of grid '
+             + 'evolution; not exhaustive.</div>')
+          : '';
+        detailsContent =
+            '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.6rem">'
+          + sideColumnsHtml
+          + '</div>'
+          + compHeading
+          + sharedComparison
+          + histHeading
+          + sharedHistoricalRows
+          + histCaption;
+      } else {
+        // ── 3+ sub-runs (all_codecs): per-mode list + winner comparison ──
+        // The per-mode list shows each sub-run's mass + ratio-vs-best + Wh
+        // in a single readable column. The comparison + historical rows
+        // below it are computed against the winner only — the linear
+        // relationship (mass = Wh × intensity / 1000) means visitors can
+        // mentally scale to any other sub-run from the per-mode list above.
+        var subRows = sortedSubs.map(function(s){
+          var sDur = (s.durationS != null && !isNaN(s.durationS) && s.durationS > 0)
+                     ? parseFloat(s.durationS) : null;
+          var sMul = (sDur != null) ? continuousMul(continuousKey, sDur) : 1;
+          var sGrams = parseFloat(s.grams) * sMul;
+          var sWh = (s.deltaWh != null && !isNaN(s.deltaWh))
+                    ? parseFloat(s.deltaWh) * sMul : null;
+          return {label: s.label, grams: sGrams, wh: sWh};
+        });
+        var bestGrams = subRows[0].grams;
+        // Wh column dropped — already in the per-codec matrix above the
+        // strip. Per-mode breakdown is the carbon view: label · CO₂e mass
+        // · ratio-vs-best only.
+        var perModeRowsHtml = subRows.map(function(s, i){
+          var ratio = (bestGrams > 0) ? (s.grams / bestGrams) : null;
+          var ratioStr = (ratio != null && i > 0)
+            ? (ratio >= 1.5 ? ratio.toFixed(1) + '× best' : ratio.toFixed(2) + '× best')
+            : (i === 0 ? 'best' : '');
+          return '<div style="display:flex;align-items:baseline;justify-content:space-between;'
+               + 'gap:0.4rem;padding:0.3rem 0.4rem;font-family:monospace">'
+               + '<span style="color:var(--text-2);flex:1;min-width:0;'
+               + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap" '
+               + 'title="' + s.label + '">' + s.label + '</span>'
+               + '<span style="color:var(--text);white-space:nowrap;font-weight:bold;'
+               + 'min-width:90px;text-align:right" title="' + massTitle(s.grams) + '">'
+               + fmtMass(s.grams) + '</span>'
+               + '<span style="color:var(--text-4);font-size:0.7rem;white-space:nowrap;'
+               + 'min-width:80px;text-align:right">' + ratioStr + '</span>'
+               + '</div>';
+        }).join('');
+        var perModeBlockHtml =
+            '<div style="margin-bottom:0.6rem">'
+          + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
+          + 'text-transform:uppercase;margin-bottom:0.3rem">'
+          + 'Per-mode breakdown — ' + sortedSubs.length + ' sub-runs sorted by CO₂e</div>'
+          + perModeRowsHtml
+          + '</div>';
+        // The single-best comparison + history block uses the headline
+        // displayWh (= winner's projected Wh).
+        var winnerCaption =
+            '<div style="color:var(--text-5);font-size:0.65rem;font-style:italic;'
+          + 'margin-bottom:0.5rem;padding:0 0.4rem">'
+          + 'Comparison rows below use the winner (' + (sortedSubs[0].label || 'best') + ') · '
+          + 'others scale linearly from the per-mode list above.'
+          + '</div>';
+        detailsContent =
+            perModeBlockHtml
+          + winnerCaption
+          + buildSideBlock(displayWh, label || '', false, false, false);
+      }
+    } else {
+      detailsContent = buildSideBlock(displayWh, label || '', false, false, false);
+    }
 
     // Optional: live French production mix (Eco2mix only). Sums positive
     // sources, shows top contributors by share. Hidden if mix_mw absent.
@@ -1036,18 +1386,6 @@ _CARBON_JS = """
       + 'Raw module status: <a href="/carbon" style="color:var(--text-3)">/carbon</a>'
       + '</div>';
 
-    // Reference-row block: the pinned home-zone EST row + its divergence
-    // note, prefixed with a small heading so visitors read it as
-    // "baseline for the headline above" rather than another comparison.
-    var referenceBlockHtml = referenceRowHtml
-      ? ('<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
-         + 'text-transform:uppercase;margin-bottom:0.3rem">'
-         + 'For reference — typical for this zone</div>'
-         + referenceRowHtml
-         + divergenceHtml
-         + '<div style="height:0.5rem"></div>')
-      : '';
-
     el.innerHTML =
         estimateCaption
       + headlineHtml
@@ -1058,12 +1396,7 @@ _CARBON_JS = """
       + 'If this had run elsewhere · or in past years · how this is calculated'
       + '</summary>'
       + '<div style="margin-top:0.5rem">'
-      + referenceBlockHtml
-      + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
-      + 'text-transform:uppercase;margin-bottom:0.3rem">'
-      + 'Same ' + fmtEnergy(displayWh) + ', on other grids (Ember 2024 annual means)</div>'
-      + comparisonRows
-      + historicalRowsHtml
+      + detailsContent
       + mixHtml
       + formulaHtml
       + '</div>'
@@ -1078,7 +1411,7 @@ _CARBON_JS = """
       if (sel) {
         sel.addEventListener('change', function(){
           writeContinuousHash(sel.value);
-          _renderStrip(elId, wh, label, durationS, savedIntensityG);
+          _renderStrip(elId, wh, label, durationS, savedIntensityG, subRuns);
         });
       }
     }
@@ -1267,6 +1600,550 @@ var WL_VIDEO_STAGES = ['Baseline', 'Encoding', 'Cooldown', 'Complete'];
 var WL_LLM_STAGES   = ['Baseline', 'Inference running', 'Complete'];
 var WL_IMAGE_STAGES = ['Baseline', 'Generating image', 'Complete'];
 var WL_RAG_STAGES   = ['Baseline poll', 'Inference running', 'Complete'];
+</script>"""
+
+
+
+# CR-034 Phase A \u2014 shared compact-result-card helpers.
+#
+# Lifted from /demo's bespoke renderers so the four workload result cards
+# (video, llm, rag, image) live in a single source of truth. /demo's
+# wrappers call into these; CR-034 Phase B (prev-row click-to-expand on
+# /video /llm /rag /image) reuses the same helpers to render expanded
+# rows. Future drift-bug class \u2014 when a polish item ships on the main
+# pages but not /demo (CR-019 lifecycle, CR-030 drift note) \u2014 is closed
+# at the architectural level.
+#
+# Contract: every helper takes `{result, isPrev, savedAt}` and RETURNS an
+# HTML string. No DOM mutation inside \u2014 callers decide where to render.
+# Confidence flag, prompt blockquote, carbon strip (with sub-runs +
+# drift note + projection toggle + EV equivalence), scope clarifier are
+# all standard surface; pages can't accidentally drop one when they
+# render through these helpers.
+_RESULT_JS = """<script>
+(function(){
+  // Local fmt \u2014 independent of /demo's `fmt` so the helpers work on any
+  // page. Number formatting only; nulls render as em-dash.
+  function _f(v, dp){
+    if (v === null || v === undefined) return '\u2014';
+    if (typeof v === 'number' && !isFinite(v)) return '\u2014';
+    return Number(v).toFixed(dp);
+  }
+  function _ago(iso){
+    if (!iso) return 'recently';
+    var diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (!isFinite(diff) || diff < 0) return 'recently';
+    if (diff < 60)    return Math.floor(diff) + 's ago';
+    if (diff < 3600)  return Math.floor(diff/60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    return Math.floor(diff/86400) + 'd ago';
+  }
+  function _prevNote(isPrev, savedAt){
+    return isPrev
+      ? '<p class="prev-note">\u21a9 Previous run \u00b7 ' + _ago(savedAt) + '</p>'
+      : '';
+  }
+  function _promptBlock(prompt, taskLabel, label){
+    if (!prompt) return '';
+    var lbl = label || (taskLabel ? taskLabel : 'Prompt');
+    return '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;'
+         + 'margin-bottom:0.85rem;border-left:2px solid var(--border-2);'
+         + 'padding-left:0.7rem">'
+         + '<span style="color:var(--text-4);font-style:normal">' + lbl + ':</span> '
+         + '"' + prompt + '"</div>';
+  }
+
+  // \u2500\u2500\u2500 Video \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  window.wlRenderVideoCard = function(opts){
+    var r = (opts && opts.result) || {};
+    var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
+    if (r.mode === 'all_codecs') {
+      // 3 codecs \u00d7 2 sides = 6 sub-runs. Compact matrix + carbon strip.
+      // The /video page renders a richer per-codec collapsible breakdown
+      // for fresh runs; this lifted helper is the prev-row / cross-page
+      // version, so it sticks to the matrix.
+      var codecs = r.codecs || {};
+      var a = r.analysis || {};
+      var codecOrder = [['h264','H.264'],['h265','H.265'],['av1','AV1']];
+      var rows = '';
+      var subRuns = [];
+      var bestE = null, bestLabel = null;
+      codecOrder.forEach(function(co){
+        var key = co[0], lbl = co[1];
+        var c = codecs[key];
+        if (!c) return;
+        var ca = c.analysis || {};
+        ['cpu','gpu'].forEach(function(side){
+          var sub = c[side];
+          if (!sub || !sub.energy) return;
+          var e = sub.energy;
+          var sideLbl = side.toUpperCase();
+          var isWinner = ca.energy_winner === sideLbl;
+          var isFastest = ca.speed_winner === sideLbl;
+          var conf = (e.confidence && e.confidence.flag) || '';
+          rows += '<tr>'
+                + '<td style="text-align:left;color:var(--text);padding:0.3rem 0.5rem">'
+                + lbl + ' ' + sideLbl + '</td>'
+                + '<td style="text-align:right;padding:0.3rem 0.5rem">'
+                + _f(e.delta_t_s,1) + 's' + (isFastest ? ' \U0001F3C1' : '') + '</td>'
+                + '<td style="text-align:right;color:' + (isWinner?'var(--accent)':'var(--text-3)')
+                + ';padding:0.3rem 0.5rem">'
+                + _f(e.delta_e_wh,4) + ' Wh' + (isWinner ? ' \u2713' : '') + '</td>'
+                + '<td style="text-align:right;color:var(--text-3);padding:0.3rem 0.5rem">'
+                + _f(sub.output_size_mb,2) + ' MB</td>'
+                + '<td style="text-align:center;padding:0.3rem 0.5rem">' + conf + '</td>'
+                + '</tr>';
+          if (e.co2e) {
+            subRuns.push({label: sub.preset_label || (lbl + ' ' + sideLbl),
+                          grams: e.co2e.grams,
+                          deltaWh: e.delta_e_wh,
+                          durationS: e.delta_t_s});
+          }
+        });
+      });
+      // Strip uses the most-efficient sub-run's energy as the headline.
+      if (a.most_efficient && a.most_efficient.codec && a.most_efficient.side) {
+        var mc = (codecs[a.most_efficient.codec] || {})[a.most_efficient.side];
+        if (mc && mc.energy) { bestE = mc.energy; bestLabel = a.most_efficient.label; }
+      }
+      var stripWh = bestE ? bestE.delta_e_wh : null;
+      var stripDur = bestE ? bestE.delta_t_s : null;
+      var stripSavedG = bestE && bestE.co2e && bestE.co2e.intensity
+        ? bestE.co2e.intensity.g_per_kwh : null;
+      var stripLabel = (bestLabel || 'Most efficient')
+        + ' \u00b7 most efficient codec across all comparisons';
+      // Highlights — mirrors /video's fresh-run renderAllCodecs framing
+      // since analysis.finding is empty for all_codecs results.
+      var highlightsHtml = '';
+      if (a.most_efficient || a.fastest) {
+        var partsH = [];
+        if (a.most_efficient) {
+          partsH.push('<span>⚡ Most efficient: <span style="color:var(--accent)">'
+                    + a.most_efficient.label + ' (' + a.most_efficient.delta_e_wh + ' Wh)</span></span>');
+        }
+        if (a.fastest) {
+          partsH.push('<span>\U0001F3C1 Fastest: <span style="color:var(--accent)">'
+                    + a.fastest.label + ' (' + a.fastest.delta_t_s + 's)</span></span>');
+        }
+        highlightsHtml = '<div style="display:flex;gap:1.5rem;flex-wrap:wrap;'
+                       + 'font-size:0.85rem;margin-bottom:0.75rem">'
+                       + partsH.join('') + '</div>';
+      }
+      html += '<div class="result-card">'
+            + (a.finding ? '<p class="headline">' + a.finding + '</p>' : '')
+            + highlightsHtml
+            + '<table style="width:100%;border-collapse:collapse;font-size:0.82rem;'
+            + 'font-family:monospace;margin-bottom:0.5rem">'
+            + '<thead><tr style="color:var(--text-4);font-size:0.7rem;'
+            + 'text-transform:uppercase;letter-spacing:0.05em">'
+            + '<th style="text-align:left;padding:0.3rem 0.5rem 0.5rem 0">Codec \u00b7 side</th>'
+            + '<th style="text-align:right;padding:0.3rem 0.5rem">Time</th>'
+            + '<th style="text-align:right;padding:0.3rem 0.5rem">Energy</th>'
+            + '<th style="text-align:right;padding:0.3rem 0.5rem">Output</th>'
+            + '<th style="text-align:center;padding:0.3rem 0.5rem">Conf</th>'
+            + '</tr></thead>'
+            + '<tbody>' + rows + '</tbody>'
+            + '</table>'
+            + '<div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.5rem">'
+            + '\u2713 energy winner per codec \u00b7 \U0001F3C1 speed winner per codec</div>'
+            + (stripWh != null
+                ? wlCarbonStrip(stripWh, stripLabel, stripDur, stripSavedG, subRuns)
+                : '')
+            + '<p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>'
+            + '</div>';
+      return html;
+    }
+    if (r.mode === 'both') {
+      var cpu = r.cpu || {}, gpu = r.gpu || {}, a = r.analysis || {};
+      var ce = cpu.energy, ge = gpu.energy;
+      if (!ce || !ge) return html + '<p style="color:var(--text-3)">Comparison result missing energy block.</p>';
+      var winner = a.energy_winner;
+      var bestE = (ce.delta_e_wh <= ge.delta_e_wh) ? ce : ge;
+      var bestSide = (ce.delta_e_wh <= ge.delta_e_wh) ? 'CPU' : 'GPU';
+      var bestSavedG = bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
+      var stripLabel = (cpu.preset_label || 'Video transcode') + ' \u00b7 best of CPU vs GPU (' + bestSide + ')';
+      var subRuns = [
+        {label: (cpu.preset_label || 'CPU') + ' \u00b7 CPU', e: ce},
+        {label: (gpu.preset_label || 'GPU') + ' \u00b7 GPU', e: ge}
+      ].filter(function(s){ return s.e && s.e.co2e; }).map(function(s){
+        return {label: s.label, grams: s.e.co2e.grams,
+                deltaWh: s.e.delta_e_wh, durationS: s.e.delta_t_s};
+      });
+      html += '<div class="result-card">'
+            + '<p class="headline">' + (a.finding || '') + '</p>'
+            + '<div class="kpi-row">'
+            +   '<div class="kpi"><div class="val">' + _f(ce.delta_e_wh,4) + ' Wh</div>'
+            +     '<div class="lbl">CPU energy ' + (winner==='CPU'?'\u2713 winner':'') + '</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(ge.delta_e_wh,4) + ' Wh</div>'
+            +     '<div class="lbl">GPU energy ' + (winner==='GPU'?'\u2713 winner':'') + '</div></div>'
+            +   '<div class="kpi"><div class="val">' + ce.delta_t_s + 's / ' + ge.delta_t_s + 's</div>'
+            +     '<div class="lbl">Encode time CPU / GPU</div></div>'
+            + '</div>'
+            + '<div class="conf-badge">' + (ce.confidence && ce.confidence.flag) + ' CPU \u00b7 '
+            + (ge.confidence && ge.confidence.flag) + ' GPU \u00b7 ' + (a.confidence_note || '') + '</div>'
+            + wlCarbonStrip(bestE.delta_e_wh, stripLabel, bestE.delta_t_s, bestSavedG, subRuns)
+            + '<p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>'
+            + '</div>';
+    } else {
+      var res = r.result || r;
+      var e = res.energy;
+      if (!e) return html + '<p style="color:var(--text-3)">Result format not recognised.</p>';
+      var savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
+      html += '<div class="result-card">'
+            + '<p class="headline">' + (res.preset_label || 'Video') + ': '
+            + e.delta_e_wh + ' Wh \u00b7 ' + e.delta_t_s + 's</p>'
+            + '<div class="kpi-row">'
+            +   '<div class="kpi"><div class="val">' + e.delta_e_wh + ' Wh</div><div class="lbl">Energy delta</div></div>'
+            +   '<div class="kpi"><div class="val">' + e.delta_w + ' W</div><div class="lbl">Power delta</div></div>'
+            +   '<div class="kpi"><div class="val">' + e.delta_t_s + 's</div><div class="lbl">Duration</div></div>'
+            + '</div>'
+            + '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</div>'
+            + wlCarbonStrip(e.delta_e_wh, res.preset_label || 'Video transcode', e.delta_t_s, savedG)
+            + '</div>';
+    }
+    return html;
+  };
+
+  // \u2500\u2500\u2500 LLM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  window.wlRenderLLMCard = function(opts){
+    var r = (opts && opts.result) || {};
+    var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
+    if (r.mode === 'both') {
+      var ce = r.cpu && r.cpu.energy, ge = r.gpu && r.gpu.energy;
+      var ci = r.cpu && r.cpu.inference, gi = r.gpu && r.gpu.inference;
+      var a = r.analysis || {};
+      var bestE = (ce && ge) ? (ce.delta_e_wh <= ge.delta_e_wh ? ce : ge) : (ce || ge);
+      var bestSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
+      var subRuns = [
+        {label: (r.model_label || '') + ' \u00b7 CPU', e: ce},
+        {label: (r.model_label || '') + ' \u00b7 GPU', e: ge}
+      ].filter(function(s){ return s.e && s.e.co2e; }).map(function(s){
+        return {label: s.label, grams: s.e.co2e.grams,
+                deltaWh: s.e.delta_e_wh, durationS: s.e.delta_t_s};
+      });
+      html += '<div class="result-card">'
+            + '<p class="headline">' + (a.finding || '') + '</p>'
+            + _promptBlock(r.prompt, r.task_label)
+            + '<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1rem">'
+            +   '<div style="flex:1;min-width:180px">'
+            +     '<div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;'
+            +     'letter-spacing:0.05em;margin-bottom:0.5rem">CPU</div>'
+            +     '<div class="kpi-row">'
+            +       '<div class="kpi"><div class="val">' + _f(ce && ce.mwh_per_token,4) + '</div><div class="lbl">mWh/token</div></div>'
+            +       '<div class="kpi"><div class="val">' + _f(ci && ci.tokens_per_sec,1) + '</div><div class="lbl">tok/s</div></div>'
+            +     '</div>'
+            +   '</div>'
+            +   '<div style="flex:1;min-width:180px">'
+            +     '<div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;'
+            +     'letter-spacing:0.05em;margin-bottom:0.5rem">GPU</div>'
+            +     '<div class="kpi-row">'
+            +       '<div class="kpi"><div class="val">' + _f(ge && ge.mwh_per_token,4) + '</div><div class="lbl">mWh/token</div></div>'
+            +       '<div class="kpi"><div class="val">' + _f(gi && gi.tokens_per_sec,1) + '</div><div class="lbl">tok/s</div></div>'
+            +     '</div>'
+            +   '</div>'
+            + '</div>'
+            + '<div class="conf-badge">' + (ce ? ce.confidence.flag : '') + ' CPU \u00b7 '
+            + (ge ? ge.confidence.flag : '') + ' GPU \u00b7 ' + (r.model_label || '') + '</div>'
+            + (bestE
+                ? wlCarbonStrip(bestE.delta_e_wh, (r.model_label || '') + ' \u00b7 best of CPU vs GPU',
+                                bestE.delta_t_s, bestSavedG, subRuns)
+                : '')
+            + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
+            + '</div>';
+    } else {
+      // single or batch summary
+      var e = r.energy;
+      var inf = r.inference;
+      if (!e && r.runs && r.runs.length) {
+        e = r.runs[r.runs.length-1].energy;
+        inf = r.runs[r.runs.length-1].inference;
+      }
+      if (!e && r.summary) {
+        e = { mwh_per_token: r.summary.mwh_per_token_mean,
+              delta_e_wh: r.summary.delta_e_wh_mean,
+              confidence: {flag:'\u2014', label:'see runs'},
+              delta_w: null, delta_t_s: null };
+        inf = { tokens_per_sec: r.summary.tokens_per_sec_mean,
+                output_tokens: '\u2014', response: '' };
+      }
+      if (!e) return html + '<p class="progress-note" style="color:var(--text-3)">Result format not recognised \u2014 run a new measurement.</p>';
+      // Use JS-side escape pair for U+1F321 (thermometer) so the Python
+      // source stays ASCII-safe; raw emoji round-trips as a Python
+      // surrogate pair which can't UTF-8-encode in the response.
+      var modeNote = r.warm ? '\\uD83C\\uDF21 Warm' : '\\u2744 Cold';
+      var savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
+      var stripLabel = (r.model_label || '') + (r.task_label ? ' \u00b7 ' + r.task_label : '');
+      html += '<div class="result-card">'
+            + _promptBlock(r.prompt, r.task_label)
+            + '<div class="kpi-row">'
+            +   '<div class="kpi"><div class="val">' + _f(e.mwh_per_token,4) + '</div><div class="lbl">mWh / token</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(inf && inf.tokens_per_sec,1) + '</div><div class="lbl">tokens / sec</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(e.delta_e_wh,4) + ' Wh</div><div class="lbl">total energy</div></div>'
+            +   '<div class="kpi"><div class="val">' + (inf ? inf.output_tokens : '\u2014') + '</div><div class="lbl">output tokens</div></div>'
+            + '</div>'
+            + '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + ' \u00b7 '
+            + (r.model_label || '') + ' \u00b7 ' + modeNote + '</div>'
+            + (inf && inf.response ? '<div class="response-preview">' + inf.response + '</div>' : '')
+            + wlCarbonStrip(e.delta_e_wh, stripLabel, e.delta_t_s, savedG)
+            + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
+            + '</div>';
+    }
+    return html;
+  };
+
+  // \u2500\u2500\u2500 RAG \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  window.wlRenderRAGCard = function(opts){
+    var r = (opts && opts.result) || {};
+    var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
+    var modes  = ['baseline', 'rag', 'rag_large'];
+    var labels = {baseline: 'No retrieval', rag: 'RAG', rag_large: 'RAG Large'};
+    var results = r.results || {};
+    var modelLine = r.model_label
+      ? '<div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:0.6rem">'
+        + 'Model: ' + r.model_label + (r.model_params ? ' \u00b7 ' + r.model_params : '') + '</div>'
+      : '';
+    var questionLine = r.question
+      ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:1rem;'
+        + 'border-left:2px solid var(--border-2);padding-left:0.7rem">'
+        + '<span style="color:var(--text-4);font-style:normal">Question:</span> "' + r.question + '"</div>'
+      : '';
+    var cols = '';
+    var bestE = null, bestLbl = null;
+    modes.forEach(function(m){
+      var res = results[m];
+      if (!res) return;
+      var e = res.energy || {}, inf = res.inference || {};
+      var inTok = inf.input_tokens != null ? inf.input_tokens : '\u2014';
+      var outTok = inf.output_tokens != null ? inf.output_tokens : '\u2014';
+      var retMs = res.retrieval_ms > 0 ? _f(res.retrieval_ms, 0) + ' ms retrieval' : 'no retrieval';
+      if (e.delta_e_wh != null && (bestE == null || e.delta_e_wh < bestE.delta_e_wh)) {
+        bestE = e; bestLbl = labels[m];
+      }
+      cols += '<div style="flex:1;min-width:130px;border-left:2px solid #1a1a1a;padding-left:0.75rem">'
+            +   '<div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:0.5rem">'
+            +     labels[m] + '</div>'
+            +   '<div class="kpi" style="margin-bottom:0.4rem">'
+            +     '<div class="val">' + _f(e.mwh_per_token, 3) + '</div>'
+            +     '<div class="lbl">mWh / token</div>'
+            +   '</div>'
+            +   '<div style="font-size:0.75rem;color:var(--text-4);line-height:1.8">'
+            +     _f(inf.tokens_per_sec, 1) + ' tok/s<br>'
+            +     inTok + ' in \u00b7 ' + outTok + ' out tokens<br>'
+            +     retMs + '<br>'
+            +     (e.confidence
+                    ? '<span class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</span>'
+                    : '')
+            +   '</div>'
+            + '</div>';
+    });
+    var stripSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
+    var subRuns = modes.map(function(m){
+      var res = results[m];
+      if (!res || !res.energy || !res.energy.co2e) return null;
+      return {label: labels[m], grams: res.energy.co2e.grams,
+              deltaWh: res.energy.delta_e_wh, durationS: res.energy.delta_t_s};
+    }).filter(function(s){ return s != null; });
+    var stripHtml = bestE
+      ? wlCarbonStrip(bestE.delta_e_wh,
+                      (r.model_label || 'RAG') + ' \u00b7 best of 3 modes (' + bestLbl + ')',
+                      bestE.delta_t_s, stripSavedG, subRuns)
+      : '';
+    html += '<div class="result-card">'
+          + modelLine
+          + questionLine
+          + '<div style="display:flex;gap:1rem;flex-wrap:wrap">' + cols + '</div>'
+          + stripHtml
+          + '<p class="scope-note" style="margin-top:1rem">'
+          + 'Input tokens show how much context the model processes per mode \u2014 '
+          + 'retrieval grows the prompt significantly.<br>'
+          + 'Device layer only. Network excluded.'
+          + '</p>'
+          + '</div>';
+    return html;
+  };
+
+  // \u2500\u2500\u2500 Prev-row click-to-expand (CR-034 Phase B / CR-013) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // Lazy-loads the full persisted result, renders through the matching
+  // shared helper above, and toggles the expand container. Multiple rows
+  // can be open at once (state lives on the container's data-attrs).
+  // jobType is the URL path segment (`/results/<jobType>/<jobId>/...`);
+  // cardKind picks the renderer (defaults to jobType \u2014 RAG runs persist
+  // under `llm/` so the caller passes `'rag'` explicitly).
+  window.wlExpandPrevRow = function(jobType, jobId, savedAt, cardKind){
+    var kind = cardKind || jobType;
+    var elId = 'expand-' + jobId;
+    var el = document.getElementById(elId);
+    if (!el) return;
+    if (el.dataset.expanded === '1') {
+      el.style.display = 'none';
+      el.dataset.expanded = '0';
+      _wlSetChev(jobId, '\u25b8');
+      return;
+    }
+    if (el.dataset.loaded === '1') {
+      el.style.display = 'block';
+      el.dataset.expanded = '1';
+      _wlSetChev(jobId, '\u25be');
+      return;
+    }
+    el.style.display = 'block';
+    el.dataset.expanded = '1';
+    _wlSetChev(jobId, '\u25be');
+    el.innerHTML = '<div style="color:var(--text-4);font-size:0.78rem;'
+                 + 'padding:0.75rem;font-family:monospace">Loading full result\u2026</div>';
+    fetch('/results/' + jobType + '/' + jobId + '/download.json')
+      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(j){
+        var renderers = {
+          video: window.wlRenderVideoCard,
+          llm:   window.wlRenderLLMCard,
+          rag:   window.wlRenderRAGCard,
+          image: window.wlRenderImageCard
+        };
+        var renderer = renderers[kind];
+        if (!renderer) {
+          el.innerHTML = '<div style="color:var(--err);padding:0.75rem">'
+                       + 'Unknown result type: ' + kind + '</div>';
+          return;
+        }
+        el.innerHTML = renderer({result: j, isPrev: true, savedAt: savedAt});
+        el.dataset.loaded = '1';
+      })
+      .catch(function(e){
+        el.innerHTML = '<div style="color:var(--err);padding:0.75rem">'
+                     + 'Failed to load result: ' + (e.message || e) + '</div>';
+        el.dataset.expanded = '0';
+        _wlSetChev(jobId, '\u25b8');
+      });
+  };
+  function _wlSetChev(jobId, glyph){
+    var c = document.getElementById('chev-' + jobId);
+    if (c) c.textContent = glyph;
+  }
+
+  // \u2500\u2500\u2500 Image \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  window.wlRenderImageCard = function(opts){
+    var r = (opts && opts.result) || {};
+    var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
+    if (r.mode === 'compare_models') {
+      // Two GPU runs: small (SD-Turbo) vs large (SDXL-Turbo). Same shape
+      // as 'both' but with r.small / r.large instead of r.cpu / r.gpu.
+      var se = r.small && r.small.energy, le = r.large && r.large.energy;
+      var sg = r.small && r.small.generation, lg = r.large && r.large.generation;
+      var ac = r.analysis || {};
+      var smallLabel = (sg && sg.model_label) || 'Small model';
+      var largeLabel = (lg && lg.model_label) || 'Large model';
+      var bestE = (se && le && se.delta_e_wh != null && le.delta_e_wh != null)
+        ? (se.delta_e_wh <= le.delta_e_wh ? se : le)
+        : (se || le);
+      var bestSavedG = bestE && bestE.co2e && bestE.co2e.intensity
+        ? bestE.co2e.intensity.g_per_kwh : null;
+      var subRunsCM = [
+        {label: smallLabel, e: se},
+        {label: largeLabel, e: le}
+      ].filter(function(s){ return s.e && s.e.co2e; }).map(function(s){
+        return {label: s.label, grams: s.e.co2e.grams,
+                deltaWh: s.e.delta_e_wh, durationS: s.e.delta_t_s};
+      });
+      var imgsCM = '';
+      if (sg && sg.b64_png) imgsCM += '<div style="flex:1;min-width:150px">'
+        + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">' + smallLabel + '</div>'
+        + '<img src="data:image/png;base64,' + sg.b64_png + '" '
+        + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
+      if (lg && lg.b64_png) imgsCM += '<div style="flex:1;min-width:150px">'
+        + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">' + largeLabel + '</div>'
+        + '<img src="data:image/png;base64,' + lg.b64_png + '" '
+        + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
+      html += '<div class="result-card">'
+            + '<p class="headline">' + (ac.finding || '') + '</p>'
+            + _promptBlock(r.full_prompt, null, 'Prompt')
+            + '<div class="kpi-row">'
+            +   '<div class="kpi"><div class="val">' + _f(se && (se.wh_per_image || se.delta_e_wh),4) + ' Wh</div>'
+            +     '<div class="lbl">' + smallLabel + ' / image</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(le && (le.wh_per_image || le.delta_e_wh),4) + ' Wh</div>'
+            +     '<div class="lbl">' + largeLabel + ' / image</div></div>'
+            + '</div>'
+            + (se && le ? '<div class="conf-badge">'
+                  + se.confidence.flag + ' ' + smallLabel + ' · '
+                  + le.confidence.flag + ' ' + largeLabel + '</div>' : '')
+            + '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem">' + imgsCM + '</div>'
+            + (bestE
+                ? wlCarbonStrip(bestE.delta_e_wh, 'Image · smaller of the two models',
+                                bestE.delta_t_s, bestSavedG, subRunsCM)
+                : '')
+            + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
+            + '</div>';
+      return html;
+    }
+    if (r.mode === 'both') {
+      var ce = r.cpu && r.cpu.energy, ge = r.gpu && r.gpu.energy;
+      var cg = r.cpu && r.cpu.generation, gg = r.gpu && r.gpu.generation;
+      var a = r.analysis || {};
+      var cpuWh = ce && (ce.wh_per_image || ce.delta_e_wh);
+      var gpuWh = ge && (ge.wh_per_image || ge.delta_e_wh);
+      var bestE = (ce && ge && ce.delta_e_wh != null && ge.delta_e_wh != null)
+        ? (ce.delta_e_wh <= ge.delta_e_wh ? ce : ge)
+        : (ce || ge);
+      var bestSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
+      var subRuns = [
+        {label: 'CPU \u00b7 image gen', e: ce},
+        {label: 'GPU \u00b7 image gen', e: ge}
+      ].filter(function(s){ return s.e && s.e.co2e; }).map(function(s){
+        return {label: s.label, grams: s.e.co2e.grams,
+                deltaWh: s.e.delta_e_wh, durationS: s.e.delta_t_s};
+      });
+      var imgs = '';
+      if (cg && cg.b64_png) imgs += '<div style="flex:1;min-width:150px">'
+        + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">CPU</div>'
+        + '<img src="data:image/png;base64,' + cg.b64_png + '" '
+        + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
+      if (gg && gg.b64_png) imgs += '<div style="flex:1;min-width:150px">'
+        + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">GPU</div>'
+        + '<img src="data:image/png;base64,' + gg.b64_png + '" '
+        + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
+      html += '<div class="result-card">'
+            + '<p class="headline">' + (a.finding || '') + '</p>'
+            + _promptBlock(r.full_prompt, null, 'Prompt')
+            + '<div class="kpi-row">'
+            +   '<div class="kpi"><div class="val">' + _f(cpuWh,4) + ' Wh</div><div class="lbl">CPU / image</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(gpuWh,4) + ' Wh</div><div class="lbl">GPU / image</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(cg && cg.gen_s,1) + 's / '
+            +     _f(gg && (gg.gen_s_per_image || gg.gen_s),1) + 's</div>'
+            +     '<div class="lbl">time CPU / GPU</div></div>'
+            + '</div>'
+            + (ce ? '<div class="conf-badge">' + ce.confidence.flag + ' CPU \u00b7 '
+                  + (ge ? ge.confidence.flag + ' GPU' : '') + '</div>' : '')
+            + '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem">' + imgs + '</div>'
+            + (bestE
+                ? wlCarbonStrip(bestE.delta_e_wh, 'Image \u00b7 best of CPU vs GPU',
+                                bestE.delta_t_s, bestSavedG, subRuns)
+                : '')
+            + '</div>';
+    } else {
+      var e = r.energy;
+      var gen = r.generation;
+      if (!e) return html + '<p class="progress-note" style="color:var(--text-3)">Result format not recognised \u2014 run a new measurement.</p>';
+      var wh = e.wh_per_image || e.delta_e_wh;
+      var savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
+      var imgHtml = gen && gen.b64_png
+        ? '<img src="data:image/png;base64,' + gen.b64_png + '" '
+          + 'style="max-width:100%;border:1px solid var(--border);display:block;margin-top:1rem">'
+        : '';
+      html += '<div class="result-card">'
+            + _promptBlock(r.full_prompt, null, 'Prompt')
+            + '<div class="kpi-row">'
+            +   '<div class="kpi"><div class="val">' + _f(wh,4) + ' Wh</div><div class="lbl">energy / image</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(gen && gen.total_s,1) + 's</div><div class="lbl">generation time</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(e.delta_w,1) + ' W</div><div class="lbl">delta above idle</div></div>'
+            + '</div>'
+            + '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</div>'
+            + imgHtml
+            + wlCarbonStrip(wh, (r.model_label || 'Image generation') + ' \u00b7 single', e.delta_t_s, savedG)
+            + '</div>';
+    }
+    return html;
+  };
+})();
 </script>"""
 
 # --- Home ---
@@ -1829,6 +2706,8 @@ async def video_page(request: Request):
         const stages = STAGES[mode];
         const stageMap = STAGE_MAP[mode];
         const currentStage = stageMap[serverStage] !== undefined ? stageMap[serverStage] : 0;
+        // Per-stage elapsed \u2014 tracked on the target element's dataset so
+        // it resets on transitions without per-call-site state.
         wlRenderProgress({{
             header: 'Running measurement \u2014 do not close this tab',
             stagesHtml: wlStageList(stages, currentStage),
@@ -1996,7 +2875,7 @@ async def video_page(request: Request):
                 <h3>${{res.preset_label}}</h3>
                 <div class="sub">${{res.preset_detail}}</div>
                 <div class="section-title">Encode</div>
-                ${{metricRow('Duration', e.delta_t_s + (isSpeedWinner ? ' 🏁' : ''), 's')}}
+                ${{metricRow('Duration', e.delta_t_s + (isSpeedWinner ? ' \U0001F3C1' : ''), 's')}}
                 ${{metricRow('Output size', res.output_size_mb, 'MB')}}
                 ${{cmdNote}}
                 <div class="section-title">Power (P110)</div>
@@ -2046,6 +2925,13 @@ async def video_page(request: Request):
         const _stripSavedG = _winnerE && _winnerE.co2e && _winnerE.co2e.intensity
             ? _winnerE.co2e.intensity.g_per_kwh : null;
         const _stripDur = _winnerE ? _winnerE.delta_t_s : null;
+        // CR-032 — sub-runs for the carbon strip's per-mode breakdown.
+        const _subRuns = [cpu, gpu].filter(s => s && s.energy && s.energy.co2e).map(s => ({{
+            label: s.preset_label,
+            grams: s.energy.co2e.grams,
+            deltaWh: s.energy.delta_e_wh,
+            durationS: s.energy.delta_t_s
+        }}));
         return `
         <div class="report">
             <h2>Comparison Report</h2>
@@ -2058,7 +2944,7 @@ async def video_page(request: Request):
                 ${{col(cpu)}}
                 ${{col(gpu)}}
             </div>
-            ${{wlCarbonStrip(stripWh, stripLbl, _stripDur, _stripSavedG)}}
+            ${{wlCarbonStrip(stripWh, stripLbl, _stripDur, _stripSavedG, _subRuns)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -2076,17 +2962,20 @@ async def video_page(request: Request):
             const ce = cd.cpu.energy, ge = cd.gpu.energy;
             const ca = cd.analysis;
             const ew = ca.energy_winner, sw = ca.speed_winner;
-            const cpuWin = (ew==='CPU'?'✓':'') + (sw==='CPU'?' 🏁':'');
-            const gpuWin = (ew==='GPU'?'✓':'') + (sw==='GPU'?' 🏁':'');
+            const cpuWin = (ew==='CPU'?'✓':'') + (sw==='CPU'?' \U0001F3C1':'');
+            const gpuWin = (ew==='GPU'?'✓':'') + (sw==='GPU'?' \U0001F3C1':'');
+            // Headers right-align, so data cells must too — otherwise the
+            // numeric columns drift left of their headers and visitors can't
+            // read off CPU vs GPU at a glance.
             return `<tr>
-                <td style="color:var(--text);font-weight:bold">${{label}}</td>
-                <td>${{fmt(ce.delta_t_s)}}s</td>
-                <td style="color:${{ew==='CPU'?'#00ff99':'#888'}}">${{fmt(ce.delta_e_wh)}} Wh ${{cpuWin}}</td>
-                <td style="color:var(--text-3);font-size:0.75rem">${{fmt(cd.cpu.output_size_mb)}} MB</td>
-                <td>${{fmt(ge.delta_t_s)}}s</td>
-                <td style="color:${{ew==='GPU'?'#00ff99':'#888'}}">${{fmt(ge.delta_e_wh)}} Wh ${{gpuWin}}</td>
-                <td style="color:var(--text-3);font-size:0.75rem">${{fmt(cd.gpu.output_size_mb)}} MB</td>
-                <td class="conf-badge" style="font-size:0.78rem">${{ce.confidence.flag}} ${{ge.confidence.flag}}</td>
+                <td style="color:var(--text);font-weight:bold;text-align:left">${{label}}</td>
+                <td style="text-align:right">${{fmt(ce.delta_t_s)}}s</td>
+                <td style="color:${{ew==='CPU'?'#00ff99':'#888'}};text-align:right">${{fmt(ce.delta_e_wh)}} Wh ${{cpuWin}}</td>
+                <td style="color:var(--text-3);font-size:0.75rem;text-align:right">${{fmt(cd.cpu.output_size_mb)}} MB</td>
+                <td style="text-align:right">${{fmt(ge.delta_t_s)}}s</td>
+                <td style="color:${{ew==='GPU'?'#00ff99':'#888'}};text-align:right">${{fmt(ge.delta_e_wh)}} Wh ${{gpuWin}}</td>
+                <td style="color:var(--text-3);font-size:0.75rem;text-align:right">${{fmt(cd.gpu.output_size_mb)}} MB</td>
+                <td class="conf-badge" style="font-size:0.78rem;text-align:center">${{ce.confidence.flag}} ${{ge.confidence.flag}}</td>
             </tr>`;
         }}).join('');
 
@@ -2095,7 +2984,7 @@ async def video_page(request: Request):
         const highlights = `
             <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.75rem;font-size:0.82rem">
                 <span>⚡ Most efficient: <span style="color:var(--accent)">${{bestE ? bestE.label + ' (' + bestE.delta_e_wh + ' Wh)' : '—'}}</span></span>
-                <span>🏁 Fastest: <span style="color:var(--accent)">${{bestS ? bestS.label + ' (' + bestS.delta_t_s + 's)' : '—'}}</span></span>
+                <span>\U0001F3C1 Fastest: <span style="color:var(--accent)">${{bestS ? bestS.label + ' (' + bestS.delta_t_s + 's)' : '—'}}</span></span>
             </div>`;
 
         // Per-codec collapsible detail
@@ -2148,6 +3037,26 @@ async def video_page(request: Request):
         const _stripDur = _winE ? _winE.delta_t_s : null;
         const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
             ? _winE.co2e.intensity.g_per_kwh : null;
+        // CR-032 — sub-runs for the carbon strip's per-mode breakdown
+        // (6 cells: H.264/H.265/AV1 × CPU/GPU). Each cell carries its own
+        // co2e snapshot, so the strip's details block surfaces all 6 instead
+        // of eliding 5/6 of the work the visitor just ran.
+        const _subRuns = [];
+        codecOrder.forEach(([key, label]) => {{
+            const cd = codecs[key];
+            if (!cd) return;
+            ['cpu','gpu'].forEach(side => {{
+                const sub = cd[side];
+                if (sub && sub.energy && sub.energy.co2e) {{
+                    _subRuns.push({{
+                        label: sub.preset_label || (label + ' ' + side.toUpperCase()),
+                        grams: sub.energy.co2e.grams,
+                        deltaWh: sub.energy.delta_e_wh,
+                        durationS: sub.energy.delta_t_s
+                    }});
+                }}
+            }});
+        }});
         return `
         <div class="report">
             <h2>All Codecs — Energy &amp; Speed Matrix</h2>
@@ -2164,11 +3073,11 @@ async def video_page(request: Request):
                 </tr></thead>
                 <tbody style="font-family:monospace">${{tableRows}}</tbody>
             </table>
-            <div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.25rem">✓ energy winner · 🏁 speed winner · CPU out / GPU out should match — confirms same bitrate target</div>
+            <div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.25rem">✓ energy winner · \U0001F3C1 speed winner · CPU out / GPU out should match — confirms same bitrate target</div>
             ${{highlights}}
             <div style="margin-top:1rem;color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Per-codec detail</div>
             ${{details}}
-            ${{wlCarbonStrip(stripWh, stripLbl, _stripDur, _stripSavedG)}}
+            ${{wlCarbonStrip(stripWh, stripLbl, _stripDur, _stripSavedG, _subRuns)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -2231,6 +3140,7 @@ async def video_page(request: Request):
                 summary = `${{r.delta_e_wh}} Wh ${{r.confidence ? '<span class="conf-badge">'+r.confidence+'</span>' : ''}}`;
             }}
             const base = '/results/video/' + r.job_id;
+            const savedAt = r.saved_at || '';
             return `<div style="border-bottom:1px solid var(--panel);padding:0.6rem 0">
                 <div style="display:flex;justify-content:space-between;align-items:baseline">
                     <span style="color:var(--text);font-size:0.82rem">${{date}}</span>
@@ -2238,12 +3148,17 @@ async def video_page(request: Request):
                 </div>
                 <div style="color:var(--text-3);font-size:0.75rem;margin:0.1rem 0">${{codec}}</div>
                 <div style="color:var(--accent);font-size:0.8rem;margin:0.2rem 0">${{summary}}</div>
-                <div style="display:flex;gap:0.5rem;margin-top:0.3rem">
+                <div style="display:flex;gap:0.75rem;margin-top:0.3rem;align-items:center">
+                    <a href="javascript:void(0)"
+                       onclick="wlExpandPrevRow('video','${{r.job_id}}','${{savedAt}}')"
+                       style="color:var(--text-3);font-size:0.75rem;text-decoration:none;cursor:pointer">
+                       <span id="chev-${{r.job_id}}">▸</span> Show full result</a>
                     <a href="${{base}}/download.json" download
-                       style="color:var(--text-3);font-size:0.75rem;text-decoration:none">↓ JSON</a>
+                       style="color:var(--text-5);font-size:0.75rem;text-decoration:none">↓ JSON</a>
                     <a href="${{base}}/download.csv" download
-                       style="color:var(--text-3);font-size:0.75rem;text-decoration:none">↓ CSV</a>
+                       style="color:var(--text-5);font-size:0.75rem;text-decoration:none">↓ CSV</a>
                 </div>
+                <div id="expand-${{r.job_id}}" style="display:none;margin-top:0.6rem"></div>
             </div>`;
         }}).join('');
         el.innerHTML = `<div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;
@@ -2256,6 +3171,7 @@ async def video_page(request: Request):
     if (_resumeJob) {{ pollJob(_resumeJob, 'both'); }}
     </script>
     {_PROGRESS_JS}
+    {_RESULT_JS}
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
@@ -2982,6 +3898,16 @@ async def llm_page(request: Request):
         const _stripDur = _winE ? _winE.delta_t_s : null;
         const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
             ? _winE.co2e.intensity.g_per_kwh : null;
+        // CR-032 — sub-runs for the carbon strip's per-mode breakdown.
+        const _subRuns = [
+            {{side: 'CPU', e: ce}},
+            {{side: 'GPU', e: ge}}
+        ].filter(s => s.e && s.e.co2e).map(s => ({{
+            label: s.side + ' · ' + r.model_label,
+            grams: s.e.co2e.grams,
+            deltaWh: s.e.delta_e_wh,
+            durationS: s.e.delta_t_s
+        }}));
         return `<div class="result-box">
             <h2>CPU vs GPU — ${{r.model_label}} · ${{r.task_label}}</h2>
             <div style="background:#0d1a0d;border:1px solid #00ff9933;
@@ -3018,7 +3944,7 @@ async def llm_page(request: Request):
             </div>
             <div class="section-title">GPU response preview</div>
             <div class="response-box">${{gi.response}}</div>
-            ${{wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG)}}
+            ${{wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG, _subRuns)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -3043,14 +3969,28 @@ async def llm_page(request: Request):
             </div>`;
         }}).join('');
         // Headline Wh = T3 (long generation), the largest of the three tasks.
-        const _t3 = r.tasks && r.tasks.T3 && r.tasks.T3.energy ? r.tasks.T3.energy.delta_e_wh : null;
+        const _t3e = r.tasks && r.tasks.T3 && r.tasks.T3.energy ? r.tasks.T3.energy : null;
+        const _t3 = _t3e ? _t3e.delta_e_wh : null;
+        const _t3Dur = _t3e ? _t3e.delta_t_s : null;
+        const _t3SavedG = _t3e && _t3e.co2e && _t3e.co2e.intensity
+            ? _t3e.co2e.intensity.g_per_kwh : null;
+        // CR-032 — sub-runs across T1/T2/T3 so the strip details show every
+        // task's CO2e snapshot, not only the T3 headline.
+        const _subRuns = Object.entries(r.tasks || {{}})
+            .filter(([k, t]) => t && t.energy && t.energy.co2e)
+            .map(([k, t]) => ({{
+                label: k + ' — ' + (taskLabels[k] || k),
+                grams: t.energy.co2e.grams,
+                deltaWh: t.energy.delta_e_wh,
+                durationS: t.energy.delta_t_s
+            }}));
         return `<div class="result-box">
             <h2>All Tasks — ${{r.model_label}} (${{r.model_params}})</h2>
             <div style="color:var(--text-3);font-size:0.78rem;margin-bottom:1rem">
                 ${{r.warm ? '🌡 Warm' : '❄ Cold'}} · ${{r.device.toUpperCase()}} · 3 tasks
             </div>
             ${{cards}}
-            ${{wlCarbonStrip(_t3, r.model_label + ' · T3 long generation')}}
+            ${{wlCarbonStrip(_t3, r.model_label + ' · T3 long generation', _t3Dur, _t3SavedG, _subRuns)}}
             <div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
@@ -3193,18 +4133,24 @@ async def llm_page(request: Request):
             const date = r.saved_at ? r.saved_at.slice(0,16).replace('T',' ') : '—';
             const summary = `${{r.model||''}} · ${{r.task||''}} · ${{r.mwh_per_token}} mWh/tok · ${{r.tokens_per_sec}} tok/s ${{r.confidence ? '<span class="conf-badge">'+r.confidence+'</span>' : ''}}`;
             const base = '/results/llm/' + r.job_id;
+            const savedAt = r.saved_at || '';
             return `<div style="border-bottom:1px solid var(--panel);padding:0.6rem 0">
                 <div style="display:flex;justify-content:space-between;align-items:baseline">
                     <span style="color:var(--text);font-size:0.82rem">${{date}}</span>
                     <span style="color:var(--text-3);font-size:0.75rem;font-family:monospace">${{r.job_id}}</span>
                 </div>
                 <div style="color:var(--accent);font-size:0.8rem;margin:0.2rem 0">${{summary}}</div>
-                <div style="display:flex;gap:0.5rem;margin-top:0.3rem">
+                <div style="display:flex;gap:0.75rem;margin-top:0.3rem;align-items:center">
+                    <a href="javascript:void(0)"
+                       onclick="wlExpandPrevRow('llm','${{r.job_id}}','${{savedAt}}')"
+                       style="color:var(--text-3);font-size:0.75rem;text-decoration:none;cursor:pointer">
+                       <span id="chev-${{r.job_id}}">▸</span> Show full result</a>
                     <a href="${{base}}/download.json" download
-                       style="color:var(--text-3);font-size:0.75rem;text-decoration:none">↓ JSON</a>
+                       style="color:var(--text-5);font-size:0.75rem;text-decoration:none">↓ JSON</a>
                     <a href="${{base}}/download.csv" download
-                       style="color:var(--text-3);font-size:0.75rem;text-decoration:none">↓ CSV</a>
+                       style="color:var(--text-5);font-size:0.75rem;text-decoration:none">↓ CSV</a>
                 </div>
+                <div id="expand-${{r.job_id}}" style="display:none;margin-top:0.6rem"></div>
             </div>`;
         }}).join('');
         el.innerHTML = `<div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;
@@ -3216,6 +4162,7 @@ async def llm_page(request: Request):
     if (_resumeJob) {{ pollLLM(_resumeJob); }}
     </script>
     {_PROGRESS_JS}
+    {_RESULT_JS}
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
@@ -3935,12 +4882,25 @@ async def rag_page(request: Request):
         const _stripDur = _winE ? _winE.delta_t_s : null;
         const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
             ? _winE.co2e.intensity.g_per_kwh : null;
+        // CR-032 \u2014 sub-runs across the 3 retrieval modes.
+        const _subRuns = MODES
+            .map(m => {{
+                const res = (r.results||{{}})[m];
+                if (!res || !res.energy || !res.energy.co2e) return null;
+                return {{
+                    label: MODE_LABELS[m],
+                    grams: res.energy.co2e.grams,
+                    deltaWh: res.energy.delta_e_wh,
+                    durationS: res.energy.delta_t_s
+                }};
+            }})
+            .filter(s => s != null);
         document.getElementById('status').innerHTML =
             '<div style="border:1px solid var(--border);padding:1.5rem">'
             + '<div style="color:var(--accent);font-size:1.1rem;margin-bottom:0.25rem">Comparison \u2014 ' + r.model_label + '</div>'
             + '<div style="color:var(--text-3);font-size:0.82rem;margin-bottom:1rem">' + r.question + '</div>'
             + cards
-            + wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG)
+            + wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG, _subRuns)
             + '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.75rem">' + (r.scope||'') + '</div>'
             + '<div style="display:flex;gap:0.5rem;margin-top:0.75rem">'
             + '<a href="/results/llm/' + jobId + '/download.json" download style="color:var(--text-3);font-size:0.75rem;text-decoration:none">\u2193 JSON</a>'
@@ -3968,15 +4928,26 @@ async def rag_page(request: Request):
             const date = r.saved_at ? r.saved_at.slice(0,16).replace('T',' ') : '\u2014';
             const summary = (r.model||'') + ' \xb7 ' + (r.task||'') + ' \xb7 ' + r.mwh_per_token + ' mWh/tok ' + (r.confidence ? '<span class="conf-badge">'+r.confidence+'</span>' : '');
             const base = '/results/llm/' + r.job_id;
+            const savedAt = r.saved_at || '';
+            // RAG persists under llm/ but renders with the RAG card; passing
+            // jobType='llm' + cardKind='rag' to wlExpandPrevRow handles both.
+            const isCompare = r.task === 'RAG compare (3 modes)';
+            const cardKind = isCompare ? 'rag' : 'llm';
             return '<div style="border-bottom:1px solid var(--panel);padding:0.6rem 0">'
                 + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
                 + '<span style="color:var(--text);font-size:0.82rem">' + date + '</span>'
                 + '<span style="color:var(--text-3);font-size:0.75rem;font-family:monospace">' + r.job_id + '</span></div>'
                 + '<div style="color:var(--accent);font-size:0.8rem;margin:0.2rem 0">' + summary + '</div>'
-                + '<div style="display:flex;gap:0.5rem;margin-top:0.3rem">'
-                + '<a href="' + base + '/download.json" download style="color:var(--text-3);font-size:0.75rem;text-decoration:none">\u2193 JSON</a>'
-                + '<a href="' + base + '/download.csv" download style="color:var(--text-3);font-size:0.75rem;text-decoration:none">\u2193 CSV</a>'
-                + '</div></div>';
+                + '<div style="display:flex;gap:0.75rem;margin-top:0.3rem;align-items:center">'
+                + '<a href="javascript:void(0)" '
+                + 'onclick="wlExpandPrevRow(\\\'llm\\\',\\\'' + r.job_id + '\\\',\\\'' + savedAt + '\\\',\\\'' + cardKind + '\\\')" '
+                + 'style="color:var(--text-3);font-size:0.75rem;text-decoration:none;cursor:pointer">'
+                + '<span id="chev-' + r.job_id + '">\u25b8</span> Show full result</a>'
+                + '<a href="' + base + '/download.json" download style="color:var(--text-5);font-size:0.75rem;text-decoration:none">\u2193 JSON</a>'
+                + '<a href="' + base + '/download.csv" download style="color:var(--text-5);font-size:0.75rem;text-decoration:none">\u2193 CSV</a>'
+                + '</div>'
+                + '<div id="expand-' + r.job_id + '" style="display:none;margin-top:0.6rem"></div>'
+                + '</div>';
         }}).join('');
         el.innerHTML = '<div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;'
             + 'letter-spacing:0.05em;margin-bottom:0.75rem">Previous RAG runs</div>' + rows;
@@ -3988,6 +4959,7 @@ async def rag_page(request: Request):
     if (_resumeJob) {{ pollRag(_resumeJob); }}
     </script>
     {_PROGRESS_JS}
+    {_RESULT_JS}
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
@@ -4631,8 +5603,10 @@ _DEMO_HTML = f"""<!DOCTYPE html>
 
   /* CR-001 capability matrix — Findings step. Locked rows are the
      GoS membership pitch; visual treatment must read as product copy,
-     not as a punishment. Two columns ("Public" / "GoS member"), with
-     the member column accent-tinted so the eye lands there. */
+     not as a punishment. CR-027: three columns ("Public" / "Member" /
+     "Lab"), with the Member column accent-tinted so the eye lands there
+     (Member sign-up is the conversion target; Lab is operator-only and
+     visible mostly so visitors understand the access ladder). */
   .cap-matrix{{width:100%;border-collapse:collapse;margin:0.5rem 0 1.5rem;
                font-family:monospace;font-size:0.83rem}}
   .cap-matrix thead th{{padding:0.6rem 0.5rem;text-align:left;
@@ -4640,14 +5614,15 @@ _DEMO_HTML = f"""<!DOCTYPE html>
                          color:var(--text-4);font-weight:normal;
                          font-size:0.72rem;letter-spacing:0.08em;
                          text-transform:uppercase}}
-  .cap-matrix .cap-col-anon{{width:30%;color:var(--text-3)}}
-  .cap-matrix .cap-col-member{{width:30%;color:var(--accent)}}
+  .cap-matrix .cap-col-anon{{width:23%;color:var(--text-3)}}
+  .cap-matrix .cap-col-member{{width:23%;color:var(--accent)}}
+  .cap-matrix .cap-col-lab{{width:23%;color:var(--text-4)}}
   .cap-matrix tbody td{{padding:0.55rem 0.5rem;
                          border-bottom:1px solid var(--panel);
                          color:var(--text-3);line-height:1.5}}
   .cap-matrix tbody tr td:first-child{{color:var(--text-2);
                                          font-family:system-ui,sans-serif;
-                                         font-size:0.88rem}}
+                                         font-size:0.88rem;width:31%}}
   .cap-matrix .cap-yes{{color:var(--accent);font-weight:bold}}
   .cap-matrix .cap-no{{color:var(--text-5)}}
   .cap-matrix .cap-partial{{color:var(--warn);font-size:0.78rem}}
@@ -4678,6 +5653,8 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   <h1>WattLab</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
     Greening of Streaming · Live energy measurement · GoS1</p>
+
+  {{TIER_INDICATOR}}
 
   <p style="color:var(--text-2);line-height:1.8;max-width:560px">
     WattLab measures the real energy cost of video transcoding and AI inference —
@@ -5004,14 +5981,18 @@ _DEMO_HTML = f"""<!DOCTYPE html>
 
   <hr class="divider">
 
-  <!-- CR-001: capability matrix. The locked rows are the GoS membership
-       pitch — same identical measurement quality across tiers, but
-       members shape the inputs (custom prompts, custom ffmpeg, all-codecs
-       compares, CSV export, RAG corpus upload). -->
+  <!-- CR-001 capability matrix; CR-027 three-column refresh.
+       Same measurement quality across all three tiers — what changes is
+       who shapes the inputs. Member is the conversion target (accent
+       column), Lab is shown so visitors understand the full access ladder
+       and see who runs the bench. Upload caps are wired to settings.json
+       via the UPLOAD_MEMBER_MB placeholder so this table never silently drifts. -->
   <h2 style="margin-top:2rem;margin-bottom:0.5rem">Want to dig deeper?</h2>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.25rem;line-height:1.6">
-    Everything you've just seen is available to anyone — that's the public OWL.
-    GoS members get to drive the same measurement engine with their own inputs:
+    OWL has three access tiers. The numbers and methodology you've just
+    seen are identical for all three — what changes is who can shape the
+    inputs (custom prompts, custom ffmpeg, all-codecs sweeps, your own
+    corpus, full settings access).
   </p>
   <table class="cap-matrix">
     <thead>
@@ -5019,6 +6000,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
         <th></th>
         <th class="cap-col-anon">Public</th>
         <th class="cap-col-member">GoS member</th>
+        <th class="cap-col-lab">Lab (operator)</th>
       </tr>
     </thead>
     <tbody>
@@ -5026,49 +6008,68 @@ _DEMO_HTML = f"""<!DOCTYPE html>
         <td>Pre-baked workloads, live wall-power &amp; CO<sub>2</sub>e</td>
         <td class="cap-yes">✓</td>
         <td class="cap-yes">✓</td>
+        <td class="cap-yes">✓</td>
       </tr>
       <tr>
         <td>Guided tour, methodology, recent-run history</td>
         <td class="cap-yes">✓</td>
         <td class="cap-yes">✓</td>
+        <td class="cap-yes">✓</td>
       </tr>
       <tr>
         <td>Custom video upload</td>
-        <td class="cap-partial">≤ 100 MB · 1 job</td>
-        <td class="cap-yes">no cap, scheduled OK</td>
+        <td class="cap-no">—</td>
+        <td class="cap-yes">≤ {{UPLOAD_MEMBER_MB}} MB</td>
+        <td class="cap-yes">no cap</td>
       </tr>
       <tr>
         <td>Custom prompts &amp; custom ffmpeg commands</td>
         <td class="cap-no">—</td>
+        <td class="cap-yes">✓</td>
         <td class="cap-yes">✓</td>
       </tr>
       <tr>
         <td>All-codecs sweeps, batch / compare-modes</td>
         <td class="cap-no">—</td>
         <td class="cap-yes">✓</td>
+        <td class="cap-yes">✓</td>
       </tr>
       <tr>
         <td>RAG corpus upload (your own PDFs)</td>
         <td class="cap-no">—</td>
+        <td class="cap-yes">✓</td>
         <td class="cap-yes">✓</td>
       </tr>
       <tr>
         <td>CSV / JSON export of your runs</td>
         <td class="cap-no">—</td>
         <td class="cap-yes">✓</td>
+        <td class="cap-yes">✓</td>
+      </tr>
+      <tr>
+        <td>Edit settings, run variance calibration, full results view</td>
+        <td class="cap-no">—</td>
+        <td class="cap-no">—</td>
+        <td class="cap-yes">✓</td>
       </tr>
     </tbody>
   </table>
+  <p style="color:var(--text-5);font-size:0.72rem;margin-top:0.25rem;margin-bottom:1.25rem;
+            font-family:monospace;line-height:1.5">
+    Lab tier is granted automatically on the GoS1 LAN (loopback / 192.168.x).
+    There's no public sign-up for Lab — it's the operator surface for the
+    bench itself.
+  </p>
   <div class="cap-cta">
     <a href="https://www.greeningofstreaming.org/membership" target="_blank"
        class="btn btn-primary" style="text-decoration:none;display:inline-block;line-height:1">
-      Join GoS — unlock the right column ↗</a>
+      Join GoS — unlock the middle column ↗</a>
     <a href="/auth/sign-in" class="btn btn-secondary"
        style="text-decoration:none;display:inline-block;line-height:1">
       Already a member? Sign in</a>
   </div>
   <p style="color:var(--text-5);font-size:0.72rem;margin-top:1rem;font-family:monospace;text-align:center">
-    Same measurement quality on both sides. Members shape the inputs; everyone sees the results.
+    Same measurement quality on every tier. Members shape the inputs; everyone sees the results.
   </p>
 
   <hr class="divider">
@@ -5383,138 +6384,29 @@ function pollLLM(jobId, t0) {{
   }}).catch(() => {{ streamTimer = setTimeout(() => pollLLM(jobId, t0), 5000); }});
 }}
 
-// ─── Result renderers ─────────────────────────────────────────────────────────
+// ─── Result renderers (CR-034 Phase A wrappers) ──────────────────────────────
+// Cards are rendered by shared helpers in _RESULT_JS — the thin wrappers
+// below only own the /demo lifecycle (button visibility + revealNext).
+// Future polish items (drift note, carbon strip extensions, etc.) ship
+// once and apply to all surfaces.
 function renderVideoResult(r, savedAt, isPrev) {{
-  const prevNote = isPrev ? '<p class="prev-note">↩ Previous run · ' + timeAgo(savedAt) + '</p>' : '';
-  let html = prevNote;
-  if (r.mode === 'both') {{
-    const cpu = r.cpu, gpu = r.gpu, a = r.analysis;
-    const ce = cpu.energy, ge = gpu.energy;
-    const winner = a.energy_winner;
-    // Most efficient side for the carbon strip headline (CR-030 framing).
-    const bestE = (ce.delta_e_wh <= ge.delta_e_wh) ? ce : ge;
-    const bestSide = (ce.delta_e_wh <= ge.delta_e_wh) ? 'CPU' : 'GPU';
-    const bestSavedG = bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
-    const stripLabel = (cpu.preset_label || 'Video transcode') + ' · best of CPU vs GPU (' + bestSide + ')';
-    html += `<div class="result-card">
-      <p class="headline">${{a.finding}}</p>
-      <div class="kpi-row">
-        <div class="kpi">
-          <div class="val">${{fmt(ce.delta_e_wh,4)}} Wh</div>
-          <div class="lbl">CPU energy ${{winner==='CPU'?'✓ winner':''}}</div>
-        </div>
-        <div class="kpi">
-          <div class="val">${{fmt(ge.delta_e_wh,4)}} Wh</div>
-          <div class="lbl">GPU energy ${{winner==='GPU'?'✓ winner':''}}</div>
-        </div>
-        <div class="kpi">
-          <div class="val">${{ce.delta_t_s}}s / ${{ge.delta_t_s}}s</div>
-          <div class="lbl">Encode time CPU / GPU</div>
-        </div>
-      </div>
-      <div class="conf-badge">${{ce.confidence.flag}} CPU · ${{ge.confidence.flag}} GPU · ${{a.confidence_note}}</div>
-      ${{wlCarbonStrip(bestE.delta_e_wh, stripLabel, bestE.delta_t_s, bestSavedG)}}
-      <p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>
-    </div>`;
-  }} else {{
-    const res = r.result || r;
-    const e = res.energy;
-    const savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
-    html += `<div class="result-card">
-      <p class="headline">${{res.preset_label}}: ${{e.delta_e_wh}} Wh · ${{e.delta_t_s}}s</p>
-      <div class="kpi-row">
-        <div class="kpi"><div class="val">${{e.delta_e_wh}} Wh</div><div class="lbl">Energy delta</div></div>
-        <div class="kpi"><div class="val">${{e.delta_w}} W</div><div class="lbl">Power delta</div></div>
-        <div class="kpi"><div class="val">${{e.delta_t_s}}s</div><div class="lbl">Duration</div></div>
-      </div>
-      <div class="conf-badge">${{e.confidence.flag}} ${{e.confidence.label}}</div>
-      ${{wlCarbonStrip(e.delta_e_wh, res.preset_label || 'Video transcode', e.delta_t_s, savedG)}}
-    </div>`;
-  }}
-  document.getElementById('video-status').innerHTML = html;
+  document.getElementById('video-status').innerHTML =
+    wlRenderVideoCard({{result: r, savedAt: savedAt, isPrev: isPrev}});
   document.getElementById('video-btns').style.display = 'none';
   revealNext(1);
 }}
 
 function renderLLMResult(r, savedAt, isPrev) {{
-  const prevNote = isPrev ? '<p class="prev-note">↩ Previous run · ' + timeAgo(savedAt) + '</p>' : '';
-  let html = prevNote;
-
-  if (r.mode === 'both') {{
-    // CPU vs GPU comparison result
-    const ce = r.cpu && r.cpu.energy, ge = r.gpu && r.gpu.energy;
-    const ci = r.cpu && r.cpu.inference, gi = r.gpu && r.gpu.inference;
-    const a = r.analysis || {{}};
-    // Most efficient side for the carbon strip headline (matches the
-    // "best of N" framing CR-030 standardised on compare modes).
-    const bestE = (ce && ge)
-      ? (ce.delta_e_wh <= ge.delta_e_wh ? ce : ge)
-      : (ce || ge);
-    const bestSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
-    html += `<div class="result-card">
-      <p class="headline">${{a.finding || ''}}</p>
-      ${{r.prompt ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:0.85rem;border-left:2px solid var(--border-2);padding-left:0.7rem">' +
-                    (r.task_label ? '<span style="color:var(--text-4);font-style:normal">' + r.task_label + ':</span> ' : '') +
-                    '"' + r.prompt + '"</div>' : ''}}
-      <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1rem">
-        <div style="flex:1;min-width:180px">
-          <div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem">CPU</div>
-          <div class="kpi-row">
-            <div class="kpi"><div class="val">${{fmt(ce && ce.mwh_per_token,4)}}</div><div class="lbl">mWh/token</div></div>
-            <div class="kpi"><div class="val">${{fmt(ci && ci.tokens_per_sec,1)}}</div><div class="lbl">tok/s</div></div>
-          </div>
-        </div>
-        <div style="flex:1;min-width:180px">
-          <div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem">GPU</div>
-          <div class="kpi-row">
-            <div class="kpi"><div class="val">${{fmt(ge && ge.mwh_per_token,4)}}</div><div class="lbl">mWh/token</div></div>
-            <div class="kpi"><div class="val">${{fmt(gi && gi.tokens_per_sec,1)}}</div><div class="lbl">tok/s</div></div>
-          </div>
-        </div>
-      </div>
-      <div class="conf-badge">${{ce ? ce.confidence.flag : ''}} CPU · ${{ge ? ge.confidence.flag : ''}} GPU · ${{r.model_label}}</div>
-      ${{bestE ? wlCarbonStrip(bestE.delta_e_wh, r.model_label + ' · best of CPU vs GPU', bestE.delta_t_s, bestSavedG) : ''}}
-      <p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>
-    </div>`;
-  }} else {{
-    // single or batch
-    let e = r.energy;
-    let inf = r.inference;
-    if (!e && r.runs && r.runs.length) {{
-      e = r.runs[r.runs.length-1].energy;
-      inf = r.runs[r.runs.length-1].inference;
-    }}
-    if (!e && r.summary) {{
-      // batch summary only — reconstruct a minimal e object
-      e = {{ mwh_per_token: r.summary.mwh_per_token_mean, delta_e_wh: r.summary.delta_e_wh_mean,
-             confidence: {{flag:'—',label:'see runs'}}, delta_w: null, delta_t_s: null }};
-      inf = {{ tokens_per_sec: r.summary.tokens_per_sec_mean, output_tokens: '—', response: '' }};
-    }}
-    if (!e) {{
-      document.getElementById('llm-btns').style.display = 'flex';
-      document.getElementById('llm-status').innerHTML = '<p class="progress-note" style="color:var(--text-3)">Result format not recognised — run a new measurement.</p>';
-      return;
-    }}
-    const modeNote = r.warm ? '🌡 Warm' : '❄ Cold';
-    const savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
-    const stripLabel = r.model_label + (r.task_label ? ' · ' + r.task_label : '');
-    html += `<div class="result-card">
-      ${{r.prompt ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:0.85rem;border-left:2px solid var(--border-2);padding-left:0.7rem">' +
-                    (r.task_label ? '<span style="color:var(--text-4);font-style:normal">' + r.task_label + ':</span> ' : '') +
-                    '"' + r.prompt + '"</div>' : ''}}
-      <div class="kpi-row">
-        <div class="kpi"><div class="val">${{fmt(e.mwh_per_token,4)}}</div><div class="lbl">mWh / token</div></div>
-        <div class="kpi"><div class="val">${{fmt(inf && inf.tokens_per_sec,1)}}</div><div class="lbl">tokens / sec</div></div>
-        <div class="kpi"><div class="val">${{fmt(e.delta_e_wh,4)}} Wh</div><div class="lbl">total energy</div></div>
-        <div class="kpi"><div class="val">${{inf ? inf.output_tokens : '—'}}</div><div class="lbl">output tokens</div></div>
-      </div>
-      <div class="conf-badge">${{e.confidence.flag}} ${{e.confidence.label}} · ${{r.model_label}} · ${{modeNote}}</div>
-      ${{inf && inf.response ? '<div class="response-preview">' + inf.response + '</div>' : ''}}
-      ${{wlCarbonStrip(e.delta_e_wh, stripLabel, e.delta_t_s, savedG)}}
-      <p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>
-    </div>`;
+  const html = wlRenderLLMCard({{result: r, savedAt: savedAt, isPrev: isPrev}});
+  // Shared helper guards on missing energy with a "format not recognised"
+  // message; preserve the original behaviour of re-showing run buttons in
+  // that case so visitors can retry from the buttons row rather than a
+  // dead card.
+  if (!r.energy && !(r.runs && r.runs.length) && !r.summary && r.mode !== 'both') {{
+    document.getElementById('llm-btns').style.display = 'flex';
+    document.getElementById('llm-status').innerHTML = html;
+    return;
   }}
-
   document.getElementById('llm-status').innerHTML = html;
   document.getElementById('llm-btns').style.display = 'none';
   revealNext(2);
@@ -5637,62 +6529,8 @@ function pollDemoRAG(jobId, t0) {{
 }}
 
 function renderRAGResult(r, savedAt, isPrev) {{
-  const prevNote = isPrev ? '<p class="prev-note">↩ Previous run · ' + timeAgo(savedAt) + '</p>' : '';
-  const modes = ['baseline', 'rag', 'rag_large'];
-  const labels = {{'baseline': 'No retrieval', 'rag': 'RAG', 'rag_large': 'RAG Large'}};
-  const results = r.results || {{}};
-  const modelLine = r.model_label
-    ? `<div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:0.6rem">
-         Model: ${{r.model_label}}${{r.model_params ? ' · ' + r.model_params : ''}}</div>`
-    : '';
-  const questionLine = r.question
-    ? `<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:1rem;border-left:2px solid var(--border-2);padding-left:0.7rem">
-         <span style="color:var(--text-4);font-style:normal">Question:</span> "${{r.question}}"</div>`
-    : '';
-  let cols = '';
-  // Pick the most-efficient sub-run for the carbon strip headline (matches
-  // CR-030's "best of N" framing for compare-mode strips).
-  let bestE = null, bestLbl = null;
-  modes.forEach(m => {{
-    const res = results[m];
-    if (!res) return;
-    const e = res.energy || {{}}, inf = res.inference || {{}};
-    const inTok = inf.input_tokens != null ? inf.input_tokens : '—';
-    const outTok = inf.output_tokens != null ? inf.output_tokens : '—';
-    const retMs = res.retrieval_ms > 0 ? fmt(res.retrieval_ms, 0) + ' ms retrieval' : 'no retrieval';
-    if (e.delta_e_wh != null && (bestE == null || e.delta_e_wh < bestE.delta_e_wh)) {{
-      bestE = e; bestLbl = labels[m];
-    }}
-    cols += `<div style="flex:1;min-width:130px;border-left:2px solid #1a1a1a;padding-left:0.75rem">
-      <div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:0.5rem">${{labels[m]}}</div>
-      <div class="kpi" style="margin-bottom:0.4rem">
-        <div class="val">${{fmt(e.mwh_per_token, 3)}}</div>
-        <div class="lbl">mWh / token</div>
-      </div>
-      <div style="font-size:0.75rem;color:var(--text-4);line-height:1.8">
-        ${{fmt(inf.tokens_per_sec, 1)}} tok/s<br>
-        ${{inTok}} in · ${{outTok}} out tokens<br>
-        ${{retMs}}<br>
-        ${{e.confidence ? '<span class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</span>' : ''}}
-      </div>
-    </div>`;
-  }});
-  const stripSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
-  const stripHtml = bestE
-    ? wlCarbonStrip(bestE.delta_e_wh, (r.model_label || 'RAG') + ' · best of 3 modes (' + bestLbl + ')', bestE.delta_t_s, stripSavedG)
-    : '';
-  document.getElementById('rag-status').innerHTML = prevNote +
-    `<div class="result-card">
-       ${{modelLine}}
-       ${{questionLine}}
-       <div style="display:flex;gap:1rem;flex-wrap:wrap">${{cols}}</div>
-       ${{stripHtml}}
-       <p class="scope-note" style="margin-top:1rem">
-         Input tokens show how much context the model processes per mode —
-         retrieval grows the prompt significantly.<br>
-         Device layer only. Network excluded.
-       </p>
-     </div>`;
+  document.getElementById('rag-status').innerHTML =
+    wlRenderRAGCard({{result: r, savedAt: savedAt, isPrev: isPrev}});
   document.getElementById('rag-btns').style.display = 'none';
   revealNext(4);
 }}
@@ -5788,65 +6626,17 @@ async function showPrevImage() {{
 }}
 
 function renderDemoImageResult(r) {{
-  let html = '';
-  if (r.mode === 'both') {{
-    const ce = r.cpu && r.cpu.energy, ge = r.gpu && r.gpu.energy;
-    const cg = r.cpu && r.cpu.generation, gg = r.gpu && r.gpu.generation;
-    const a = r.analysis || {{}};
-    const cpuWh = ce && (ce.wh_per_image || ce.delta_e_wh);
-    const gpuWh = ge && (ge.wh_per_image || ge.delta_e_wh);
-    // Most efficient side for the carbon strip headline.
-    const bestE = (ce && ge && ce.delta_e_wh != null && ge.delta_e_wh != null)
-      ? (ce.delta_e_wh <= ge.delta_e_wh ? ce : ge)
-      : (ce || ge);
-    const bestSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
-    let imgs = '';
-    if (cg && cg.b64_png) imgs += '<div style="flex:1;min-width:150px"><div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">CPU</div>' +
-      '<img src="data:image/png;base64,' + cg.b64_png + '" style="max-width:100%;border:1px solid var(--border);display:block"></div>';
-    if (gg && gg.b64_png) imgs += '<div style="flex:1;min-width:150px"><div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">GPU</div>' +
-      '<img src="data:image/png;base64,' + gg.b64_png + '" style="max-width:100%;border:1px solid var(--border);display:block"></div>';
-    html = '<div class="result-card">' +
-      '<p class="headline">' + (a.finding || '') + '</p>' +
-      (r.full_prompt ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:0.85rem;border-left:2px solid var(--border-2);padding-left:0.7rem"><span style="color:var(--text-4);font-style:normal">Prompt:</span> "' + r.full_prompt + '"</div>' : '') +
-      '<div class="kpi-row">' +
-      '<div class="kpi"><div class="val">' + fmt(cpuWh,4) + ' Wh</div><div class="lbl">CPU / image</div></div>' +
-      '<div class="kpi"><div class="val">' + fmt(gpuWh,4) + ' Wh</div><div class="lbl">GPU / image</div></div>' +
-      '<div class="kpi"><div class="val">' + fmt(cg && cg.gen_s,1) + 's / ' + fmt(gg && (gg.gen_s_per_image || gg.gen_s),1) + 's</div><div class="lbl">time CPU / GPU</div></div>' +
-      '</div>' +
-      (ce ? '<div class="conf-badge">' + ce.confidence.flag + ' CPU · ' + (ge ? ge.confidence.flag + ' GPU' : '') + '</div>' : '') +
-      '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem">' + imgs + '</div>' +
-      (bestE ? wlCarbonStrip(bestE.delta_e_wh, 'Image · best of CPU vs GPU', bestE.delta_t_s, bestSavedG) : '') +
-      '</div>';
-  }} else {{
-    const e = r.energy;
-    const gen = r.generation;
-    if (!e) {{
-      document.getElementById('image-btns').style.display = 'flex';
-      document.getElementById('image-status').innerHTML = '<p class="progress-note" style="color:var(--text-3)">Result format not recognised — run a new measurement.</p>';
-      return;
-    }}
-    const wh = e.wh_per_image || e.delta_e_wh;
-    const savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
-    const imgHtml = gen && gen.b64_png
-      ? '<img src="data:image/png;base64,' + gen.b64_png +
-        '" style="max-width:100%;border:1px solid var(--border);display:block;margin-top:1rem">'
-      : '';
-    const promptLine = r.full_prompt
-      ? '<div style="font-size:0.78rem;color:var(--text-3);font-style:italic;margin-bottom:0.85rem;border-left:2px solid var(--border-2);padding-left:0.7rem"><span style="color:var(--text-4);font-style:normal">Prompt:</span> "' + r.full_prompt + '"</div>'
-      : '';
-    html = '<div class="result-card">' +
-      promptLine +
-      '<div class="kpi-row">' +
-      '<div class="kpi"><div class="val">' + fmt(wh,4) + ' Wh</div><div class="lbl">energy / image</div></div>' +
-      '<div class="kpi"><div class="val">' + fmt(gen && gen.total_s,1) + 's</div><div class="lbl">generation time</div></div>' +
-      '<div class="kpi"><div class="val">' + fmt(e.delta_w,1) + ' W</div><div class="lbl">delta above idle</div></div>' +
-      '</div>' +
-      '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</div>' +
-      imgHtml +
-      wlCarbonStrip(wh, (r.model_label || 'Image generation') + ' · single', e.delta_t_s, savedG) +
-      '</div>';
+  // Single-run path with no energy block: re-show the buttons row so
+  // visitors can retry, and let the shared helper render the
+  // "format not recognised" notice.
+  if (r.mode !== 'both' && !r.energy) {{
+    document.getElementById('image-btns').style.display = 'flex';
+    document.getElementById('image-status').innerHTML =
+      wlRenderImageCard({{result: r, isPrev: false}});
+    return;
   }}
-  document.getElementById('image-status').innerHTML = html;
+  document.getElementById('image-status').innerHTML =
+    wlRenderImageCard({{result: r, isPrev: false}});
   document.getElementById('image-btns').style.display = 'none';
   revealNext(3);
 }}
@@ -5974,6 +6764,7 @@ function buildSummary() {{
 }}
 </script>
     {_PROGRESS_JS}
+    {_RESULT_JS}
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
@@ -6014,13 +6805,26 @@ async def image_page(request: Request):
         for r in prev_runs:
             fp = r.get("full_prompt", "")
             date_str = (r.get("saved_at") or "")[:16].replace("T", " ")
+            saved_at = r.get("saved_at") or ""
             mode = r.get("mode", "cpu")
+            # CR-034 Phase B / CR-013 — click-to-expand toggle. Lazy-loads the
+            # full result via /results/image/<id>/download.json and renders
+            # through window.wlRenderImageCard from _RESULT_JS.
+            expand_link = (
+                f'<a href="javascript:void(0)" '
+                f'onclick="wlExpandPrevRow(\'image\',\'{r["job_id"]}\',\'{saved_at}\')" '
+                f'style="color:var(--text-3);font-size:0.72rem;text-decoration:none;'
+                f'margin-right:0.75rem;cursor:pointer">'
+                f'<span id="chev-{r["job_id"]}">▸</span> Show full result</a>'
+            )
             downloads = (
-                f'<a href="/results/image/{r["job_id"]}/download.json" download '
+                expand_link
+                + f'<a href="/results/image/{r["job_id"]}/download.json" download '
                 f'style="color:var(--text-5);font-size:0.72rem;text-decoration:none;margin-right:0.75rem">↓ JSON</a>'
                 f'<a href="/results/image/{r["job_id"]}/download.csv" download '
                 f'style="color:var(--text-5);font-size:0.72rem;text-decoration:none">↓ CSV</a>'
             )
+            expand_div = f'<div id="expand-{r["job_id"]}" style="display:none;margin-top:0.6rem"></div>'
             if mode == "both":
                 def _side_html(label, s):
                     img = (f'<img src="data:image/png;base64,{s["b64_png"]}" '
@@ -6041,6 +6845,7 @@ async def image_page(request: Request):
                   {_side_html("GPU", r.get("gpu", {}))}
                   <div class="prev-prompt" style="color:var(--text-3);font-size:0.75rem;margin-top:0.3rem">{fp[:80]}</div>
                   <div style="margin-top:0.3rem">{downloads}</div>
+                  {expand_div}
                 </div>"""
             elif mode == "compare_models":
                 def _mdl_html(s):
@@ -6062,6 +6867,7 @@ async def image_page(request: Request):
                   {_mdl_html(r.get("large", {}))}
                   <div class="prev-prompt" style="color:var(--text-3);font-size:0.75rem;margin-top:0.3rem">{fp[:80]}</div>
                   <div style="margin-top:0.3rem">{downloads}</div>
+                  {expand_div}
                 </div>"""
             else:
                 conf = r.get("confidence", {})
@@ -6069,18 +6875,21 @@ async def image_page(request: Request):
                            f'style="width:80px;height:80px;object-fit:cover;vertical-align:middle;margin-right:0.75rem">'
                            if r.get("b64_png") else "")
                 mode_label = {"cpu": "CPU", "gpu": "GPU"}.get(mode, mode)
-                prev_html += f"""<div class="prev-item">
-                  {img_tag}
-                  <div>
-                    <span class="prev-meta">
-                      {date_str} &nbsp;·&nbsp; {mode_label}
-                      &nbsp;·&nbsp; <span class="conf-badge">{conf.get("flag","")} {conf.get("label","")}</span>
-                      &nbsp;·&nbsp; {r.get("delta_e_wh","?")} Wh/image
-                      &nbsp;·&nbsp; {r.get("delta_t_s","?")}s
-                    </span>
-                    <div class="prev-prompt" style="color:var(--text-3);font-size:0.75rem;margin-top:0.3rem">{fp[:80]}</div>
-                    <div style="margin-top:0.3rem">{downloads}</div>
+                prev_html += f"""<div class="prev-item" style="flex-direction:column;align-items:flex-start">
+                  <div style="display:flex;align-items:flex-start;width:100%">
+                    {img_tag}
+                    <div>
+                      <span class="prev-meta">
+                        {date_str} &nbsp;·&nbsp; {mode_label}
+                        &nbsp;·&nbsp; <span class="conf-badge">{conf.get("flag","")} {conf.get("label","")}</span>
+                        &nbsp;·&nbsp; {r.get("delta_e_wh","?")} Wh/image
+                        &nbsp;·&nbsp; {r.get("delta_t_s","?")}s
+                      </span>
+                      <div class="prev-prompt" style="color:var(--text-3);font-size:0.75rem;margin-top:0.3rem">{fp[:80]}</div>
+                      <div style="margin-top:0.3rem">{downloads}</div>
+                    </div>
                   </div>
+                  {expand_div}
                 </div>"""
         prev_html += "</div>"
 
@@ -6314,6 +7123,16 @@ async function startCompareModels() {{
   const prompt = document.getElementById('prompt').value.trim();
   if (CAN_CUSTOM_PROMPT && !prompt) {{ alert('Enter a prompt'); return; }}
 
+  // Compare Models is GPU-only (SDXL-Turbo can't run on CPU). Flip the
+  // backend radio to GPU so the page state reflects what's about to run —
+  // otherwise the radio stays on CPU/Both while the progress widget shows
+  // GPU stages, which reads as a contradiction.
+  const gpuRadio = document.querySelector('input[name="img-device"][value="gpu"]');
+  if (gpuRadio && !gpuRadio.checked) {{
+    gpuRadio.checked = true;
+    selectedDevice = 'gpu';
+  }}
+
   document.getElementById('run-btn').disabled = true;
   document.getElementById('compare-btn').disabled = true;
   document.getElementById('status').innerHTML = '';
@@ -6413,6 +7232,16 @@ function renderImageBoth(r) {{
   const _stripDur = _winE ? _winE.delta_t_s : null;
   const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
     ? _winE.co2e.intensity.g_per_kwh : null;
+  // CR-032 — sub-runs across the two devices.
+  const _subRuns = [
+    {{label: 'CPU · Ryzen 9 7900',  e: r.cpu  && r.cpu.energy}},
+    {{label: 'GPU · RX 7800 XT',    e: r.gpu  && r.gpu.energy}}
+  ].filter(s => s.e && s.e.co2e).map(s => ({{
+    label: s.label,
+    grams: s.e.co2e.grams,
+    deltaWh: s.e.delta_e_wh,
+    durationS: s.e.delta_t_s
+  }}));
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>CPU vs GPU — Image Generation</h2>
@@ -6426,7 +7255,7 @@ function renderImageBoth(r) {{
       <div style="font-size:0.75rem;color:var(--text-4);margin-top:0.5rem">
         Prompt: "${{r.full_prompt}}" · modifier: <em>${{r.modifier}}</em>
       </div>
-      ${{wlCarbonStrip(_stripWh, 'Image gen · most efficient device', _stripDur, _stripSavedG)}}
+      ${{wlCarbonStrip(_stripWh, 'Image gen · most efficient device', _stripDur, _stripSavedG, _subRuns)}}
       <p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
@@ -6462,6 +7291,16 @@ function renderCompareModels(r) {{
   const _stripDur = _winE ? _winE.delta_t_s : null;
   const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
     ? _winE.co2e.intensity.g_per_kwh : null;
+  // CR-032 — sub-runs across the two model sizes.
+  const _subRuns = [
+    {{label: (r.small && r.small.generation && r.small.generation.model_label) || 'Small model',  e: r.small && r.small.energy}},
+    {{label: (r.large && r.large.generation && r.large.generation.model_label) || 'Large model',  e: r.large && r.large.energy}}
+  ].filter(s => s.e && s.e.co2e).map(s => ({{
+    label: s.label,
+    grams: s.e.co2e.grams,
+    deltaWh: s.e.delta_e_wh,
+    durationS: s.e.delta_t_s
+  }}));
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>SD-Turbo vs SDXL-Turbo — Same Prompt + Seed</h2>
@@ -6479,7 +7318,7 @@ function renderCompareModels(r) {{
         Quality is subjective. Judge the visual output above — is the larger model's image worth
         ${{a.energy_ratio_large_over_small}}× the energy for this prompt?
       </div>
-      ${{wlCarbonStrip(_stripWh, 'Image gen · smaller of the two models', _stripDur, _stripSavedG)}}
+      ${{wlCarbonStrip(_stripWh, 'Image gen · smaller of the two models', _stripDur, _stripSavedG, _subRuns)}}
       <p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
@@ -6533,6 +7372,7 @@ const _resumeJob = new URLSearchParams(location.search).get('job');
 if (_resumeJob) {{ document.getElementById('run-btn').disabled = true; pollTimer = setInterval(() => pollJob(_resumeJob), 1500); }}
 </script>
     {_PROGRESS_JS}
+    {_RESULT_JS}
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
@@ -6686,7 +7526,11 @@ async def demo_page(request: Request):
     # never silently contradict the running config (same pattern as
     # /methodology — see methodology_page below).
     # CR-001: AUTH_CHIP placeholder renders the tier-aware sign-in widget.
+    # CR-027: TIER_INDICATOR + upload-cap placeholders so the Welcome-step
+    # tier framing and the Findings-step capability matrix stay in sync
+    # with settings.json (no silent drift if caps change).
     s = cfg.load()
+    member_cap_mb = s.get("upload_size_member_mb", "—")
     return (_DEMO_HTML
             .replace("{BASELINE_POLLS}",     str(s.get("baseline_polls",     "—")))
             .replace("{VIDEO_COOLDOWN_S}",   str(s.get("video_cooldown_s",   "—")))
@@ -6696,7 +7540,9 @@ async def demo_page(request: Request):
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
             .replace("{BETA_CHIP}",          _BETA_CHIP)
             .replace("{AUTH_CHIP_STYLES}",   _AUTH_CHIP_STYLES)
-            .replace("{AUTH_CHIP}",          _auth_chip_html(request)))
+            .replace("{AUTH_CHIP}",          _auth_chip_html(request))
+            .replace("{TIER_INDICATOR}",     _tier_indicator_html(request))
+            .replace("{UPLOAD_MEMBER_MB}",   str(member_cap_mb)))
 
 
 _METHODOLOGY_HTML = """<!DOCTYPE html>
