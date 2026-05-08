@@ -1574,12 +1574,39 @@ function wlRenderProgress(opts) {
     var elHtml = opts.elapsed != null
         ? '<div style="color:var(--text-4);font-size:0.78rem;margin-top:0.4rem">Elapsed: ' + wlFormatElapsed(opts.elapsed) + '</div>'
         : '';
+    // CR-035 \u2014 encode progress bar. Renders above the stage list when the
+    // server has streamed a `progress_pct` (video jobs only). Caption
+    // underneath shows %, encode speed (e.g. "2.1x"), and ETA. Hidden on
+    // any workload that doesn't surface a percentage \u2014 same widget,
+    // workload-agnostic field.
+    var pbHtml = '';
+    if (opts.progressPct != null && !isNaN(opts.progressPct)) {
+        var pct = Math.max(0, Math.min(100, parseFloat(opts.progressPct)));
+        var captionParts = [pct.toFixed(1) + '%'];
+        if (opts.encodeSpeed) captionParts.push(opts.encodeSpeed);
+        if (opts.etaS != null && !isNaN(opts.etaS) && opts.etaS > 0) {
+            captionParts.push('ETA ' + wlFormatElapsed(opts.etaS * 1000));
+        }
+        pbHtml =
+            '<div style="margin-bottom:0.85rem">'
+          + '<div style="height:6px;background:var(--panel);border:1px solid var(--border-2);'
+          + 'overflow:hidden">'
+          + '<div style="height:100%;width:' + pct + '%;background:var(--accent);'
+          + 'transition:width 0.4s ease-out"></div>'
+          + '</div>'
+          + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem;'
+          + 'font-family:monospace;letter-spacing:0.04em">'
+          + captionParts.join(' \xb7 ')
+          + '</div>'
+          + '</div>';
+    }
     var t = _wlTarget(opts);
     if (!t) return;
     t.innerHTML =
         '<div style="border:1px solid var(--border);padding:1.5rem">'
         + '<div style="color:var(--warn);font-size:0.9rem;margin-bottom:0.75rem">'
         + (opts.header || 'Measuring \u2014 do not close this tab') + '</div>'
+        + pbHtml
         + (opts.stagesHtml || '')
         + wHtml + elHtml
         + (opts.extraHtml || '')
@@ -2702,7 +2729,10 @@ async def video_page(request: Request):
         fetchCmdPreview(key);
     }}
 
-    function renderProgress(jobId, mode, serverStage, watts) {{
+    // CR-035 \u2014 optional 5th arg `data` carries the full /video/job/<id>
+    // dict so we can pluck the encode-progress fields. Old callers that
+    // pass a literal stage string just don't populate the bar.
+    function renderProgress(jobId, mode, serverStage, watts, data) {{
         const stages = STAGES[mode];
         const stageMap = STAGE_MAP[mode];
         const currentStage = stageMap[serverStage] !== undefined ? stageMap[serverStage] : 0;
@@ -2713,6 +2743,9 @@ async def video_page(request: Request):
             stagesHtml: wlStageList(stages, currentStage),
             watts: watts,
             elapsed: startTime ? Date.now() - startTime : null,
+            progressPct: data && data.progress_pct,
+            etaS:        data && data.eta_s,
+            encodeSpeed: data && data.encode_speed,
             extraHtml: '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.4rem">Job: ' + jobId + ' \xb7 polling every 5s</div>',
         }});
     }}
@@ -2796,7 +2829,7 @@ async def video_page(request: Request):
                 renderQueued(data.queue_position);
                 setTimeout(() => pollJob(jobId, mode), 3000);
             }} else {{
-                renderProgress(jobId, mode, data.stage || "starting", watts);
+                renderProgress(jobId, mode, data.stage || "starting", watts, data);
                 setTimeout(() => pollJob(jobId, mode), 5000);
             }}
         }} catch(e) {{
@@ -6312,6 +6345,9 @@ function pollVideo(jobId, t0) {{
         stagesHtml: wlStageList(WL_VIDEO_STAGES, idx),
         watts: data.watts,
         elapsed: Date.now() - t0,
+        progressPct: data.progress_pct,
+        etaS:        data.eta_s,
+        encodeSpeed: data.encode_speed,
         extraHtml: sideLine,
       }});
       setTimeout(() => pollVideo(jobId, t0), 5000);

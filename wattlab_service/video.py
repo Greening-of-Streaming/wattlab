@@ -1,9 +1,12 @@
 import asyncio
 import shlex
 import subprocess
+import threading
 import time
 import json
+from collections import deque
 from pathlib import Path
+from typing import Callable, Optional
 import settings as cfg
 from power import get_power_watts
 UPLOAD_DIR = Path("/tmp/wattlab_uploads")
@@ -56,6 +59,117 @@ def _ffmpeg_version() -> str:
         return out.stdout.split("\n", 1)[0]
     except Exception:
         return "unknown"
+
+
+# CR-035 — ffprobe input-duration helper.
+#
+# Returns the input's duration in seconds, or None if probing fails. Used
+# by run_single() to compute a progress percentage from ffmpeg's
+# `out_time_us=` progress lines (current encoded position ÷ total = pct).
+# A None return is the "no progress bar" signal — the encode still runs,
+# just without the live bar (graceful degradation; no error path).
+#
+# We probe the input alongside the binary that will encode it (ffprobe
+# ships next to ffmpeg in any standard build) but with a hard 10 s
+# timeout — a hung probe must not delay the actual measurement.
+def _probe_duration(input_path) -> Optional[float]:
+    bin_path = _ffmpeg_bin()
+    # Sibling `ffprobe` in the same directory as the configured ffmpeg.
+    # Falls back to PATH lookup if no sibling exists.
+    candidate = Path(bin_path).with_name("ffprobe") if "/" in bin_path else Path("ffprobe")
+    probe_bin = str(candidate) if candidate.exists() or "/" not in bin_path else "ffprobe"
+    try:
+        out = subprocess.run(
+            [probe_bin, "-v", "error",
+             "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1",
+             str(input_path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode != 0:
+            return None
+        return float(out.stdout.strip())
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+# CR-035 — parse a single line from `ffmpeg -progress pipe:1` into the
+# accumulating block dict, and return the block when a sentinel
+# (`progress=continue|end`) closes it. Pure function — exported so the
+# unit tests can exercise it without a live ffmpeg process.
+def _consume_progress_line(line: str, block: dict) -> Optional[dict]:
+    line = line.strip()
+    if not line or "=" not in line:
+        return None
+    key, _, val = line.partition("=")
+    block[key] = val
+    if key == "progress":
+        # Sentinel — block is complete. Caller resets the dict.
+        return dict(block)
+    return None
+
+
+# CR-035 — build a progress callback closure. Threads ETA smoothing
+# (deque of last N speed samples) and writes results to jobs[job_id].
+# Returns a function suitable for `transcode(progress_cb=…)`.
+def _make_progress_cb(jobs: Optional[dict], job_id: str,
+                      duration_s: Optional[float],
+                      smoothing_n: int = 10) -> Callable[[dict], None]:
+    samples: deque = deque(maxlen=smoothing_n)
+
+    def cb(block: dict) -> None:
+        if jobs is None or job_id not in jobs:
+            return
+        try:
+            out_time_us_raw = block.get("out_time_us") or block.get("out_time_ms")
+            if out_time_us_raw is None or out_time_us_raw == "N/A":
+                return
+            # Both `out_time_us` (microseconds, modern ffmpeg) and
+            # `out_time_ms` (microseconds despite the name — ffmpeg quirk)
+            # use microsecond precision. Treat them identically.
+            out_time_s = int(out_time_us_raw) / 1_000_000
+
+            speed_str = (block.get("speed") or "").strip()
+            try:
+                speed = float(speed_str.rstrip("x")) if speed_str.endswith("x") else None
+            except ValueError:
+                speed = None
+
+            pct = None
+            eta_s = None
+            if duration_s and duration_s > 0:
+                pct = max(0.0, min(100.0, (out_time_s / duration_s) * 100.0))
+                if speed is not None and speed > 0:
+                    samples.append(speed)
+                    avg_speed = sum(samples) / len(samples)
+                    remaining = max(0.0, duration_s - out_time_s)
+                    if avg_speed > 0:
+                        eta_s = remaining / avg_speed
+
+            # `progress=end` is the final block; clamp pct to 100 so
+            # the bar always closes cleanly even if the last reported
+            # `out_time_us` undershoots due to rounding.
+            if block.get("progress") == "end":
+                pct = 100.0
+                eta_s = 0.0
+
+            jobs[job_id]["progress_pct"] = round(pct, 1) if pct is not None else None
+            jobs[job_id]["encode_speed"] = speed_str or None
+            jobs[job_id]["eta_s"]        = round(eta_s, 1) if eta_s is not None else None
+        except Exception:
+            # Never let a bad progress line take down the encode.
+            return
+
+    return cb
+
+
+# CR-035 — clear progress fields on the job dict so a previous encode's
+# state doesn't leak into the next one (compare modes, all_codecs).
+def _clear_progress(jobs: Optional[dict], job_id: str) -> None:
+    if jobs is None or job_id not in jobs:
+        return
+    for k in ("progress_pct", "eta_s", "encode_speed"):
+        jobs[job_id].pop(k, None)
 
 
 PRESETS = {
@@ -238,24 +352,99 @@ def apply_custom_cmd(custom_cmd: str, input_path, output_path) -> list:
     return parts
 
 
-def transcode(cmd: list) -> dict:
+def transcode(cmd: list, progress_cb: Optional[Callable[[dict], None]] = None) -> dict:
+    """Run an ffmpeg command, optionally streaming progress to a callback.
+
+    `progress_cb` (CR-035): when provided, ffmpeg is launched with
+    `-progress pipe:1 -nostats` and stdout is parsed line-by-line. The
+    callback fires once per `progress=continue|end` block with a dict of
+    all key=value pairs ffmpeg emitted in that block (out_time_us, speed,
+    total_size, fps, …).
+
+    Without a callback the function falls back to the original
+    `subprocess.run` path so the variance-calibration template and any
+    other non-progress callers are untouched.
+    """
     # nice -n -5 gives ffmpeg elevated CPU scheduling priority
     cmd = ["nice", "-n", "-5"] + cmd
     t_start = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if progress_cb is None:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        t_end = time.time()
+        return {
+            "success": result.returncode == 0,
+            "duration_s": round(t_end - t_start, 1),
+            "ffmpeg_cmd": " ".join(cmd),
+            "ffmpeg_version": _ffmpeg_version(),
+            "stderr": result.stderr[-500:] if result.returncode != 0 else ""
+        }
+
+    # Progress-streaming path. Append `-progress pipe:1 -nostats`. The
+    # `-nostats` flag suppresses the regular stderr frame counter so
+    # stderr stays small (only errors + the standard ffmpeg banner) and
+    # we don't risk a pipe-buffer deadlock between the two streams.
+    cmd_with_progress = cmd + ["-progress", "pipe:1", "-nostats"]
+
+    proc = subprocess.Popen(
+        cmd_with_progress,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,   # line-buffered
+    )
+
+    # Stderr drained in a background thread so a long stderr can't block
+    # the stdout reader. Cap retained tail at the same 500-byte slice as
+    # the non-progress path returns.
+    stderr_tail: list[str] = []
+    def _drain_stderr():
+        try:
+            for line in proc.stderr:
+                stderr_tail.append(line)
+                # Bound memory — keep a rolling tail. 50 lines is comfortably
+                # more than any ffmpeg failure dump we've seen.
+                if len(stderr_tail) > 50:
+                    stderr_tail.pop(0)
+        except Exception:
+            pass
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    block: dict = {}
+    try:
+        for line in proc.stdout:
+            completed = _consume_progress_line(line, block)
+            if completed is not None:
+                try:
+                    progress_cb(completed)
+                except Exception:
+                    # A buggy callback must not take down the encode.
+                    pass
+                block = {}
+    except Exception:
+        # If the stdout iterator faults (rare), fall through to wait()
+        # so we still get a clean exit code + stderr.
+        pass
+
+    proc.wait()
+    stderr_thread.join(timeout=2)
     t_end = time.time()
+    stderr_text = "".join(stderr_tail)
+
     return {
-        "success": result.returncode == 0,
+        "success": proc.returncode == 0,
         "duration_s": round(t_end - t_start, 1),
-        "ffmpeg_cmd": " ".join(cmd),
+        "ffmpeg_cmd": " ".join(cmd_with_progress),
         "ffmpeg_version": _ffmpeg_version(),
-        "stderr": result.stderr[-500:] if result.returncode != 0 else ""
+        "stderr": stderr_text[-500:] if proc.returncode != 0 else "",
     }
 
 # --- Single run ---
 
 async def run_single(input_path: Path, job_id: str, preset_key: str,
-                     baseline: dict, custom_cmd: str = None) -> dict:
+                     baseline: dict, custom_cmd: str = None,
+                     jobs: Optional[dict] = None) -> dict:
     s = cfg.load()
     preset = PRESETS[preset_key]
     bps = _preset_bps(preset_key, s)
@@ -268,10 +457,27 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
         cmd = apply_custom_cmd(custom_cmd, input_path, output_path)
     else:
         cmd = preset["cmd_fn"](input_path, output_path, bps)
+
+    # CR-035 — probe input duration once and stream progress through to
+    # jobs[job_id]. Probe failure (e.g. ffprobe not installed) means no
+    # progress bar, but the encode still runs.
+    duration_s = _probe_duration(input_path)
+    progress_cb = _make_progress_cb(jobs, job_id, duration_s) if jobs is not None else None
+    if jobs is not None:
+        _clear_progress(jobs, job_id)
+        if duration_s is not None:
+            jobs[job_id]["input_duration_s"] = round(duration_s, 1)
+
     poll_task = asyncio.create_task(poll_during_task(stop_event))
     transcode_result = await asyncio.get_event_loop().run_in_executor(
-        None, transcode, cmd
+        None, lambda: transcode(cmd, progress_cb=progress_cb)
     )
+
+    # Clear progress fields once the encode is done so the next encode
+    # in a compare/all_codecs sweep doesn't inherit stale values during
+    # the cooldown / next-baseline window.
+    if jobs is not None:
+        _clear_progress(jobs, job_id)
 
     t_end = time.time()
     stop_event.set()
@@ -429,7 +635,7 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) 
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_cpu_baseline"
             base_cpu = await measure_baseline(polls=s["baseline_polls"])
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_cpu_encode"
-            cpu_result = await run_single(input_path, job_id, cpu_key, base_cpu)
+            cpu_result = await run_single(input_path, job_id, cpu_key, base_cpu, jobs=jobs)
 
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_rest"
             await asyncio.sleep(s["video_cooldown_s"])
@@ -437,7 +643,7 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) 
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_gpu_baseline"
             base_gpu = await measure_baseline(polls=s["baseline_polls"])
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_gpu_encode"
-            gpu_result = await run_single(input_path, job_id, gpu_key, base_gpu)
+            gpu_result = await run_single(input_path, job_id, gpu_key, base_gpu, jobs=jobs)
 
             results[codec_name] = {
                 "cpu": cpu_result,
@@ -474,7 +680,8 @@ async def run_video_measurement(input_path: Path, job_id: str,
     LOCK_FILE.write_text(job_id)
     try:
         if jobs is not None: jobs[job_id]["stage"] = f"{preset_key}_encode"
-        result = await run_single(input_path, job_id, preset_key, baseline, custom_cmd)
+        result = await run_single(input_path, job_id, preset_key, baseline,
+                                  custom_cmd, jobs=jobs)
         if jobs is not None: jobs[job_id]["stage"] = "done"
     finally:
         LOCK_FILE.unlink(missing_ok=True)
@@ -500,13 +707,15 @@ async def run_both_measurement(input_path: Path, job_id: str, jobs: dict = None,
     LOCK_FILE.write_text(job_id)
     try:
         if jobs is not None: jobs[job_id]["stage"] = "cpu_encode"
-        cpu_result = await run_single(input_path, job_id, preset_cpu, baseline, custom_cmd_cpu)
+        cpu_result = await run_single(input_path, job_id, preset_cpu, baseline,
+                                      custom_cmd_cpu, jobs=jobs)
         if jobs is not None: jobs[job_id]["stage"] = "rest"
         await asyncio.sleep(s["video_cooldown_s"])
         if jobs is not None: jobs[job_id]["stage"] = "baseline_2"
         gpu_baseline = await measure_baseline(polls=s["baseline_polls"])
         if jobs is not None: jobs[job_id]["stage"] = "gpu_encode"
-        gpu_result = await run_single(input_path, job_id, preset_gpu, gpu_baseline, custom_cmd_gpu)
+        gpu_result = await run_single(input_path, job_id, preset_gpu, gpu_baseline,
+                                      custom_cmd_gpu, jobs=jobs)
     finally:
         LOCK_FILE.unlink(missing_ok=True)
         loop = asyncio.get_event_loop()
