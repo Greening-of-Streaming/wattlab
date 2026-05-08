@@ -1623,12 +1623,27 @@ function wlRenderQueued(pos, opts) {
 }
 // Shared per-workload stage labels \u2014 referenced from main pages and
 // from /demo's poll loops, so the stage list can't drift between them.
-var WL_VIDEO_STAGES = ['Baseline', 'Encoding', 'Cooldown', 'Complete'];
-var WL_LLM_STAGES   = ['Baseline', 'Inference running', 'Complete'];
-var WL_IMAGE_STAGES = ['Baseline', 'Generating image', 'Complete'];
-var WL_RAG_STAGES   = ['Baseline poll', 'Inference running', 'Complete'];
+// Static expected-duration suffix (e.g. "Baseline (10s)", "Cooldown (90s)")
+// is baked at module load via the .replace() chain below \u2014 keeps the
+// visitor oriented during long quiet stages without a live timer (which
+// would imply more precision than the static expectation actually has).
+var WL_VIDEO_STAGES = ['Baseline ({BASELINE_S}s)', 'Encoding', 'Cooldown ({COOLDOWN_S}s)', 'Complete'];
+var WL_LLM_STAGES   = ['Baseline ({BASELINE_S}s)', 'Inference running', 'Complete'];
+var WL_IMAGE_STAGES = ['Baseline ({BASELINE_S}s)', 'Generating image', 'Complete'];
+var WL_RAG_STAGES   = ['Baseline poll ({BASELINE_S}s)', 'Inference running', 'Complete'];
 </script>"""
 
+# Bake settings-driven durations into the shared stage labels at module
+# load \u2014 settings changes require a service restart for the labels to
+# refresh, same constraint /methodology's baseline copy already documents.
+def _bake_durations(template: str) -> str:
+    s = cfg.load()
+    return (template
+            .replace("{BASELINE_S}", str(s.get("baseline_polls", "\u2014")))
+            .replace("{COOLDOWN_S}", str(s.get("video_cooldown_s", "\u2014")))
+            .replace("{LLM_REST_S}", str(s.get("llm_rest_s", "\u2014"))))
+
+_PROGRESS_JS = _bake_durations(_PROGRESS_JS)
 
 
 # CR-034 Phase A \u2014 shared compact-result-card helpers.
@@ -2348,7 +2363,7 @@ async def video_page(request: Request):
                    f'yours will be added and run automatically.</div>') \
         if queue_depth > 0 else ""
 
-    return f"""<!DOCTYPE html>
+    return _bake_durations(f"""<!DOCTYPE html>
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
@@ -2669,13 +2684,13 @@ async def video_page(request: Request):
     let elapsedTimer = null;
     let startTime = null;
 
-    const _SINGLE = ['Baseline', 'Encode', 'Done'];
+    const _SINGLE = ['Baseline ({{BASELINE_S}}s)', 'Encode', 'Done'];
     const _SINGLE_MAP = {{'starting':0, 'baseline':0, 'cpu_encode':1, 'gpu_encode':1,
                           'h265_cpu_encode':1, 'h265_gpu_encode':1, 'av1_cpu_encode':1, 'done':2}};
-    const _BOTH_STAGES = ['Baseline', 'CPU encode', 'Rest', 'Baseline 2', 'GPU encode', 'Done'];
+    const _BOTH_STAGES = ['Baseline ({{BASELINE_S}}s)', 'CPU encode', 'Rest ({{COOLDOWN_S}}s)', 'Baseline 2 ({{BASELINE_S}}s)', 'GPU encode', 'Done'];
     const _BOTH_MAP = {{'starting':0, 'baseline':0, 'cpu_encode':1, 'rest':2,
                         'baseline_2':3, 'gpu_encode':4, 'done':5}};
-    const _ALL_STAGES = ['H.264 CPU','Rest','H.264 GPU','Rest','H.265 CPU','Rest','H.265 GPU','Rest','AV1 CPU','Rest','AV1 GPU','Done'];
+    const _ALL_STAGES = ['H.264 CPU','Rest ({{COOLDOWN_S}}s)','H.264 GPU','Rest ({{COOLDOWN_S}}s)','H.265 CPU','Rest ({{COOLDOWN_S}}s)','H.265 GPU','Rest ({{COOLDOWN_S}}s)','AV1 CPU','Rest ({{COOLDOWN_S}}s)','AV1 GPU','Done'];
     const _ALL_MAP = {{'starting':0,
         'h264_cpu_baseline':0,'h264_cpu_encode':0,
         'h264_rest':1,
@@ -3208,7 +3223,7 @@ async def video_page(request: Request):
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
-</html>"""
+</html>""")
 
 # --- Job runner ---
 
@@ -3488,7 +3503,7 @@ async def llm_page(request: Request):
     import json as _json
     tasks_js = _json.dumps({k: v["prompt"] for k, v in TASKS.items()})
 
-    return f"""<!DOCTYPE html>
+    return _bake_durations(f"""<!DOCTYPE html>
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
@@ -3697,16 +3712,16 @@ async def llm_page(request: Request):
         const stageLabel = stage.startsWith('inference_') ? 'Running inference (' + stage.replace('inference_','').replace('_',' ') + ')' :
                            stage.startsWith('rest_') ? 'Resting between runs\u2026' : null;
         const stages = isBoth ? [
-            ['baseline_cpu', 'Measuring CPU baseline'],
+            ['baseline_cpu', 'Measuring CPU baseline ({{BASELINE_S}}s)'],
             ['cpu_inference', 'CPU inference (num_gpu=0)'],
-            ['cooldown', 'Cooldown between runs'],
-            ['baseline_gpu', 'Measuring GPU baseline'],
+            ['cooldown', 'Cooldown between runs ({{COOLDOWN_S}}s)'],
+            ['baseline_gpu', 'Measuring GPU baseline ({{BASELINE_S}}s)'],
             ['gpu_inference', 'GPU inference (ROCm)'],
             ['done', 'Done'],
         ] : [
-            ['baseline', 'Measuring baseline'],
+            ['baseline', 'Measuring baseline ({{BASELINE_S}}s)'],
             ['inference', stageLabel || 'Running inference'],
-            ['rest', 'Resting between runs\u2026'],
+            ['rest', 'Resting between runs\u2026 ({{LLM_REST_S}}s)'],
             ['done', 'Done'],
         ].filter(([k]) => k !== 'rest' || displayStage === 'rest');
         const stageIdx = stages.findIndex(([k]) => k === displayStage);
@@ -4199,7 +4214,7 @@ async def llm_page(request: Request):
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
-</html>"""
+</html>""")
 
 @app.post("/llm/run", dependencies=[Depends(requires(LLM_RUN))])
 async def llm_run(
@@ -4373,7 +4388,7 @@ async def rag_page(request: Request):
                    f'yours will be added and run automatically.</div>') \
         if queue_depth > 0 else ""
 
-    return f"""<!DOCTYPE html>
+    return _bake_durations(f"""<!DOCTYPE html>
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
@@ -4672,7 +4687,7 @@ async def rag_page(request: Request):
         }}
     }}
 
-    const RAG_STAGES = ['Baseline poll', 'Inference running', 'Complete'];
+    const RAG_STAGES = ['Baseline poll ({{BASELINE_S}}s)', 'Inference running', 'Complete'];
     const RAG_STAGE_IDX = {{baseline:0, inference:1, done:2}};
 
     function renderRagProgress(stage, watts) {{
@@ -4996,7 +5011,7 @@ async def rag_page(request: Request):
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
-</html>"""
+</html>""")
 
 
 @app.get("/rag/index-status", dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -6929,7 +6944,7 @@ async def image_page(request: Request):
                 </div>"""
         prev_html += "</div>"
 
-    return f"""<!DOCTYPE html>
+    return _bake_durations(f"""<!DOCTYPE html>
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
@@ -7058,16 +7073,16 @@ const GPU_STAGES = ['baseline','generating','done'];
 const BOTH_STAGES = ['cpu_baseline','cpu_generating','cooldown','gpu_baseline','gpu_generating','done'];
 const COMPARE_STAGES = ['small_baseline','small_generating','cooldown','large_baseline','large_generating','done'];
 const STAGE_LABELS = {{
-  'baseline': 'Measuring baseline power',
+  'baseline': 'Measuring baseline power ({{BASELINE_S}}s)',
   'generating': 'Generating image',
-  'cpu_baseline': 'CPU — measuring baseline',
+  'cpu_baseline': 'CPU — measuring baseline ({{BASELINE_S}}s)',
   'cpu_generating': 'CPU — generating image',
-  'cooldown': 'Cooldown between passes',
-  'gpu_baseline': 'GPU — measuring baseline',
+  'cooldown': 'Cooldown between passes ({{COOLDOWN_S}}s)',
+  'gpu_baseline': 'GPU — measuring baseline ({{BASELINE_S}}s)',
   'gpu_generating': 'GPU — generating images (batch)',
-  'small_baseline': 'SD-Turbo — measuring baseline',
+  'small_baseline': 'SD-Turbo — measuring baseline ({{BASELINE_S}}s)',
   'small_generating': 'SD-Turbo — generating (GPU batch)',
-  'large_baseline': 'SDXL-Turbo — measuring baseline',
+  'large_baseline': 'SDXL-Turbo — measuring baseline ({{BASELINE_S}}s)',
   'large_generating': 'SDXL-Turbo — generating (GPU batch)',
   'done': 'Complete',
 }};
@@ -7412,7 +7427,7 @@ if (_resumeJob) {{ document.getElementById('run-btn').disabled = true; pollTimer
     {_CONF_HELP_WIDGET}
     {_FOOTER}
 </body>
-</html>"""
+</html>""")
 
 
 @app.post("/image/start", dependencies=[Depends(requires(IMAGE_RUN))])
