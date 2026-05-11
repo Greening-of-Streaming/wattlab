@@ -6,6 +6,12 @@ Active design / change requests. Each entry has a status, a problem statement, t
 
 ---
 
+## Design principle (standing): preserve the lab look & feel
+
+OWL was designed as a **lab tool first** — dense, fast, neutral, no marketing chrome. Every CR that adds UI elements (badges, headers, comparison rows, advisory copy, charts) must consciously preserve that: keep elements compact, default-collapsed when supplementary, monospace where it earns it, no decorative animation. The risk is real and stated by the owner (2026-05-11): *"as we add more and more info on the UI, it loses its LAB look & feel that must always allow for quick use."* Each UI-touching CR carries a "Lab look & feel constraint" line — when in doubt, hide it behind a `<details>` block, push it to `/methodology`, or cut it. Density audits are a hard gate at PR review; CR-034 (unified results card) is the natural place to enforce them across surfaces.
+
+---
+
 ## CR-003 · Iso-energy bitrate sweep ("I want to spend X Wh, what are my options?")
 
 **Status:** captured 2026-05-01 — likely post-conference.
@@ -662,44 +668,14 @@ Leverage: Sub 2 is pure win, ship anytime. Sub 1 is a strategic decision that ot
 - **DB choice if we migrate.** SQLite is the obvious starting point (file-based, no extra service). Postgres if multi-deployment merge becomes near-term. Don't pre-decide; the answer falls out of Sub 1's criteria.
 - **Synthetic power source as a first-class testing tool?** Cleanly written, it'd let us run integration tests with deterministic measurement responses — useful far beyond this CR. Capture as a follow-up if Sub 2 ships.
 
----
+### Update 2026-05-11 (board meeting context)
 
-## CR-032 · Per-mode CO₂e rows inside the carbon strip details
+Board reinforced sub-section 3 (containerisation) as the path to data-centre hosting on a friendly partner's rack (Linode, or Mike's Akamai offer of an open-rack slot in Virginia with 100% renewable cover). Two constraints surfaced that grow sub-section 2:
 
-**Status:** captured 2026-05-05 (Session 22 part 2). Medium priority — UX clarification, not a credibility blocker. CR-030's bonus label fix ("best of CPU vs GPU" / "most efficient codec") is the V1 patch that stops the strip from misleading on its own; CR-032 is the next step that makes the strip *self-contained* for compare results.
-**Triggered by:** owner observation during Bundle 2 visual verification — for compare-mode results the strip headline shows the most-efficient mode's mass with explicit "best of N" framing, but the other modes' CO₂e footprints aren't visible inside the strip itself. Visitors who want to compare per-mode CO₂e have to scroll up to the per-column inline rows. The strip should answer "where does this number come from" without forcing the eye elsewhere.
+- **1 s power-measurement granularity is a hard portability constraint.** Many PDUs poll at 1 min or coarser — they can't replace the Tapo P110 without losing measurement fidelity. Sub-section 2 must include a *meter-resolution declaration* on every backend, and the confidence flag must visibly degrade when the backend's resolution is coarser than the task's duration ("you cannot be 🟢 on a 4 s encode measured by a 60 s meter"). This is **resolution-aware confidence**, a required behaviour of the abstraction, not a watch-out.
+- **Utility-grade meter + PDU per-plug meters in series** (Mike). A contained-rack deployment is one utility-grade meter on top of the rack plus PDU meters per plug for component attribution. The backend interface should be expressive enough to represent that stack — one primary reading plus N attributable sub-readings — not just `get_power_watts() -> float`.
 
-### Problem
-
-Today's compare-mode strips (video CPU/GPU, video all_codecs, LLM CPU/GPU, image CPU/GPU, image small/large, RAG 3-mode) all use `Math.min` to pick the most-efficient sub-run's energy and label that mode as the headline. The strip's `<details>` block then shows comparison rows for *other zones / other dates / live mix / formula* — but never the *other sub-runs of this same comparison*. The data exists (each sub-run has its own `energy.co2e.grams`), it's just not surfaced in the strip.
-
-### Agreed direction
-
-Inside the strip's `<details>` block, when the result is a compare mode, render one row per sub-mode showing each mode's individual CO₂e at the saved home intensity (consistent with the per-column inline rows that visitors see above). Sits alongside the existing reference row, comparison rows, historical rows, and live-mix breakdown. Gated on the strip being passed enough context to know it's a compare result.
-
-Mechanically: extend `wlCarbonStrip` signature with an optional `subRuns` array — `[{label, grams, deltaWh}, ...]` — and have the strip render a "Per-mode breakdown" sub-section in the details block when present. Existing single-run call sites pass `null` and behave unchanged. Compare-mode call sites construct the array from their per-mode energy blocks. Keeps single-run scope unchanged; opt-in for compare modes.
-
-### Cost / leverage
-
-~half a day:
-- Extend strip signature (~10 min)
-- Render the new sub-section inside `<details>` (~30 min)
-- Update 5 compare-mode call sites to construct the array (~1 hour)
-- Visual verification on each (~1 hour)
-- Tests / sanity checks (~30 min)
-
-Leverage: closes the "what about the others?" gap on every compare-mode result page. Especially valuable for `all_codecs` (6 sub-runs) where the strip currently elides 5/6 of the work the visitor just ran.
-
-### Watch-outs
-
-- **Don't bloat the headline.** Per-mode rows live inside the dropdown, not above. The headline stays "best of N" with the most-efficient mass — that's the right takeaway number.
-- **Use saved intensity for consistency.** Per-mode rows should compute mass from each sub-run's `energy.co2e.grams` (already saved at /carbon snapshot time), so they agree with the per-column inline rows above. Don't recompute from current live intensity — that diverges, and CR-030's drift-note already covers that case for the headline.
-- **Sort order.** Most-efficient first (matches the headline framing) or stable-by-mode (matches the page order above)? Lean: most-efficient first, since the strip is the carbon-perspective rendering — sorting by carbon footprint is internally consistent.
-
-### Open questions
-
-- Should the per-mode rows also show the projected (24/7 toggle) values when the toggle is on? Probably yes — the projection multiplier is page-wide via the URL hash, so applying it consistently across all rows is the least-surprise behaviour.
-- Should non-compare strips (single-run) get any analogue? Not in scope; the inline `wlCarbonRow` above already shows the per-run CO₂e for single results.
+Net: sub-section 2 grows from ~half day to ~1 day. Sub-section 3 lands on Mike's facility if/when the offer materialises; nothing about CR-031 changes in shape, but the timeline becomes externally-driven.
 
 ---
 
@@ -731,61 +707,6 @@ Tiny — a chip-row UI on `/demo` step 1, two `runDemoVideo()` variants (or one 
 
 - **Default selection.** If we ship two chips, which one is on by default? H.265 (current) is safer (more familiar codec to most operators) but AV1 makes the GoS environmental story better (most efficient).
 - **Chip persistence.** Should the choice persist across the visitor's session (localStorage) or reset each load? Lean: reset — the demo is meant to be a fresh first-impression each time.
-
----
-
-## CR-034 · Unified results card (lift renderers + click-to-expand prev rows)
-
-**Status:** captured 2026-05-08 (Session 23 part 6). **Absorbs CR-013** (2026-05-02 capture, "previous-result rows clickable for full stored detail") — both touch the result-rendering surface and CR-034's structural lift naturally enables CR-013's expand-to-full-card affordance, so they ship together as Phase A + Phase B.
-**Triggered by:** two converging observations: (i) `/demo`'s `renderVideoResult` / `renderLLMResult` / `renderRAGResult` / `renderDemoImageResult` are bespoke compact cards that don't include the polished elements that ship on the main pages (carbon strip, EV-distance equivalence, 24/7 projection toggle, drift note, use-phase scope clarifier — visitors on the guided tour saw substantively different framing than direct-URL visitors); (ii) prev-run rows on `/video` / `/llm` / `/rag` / `/image` / `/queue-status` show only a one-line summary (date, model, key metric, confidence flag), and there's no path to the rich detail short of downloading the JSON.
-
-### Problem
-
-Two parallel result-rendering paths exist today (mirror-image of the situation CR-019 fixed for the in-progress phase):
-
-- **Main pages** assemble a result card with `wlCarbonStrip(wh, label, durationS, savedIntensityG)` injected at the bottom of every result, scope clarifier in the header, EV equivalence and historical comparison rows in the strip's `<details>` block.
-- **`/demo`** renders a compact card with energy + confidence + scope-note only. Until Session 23 part 10 it had no carbon strip at all; after that part the renderers gained the strip + prompt blockquote inline, but they're still bespoke per surface.
-
-Same drift-bug class as CR-019 — when CR-030's drift note shipped, it landed on /image /video /llm /rag but not /demo. The Session 23 part 10 patch was a partial fix (visible-to-visitor wins without the full lift); this CR is the structural cleanup.
-
-Independently, prev-row drilldown is broken in shape: clicking a row gives JSON / CSV download links, not an inline expansion to the rich card visitors saw the first time they ran the job. For Lab repetitive work, that's a friction point (can't quickly re-inspect yesterday's run); for public visitors browsing curated demo runs, it's a dead end after the first impression.
-
-### Agreed direction
-
-Two phases, one PR. Phase A makes the renderers shared; Phase B makes the prev-rows expand to call them.
-
-#### Phase A — Lift renderers into a shared helper
-
-1. Lift the per-page render functions (`renderResult` on `/image`, equivalents on others) into shared helpers in `_BASE_STYLES` or a sibling `_RESULT_JS` block.
-2. `/demo`'s `renderVideoResult` / `renderLLMResult` / `renderRAGResult` / `renderDemoImageResult` become thin wrappers that call the shared helper with the appropriate target.
-3. Result cards include: headline KPI row + prompt/question blockquote (where applicable) + confidence badge + carbon strip (with the full `<details>` block: comparison rows, historical rows, drift note, EV equivalence, projection toggle) + scope clarifier.
-
-Mirror of CR-019's contract: stages reuse + `opts.target`. The result-card equivalent is `opts.target` + `opts.kpis` + `opts.modeKey` + `opts.savedIntensity`.
-
-#### Phase B — Prev-row click-to-expand
-
-Each prev-run row becomes click-to-expand: collapsed by default; click to fetch the full result via `/results/{type}/{job_id}` and render through the shared helper from Phase A; second click collapses; multiple rows can be open at once for side-by-side compare. Lab tier optionally gets an "expand all" toggle.
-
-Two design constraints to balance:
-
-1. **Public visitors:** want everything visible — same rich card they'd see for a fresh run, just labelled "↩ Previous run · 2 hours ago" (the `prevNote` line that already exists in `/image`'s `renderImageBoth` etc.).
-2. **Lab repetitive work:** dozens of runs in a session; expanding inline would clutter — collapse-by-default with click-to-expand is right.
-
-### Cost / leverage
-
-Phase A alone is ~1 day (the lift + retrofit + visual verification across 5 result paths × 2–4 modes each). Phase B is another ~½ day on top once the shared renderer exists. Both together ~1.5 days. Leverage: closes the same drift-bug class CR-019 closed for progress, on the side where the actual numbers live; turns prev-runs panels from terse summaries into a real history surface.
-
-### Watch-outs
-
-- **Don't break the carbon-strip URL hash state.** CR-017's projection toggle uses `history.replaceState(#continuous=1d)`. If the strip renders multiple times on a single page (e.g. the visitor runs a new job after seeing a prev-run, or expands two prev-rows), the hash needs to track only the *active* strip.
-- **`/demo`'s renderers read several fields the main pages don't** (e.g. inline image previews from `b64_png`). Lift those *into* the shared helper rather than special-casing /demo.
-- **Result-card unification might re-surface the resume-job lifecycle bug** that CR-019 deferred — the result card is the natural landing point after a resumed job. Pair the two if/when both ship.
-- **Lazy-load JSON on click** for prev-row expansion — don't preload all when the prev-runs list renders. At scale (tens to hundreds of runs in `results/`) preloading kills the page.
-- **Image previews already inline-render thumbnails server-side** on `/image` — interaction with the click-to-expand pattern needs thought (probably: click thumbnail → open full result; the row stays as-is).
-
-### Pre-conference: medium priority
-
-The /demo guided tour is the highest-traffic surface and currently the *least* polished result-rendering path. Unifying it gets the carbon framing in front of every visitor on the public funnel. Land before CR-029 (encoding rigor); the CR-029 work will need this card to display the apples-to-apples result correctly.
 
 ---
 
@@ -854,6 +775,255 @@ Not strictly blocking but a real polish item for Members operating long encodes 
 
 ---
 
+## CR-037 · Tether the AI jobs to streaming workflows (anchor to the Language Lab AI position paper)
+
+**Status:** captured 2026-05-11 (board meeting + AI position paper review). High priority — board-endorsed quick-win.
+**Triggered by:** GoS board meeting 2026-05-11. Tania: *"we did publish a paper about the uses of AI in the context of video… maybe the inclusion of AI in our [tool] should be kind of in that context. We can take some of those applications, at least the simpler ones, link it and maybe compare — encoding in the bad standard way takes that, compares to a prompt of that length or complexity — rather than just 'here's the AI tab which has nothing to do with streaming.'"* Dom seconded with the "25 fps × 15 min" personalisation-energy framing. Cross-references the Language Lab Jan-2026 position paper *"Artificial Intelligence in Streaming Media Sustainability: Distinguishing Impact from Innovation"* (v1.4 final).
+
+### Problem
+
+CR-006 (closed) reframed `/llm`, `/image`, `/rag` as "AI workloads — beta · exploratory" — the right step, but a *negative* framing (what they're not). The AI tabs still read as generic AI demos with no connection to streaming. That's the failure mode Tania flagged and Dom warned against: *"I don't think greening and streaming should be going and just doing energy measurement of AI, because then the greening of AI will lose our identity and will lose our focus."*
+
+The paper provides the positive framing that's currently missing. Central claims OWL can express:
+
+- AI in streaming is **neither inherently a sustainability solution nor a threat**; the type, size, and deployment context determine net impact.
+- **The type of AI matters enormously.** Small specialised CNNs (per-title encoding, scene classification, super-resolution) are orders of magnitude cheaper than general-purpose LLMs and diffusion models. **Streaming primarily uses the former.**
+- **Data volume ≠ energy consumption.**
+- **Efficiency must be measured against useful work, not assumed.** Critically: measuring the energy AI *adds* is only half the equation — the other half is the energy AI *avoids* through better compression / caching / routing.
+- **Training vs inference** are distinct cost categories; OWL measures only inference.
+- **The Personalisation Risk:** AI-generated personalised content streams break the multicast / cached-edge model and return delivery to expensive unicast.
+
+Today none of those framings appear on `/llm`, `/image`, `/rag`. Visitors leave with a fuzzy "AI uses lots of watts" impression but no map of where the numbers fit in streaming sustainability.
+
+### Agreed direction
+
+**Each AI page gets a streaming-anchored header band, a video-relative comparison readout, and adopts the paper's framing principles as standing copy.** No new measurements — reframing only.
+
+#### Per-page reframes
+
+- **`/image` → "AI-generated content / video-frame synthesis."** The Personalisation Risk anchor. Every result also shows per-image energy *scaled to a video*: *"× 25 fps × 1 min = X Wh per minute of personalised content"* and *"the same 1-minute clip encoded H.265 GPU = Y Wh (≈ N× less)."* Makes the personalised-unicast cost concrete; lands Dom's "25 fps × 15 min" comment directly. Use the canonical H.265 GPU on Meridian-120 s as the video baseline (already in CLAUDE.md Key Findings).
+- **`/llm` → "the 'what about AI?' upper bound."** Honest framing per the paper: chat-style LLMs have **limited direct application in traditional streaming workflows**; streaming itself uses small specialised CNNs. OWL's LLM tab measures the *expensive end* of the spectrum as an upper bound, not the streaming-typical case. Each result also shown as a multiple of the canonical H.265 GPU encode of Meridian-120 s ("≈ N× a 120 s 1080p hardware encode") — Ben's "ratios stay stable even as models go stale" thesis from the board.
+- **`/rag` → "the energy cost of a retrieval/context layer."** Less directly streaming-shaped, so framed as a controlled study of a *variable that recurs in streaming AI* (context-aware encoding decisions, retrieval-augmented QoE models). The corpus being GoS's own ~100 white papers makes it self-referential — label it explicitly as a meta-demo, not generic Q&A. Same video-relative comparison line.
+
+#### Standing copy adoption
+
+A small "About this measurement" expander on each AI page lists, in 4–5 lines drawn verbatim/near-verbatim from the paper:
+
+1. *Type of AI matters enormously — small specialised CNNs vs general-purpose LLMs are orders of magnitude apart.*
+2. *Data volume ≠ energy consumption.*
+3. *OWL measures the energy AI **adds**; we do not measure the infrastructure energy AI **avoids** through optimisation. Both halves are needed for net impact; OWL has the first.*
+4. *Inference cost only — no amortised training cost included.*
+5. *Watch for rebound effects: efficiency gains can be offset by expanded use (more variations, more personalisation).*
+
+Mirror text lives on `/methodology` under a new "AI workloads — framing" subsection; the on-page expanders summarise.
+
+#### Cross-links
+
+Each AI page header gets a one-line link to the position paper PDF (publish location TBD with Language Lab; failing that, link the closed-doc copy under `/static/papers/` with a "GoS member access" note). The methodology page's "AI workloads" subsection gets the same link as the primary anchor.
+
+### Lab look & feel constraint
+
+Three header bands, three comparison readouts, three about-expanders — this is the most copy-heavy CR in the batch and the most exposed to the design risk. Mitigations: the header band is one line + an inline link, not a banner; the video-relative comparison is one extra row in the result KPI block (no new card); the "About this measurement" copy lives behind a `<details>` summary collapsed by default. Total visual addition per page must be *one line* unless the visitor opens an expander.
+
+### Cost / leverage
+
+~1.5–2 days:
+- ~3h: copy draft (header bands + video-relative readouts + about-expanders) — heavily reuses paper text.
+- ~4h: per-page wiring (`/llm`, `/image`, `/rag`) + the methodology subsection.
+- ~2h: the video-relative comparison number — a small helper that pulls a *pinned* canonical H.265 GPU Meridian-120 s result from disk as the reference, then formats "≈ N× a 120 s 1080p hardware encode" against the current result's energy. Caches the reference at startup; falls back gracefully if the canonical result is missing.
+- ~1h: visual verification, dense-page check, lab look & feel review.
+- ~1h: tests for the multiplier helper.
+
+Leverage: the board's explicit "AI must stay tethered to streaming" deliverable. Without it, the AI tabs remain the strongest argument *against* OWL's coherence; with it, they become the strongest argument *for* GoS's measurement-first stance on AI.
+
+### Watch-outs
+
+- **The canonical reference is a moving target.** When the canonical Meridian H.265 GPU benchmark is re-run (e.g. after CR-029 lands), the multiplier "≈ N×" shifts. Pin the reference to a specific *commit-tagged* result file under `results/canonical/`, not "whatever's latest." When the canonical is intentionally updated, do the multiplier review as part of that work.
+- **Position-paper publication state.** As of 2026-05-11 the paper is final v1.4 but not yet on the public site. If it lands behind member access, the AI tabs' link copy needs to say "GoS member document" — not a dead URL.
+- **Don't quietly convert the multipliers into a leaderboard.** "AI is N× a video encode" is a framing helper, not a competition. Avoid bar charts ranking everything against the H.265 baseline; one inline line per result is the right dose.
+- **RAG's streaming connection is the weakest of the three.** The "retrieval layer as a recurring streaming-AI variable" framing is honest but more abstract than the image/LLM ones. Don't oversell the connection; if the framing reads forced, leave RAG as the meta-demo and skip the streaming-relative readout for it.
+- **The "About this measurement" copy must match the paper exactly on contested phrasing.** *"AI is neither inherently sustainable nor unsustainable"* is the paper's headline; don't paraphrase it in OWL or the two voices diverge.
+
+### Cross-references
+
+- **CR-006 (closed):** the "beta · exploratory" framing. CR-037 adds the positive framing on top.
+- **CR-029:** the canonical Meridian H.265 GPU result is the reference. CR-029 may shift the canonical bitrates; if so, the multiplier needs a refresh.
+- **CR-034:** if the unified result card lands first, the video-relative comparison row drops into the shared renderer cleanly.
+- **CR-036:** carbon hardening sets the energy/carbon visual contrast that the AI tabs inherit.
+- **CR-042:** the Pixop placeholder is exactly the paper's "small specialised CNN" pattern; if Pixop joins, CR-037's framing extends to whatever measurement module replaces CR-042's placeholder.
+
+### Priority: high
+
+Board explicitly endorsed this. Highest-value framing change for OWL's public AI narrative.
+
+---
+
+## CR-039 · Energy-vs-quality axis for AI jobs (frontier-model-as-judge — exploratory)
+
+**Status:** captured 2026-05-11 (board meeting). **Exploratory** — owner's idea, mixed reception; ship behind a Member/Lab gate, frame explicitly as a snapshot not a leaderboard. **Easy to drop** if the answer to the CR-029 §6 tension below is "don't."
+**Triggered by:** GoS board meeting 2026-05-11. Ben: *"use a frontier model. We'd have to have a teeny weeny budget for some tokens to ask really cheap local models simple questions, then send them to a frontier model and have a frontier model score them. So you could say, OK, you're using ten times less energy for a ten times smaller model, but the answer is only ten percent less good."* Mike: standardise on a model and evolve. Tania (cautionary): *"I would seriously hesitate getting into measuring the energy consumption and sustainability of AI… we're going to be really out of our depth really quickly."* Tania's concern is energy-of-AI; this CR is **quality-of-AI** — the orthogonal axis the paper itself calls out as missing (*"what constitutes useful work?"*).
+
+### Problem
+
+OWL's LLM/RAG Compare views report energy and duration cleanly but say nothing about answer quality. So a visitor sees *"TinyLlama: 0.061 mWh/token, 15× less than Mistral"* — and walks away thinking small models are obviously the answer. CLAUDE.md Key Findings already flags the counter-evidence: *"TinyLlama hallucinated 'REM is a framework provided by the European Commission'… Gemma and Phi-4 stayed faithful."* The energy story without the quality story is misleading. The board explicitly raised this gap.
+
+### Agreed direction (exploratory)
+
+A frontier-model judge that scores cheap-local-model answers so the Compare views show **energy × quality** rather than energy alone. Ship behind capabilities (Member + Lab — needs API budget); frame as a *snapshot of the ratio today*, never a leaderboard.
+
+1. **Capability + settings:** new `AI_QUALITY_JUDGE` capability (Member-tier by default), `judge_provider` and `judge_model` settings (default to a single named frontier model — Mike's "standardise and evolve" point), `judge_token_budget_per_day_usd` cap enforced server-side per visitor key.
+2. **Judge protocol:** for each candidate answer, send the prompt + the answer + a fixed rubric to the judge with low temperature; parse a 1–5 quality score + a one-line rationale. Same rubric across all judged runs in a comparison; rubric pinned in source so it's auditable and versioned.
+3. **Surfacing:** Compare result rows gain a "Quality (judged)" column showing score + rationale-on-hover. Verdict line (CR-038) gains an optional second clause: *"…and answers scored 4.6/5 vs Mistral's 4.8/5 — ~4% quality loss for ~15× energy savings."* Hidden entirely when judging is off.
+4. **Provenance preserved.** Result JSON gains `quality.judge_model`, `quality.judge_score`, `quality.judge_rationale`, `quality.judge_run_at`, `quality.rubric_version`. The score is always paired with which judge produced it, on what date, against which rubric — so nobody can quote *"OWL scored TinyLlama 4.6"* a year later without that context.
+5. **Snapshot, not leaderboard.** Header copy on the Compare views: *"Quality snapshot — frontier-model judgement as of [date]. Models drift; this is one ratio, one judge. See `/methodology` for the rubric."* No persistent rankings page.
+
+### Lab look & feel constraint
+
+One column added to the compare table; one optional clause on the verdict line; hidden entirely without judge access. No dashboard, no leaderboard page.
+
+### Cost / leverage
+
+~2 days:
+- ~3h: capability + settings + budget cap + rubric source-pinning.
+- ~4h: judge call wired into LLM and RAG compare flows (gated path).
+- ~3h: result-card surfacing + JSON provenance fields + tests.
+- ~2h: methodology subsection on the rubric + the "snapshot not leaderboard" framing.
+- ~2h: a small CLI to retroactively judge stored historical results (one-shot, useful for backfilling without re-running them).
+- ~2h: visual + look & feel review.
+
+Leverage: turns the LLM and RAG Compare views from "small is cheap" into the actual story — *"small is cheap, here's how much quality you trade for it."* Partially answers the paper's "what constitutes useful work?" open question.
+
+### Watch-outs
+
+- **Tension with CR-029 §6 ("External PQA, not internal").** That principle was about *video* PQA, where industry has external benchmarks (Netflix VMAF). Internalising video quality scoring would be a credibility liability. **AI quality scoring has no equivalent external authority OWL can point at** — University of Michigan's `ml.energy/leaderboard` measures energy only; LMSYS and Hugging Face quality leaderboards are general-purpose, not streaming-anchored. So CR-039 doesn't *violate* CR-029's spirit, but it sits adjacent to it and the carve-out must be explicit on `/methodology`: *"we don't do PQA on video output because Netflix-class references exist; we do a quality snapshot on LLM output because no equivalent external authority exists for the streaming-adjacent AI workloads we measure."* **If owner disagrees with the carve-out, drop CR-039 entirely** — the principle of leaning on external authorities is more important than the column.
+- **Judge bias.** A frontier model judging smaller models inherits the judge's own training-data bias. Document this on `/methodology`; pick a judge from a different provider than the candidates where possible (avoid "OpenAI judges OpenAI"). Periodic sanity check with a second judge family; surface divergence if scores diverge meaningfully.
+- **Cost spiral.** The budget cap is non-optional. Without it, an enthusiastic Member could rack up real money. Cap enforced server-side per visitor key per day.
+- **Staleness.** Models update on weeks-months cadence. The "snapshot date" in the header copy is the single most important framing; don't let it get stale. A periodic refresh of canonical snapshots (same judge, same rubric) keeps the displayed ratios fresh.
+- **The cautious voice on the board is on record.** Tania's hesitation was about AI *energy*, not AI quality; CR-039 doesn't trip that exact wire — but the framing must distinguish them crisply or visitors conflate them.
+
+### Cross-references
+
+- **CR-029 §6:** principle-tension noted above; resolved (or rejected) by owner judgment.
+- **CR-037:** the streaming-tethered framing for LLM/RAG. Quality scoring lives on those tethered pages, not a generic `/ai-judge`.
+- **CR-038:** the verdict line is the natural surface for the quality clause.
+
+### Priority: medium (exploratory) — sequence after CR-037 and CR-038, or drop.
+
+If CR-037 and CR-038 land first, CR-039 reads as natural continuation. If they don't, it risks reading as a quality leaderboard out of nowhere.
+
+---
+
+## CR-040 · "Reproduce this result" downloadable bundle
+
+**Status:** captured 2026-05-11 (board meeting). Medium priority — addresses the explicit trust / buy-in concern from Marisol and Barbara.
+**Triggered by:** GoS board meeting 2026-05-11. Marisol: *"verification and trust of those data — it would be really good to have some of the members buy in and see if we can do some tests. We were talking to Telefónica — probably just verify and demonstrate that you can trust those data is something that can be worked out."* Stan: OWL is the recruitment loss-leader; reproducibility is what makes it convincing to a sceptical operator. The AI position paper itself says GoS has *"our own early proof-of-concept working models that we are encouraging the wider community to experiment with."* Reproducibility is what makes that invitation real.
+
+### Problem
+
+OWL logs the exact ffmpeg command in each result JSON (CR-002 closed) and pins ffmpeg via `ffmpeg_bin` (S23). Everything needed to reproduce a video result is technically present on disk — but spread across files, with no member-friendly path from *"I see this result in the UI"* to *"I'm running the same workload on my own GoS1-class server and comparing my numbers to OWL's."* When Marisol talks to Telefónica about "verifying the data", today's only honest answer is *"clone the repo, set up a Tapo plug, calibrate."* Friction → no verification.
+
+### Agreed direction
+
+A per-result **"Reproduce this" download** bundling everything needed to re-run on the visitor's hardware and compare:
+
+1. **Bundle contents (one zip per video result):**
+   - `cmd.sh` — the exact ffmpeg command (already in result JSON), wrapped in a minimal shell script that prints the command, runs it, prints elapsed wall time.
+   - `expected.json` — OWL's measured numbers for this run: `delta_w_mean`, `delta_e_wh`, `duration_s`, `confidence_flag`, hardware fingerprint (`cpu`, `gpu`, `kernel`, `ffmpeg_version`), `variance_pct_at_time_of_run`. Plus a "compare bounds" block: 3σ envelope on `delta_e_wh` from OWL's variance, so the reproducer has a numeric pass/fail.
+   - `source/` — the input asset reference (URL to Meridian under its CC BY 4.0 license; for uploaded inputs a "you'll need to provide your own; the OWL-side SHA was X" note).
+   - `README.md` — three sections: *prerequisites* (ffmpeg version, sensible OS, a power meter — any of: Tapo P110, a PDU with ≥1 s granularity, a Kill-A-Watt with manual logging), *running the script*, *interpreting the comparison*. Reads as an invitation, not a barrier.
+   - `compare.py` — reads `expected.json` and a user-supplied `your_run.json` (same shape), prints per-metric diff and green/yellow/red verdict against the bounds. Stdlib only.
+
+2. **Surfacing:**
+   - "↓ Reproduce this" button on every video result card (next to the existing CSV/JSON download).
+   - Hidden on AI results in V1 — LLM/image/RAG are *less* reproducible across hardware (model is sensitive to driver/cuDNN/ROCm versions in ways video isn't); capture as a follow-up.
+
+3. **Receiving comparisons:**
+   - `POST /reproduce/contribute` (Member-tier) accepts `your_run.json` and records under `results/contributed/`. *Optional* — useful if a member wants OWL to track their reproduction; not required for the verification loop to work.
+
+### Lab look & feel constraint
+
+One new button per result card, same compact treatment as the existing download links. No new page.
+
+### Cost / leverage
+
+~1 day:
+- ~3h: bundle generator (server-side, builds the zip on demand from result JSON + canonical assets).
+- ~2h: `compare.py` (~80 lines, stdlib only).
+- ~2h: README copy.
+- ~1h: `POST /reproduce/contribute` endpoint + tests.
+- ~1h: UI button + visual.
+
+Leverage: Marisol said it directly — *"trust those data is something that can be worked out."* This is the worked-out version. Doubles as the paper's *"open proof-of-concept the wider community can experiment with"* claim made real. Recruitment angle (Stan + Barbara): a member who runs the script and sees their numbers within OWL's bounds *is* the conversation Barbara wants when she asks *"how would you envision using this?"*
+
+### Watch-outs
+
+- **Don't promise cross-hardware identicality.** A Ryzen 9 7900 won't produce the same ΔW as a different chip — the bound is "within OWL's variance envelope on equivalent hardware", not absolute. The README must explain this *before* the visitor runs the script and is surprised.
+- **Confidence-of-confidence problem.** If the reproducer hits a wide envelope on their hardware, that's actually informative (their lab has more variance than OWL's) — render the comparison as "your variance + OWL's variance" rather than "you matched / didn't match."
+- **License the Meridian asset reference explicitly.** Netflix's CC BY 4.0 is permissive; the README carries the attribution. Don't ship the asset in the bundle (812 MB); link it.
+- **Don't blow the "OWL is a lab tool" framing.** The bundle is a serious-but-friendly addition; don't market it as a product. *"Reproduce this"* button copy beats *"Verify OWL's claims"* copy.
+- **Mike's data-centre rack offer.** If that materialises, the bundle becomes the natural validation harness for "is OWL's result reproducible on a colocated GoS1-class machine in a real data centre?" — sequence with CR-031 sub-section 3.
+
+### Cross-references
+
+- **CR-002 (closed):** ffmpeg cmd already logged. CR-040 makes it actionable.
+- **CR-031:** when OWL is portable, the reproducer works against any OWL deployment; the bundle format becomes the interchange layer.
+- **CR-008:** REM ↔ OWL — contributed reproductions eventually merge into the cross-deployment data model.
+- **AI position paper:** the *"proof-of-concept the wider community can experiment with"* claim. CR-040 is what makes it true.
+
+### Priority: medium-high (scoped tight, video-only V1).
+
+A working "reproduce this" button is the single most convincing artefact for a sceptical member or stakeholder. Don't gold-plate it.
+
+---
+
+## CR-041 · New-vs-aged silicon benchmark (chip-instance comparison)
+
+**Status:** captured 2026-05-11 (board meeting). Low priority — opportunistic research finding.
+**Triggered by:** GoS board meeting 2026-05-11. Dom: *"from what I understand, CPUs and GPUs — their thermal performance changes with age, and it might be interesting if we could get a comparable chip, a new comparable chip, and maybe Mike could pull one out of one of their recycled bins at the back of Akamai. But it might be worth comparing a brand new chip and one that's been absolutely hammered in a data centre at some point — just because it's yet another interesting statistic that you could benchmark in there."* Mike was warm to the idea.
+
+### Problem
+
+OWL's canonical findings are all from one chip instance (GoS1's Ryzen 9 7900 + RX 7800 XT, ~18 months old, sitting-room ambient). Whether those numbers generalise to a *data-centre-aged* chip — same SKU, same kernel, but hammered for years — is unknown. CLAUDE.md memory already flags the *ffmpeg* version analogue ("software-aging energy comparison"); this is the hardware analogue. Both speak to the same generalisable insight: *small changes to the run environment shift energy meaningfully, and the streaming industry tends to forget that.*
+
+### Agreed direction
+
+When a comparable chip becomes available (Mike's offer; or any donated/decommissioned matching SKU), tag results by `chip_instance` and publish the new-vs-aged delta as a one-off finding. The only code change ahead of chip access is a new `chip_instance_id` field on the result JSON + hardware-fingerprint surfacing on the result card.
+
+1. **Settings:** `chip_instance_id` string in `settings.json` (free-form: `"gos1-original-2024"` / `"akamai-recycled-2026-05"`). Defaults to a generated UUID with a friendly suffix.
+2. **Result JSON:** `hardware.chip_instance_id` written into every result alongside the existing `cpu` / `gpu` fields.
+3. **Comparison helper:** a small `/findings/chip-aging` page (Lab-only) that walks results across `chip_instance_id` values and renders the delta on the canonical Meridian benchmark.
+4. **Discoverability:** when a new chip_instance appears in stored results, a one-line "chip change detected" note on `/queue-status` so the operator confirms before publishing comparison numbers.
+
+### Lab look & feel constraint
+
+One field on result JSON (invisible to most visitors), one Lab-only findings page. Public visitors see no new UI unless the canonical Key Findings table is later updated with a "new vs aged" row.
+
+### Cost / leverage
+
+~half a day for instrumentation; the experiment itself depends on chip availability. Without chip access, this CR is captured-only.
+
+- ~1h: settings field + result JSON wiring + tests.
+- ~2h: `/findings/chip-aging` page (Lab-only, simple table — graph deferred to CR-004 territory).
+- ~1h: documentation on `/methodology` once the first finding lands.
+
+Leverage: low until a chip exists. When one does, the finding is a sharper version of CLAUDE.md's existing "software changes shift energy" story. Pair with the ffmpeg-version energy test (existing memory note) for a running theme: *"the lab numbers are good; here are the things that move them."*
+
+### Watch-outs
+
+- **Without chip access, don't ship the instrumentation prematurely.** The result-JSON field is fine to add (forward-compatible), but the `/findings` page should land *with* the first comparison data, not as a placeholder. Empty findings pages erode credibility.
+- **Confound: thermal environment.** A chip in a data centre runs cooler and steadier than one in a sitting room. If we compare "aged data-centre chip vs new sitting-room chip", the delta is *aging + thermal environment*, not aging alone. Document the confound; ideally test both chips in the same environment.
+- **Confound: power supply.** PSU age also matters. If the aged chip arrives in its original chassis, the PSU is part of the comparison.
+
+### Cross-references
+
+- **CLAUDE.md memory `ffmpeg_version_energy_test.md`:** the software analogue. Land both as a single "things that move the numbers" finding.
+- **CR-031:** if OWL is portable, the chip-instance field is the natural multi-deployment merge key.
+- **CR-008:** REM ↔ OWL — REM already runs across a fleet; cross-fleet chip-aging data could come from REM rather than from a one-off OWL experiment.
+
+### Priority: low (opportunistic). Stays captured until a chip arrives.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
@@ -871,11 +1041,21 @@ For the record, several items came up that don't warrant new CR entries:
 - **Carbon philosophy / scoping board agenda** (item 25) — strategic discussion item, not engineering work. Belongs on a board agenda, not in CRs.
 - **GosOne → OWL name pass** (item 33) — doc/comment audit. Trivial sweep across stale references; do inline whenever convenient. Not a CR.
 
+**From board meeting 2026-05-11:**
+
+- **Bug: live energy-mix breakdown row missing from some result tables.** Owner observed mid-demo: *"it doesn't show the energy mix here, a little bug here… it's supposed to have a little thing just on this table, it's not here."* Filed as bug; check the `wlCarbonStrip` mode-detection branch that conditionally renders the mix row.
+- **Bug: `/image` previous-results panel not rendering.** Owner: *"there's a bug, it's not showing the previous results."* Likely the same drift-bug class as the original /demo↔main-page renderer split; check first whether CR-034 Phase A would absorb the fix automatically rather than patching `/image` in isolation.
+- **Methodology page status:** as of 2026-05-11 the page is mostly aligned with board feedback already — CO₂e section reduced and reframed *"for reference only"*; recovery-curve graphic added under *Thermal-recovery probe* (uses the shared `WlCharts.line` helper from S21). Owner waiting on Tania's review before publishing the page externally.
+- **OWL/WattLab UI rename** done 2026-05-11 across all pages (`<title>`s, headers, hero name, methodology copy); repo URLs and module names stay lowercase `wattlab`. Not a CR — naming hygiene only.
+- **Marketing Lab workshop on OWL usage** (Barbara): action for Marketing Lab, not a CR. Pair with CR-040 — the reproducibility kit is the natural artefact for that workshop.
+- **OWL containerised + data-centre hosting** (Mike's Akamai-Virginia open-rack offer; Linode option): folds into the 2026-05-11 addendum on CR-031 sub-section 3. New constraint surfaced: 1 s power-measurement granularity as a hard portability gate.
+- **Recruitment brainstorm meeting (~10 days out)**: action item from the meeting, not a CR. Stan / Marisol / Veronika / Ben / probably Mike participating.
+
 ---
 
-## Groupings & dependencies (added 2026-05-08, S23 close-out review)
+## Groupings & dependencies (added 2026-05-08, S23 close-out review; updated 2026-05-11 after board meeting; 2026-05-12 close-out sweep — CR-032 / CR-034 / CR-036 / CR-038 / CR-042 moved to closed)
 
-The 18 active CRs cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
+The 20 active CRs cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
 
 ### Track A — Storage / persistence (Tania-elevated 2026-05-07)
 
@@ -906,29 +1086,38 @@ All three touch `wlRenderProgress` but the work is independent:
 
 **Recommendation:** ship in this order — CR-035 first (highest visitor value, especially Member-tier long uploads), CR-024 next (operator quality-of-life), resume-job last (lifecycle is the hardest to design for cleanly without spilling).
 
-### Track D — Result-rendering coherence
+### Track D — Result-rendering / framing coherence
 
-- **CR-034** unified result card (Phase A lift + Phase B prev-row click-to-expand, absorbed CR-013 in S23 part 12)
-- **CR-032** per-mode CO₂e rows in carbon-strip details — natural sub-task once CR-034 has the shared renderer
-- **CR-027** tier explanation copy — pairs with CR-026 to land the access story coherently
+Most of this track shipped in the 2026-05-12 sweep: **CR-034** (unified result card — Phase A renderer lift + Phase B prev-row click-to-expand, absorbed CR-013), **CR-032** (per-mode CO₂e rows in the carbon-strip `<details>`), **CR-036** (carbon "indicative only" — amber chrome + 🟡 INDICATIVE / 🟢 DIRECT chips), and **CR-038** (efficiency-winner verdict on every compare mode) are all in `CHANGE_REQUESTS_CLOSED.md`. Two items remain:
 
-**Recommendation:** Do CR-034 Phase A first; CR-032 becomes a 1-hour add-on once the strip is shared; CR-027 can run in parallel since it's mostly UX copy.
+- **CR-037** *(captured 2026-05-11, not yet implemented)* — AI workloads tethered to streaming per the Language Lab position paper: streaming-anchored header bands + video-relative energy multipliers on `/llm`, `/image`, `/rag`, plus the paper's framing principles as standing copy. The board's biggest open "AI must stay tethered to streaming" deliverable. It now lands on a surface where the renderer lift (CR-034) and the amber/green vocabulary (CR-036) are already in place — so it's mostly copy + a small canonical-result reference helper.
+- **CR-027** tier explanation copy — refresh the capability matrix copy, add the Lab column, surface tier framing on the demo's first step. Pairs with the already-closed CR-026. Mostly UX copy; no dependency on CR-037.
 
-### Track E — Pre-conference polish (small, independent)
+**Recommendation:** **CR-037 next**, then CR-027 in parallel (different surface, no contention). Watch the lab look & feel budget on CR-037 — it's the most copy-heavy item left.
+
+### Track E — Polish (small, independent)
 
 - **CR-005** software fan-speed control during tests *(measurement quality)*
 - **CR-007** carbon variance study *(also Track A downstream)*
 
-**Recommendation:** these are nice-to-haves, no dependencies. Slot whenever Track A–D are blocked.
+**Recommendation:** no dependencies. Slot whenever Track A–D are blocked.
 
-### Track F — Strategic / exploratory (out of session scope)
+### Track F — Strategic / exploratory (longer horizon, captured-but-not-active)
 
-- **CR-008** REM ↔ OWL integration *(post-conference)*
-- **CR-009** cross-platform web client test bay *(post-conference)*
+- **CR-008** REM ↔ OWL integration
+- **CR-009** cross-platform web client test bay
 - **CR-018 Tier 2/3** historical CO₂e visitor-pickable any-month *(Tier 1 shipped; T2/T3 are gold-plating)*
-- **CR-025** real-time Linux kernel migration *(exploratory; team meeting upgraded direction but not yet started)*
+- **CR-025** real-time Linux kernel migration *(team meeting upgraded direction but not yet started)*
+- **CR-039** *(new, 2026-05-11)* energy-vs-quality axis for AI (frontier-model judge) — explicit tension with CR-029 §6 to resolve; easy to drop.
+- **CR-041** *(new, 2026-05-11)* new-vs-aged silicon comparison — opportunistic, awaiting chip availability.
 
-**Recommendation:** keep captured. Not for active session work until the pre-conference Track A–D items are mostly resolved.
+**Recommendation:** keep captured. CR-039 is the one most likely to mature quickly once CR-037 ships (it lives on the tethered AI pages, and CR-038's verdict line — now shipped — is its natural surface). Others remain idle until the active tracks resolve.
+
+### Track G — Member trust & verification *(new, 2026-05-11)*
+
+- **CR-040** "Reproduce this result" downloadable bundle. Marisol's *"verification and trust of those data"* concern; Stan's *"loss-leader"* recruitment lever; the paper's *"open proof-of-concept the wider community can experiment with"* claim made real.
+
+**Recommendation:** ship as a standalone, video-only V1. Pair with the Marketing Lab workshop Barbara proposed — the bundle is the natural artefact for that conversation. Member-side `POST /reproduce/contribute` is optional V1 scope; can land later.
 
 ### Cross-track dependencies summary
 
@@ -939,10 +1128,20 @@ CR-031 storage decision  ─┬─→  CR-012  (calibration history persistence)
 Tania §9 v2  ─────────→  CR-028 Phase 2  ─→  CR-029 (encoding rigor)
                                           ─→  retire CR-020 fully
 
-CR-034 (Phase A)  ─────→  CR-032  (per-mode CO₂e rows)
-                  ─────→  CR-013  [absorbed]
+CR-037 (AI tethering)  ─────→  CR-039  (quality scoring lives on the tethered AI pages)
+CR-029 §6 "external PQA"  ─?→  CR-039  (carve-out needed, or drop CR-039)
 
 CR-026 ✅  ─→  CR-027  (tier explanation pairs with the access story)
 ```
 
-If you can only ship one thing per week, the priority order is roughly: **CR-029 prep work → Track D (CR-034 + CR-027 + CR-032) → Track C (CR-035 → CR-024) → Track A (CR-012 inside the storage design pass)**.
+(Track D's internal chain — CR-034 → CR-036 → CR-038 → CR-032 — has fully resolved; all four are closed. CR-037 now lands on that finished surface.)
+
+### Suggested order (post-2026-05-12 close-out sweep)
+
+1. **CR-037** — the board's "AI must stay tethered to streaming" deliverable; biggest open framing item. Lands on a surface where the renderer lift + amber/green vocabulary are already done, so it's mostly copy + a small canonical-result reference helper.
+2. **CR-040** — member trust / recruitment lever. Pairs with the Marketing Lab workshop. Standalone, no dependency.
+3. **CR-027** — tier-explanation copy refresh. Mostly UX copy; can run in parallel with anything above.
+4. **CR-029 prep + Track A storage decision** — picks up where the original priority order was (CR-029 still gated on Tania's §9 v2).
+5. **Track C (CR-035 → CR-024)**, then **CR-039 / CR-041** as exploratory follow-ups.
+
+If only one thing per week: in the order above.

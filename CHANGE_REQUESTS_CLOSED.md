@@ -588,5 +588,156 @@ Getting the visual hierarchy right means OWL reads as an energy-measurement tool
 
 ### Not shipped (captured for follow-up)
 
-- **CSV export µg/mg disambiguation.** Open question on the original CR — probably yes. Add unit explicitly as a column header note for downstream CSV consumers who don't see UI tooltips. Captured as a deferred quick-fix.
-- **Per-mode CO₂e expansion in the strip's details block.** When a result is a compare mode, currently only the most-efficient mode's CO₂e is shown in the strip headline; visitors who want per-mode carbon footprints have to scroll up to the per-column inline rows. Promoted to **CR-032** during Bundle 2.
+- **CSV export µg/mg disambiguation.** ✅ Resolved (differently) by **CR-036** — the CSV now carries a leading comment marking the `co2e_*` columns 🟡 indicative, which subsumes the unit-clarification intent.
+- **Per-mode CO₂e expansion in the strip's details block.** ✅ Shipped as **CR-032** (see below) — promoted from this note during Bundle 2, landed alongside the CR-034 result-card lift.
+
+---
+
+## CR-032 · Per-mode CO₂e rows inside the carbon strip details
+
+**Status:** ✅ shipped — `wlCarbonStrip`'s `subRuns` parameter + the per-mode breakdown inside the strip's `<details>` block are in `_CARBON_JS` and wired into every compare-mode result renderer. The implementation went beyond the original "one row per sub-mode" spec: N=2 comparisons (CPU vs GPU, small vs large) render two narrow side columns + shared two-mass rows; N≥3 (all_codecs) renders a per-mode ladder ("Per-mode breakdown — N sub-runs sorted by CO₂e") + a winner-anchored comparison block. Captured 2026-05-05 (Session 22 part 2); landed alongside the CR-034 result-card lift; closed in the 2026-05-12 close-out sweep.
+**Triggered by:** owner observation during Bundle 2 visual verification — for compare-mode results the strip headline showed the most-efficient mode's mass with "best of N" framing, but the other modes' CO₂e footprints weren't visible inside the strip itself; visitors had to scroll up to the per-column inline rows.
+
+### Problem
+
+Compare-mode strips (video CPU/GPU, video all_codecs, LLM CPU/GPU, image CPU/GPU, image small/large, RAG 3-mode) all use `Math.min` to pick the most-efficient sub-run's energy and label that mode as the headline. The strip's `<details>` block showed comparison rows for *other zones / other dates / live mix / formula* — but never the *other sub-runs of this same comparison*. The data existed (each sub-run has its own `energy.co2e.grams`), it just wasn't surfaced in the strip.
+
+### Direction shipped
+
+`wlCarbonStrip` signature gained an optional `subRuns` array — `[{label, grams, deltaWh, durationS}, ...]`. When present (compare mode), the strip renders per-mode CO₂e inside `<details>`, computing each row from the sub-run's saved-snapshot `energy.co2e.grams` (so the rows agree with the per-column inline rows above). Single-run call sites pass `null` and behave unchanged. The 24/7 projection multiplier scales each sub-run by its own duration. Headline stays "best of N" — per-mode rows live inside the dropdown, not above it.
+
+### Resolved / not in scope (from the original capture)
+
+- Per-mode rows do honour the 24/7 projection toggle (the page-wide hash multiplier applies to all rows). No further work.
+- No analogue for single-run strips — out of scope; `wlCarbonRow` already shows per-run CO₂e for single results.
+
+---
+
+## CR-034 · Unified results card (lift renderers + click-to-expand prev rows)
+
+**Status:** ✅ shipped — both phases landed. **Phase A:** `_RESULT_JS` carries shared `window.wlRenderVideoCard / wlRenderLLMCard / wlRenderRAGCard / wlRenderImageCard` helpers (the compact-result-card lift); `/demo`'s `renderVideoResult` etc. are thin wrappers calling them. **Phase B:** `window.wlExpandPrevRow(jobType, jobId, savedAt, cardKind)` lazy-loads `/results/{type}/{job_id}/download.json` and renders through the matching helper; wired into the prev-run rows on `/video`, `/llm`, `/rag` (with `cardKind='rag'` since RAG persists under `llm/`), and `/image` — each with `chev-<jobId>` / `expand-<jobId>` element IDs, multiple rows expandable at once. **Absorbs CR-013** ("previous-result rows clickable for full stored detail", captured 2026-05-02) — CR-013 never got a standalone entry; it shipped as CR-034's Phase B. Captured 2026-05-08 (Session 23 part 6); closed in the 2026-05-12 close-out sweep.
+**Triggered by:** two converging observations — (i) `/demo`'s bespoke compact result cards lacked the polished elements the main pages ship (carbon strip, EV-distance equivalence, 24/7 projection toggle, drift note, scope clarifier), so guided-tour visitors saw substantively different framing than direct-URL visitors; (ii) prev-run rows on the main pages showed only a one-line summary with no path to the rich detail short of downloading the JSON.
+
+### Problem
+
+Two parallel result-rendering paths existed (mirror of the situation CR-019 fixed for the in-progress phase): main pages assembled a rich card with `wlCarbonStrip` + scope clarifier + the full `<details>` block; `/demo` rendered a compact card with energy + confidence + scope-note only. Same drift-bug class — when CR-030's drift note shipped it landed on the main pages but not `/demo`. Independently, prev-row drilldown gave JSON/CSV download links rather than an inline expansion to the rich card visitors saw the first time.
+
+### Direction shipped
+
+**Phase A** — per-page render functions lifted into a sibling `_RESULT_JS` block as `wlRenderXxxCard({result, isPrev, savedAt})` helpers that *return* HTML strings (no DOM mutation; callers decide where to render). Cards include headline KPI row + prompt/question blockquote + confidence badge + carbon strip (full `<details>`: comparison rows, historical rows, drift note, EV equivalence, projection toggle) + scope clarifier. `/demo`'s renderers became thin wrappers. **Phase B** — prev-run rows became click-to-expand: collapsed by default, click fetches the full result and renders it through the Phase A helper, second click collapses, multiple rows open at once. Image previews still inline-render server-side thumbnails; the row stays as-is and the expand opens the full result.
+
+### Deferred
+
+- **"Expand all" toggle for Lab tier** — the original capture marked it "optionally"; not shipped. Capture if it surfaces as real friction in repetitive Lab work.
+- **Resume-job lifecycle hook** — still the deferred CR-019 follow-up; the unified result card is its natural landing point, so pair the two if/when resume-job ships.
+
+---
+
+## CR-036 · Carbon "indicative only" — hard delineation across the UI
+
+**Status:** ✅ shipped 2026-05-12 (Session 24). Captured 2026-05-11 from the board meeting. Commit-hash TBD — bundled into the next commit on `main`.
+**Triggered by:** GoS board meeting 2026-05-11. Dom: *"all those carbon calculators… picking made-up numbers… we're doing really good primary empirical research and then sticking some random numbers on them and saying carbon. So I think it's just really important that they're all badged orange and they're all clearly not supposed to be interpreted as anything other than indicative."* Barbara: *"it could be a little bit more obvious… colour it… it should be very clear that this is a disclaimer."* Dom: *"make sure that's not someone reading it and quoting greening of streaming on someone else's carbon data — that would be appalling."*
+
+### Problem
+
+CR-030 shrank the carbon-block typography and added the drift note; the methodology "From energy to CO₂e" section was reframed "for reference only" (2026-05-11). But on the result-card carbon strips themselves, CO₂e was still visually peer to the energy headline — same palette, no consistent "third-party data, not a GoS measurement" treatment, no traffic-light data-quality badge. A screenshot of any carbon number could be lifted out of context and re-shared as GoS data. The Jan-2026 Language Lab AI position paper defines a 🟢 direct / 🟡 estimation / 🔴 speculation data-quality framework and rates IEA top-down energy figures 🟡 Amber — by that framework OWL's energy figures are 🟢 and its CO₂e figures are 🟡, and OWL didn't express that asymmetry visually.
+
+### Direction shipped
+
+- **Amber chrome on every `wlCarbonStrip`** — `rgba(255,170,0,0.30)` border + a 2 px warn-tone top edge, so the block reads as indicative third-party data before any number inside it is read. Energy results above keep the accent-green chrome; the contrast is the signal.
+- **Persistent 🟡 INDICATIVE chip** at the top of every strip (single line, monospace, amber) with a tooltip naming both halves of the framework (🟢 direct = the energy figure; 🟡 indicative = this block, Wh × third-party grid intensity, IPCC AR6 lifecycle factors × live/recent mix, not a GoS primary measurement, see /methodology). Replaced the prior "High-level CO₂e estimate" caption.
+- **Headline mass colour** swapped `--text-3` → `--warn`.
+- **`wlCarbonRow`** (inline CO₂e row under each ΔE) — `(est.)` replaced by an inline `🟡 indicative` chip; mass cell `--warn`.
+- **Strip `<details>` formula block** names the 🟢/🟡 framework explicitly and anchors to the position paper — single source of truth for the framing.
+- **`estBadge()` tooltip** and the section-heading copy updated; "estimate" → "indicative" in carbon contexts (kept the existing LIVE/EST badges, which signal *source freshness* — a distinct axis).
+- **CSV export** — leading comment row: `# OWL CSV export — energy columns (w_*, delta_*) are 🟢 direct measurements; co2e_* columns are 🟡 indicative (Wh × third-party grid intensity, not measured). See /methodology.` Survives `pandas.read_csv(comment='#')`; visible even to consumers who don't strip it. (Supersedes CR-030's "CSV µg/mg disambiguation" follow-up — this clearer framing replaces a unit-clarification note.)
+- **Methodology page** "From energy to CO₂e" gained an amber call-out paragraph defining 🟢 Direct / 🟡 Indicative anchored to the position paper.
+
+### Not shipped (deliberately)
+
+- **Per-result-card 🟢 DIRECT chip next to the energy KPI** — the CR's "(or on hover)" escape hatch was taken: the 🟢 framing now lives once inside the strip header copy, communicating the asymmetry without N edits across every workload's energy display. No decision lost; a visible green chip on every result is a small follow-up if ever wanted.
+
+---
+
+## CR-038 · Efficiency-winner headline across all compare modes
+
+**Status:** ✅ shipped 2026-05-12 (Session 24). Captured 2026-05-11 from the board meeting. Commit-hash TBD — bundled into the next commit on `main`.
+**Triggered by:** GoS board meeting 2026-05-11. Marisol: *"if we could focus on sustainable AI… you have three models, one will be more sustainable than the other — highlight that on your screen as well, just make the focus on what is sustainable."* The data was in wattage but sat in a table, not a verdict.
+
+### Problem
+
+CR-030 gave the video compare-mode result a "best of CPU vs GPU" / "most efficient codec" label — but only on video, and only on the strip label. LLM Compare Models, Image Compare Models, and RAG compare-3-modes showed a results table with energy per mode and no headline verdict; visitors had to read row-by-row to find the winner.
+
+### Direction shipped
+
+- **`window.wlEfficiencyVerdict(subRuns, opts)`** in `_RESULT_JS` — sorts by `energy`, emits `⚡ Most efficient: <winner> · <value> <unit> · <ratio>× less than <other>` for N=2; `· best of N · spread <X>× across all sub-runs` for N≥3; `Tied within noise · A and B both ≈ <value> <unit>` when the margin is <5%. Returns empty string for fewer than 2 valid sub-runs. Optional `qualityNote` passes through verbatim — the helper does **not** invent quality scoring (that's CR-039). Single compact line, monospace, accent-green winner, soft-green background (a 🟢-direct framing, in deliberate contrast to the amber carbon strip below it).
+- **Wired in:** the shared `_RESULT_JS` helpers (prev-row expansion + /demo) — `wlRenderLLMCard` both-mode, `wlRenderRAGCard` 3-mode, `wlRenderImageCard` both + compare_models; and the page-local fresh-run renderers — `/llm` `renderLLMBoth`, `/rag` `renderCompareResult`, `/image` `renderImageBoth` + `renderCompareModels`. So the verdict shows on a fresh main-page run, not just /demo and prev-rows. mWh/token for LLM/RAG, Wh/image for image (the units visitors see in the cells).
+
+### Not shipped (deliberately)
+
+- **Video `renderBoth` / `renderAllCodecs`** keep their own richer "⚡ Most efficient + 🏁 Fastest + finding-prose" highlights block — adding `wlEfficiencyVerdict` would duplicate. The CR's "refactor video to use the helper" is partial: the helper exists, video stays on its richer block.
+- **LLM `renderLLMAllBoth`** (Run-All × Both — 6 sub-runs grouped by task) — a single verdict over all 6 doesn't map cleanly; deferred.
+
+---
+
+## CR-042 · Pixop placeholder — ML video enhancement demo tile
+
+**Status:** ✅ shipped 2026-05-12 (Session 24). Captured 2026-05-11 from the board meeting; implemented same week ahead of the owner's Wednesday 2026-05-13 meeting with Pixop. Commit-hash TBD — bundled into the next commit on `main` alongside the board-meeting CR drafts.
+**Triggered by:** owner — meeting with Pixop (startup using specialised ML models for video enhancement). Goal: show them concretely *"where ML-based video enhancement would slot in"* if Pixop joined GoS, opening a real conversation rather than a hypothetical one. Aligns with the position paper's "small specialised CNNs" framing and the board's "AI must stay tethered to streaming" steer (CR-037 captured the same week).
+
+### Problem
+
+OWL had no surface where a Pixop-class workload (specialised CNN super-resolution / denoise / interpolation) would live. The home page listed Video Transcode + the three "beta · exploratory" AI tabs; none would make Pixop's eyes light up. They needed to see a slot shaped like their product to imagine joining. A short, honest *placeholder* tile does that work without overcommitting OWL to a measurement we can't yet do.
+
+Reversibility was a hard constraint: must revert in a single commit if Pixop doesn't sign.
+
+### Direction shipped
+
+A new home-page tile **"Video Enhancement (placeholder)"** immediately below the Video Transcode tile — peer-shape, but amber (`--warn`) so it visibly reads as placeholder. Sub-label *"Demo · illustrative · awaiting partner integration"*. Clicking opens `/video-enhance`.
+
+#### `/video-enhance` page
+
+- **Amber `placeholder-band` at the top** — *"⚠ This page is a placeholder."* + one sentence explaining the slot.
+- **"Before" video viewer** — newly-generated `meridian_120s_lowq.mp4` (720p × 1.5 Mbps H.264, 22 MB) served via a small allowlisted `FileResponse` route.
+- **Three enhancement chip-buttons** — Denoise (~5M params), Super-resolution (~25M, 720p→1080p), Frame interpolation (25→50 fps).
+- **Fake progress** via the existing `wlRenderProgress` widget — 4 / 5 / 7 second simulated runs with a sin-shaped peak watts curve on a 53.5 W baseline.
+- **Result card wrapped in amber chrome** with every KPI tagged `· illustrative`: duration / ΔW mean / ΔE. Illustrative energies per option (denoise 0.03 Wh, super-res 0.18 Wh, interp 0.45 Wh on a 120 s clip — inside the position paper's small-specialised-CNN envelope). Carbon strip rendered via `wlCarbonStrip` so the gCO₂e tracks live grid intensity but lives inside the amber result card.
+- **"After" video viewer** — reveals on result, replays the full-quality `meridian_120s.mp4` with a caption that names the enhancement and says *"illustrative — full-quality master shown for comparison."*
+- **Methodology note** at the bottom linking `/methodology`.
+
+#### Three "placeholder" signals (per the lab look & feel hard constraint)
+
+1. Home-tile sub-label *"Demo · illustrative · awaiting partner integration"*.
+2. Amber `placeholder-band` at the top of the page.
+3. `· illustrative` clause on every result-card KPI label + an explicit *"illustrative values, not measured"* sub-line on the result-card header.
+
+#### Reversibility — held
+
+Everything additive:
+
+- One `FileResponse` import addition.
+- One `_VIDEO_ENHANCE_HTML` constant + two route handlers (`/video-enhance` and `/video-enhance/asset/{name}` — both `PUBLIC_PAGE`-gated; the asset route has a dict-key allowlist of two filenames so path-traversal attempts 404 by definition).
+- One `.nav-enhance` CSS block + one tile HTML stanza on the home page.
+- One degraded video asset (`test_content/meridian_120s_lowq.mp4`, gitignored).
+
+**No new module, no new route on the runtime measurement spine, no new capability, no settings change, no schema change, no persistence change.** Revert = one `git restore` on the four touched files; the asset stays in the gitignored directory.
+
+#### Verification at ship time
+
+213 tests passing throughout. Page renders 200 OK; asset endpoint returns 206 Partial Content for range requests (video seeking works) and 404 on misses / traversal attempts. Home page tile appears for Lab/Member tier in the correct order (Video Transcode → Video Enhancement → Beta · exploratory); Anonymous tier still redirects to `/demo` (no regression).
+
+### Visibility caveat (recorded for the post-meeting decision)
+
+The home tile lives at `/` which redirects Anonymous → `/demo`. So Pixop sees the tile only when the owner is signed in (Lab or Member) and drives the demo from the home page — the canonical Wednesday-meeting path. For anonymous post-meeting browsing, Pixop needs the direct URL `/video-enhance`. If broader discoverability is needed, a small link on `/demo` is a ~5-minute follow-up.
+
+### Two decision points wait on the Pixop meeting outcome
+
+- **If Pixop joins:** the placeholder is retired and a real `video_enhance.py`-style measurement module replaces it (tethered per CR-037; reproducibility kit per CR-040 from day one). New CR captured at that point.
+- **If Pixop doesn't join:** revert. Don't leave an empty placeholder live "in case someone else fits."
+
+### Cross-references
+
+- **CR-006 (closed) + CR-037 (captured):** AI as "beta · exploratory" / streaming-tethered. CR-042's placeholder inherits both framings.
+- **CR-036 (captured):** carbon "indicative only" hardening — when it lands, the amber `--warn` palette used here becomes the site-wide indicative vocabulary, and the placeholder fits the standard.
+- **CR-040 (captured):** reproducibility kit — if/when CR-042 becomes a real measurement, the kit covers it from day one.
+- **AI position paper (Jan 2026 Language Lab):** specialised CNNs (denoise, super-resolution) are the paper's headline efficient-AI category. The placeholder is shaped to that exactly.
