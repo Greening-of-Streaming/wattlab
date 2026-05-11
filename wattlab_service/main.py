@@ -7908,19 +7908,21 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   }
 {AUTH_CHIP_STYLES}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/wl-charts.js"></script>
 </head>
 <body>
 {AUTH_CHIP}
 
 <!-- Top bar -->
 <div class="topbar">
-  <a href="/" title="WattLab home" style="display:inline-flex;align-items:center;gap:0.5rem;text-decoration:none">
-    <img src="/static/owl.svg" alt="WattLab" style="height:32px;width:32px;border-radius:0;flex-shrink:0">
+  <a href="/" title="OWL home" style="display:inline-flex;align-items:center;gap:0.5rem;text-decoration:none">
+    <img src="/static/owl.svg" alt="OWL" style="height:32px;width:32px;border-radius:0;flex-shrink:0">
   </a>
   <a href="https://greeningofstreaming.org" target="_blank" title="Greening of Streaming">
     <img src="https://static.wixstatic.com/media/b1006e_f5e9aff607cf4133abf7089207dc3cab~mv2.png" alt="GoS">
   </a>
-  <span class="title">WattLab · Methodology</span>
+  <span class="title">OWL · Methodology</span>
   <a href="/" class="back">&larr; Home</a>
 </div>
 
@@ -8091,15 +8093,44 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <h3>Thermal-recovery probe</h3>
   <p>Before trusting a calibration result, the system needs to know that <code>variance_cooldown_s</code> is long enough &mdash; the idle samples taken between encodes must come from a thermally recovered system, not from the tail of the previous workload. The <code>bin/probe-thermal-recovery</code> diagnostic characterises this empirically. For a sequence of distances <em>d</em> after each of a CPU and a GPU encode (defaults: 0, 2, 5, 8, 12, 18, 25, 35, 50, 70, 95, 120 seconds), the probe samples idle power for 8 polls and writes the mean / std / CV to a CSV under <code>results/diagnostics/</code>.</p>
-  <p>On the GoS1 hardware the recovery is fast: post-CPU and post-GPU baselines converge to the settled idle floor by <em>d&nbsp;=&nbsp;5&ndash;8&thinsp;s</em> with within-window CV around 1&ndash;2.5%. So the configured cooldown of <code>{VARIANCE_COOLDOWN_S}</code>&thinsp;seconds is comfortably more than necessary &mdash; useful as a margin, not as a correction.</p>
-  <p>The probe&rsquo;s recovery curve is rendered as a chart inside the <em>More calibration details</em> dropdown on Settings (LAN-only). Each new probe run overwrites nothing; it leaves a fresh timestamped CSV pair so historical curves can be diffed if hardware or thermal conditions change.</p>
+  <figure id="recoveryFig" style="margin:18px 0 22px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:6px">
+    <div style="position:relative;height:280px"><canvas id="recoveryChart"></canvas></div>
+    <figcaption id="recoveryCap" style="margin-top:10px;font-size:12px;color:var(--text-dim);line-height:1.6">Recovery curve from the latest probe run.</figcaption>
+  </figure>
+  <script>
+  (function () {
+    var data = {RECOVERY_CHART_DATA};
+    var fig = document.getElementById('recoveryFig');
+    if (!data || !window.WlCharts) { if (fig) fig.style.display = 'none'; return; }
+    var cpu = data.points.filter(function (p) { return p.workload === 'cpu'; }).map(function (p) { return {x: p.distance_s, y: p.mean_w}; });
+    var gpu = data.points.filter(function (p) { return p.workload === 'gpu'; }).map(function (p) { return {x: p.distance_s, y: p.mean_w}; });
+    WlCharts.line({
+      canvas: document.getElementById('recoveryChart'),
+      xLabel: 'seconds after the encode ends',
+      yLabel: 'mean idle power (8-poll window)',
+      yUnit:  'W',
+      datasets: [
+        { label: 'after a CPU encode', color: 'cpu', points: cpu },
+        { label: 'after a GPU encode', color: 'gpu', points: gpu },
+        { label: 'configured cooldown (' + data.cooldown + 's)', color: 'warn', borderDash: [5, 4], pointRadius: 0,
+          points: [{x: data.cooldown, y: data.yLo}, {x: data.cooldown, y: data.yHi}] }
+      ]
+    });
+    var cap = document.getElementById('recoveryCap');
+    if (cap) cap.innerHTML = 'Source: <code>' + data.source + '</code> &middot; generated ' + data.generatedAt +
+      '. Idle power drops back to &approx;' + data.floor + '&nbsp;W within roughly 5&nbsp;s of either encode ending and stays flat; the dashed line marks the configured ' + data.cooldown + '&nbsp;s cooldown &mdash; comfortably past recovery.';
+  })();
+  </script>
+
+  <p>On the GoS1 hardware the recovery is fast (see chart above): post-CPU and post-GPU baselines converge to the settled idle floor by <em>d&nbsp;=&nbsp;5&ndash;8&thinsp;s</em> with within-window CV around 1&ndash;2.5%. So the configured cooldown of <code>{VARIANCE_COOLDOWN_S}</code>&thinsp;seconds is comfortably more than necessary &mdash; useful as a margin, not as a correction.</p>
+  <p>The same curve is also on the Settings page (lab access), where it refreshes live from the probe endpoint. Each probe run overwrites nothing &mdash; it leaves a fresh timestamped CSV pair under <code>results/diagnostics/</code> so historical curves can be diffed if hardware or thermal conditions change.</p>
 
   <h3>Why the probe matters</h3>
   <p>The probe was the seam that exposed the <code>scale_vaapi</code> leak (the GPU encode failed within 90 seconds of starting the diagnostic) and the silent-failure path in the calibration loop. Generalisable lesson: <em>measurement code should fail loudly, not interpolate around brokenness.</em> The probe predates being a first-class server feature, so its on-server execution is currently CLI-only; a queue-aware <code>/precalibration/run</code> endpoint with an in-page &ldquo;Re-run&rdquo; button is captured as a follow-up.</p>
 
   <h2 id="hardware">Hardware Disclosure</h2>
 
-  <p>All results are tied to specific hardware. Different CPUs, GPUs, RAM configurations, and PSU efficiencies will produce different numbers. WattLab results should always be cited with their hardware context.</p>
+  <p>All results are tied to specific hardware. Different CPUs, GPUs, RAM configurations, and PSU efficiencies will produce different numbers. OWL results should always be cited with their hardware context.</p>
 
   <table class="hw-table">
     <tr><td>Server</td><td>GoS1 &mdash; custom build, Ubuntu 24, kernel 6.17</td></tr>
@@ -8109,7 +8140,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <tr><td>Storage</td><td>457 GB (NVMe)</td></tr>
     <tr><td>Idle power</td><td>~51&ndash;54W (stable), occasional drift to 58W</td></tr>
     <tr><td>Measurement</td><td>Tapo P110 smart plug, 1-second polling via local API (tapo 0.8.12)</td></tr>
-    <tr><td>Video</td><td>ffmpeg 6.1.1 &mdash; libx264, libx265, libsvtav1 (CPU); h264_vaapi, hevc_vaapi, av1_vaapi (GPU, full VAAPI pipeline)</td></tr>
+    <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code>, May 2026 &mdash; carries the upstream <code>scale_vaapi</code> surface-pool fix) &mdash; libx264, libx265, libsvtav1 (CPU); h264_vaapi, hevc_vaapi, av1_vaapi (GPU, full VAAPI pipeline)</td></tr>
     <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; TinyLlama 1.1B, Mistral 7B, Gemma 3 12B (CPU + ROCm GPU); Phi-4 14B available for RAG</td></tr>
     <tr><td>Image</td><td>PyTorch + diffusers &mdash; SD-Turbo (~1B), SDXL-Turbo (~3.5B, GPU only); CPU + ROCm GPU</td></tr>
   </table>
@@ -8120,26 +8151,19 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <p>Transcode a source file (default: Netflix Meridian 4K, CC BY 4.0) to a target codec and 1080p. Measures the energy cost of the full encode pipeline &mdash; decode, colour-space conversion, scale, encode. Supports CPU vs GPU comparison: both paths are run sequentially with a cooldown between them, and results are presented side by side.</p>
   <p>Six presets across three codecs: <strong>H.264</strong> (libx264 / h264_vaapi, 4000 kbps), <strong>H.265</strong> (libx265 / hevc_vaapi, 2000 kbps), <strong>AV1</strong> (libsvtav1 / av1_vaapi, 1500 kbps). A seventh <strong>Compare all codecs</strong> preset runs all six in sequence and produces a cross-codec energy matrix.</p>
   <p>All presets use <strong>ABR (Average Bit Rate)</strong> rate control at a shared per-codec bitrate target, so CPU and GPU receive the identical encoding task &mdash; output file sizes match across devices as confirmation. All GPU presets use the <strong>full VAAPI pipeline</strong>: hardware decode (<code>-hwaccel vaapi</code>) + <code>scale_vaapi</code> + hardware encode, with frames GPU-resident throughout. This represents real live-encoding workflows (Harmonic, Ateme); an earlier partial pipeline (CPU decode + GPU encode) has been replaced because it was unrepresentative and bottlenecked on CPU decode overhead.</p>
-  <p>The ffmpeg command used for each run is logged in the result JSON, editable from the page (on LAN), and reproduced in the result card for full transparency.</p>
+  <p>The ffmpeg command used for each run is logged in the result JSON, editable from the page (signed-in GoS members and lab access), and reproduced in the result card for full transparency.</p>
 
   <div class="callout">
     <strong>Open item (narrower than before):</strong> With ABR, the bitrate target is now equal across devices. GOP structure and profile level are not yet explicitly controlled and may differ between CPU and GPU encoder defaults &mdash; a working session with the measurement team is planned to confirm apples-to-apples output at the profile/GOP level. A second benchmark family at each codec&rsquo;s natural operating point (CRF for CPU, QP for GPU) is also on the roadmap.
   </div>
 
-  <h3>LLM inference</h3>
-  <p>Run a language model on a fixed prompt and measure energy per token. Three model sizes are available spanning small to large: <strong>TinyLlama 1.1B</strong>, <strong>Mistral 7B</strong>, <strong>Gemma 3 12B</strong>. Supports cold inference (model unloaded before each run, measuring load + inference cost) and warm inference (model pre-loaded, measuring steady-state cost). Batch mode runs the prompt multiple times in sequence, with a configurable rest period between iterations, and reports the aggregate. CPU vs GPU comparison is also available.</p>
-  <p>Prompts are editable and saved in the result JSON. Streaming output is displayed word-by-word as proof that inference is happening live. The mWh/token metric divides total energy by total tokens generated.</p>
-
-  <h3>Image generation</h3>
-  <p>Generate images from text prompts using one of two diffusion models, both distilled &ldquo;turbo&rdquo; variants designed for 1&ndash;4 step inference:</p>
+  <h3>AI workloads <span style="color:var(--text-dim);font-weight:400;font-size:13px">— beta, exploratory</span></h3>
+  <p>Video transcoding is OWL&rsquo;s core benchmark. Three AI workloads run alongside it on the same protocol and confidence framework, but they are explicitly <strong>beta</strong> &mdash; useful for relative comparisons, with headline numbers still being hardened (see Open Questions). In brief:</p>
   <ul style="margin: 12px 0 18px 20px; font-size: 14px; line-height: 1.7;">
-    <li><strong>SD-Turbo (~1B)</strong> &mdash; ADD-distilled SD 2.1. CPU or GPU. Solo-mode GPU uses 20 steps &times; batch 5 to keep runtime above the P110 polling floor (the model is over-sampled relative to its native 1&ndash;4 step range).</li>
-    <li><strong>SDXL-Turbo (~3.5B)</strong> &mdash; ADD-distilled SDXL. GPU only (fp32 VAE upcast on Navi31 makes CPU impractical). 4 steps (native) &times; batch 15 at 512&times;512.</li>
+    <li><strong>LLM inference</strong> &mdash; mWh/token for TinyLlama&nbsp;1.1B / Mistral&nbsp;7B / Gemma&nbsp;3&nbsp;12B, cold or warm, CPU or GPU, with an optional batch mode. Prompts are saved in the result JSON; output streams word-by-word as live-run proof.</li>
+    <li><strong>Image generation</strong> &mdash; Wh/image for the SD-Turbo (~1B) and SDXL-Turbo (~3.5B) distilled diffusion models, CPU or GPU, with a Compare-Models mode that fixes prompt, seed and resolution so model size is the only variable.</li>
+    <li><strong>RAG</strong> &mdash; the energy delta of retrieval: baseline (no retrieval) vs RAG with 3 context chunks vs 8, retrieved from a document corpus via ChromaDB + sentence-transformer embeddings, compared side by side.</li>
   </ul>
-  <p><strong>Compare Models ⚡</strong> runs both on GPU with the same prompt, same seed, same resolution (512&times;512) and each at its native 4-step operating point (SD-Turbo batch 30, SDXL-Turbo batch 15) &mdash; model size is the only variable so the energy comparison is apples-to-apples. Image quality is subjective and presented side-by-side for visual judgement. A random colour/mood modifier is appended to every prompt as live-generation proof.</p>
-
-  <h3>RAG (Retrieval-Augmented Generation)</h3>
-  <p>Compare three modes of LLM inference: baseline (no retrieval), RAG with 3 context chunks, and RAG with 8 context chunks. Uses ChromaDB with sentence-transformer embeddings to retrieve relevant passages from a document corpus before prompting the LLM. The &ldquo;Compare 3 modes&rdquo; function runs all three sequentially with fresh baselines, producing side-by-side energy comparisons.</p>
 
   <h2 id="limits">Known Limitations</h2>
 
@@ -8195,6 +8219,43 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+def _recovery_chart_payload(cooldown_s):
+    """Latest thermal-recovery probe summary, trimmed to what the static
+    /methodology chart needs (points + settled floor + provenance), or None
+    if no probe data is on disk. Unlike /precalibration/data this carries no
+    auth — it's a frozen snapshot baked into a public page at render time,
+    re-read from the CSV on each request."""
+    import csv as csv_mod
+    diag_dir = Path("/home/gos/wattlab/results/diagnostics")
+    summaries = sorted(diag_dir.glob("recovery_*_summary.csv")) if diag_dir.exists() else []
+    if not summaries:
+        return None
+    latest = summaries[-1]
+    pts = []
+    try:
+        with latest.open() as f:
+            for row in csv_mod.DictReader(f):
+                pts.append({"distance_s": int(row["distance_s"]),
+                            "workload":   row["workload"],
+                            "mean_w":     round(float(row["mean_w"]), 2)})
+    except (OSError, KeyError, ValueError):
+        return None
+    if not pts:
+        return None
+    ys      = [p["mean_w"] for p in pts]
+    settled = [p["mean_w"] for p in pts if p["distance_s"] >= 60]
+    floor   = round(sum(settled) / len(settled), 1) if settled else round(min(ys), 1)
+    return {
+        "points":      pts,
+        "cooldown":    cooldown_s,
+        "floor":       floor,
+        "yLo":         round(min(ys), 1),
+        "yHi":         round(max(ys), 1),
+        "source":      latest.name,
+        "generatedAt": datetime.fromtimestamp(latest.stat().st_mtime).isoformat(timespec="seconds"),
+    }
+
+
 @app.get("/methodology", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def methodology_page(request: Request):
     # Inject live settings into placeholder fields so the methodology page
@@ -8204,6 +8265,7 @@ async def methodology_page(request: Request):
     # previously hard-coded in the prose and table, and contradicted the
     # running config any time settings were changed.
     s = cfg.load()
+    recovery = _recovery_chart_payload(s.get("variance_cooldown_s", 40))
     return (_METHODOLOGY_HTML
             .replace("{AUTH_CHIP_STYLES}",   _AUTH_CHIP_STYLES)
             .replace("{AUTH_CHIP}",          _auth_chip_html(request))
@@ -8214,4 +8276,5 @@ async def methodology_page(request: Request):
             .replace("{CONF_GREEN_POLLS}",   str(s.get("conf_green_polls",   "—")))
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
             .replace("{VARIANCE_RUNS}",      str(s.get("variance_runs",      "—")))
-            .replace("{VARIANCE_COOLDOWN_S}",str(s.get("variance_cooldown_s","—"))))
+            .replace("{VARIANCE_COOLDOWN_S}",str(s.get("variance_cooldown_s","—")))
+            .replace("{RECOVERY_CHART_DATA}", json.dumps(recovery)))

@@ -102,6 +102,7 @@
         data: (ds.points || []).map((p) => ({ x: p.x, y: p.y })),
         borderColor: color,
         backgroundColor: color + '33',
+        borderDash: ds.borderDash,  // e.g. [5,4] for marker / reference lines
         tension: ds.tension !== undefined ? ds.tension : 0.2,
         pointRadius: ds.pointRadius !== undefined ? ds.pointRadius : 3,
       };
