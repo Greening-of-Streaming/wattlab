@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, Form, Request, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
 from power import get_power_watts, read_sensors_dict
@@ -2392,6 +2392,22 @@ async def index(request: Request):
                         border: 1px solid var(--accent); padding: 0.55rem 2rem;
                         font-size: 1rem; display: inline-block; }}
         .nav-video a:hover {{ background: #00ff9922; }}
+        /* CR-042 — Pixop placeholder tile. Peer-shape to nav-video but amber
+           (--warn) so it visibly reads as "placeholder, not measured". Sub-label
+           is the second signal; the third lives on the page itself. */
+        .nav-enhance {{ display: flex; flex-direction: column; align-items: center;
+                        gap: 0.3rem; }}
+        .nav-enhance a {{ color: var(--warn); text-decoration: none;
+                          border: 1px solid var(--warn); padding: 0.55rem 2rem;
+                          font-size: 1rem; display: inline-flex; align-items: baseline;
+                          gap: 0.5rem; }}
+        .nav-enhance a:hover {{ background: rgba(255,170,0,0.12); }}
+        .nav-enhance .enhance-tag {{ font-size: 0.55rem; letter-spacing: 0.08em;
+                                     color: var(--warn); border: 1px solid var(--warn);
+                                     padding: 0.05rem 0.3rem; border-radius: 2px;
+                                     text-transform: uppercase; }}
+        .nav-enhance-sub {{ font-size: 0.7rem; color: var(--text-5);
+                            letter-spacing: 0.04em; }}
         .nav-beta-note {{ font-size: 0.72rem; color: var(--text-5); text-align: center;
                           line-height: 1.55; max-width: 460px; margin-top: -0.5rem; }}
         .nav-ai {{ display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }}
@@ -2439,6 +2455,10 @@ async def index(request: Request):
     <div class="nav">
         <div class="nav-tour"><a href="/demo">◆ Guided Tour</a></div>
         <div class="nav-video"><a href="/video">▶ Video transcode</a></div>
+        <div class="nav-enhance">
+            <a href="/video-enhance">▶ Video enhancement <span class="enhance-tag">Placeholder</span></a>
+            <div class="nav-enhance-sub">Demo · illustrative · awaiting partner integration</div>
+        </div>
         <div class="nav-label">Beta · exploratory</div>
         <div class="nav-beta-note">
             Energy / quality / faithfulness tradeoffs we're investigating.<br>
@@ -3375,6 +3395,316 @@ async def video_page(request: Request):
     {_FOOTER}
 </body>
 </html>""")
+
+
+# --- CR-042 · Pixop placeholder (video enhancement demo) -------------------
+#
+# Self-contained placeholder for ML-based video enhancement (denoise,
+# super-resolution, frame interpolation). Pre-meeting tactical for the
+# 2026-05-13 Pixop demo. Reversibility constraint: this block + the home-
+# page tile insertion + the FileResponse import are the only places that
+# touch the topic. No measurement-spine code, no settings, no persistence,
+# no capability, no schema change. Revert deletes this block and the home
+# additions; nothing else.
+
+_VIDEO_ENHANCE_ASSETS = {
+    "meridian_120s.mp4":      Path("/home/gos/wattlab/test_content/meridian_120s.mp4"),
+    "meridian_120s_lowq.mp4": Path("/home/gos/wattlab/test_content/meridian_120s_lowq.mp4"),
+}
+
+
+# Lab-styled 404 body — small HTML page so a browser visit shows a
+# recognisable "not found" rather than a JSON dump. Same 404 status
+# code; `<video>` consumers still treat it as a load failure, so no
+# behaviour change there.
+_VIDEO_ENHANCE_404 = (
+    '<!DOCTYPE html><html><head>'
+    '<link rel="icon" type="image/svg+xml" href="/static/owl.svg">'
+    '<title>OWL — 404 Not Found</title>'
+    '<style>body{font-family:monospace;background:#0a0a0a;color:#e0e0e0;'
+    'max-width:480px;margin:0 auto;padding:4rem 2rem;text-align:center;'
+    'line-height:1.6}h1{color:#00ff99;font-size:1.2rem;margin-bottom:0.5rem}'
+    'p{color:#8a8a8a;font-size:0.85rem;margin-bottom:1.5rem}'
+    'code{color:#ffaa00}a{color:#00ff99;text-decoration:none}</style>'
+    '</head><body>'
+    '<h1>404 · Not found</h1>'
+    '<p>No asset by that name on the <code>/video-enhance/asset/</code> endpoint.<br>'
+    'Allowlist: <code>meridian_120s.mp4</code>, <code>meridian_120s_lowq.mp4</code>.</p>'
+    '<p><a href="/video-enhance">← Video enhancement (placeholder)</a> · '
+    '<a href="/">Home</a></p>'
+    '</body></html>'
+)
+
+
+@app.get("/video-enhance/asset/{name}",
+         dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def video_enhance_asset(name: str):
+    path = _VIDEO_ENHANCE_ASSETS.get(name)
+    if path is None or not path.exists():
+        return HTMLResponse(_VIDEO_ENHANCE_404, status_code=404)
+    return FileResponse(path, media_type="video/mp4")
+
+
+# Plain string (not f-string) so JS object literals don't need escaping;
+# Python-side placeholders are explicit `{NAME}` tokens replaced once at
+# render time, same pattern /methodology and /queue-status use.
+_VIDEO_ENHANCE_HTML = """<!DOCTYPE html>
+<html>
+<head>
+  <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+  <title>OWL — Video Enhancement (placeholder)</title>
+  <style>
+    {AUTH_CHIP_STYLES}
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: var(--bg); color: var(--text);
+           max-width: 780px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { color: var(--warn); margin-bottom: 0.25rem; font-size: 1.45rem;
+         letter-spacing: 0.01em; }
+    .subtitle { color: var(--text-3); font-size: 0.82rem; margin-bottom: 1.5rem;
+                letter-spacing: 0.04em; }
+    .back { display: inline-block; color: var(--text-4); text-decoration: none;
+            font-size: 0.82rem; margin-bottom: 1.25rem; }
+    .back:hover { color: var(--accent); }
+    .placeholder-band { background: rgba(255,170,0,0.06);
+                        border-left: 3px solid var(--warn); padding: 0.85rem 1rem;
+                        margin-bottom: 1.75rem; color: var(--text-2);
+                        font-size: 0.85rem; line-height: 1.65; }
+    .placeholder-band .lead { color: var(--warn); font-size: 0.95rem;
+                              font-weight: bold; display: block;
+                              margin-bottom: 0.4rem; letter-spacing: 0.02em; }
+    .vid-wrap { background: var(--panel); border: 1px solid var(--border-2);
+                padding: 0.45rem; margin-bottom: 0.85rem; }
+    .vid-wrap video { width: 100%; display: block; background: #000; }
+    .vid-caption { color: var(--text-4); font-size: 0.74rem;
+                   margin-top: 0.4rem; font-family: monospace; }
+    .section-label { color: var(--text-3); font-size: 0.85rem;
+                     margin: 1.5rem 0 0.65rem; letter-spacing: 0.02em; }
+    .options { display: flex; gap: 0.6rem; flex-wrap: wrap;
+               margin-bottom: 1.25rem; }
+    .enhance-chip { flex: 1; min-width: 210px; background: var(--panel);
+                    border: 1px solid var(--border-3); color: var(--text-2);
+                    padding: 0.75rem 0.9rem; font-family: monospace;
+                    cursor: pointer; font-size: 0.85rem; line-height: 1.45;
+                    text-align: left; transition: border-color 0.15s; }
+    .enhance-chip:hover:not(.disabled) { border-color: var(--warn);
+                                         color: var(--text); }
+    .enhance-chip .chip-label { color: var(--accent); font-weight: bold;
+                                display: block; margin-bottom: 0.25rem; }
+    .enhance-chip .chip-meta { color: var(--text-4); font-size: 0.72rem; }
+    .enhance-chip.disabled { opacity: 0.45; cursor: not-allowed; }
+    #enhance-status { margin-bottom: 1.5rem; }
+    .result-card { display: none; border: 1px solid var(--warn);
+                   padding: 1rem 1.15rem; margin-bottom: 1.25rem;
+                   background: rgba(255,170,0,0.025); }
+    .result-card .rc-header { color: var(--warn); font-size: 0.7rem;
+                              letter-spacing: 0.08em; text-transform: uppercase;
+                              margin-bottom: 0.55rem; }
+    .result-card .rc-kpi { display: flex; gap: 1.6rem; flex-wrap: wrap;
+                           margin-bottom: 0.75rem; }
+    .result-card .rc-kpi > div { display: flex; flex-direction: column;
+                                 gap: 0.18rem; }
+    .result-card .rc-kpi .val { color: var(--accent); font-size: 1.2rem;
+                                font-family: monospace; }
+    .result-card .rc-kpi .lbl { color: var(--text-4); font-size: 0.66rem;
+                                letter-spacing: 0.05em; text-transform: uppercase; }
+    .result-card .illustrative-tag { color: var(--warn); font-size: 0.65rem;
+                                     font-weight: normal; letter-spacing: 0.04em; }
+    .result-card .rc-note { color: var(--text-4); font-size: 0.72rem;
+                            margin: 0.4rem 0 0.4rem; font-family: monospace;
+                            line-height: 1.55; }
+    .footer-note { color: var(--text-4); font-size: 0.78rem; line-height: 1.65;
+                   border-left: 2px solid var(--border-2);
+                   padding-left: 0.9rem; margin-top: 2.5rem; }
+    .footer-note a { color: var(--text-3); }
+  </style>
+</head>
+<body>
+{AUTH_CHIP}
+<a href="/" class="back">&larr; Home</a>
+
+<h1>Video Enhancement</h1>
+<div class="subtitle">Placeholder &middot; illustrative values, not measured</div>
+
+<div class="placeholder-band">
+  <span class="lead">&#9888; This page is a placeholder.</span>
+  Where a partner using small specialised ML models &mdash; for example denoise,
+  super-resolution, or frame interpolation &mdash; would slot into the OWL
+  measurement chain. The numbers below are <strong>illustrative</strong> and not
+  produced by a real measurement run on this server. If this category lands as a
+  real OWL measurement, every figure here would be replaced by a P110-polled
+  delta with a variance-based confidence flag, just like every other workload.
+</div>
+
+<div class="section-label">Input video</div>
+<div class="vid-wrap">
+  <video controls preload="metadata" muted>
+    <source src="/video-enhance/asset/meridian_120s_lowq.mp4" type="video/mp4">
+  </video>
+  <div class="vid-caption">Input &middot; 720p &times; ~1.5 Mbps H.264 (Meridian-120s, degraded for the demo)</div>
+</div>
+
+<div class="section-label">Pick a (placeholder) enhancement</div>
+<div class="options">
+  <button class="enhance-chip" onclick="startEnhance('denoise')">
+    <span class="chip-label">Denoise</span>
+    <span class="chip-meta">small CNN &middot; ~5M params</span>
+  </button>
+  <button class="enhance-chip" onclick="startEnhance('superres')">
+    <span class="chip-label">Super-resolution</span>
+    <span class="chip-meta">medium CNN &middot; ~25M params &middot; 720p &rarr; 1080p</span>
+  </button>
+  <button class="enhance-chip" onclick="startEnhance('interp')">
+    <span class="chip-label">Frame interpolation</span>
+    <span class="chip-meta">specialised model &middot; 25 &rarr; 50 fps</span>
+  </button>
+</div>
+
+<div id="enhance-status"></div>
+
+<div id="result-card" class="result-card"></div>
+
+<div id="after-viewer" style="display:none">
+  <div class="section-label">Enhanced output</div>
+  <div class="vid-wrap">
+    <video controls preload="metadata" muted>
+      <source src="/video-enhance/asset/meridian_120s.mp4" type="video/mp4">
+    </video>
+    <div class="vid-caption" id="after-caption">Output &middot; enhanced (illustrative)</div>
+  </div>
+</div>
+
+<div class="footer-note">
+  If a workload like this becomes a real OWL measurement, it inherits the
+  standard protocol: P110 polling at 1&nbsp;Hz, focus mode, variance-based
+  confidence flag. See <a href="/methodology">/methodology</a> for the
+  measurement framework. The illustrative ranges chosen for this placeholder
+  sit inside the position paper's small-specialised-CNN envelope &mdash; OWL
+  does not yet measure this category directly.
+</div>
+
+{PROGRESS_JS}
+{FOOTER}
+
+<script>
+// Illustrative parameter table. Energy ranges chosen to sit inside the
+// Language Lab AI position paper's "small specialised CNN" envelope on a
+// 120s clip. Peak ΔW is a plausible shape for these models on a Ryzen 9
+// 7900 / RX 7800 XT. Everything here is for the placeholder UI only; the
+// real measurement would land here when the workload runs locally.
+var ENHANCE_OPTIONS = {
+  denoise:  { label: 'Denoise · small CNN',             durationS: 4.0,
+              energyWh: 0.03, peakDeltaW: 9,
+              caption: 'Output · denoised (illustrative — full-quality master shown for comparison)' },
+  superres: { label: 'Super-resolution · medium CNN',   durationS: 5.0,
+              energyWh: 0.18, peakDeltaW: 22,
+              caption: 'Output · 1080p super-resolved (illustrative — full-quality master shown for comparison)' },
+  interp:   { label: 'Frame interpolation · specialised model', durationS: 7.0,
+              energyWh: 0.45, peakDeltaW: 34,
+              caption: 'Output · 50 fps interpolated (illustrative — full-quality master shown for comparison)' }
+};
+var FAKE_BASELINE_W = 53.5;
+var STAGES = ['Baseline (illustrative)', 'Inference running', 'Cooldown', 'Complete'];
+
+var fakeTimer = null;
+var fakeStart = null;
+
+function startEnhance(key) {
+  if (fakeTimer) { clearInterval(fakeTimer); fakeTimer = null; }
+  var cfg = ENHANCE_OPTIONS[key];
+  if (!cfg) return;
+  fakeStart = Date.now();
+  document.getElementById('result-card').style.display = 'none';
+  document.getElementById('after-viewer').style.display = 'none';
+  document.querySelectorAll('.enhance-chip').forEach(function(b){ b.classList.add('disabled'); });
+  var totalMs = cfg.durationS * 1000;
+
+  function tick() {
+    var elapsed = Date.now() - fakeStart;
+    var pct = Math.min(100, (elapsed / totalMs) * 100);
+    var stageIdx = pct < 22 ? 0 : pct < 88 ? 1 : pct < 100 ? 2 : 3;
+    // Synthesised watts: baseline + a sin-shaped peak during inference.
+    var w = FAKE_BASELINE_W + (Math.random() - 0.5) * 0.6;
+    if (pct >= 22 && pct < 88) {
+      var phase = (pct - 22) / 66;
+      w += cfg.peakDeltaW * Math.sin(phase * Math.PI);
+    }
+    if (window.wlRenderProgress) {
+      wlRenderProgress({
+        target:      'enhance-status',
+        header:      'Running placeholder · illustrative measurement (no real workload)',
+        stagesHtml:  (window.wlStageList ? wlStageList(STAGES, stageIdx) : ''),
+        watts:       w,
+        elapsed:     elapsed,
+        progressPct: pct
+      });
+    }
+    if (elapsed >= totalMs) {
+      clearInterval(fakeTimer); fakeTimer = null;
+      showResult(key);
+    }
+  }
+  tick();
+  fakeTimer = setInterval(tick, 250);
+}
+
+function showResult(key) {
+  var cfg = ENHANCE_OPTIONS[key];
+  var wh   = cfg.energyWh;
+  var durS = cfg.durationS;
+  // Average ΔW over a sin-shaped peak across the inference phase ≈ 2/π × peak ≈ 0.64;
+  // we round to ×0.55 for the placeholder.
+  var dwAvg = cfg.peakDeltaW * 0.55;
+
+  document.getElementById('enhance-status').innerHTML = '';
+  document.querySelectorAll('.enhance-chip').forEach(function(b){ b.classList.remove('disabled'); });
+
+  var stripHtml = (window.wlCarbonStrip)
+    ? wlCarbonStrip(wh, cfg.label + ' · illustrative', durS, null)
+    : '';
+
+  var card = document.getElementById('result-card');
+  card.innerHTML = ''
+    + '<div class="rc-header">Result &middot; ' + cfg.label
+    + ' <span class="illustrative-tag">&middot; illustrative values, not measured</span></div>'
+    + '<div class="rc-kpi">'
+    +   '<div><span class="val">' + durS.toFixed(1) + ' s</span>'
+    +       '<span class="lbl">Duration · illustrative</span></div>'
+    +   '<div><span class="val">' + dwAvg.toFixed(1) + ' W</span>'
+    +       '<span class="lbl">&Delta;W mean · illustrative</span></div>'
+    +   '<div><span class="val">' + wh.toFixed(3) + ' Wh</span>'
+    +       '<span class="lbl">&Delta;E · illustrative</span></div>'
+    + '</div>'
+    + '<div class="rc-note">'
+    + 'Position-paper envelope for small specialised CNNs in this size class. A real measurement, '
+    + 'when the workload runs locally, would land somewhere in this range and carry a 🟢/🟡/🔴 '
+    + 'confidence flag derived from the measured noise floor.'
+    + '</div>'
+    + stripHtml;
+  card.style.display = 'block';
+
+  var afterV = document.getElementById('after-viewer');
+  afterV.style.display = 'block';
+  var capEl = document.getElementById('after-caption');
+  if (capEl) capEl.textContent = cfg.caption;
+
+  setTimeout(function(){
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 80);
+}
+</script>
+</body>
+</html>"""
+
+
+@app.get("/video-enhance", response_class=HTMLResponse,
+         dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def video_enhance_page(request: Request):
+    return (_VIDEO_ENHANCE_HTML
+            .replace("{AUTH_CHIP_STYLES}", _AUTH_CHIP_STYLES)
+            .replace("{AUTH_CHIP}",        _auth_chip_html(request))
+            .replace("{PROGRESS_JS}",      _PROGRESS_JS)
+            .replace("{FOOTER}",           _FOOTER))
+
 
 # --- Job runner ---
 
