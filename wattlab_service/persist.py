@@ -140,7 +140,18 @@ def to_csv(job_type: str, data: dict) -> str:
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
     writer.writeheader()
     writer.writerows(rows)
-    return output.getvalue()
+    # CR-036 — leading-comment line warning downstream consumers that the
+    # `co2e_*` columns are indicative (third-party grid factors × Wh), not
+    # a GoS primary measurement. Most parsers that respect `comment='#'`
+    # (pandas.read_csv etc.) will skip this line; vanilla csv.reader sees
+    # it as a row, which is fine — anyone parsing without disclaimer
+    # awareness still sees the disclaimer before they parse the numbers.
+    return (
+        "# OWL CSV export — energy columns (w_*, delta_*) are 🟢 direct "
+        "measurements; co2e_* columns are 🟡 indicative (Wh × third-party "
+        "grid intensity, not measured). See /methodology.\n"
+        + output.getvalue()
+    )
 
 
 # --- Internal helpers ---

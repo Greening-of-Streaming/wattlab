@@ -619,6 +619,17 @@ _CARBON_JS = """
   // results without enrichment, returns empty string (no broken row).
   // When grams === 0 (ΔE below P110 floor), surfaces "below measurement
   // floor" with a tooltip rather than rendering a misleading "0 g".
+  // CR-036 — the inline carbon row under each ΔE picks up the same 🟡
+  // INDICATIVE language as the strip. The "(est.)" suffix is replaced
+  // by an amber chip, and the mass cell is amber-tinted to match the
+  // strip headline. Below-floor branch keeps the muted-grey treatment
+  // since the value itself is the absence of a measurable signal.
+  var INDICATIVE_INLINE_CHIP =
+      '<span style="color:var(--warn);font-family:monospace;font-size:0.58rem;'
+    + 'letter-spacing:0.06em;text-transform:uppercase;border:1px solid rgba(255,170,0,0.55);'
+    + 'padding:0.02rem 0.28rem;border-radius:2px;margin-left:0.35rem;vertical-align:middle" '
+    + 'title="Indicative — Wh × third-party grid intensity. Not a GoS primary '
+    + 'measurement. See /methodology for the basis.">🟡 indicative</span>';
   window.wlCarbonRow = function(energy){
     if (!energy || !energy.co2e || !energy.co2e.intensity) return '';
     var c = energy.co2e;
@@ -626,7 +637,7 @@ _CARBON_JS = """
     var live = i.source === 'live';
     if (c.grams <= 0) {
       return '<div class="metric" title="' + BELOW_FLOOR_TOOLTIP + '">'
-           + '<span>CO₂e (est.)</span>'
+           + '<span>CO₂e' + INDICATIVE_INLINE_CHIP + '</span>'
            + '<span class="val" style="color:var(--text-4)">— '
            + '<span style="color:var(--text-5);font-size:0.7rem;font-family:monospace;'
            + 'margin-left:0.5rem;font-weight:normal">below measurement floor</span>'
@@ -635,8 +646,9 @@ _CARBON_JS = """
     var freshness = live
       ? (i.zone_label + ' · ' + i.g_per_kwh + ' g/kWh · ' + fmtAge(i.age_s))
       : (i.zone_label + ' · ' + i.g_per_kwh + ' g/kWh · ' + (i.year ? i.year + ' mean' : 'annual mean'));
-    return '<div class="metric"><span>CO₂e (est.)</span>'
-         + '<span class="val" title="' + massTitle(c.grams) + '">' + fmtMass(c.grams)
+    return '<div class="metric"><span>CO₂e' + INDICATIVE_INLINE_CHIP + '</span>'
+         + '<span class="val" style="color:var(--warn)" '
+         + 'title="' + massTitle(c.grams) + '">' + fmtMass(c.grams)
          + (live ? liveBadge() : estBadge())
          + '<span style="color:var(--text-4);font-size:0.7rem;font-family:monospace;'
          + 'margin-left:0.5rem;font-weight:normal">' + freshness + '</span>'
@@ -698,9 +710,16 @@ _CARBON_JS = """
   window.wlCarbonStrip = function(wh, label, durationS, savedIntensityG, subRuns){
     if (wh == null || isNaN(wh)) return '';
     var elId = 'carbon-strip-' + Math.random().toString(36).slice(2,9);
+    // CR-036 — amber-tinted outer border + warn-coloured top edge so the
+    // whole block reads as "indicative third-party data" before the
+    // visitor reads a single number inside. Border alpha is intentionally
+    // light (--warn at ~25%) so the strip stays a lab block, not a
+    // marketing banner. Energy results above keep the accent-green
+    // chrome; the contrast is the signal.
     var html = '<div id="' + elId + '" class="carbon-strip" '
              + 'style="margin:0.75rem 0;padding:0.7rem 0.85rem;background:var(--panel-2);'
-             + 'border:1px solid var(--border-2);font-size:0.78rem">'
+             + 'border:1px solid rgba(255,170,0,0.30);border-top:2px solid rgba(255,170,0,0.45);'
+             + 'font-size:0.78rem">'
              + '<div style="color:var(--text-4);font-size:0.7rem">'
              + 'CO₂e — loading grid intensity…</div></div>';
     var dur = (durationS != null && !isNaN(durationS) && durationS > 0)
@@ -810,21 +829,35 @@ _CARBON_JS = """
       providerStr = ' · ' + prov;
     }
 
-    // "High-level estimate" caption — frames the whole strip as derived/
-    // estimated context. The energy figures above the strip ARE measured;
-    // these CO2e numbers are calculated from them × a grid-intensity
-    // estimate, useful for comparison with other activities (driving an
-    // EV, etc.) but never the primary measurement claim. "Use phase"
-    // signals scope — embodied / manufacturing carbon of the hardware is
-    // out of scope here; numbers reflect grid emissions during operation.
+    // CR-036 — top-of-strip "indicative only" framing. Replaces the prior
+    // "High-level CO₂e estimate" caption with an explicit 🟡 chip + a
+    // one-line basis statement, anchored to the data-quality framework
+    // the Language Lab AI position paper (Jan 2026) proposes:
+    //   🟢 Direct measurement — the energy block above.
+    //   🟡 Indicative — third-party grid factors × live mix; this block.
+    // Single line, monospace, amber — communicates the asymmetry without
+    // recoloring the actual values (which would hurt readability). The
+    // tooltip carries the long form so the visible chrome stays compact.
     var estimateCaption =
-        '<div style="color:var(--text-5);font-size:0.6rem;letter-spacing:0.08em;'
-      + 'text-transform:uppercase;margin-bottom:0.4rem"'
-      + ' title="Wh × grid intensity. Use phase only — embodied carbon of '
-      + 'the hardware (manufacturing, transport, end-of-life) is not '
-      + 'included. Energy is measured at the wall; this block is derived '
-      + 'for carbon-accounting comparison.">'
-      + 'High-level CO₂e estimate · use phase · for comparison with other activities'
+        '<div style="margin-bottom:0.45rem;display:flex;align-items:baseline;'
+      + 'flex-wrap:wrap;gap:0.45rem">'
+      + '<span style="color:var(--warn);font-family:monospace;font-size:0.62rem;'
+      + 'letter-spacing:0.08em;text-transform:uppercase;'
+      + 'border:1px solid rgba(255,170,0,0.55);padding:0.1rem 0.4rem;'
+      + 'border-radius:2px" '
+      + 'title="🟢 Direct measurement = the energy figure above (P110 polling, '
+      + 'validated method). 🟡 Indicative = this carbon block — Wh × grid '
+      + 'intensity from third-party sources (IPCC AR6 lifecycle factors × the '
+      + 'live or recent grid mix). Not a GoS primary measurement; provided '
+      + 'for context, not for citation. See /methodology.">'
+      + '🟡 Indicative'
+      + '</span>'
+      + '<span style="color:var(--text-4);font-size:0.7rem;font-family:monospace;'
+      + 'letter-spacing:0.02em">'
+      + 'Third-party grid factors · use phase only · '
+      + '<a href="/methodology" style="color:var(--text-3);text-decoration:none;'
+      + 'border-bottom:1px solid var(--border-3)">methodology</a>'
+      + '</span>'
       + '</div>';
 
     // EV-distance equivalence — a relatable physical-world comparator.
@@ -872,12 +905,15 @@ _CARBON_JS = """
         + '</div>';
     }
 
+    // CR-036 — headline mass takes the --warn palette (carbon = amber across
+    // the strip). Energy retains --accent (green) on the result card above,
+    // so the contrast itself is the 🟢-direct vs 🟡-indicative signal.
     var headlineHtml =
         '<div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:0.4rem 0.75rem;'
       + 'margin-bottom:0.3rem">'
       + '<span style="color:var(--text-4);font-size:0.7rem;letter-spacing:0.04em;'
       + 'text-transform:uppercase">CO₂e</span>'
-      + '<span style="color:var(--text-3);font-size:0.85rem;font-family:monospace;'
+      + '<span style="color:var(--warn);font-size:0.85rem;font-family:monospace;'
       + 'line-height:1"' + (homeGrams != null ? ' title="' + massTitle(homeGrams) + '"' : '') + '>'
       + (homeGrams != null ? fmtMass(homeGrams) : '—') + '</span>'
       + (homeLive ? liveBadge() : estBadge())
@@ -1366,18 +1402,31 @@ _CARBON_JS = """
         + 'style="color:var(--text-3)">ElectricityMaps</a> real-time grid intensity. '
         + 'Falls back to the static annual mean if unavailable.';
 
+    // CR-036 — formula block names the 🟢 direct / 🟡 indicative split
+    // explicitly, anchored to the Language Lab AI position paper's data-
+    // quality framework. Single source of truth for the framing; the
+    // top-of-strip chip is the visible signal, this block is the receipt.
     var formulaHtml =
         '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2);'
       + 'color:var(--text-4);font-size:0.7rem;line-height:1.55">'
+      + '<div style="margin-bottom:0.4rem">'
+      + '<strong style="color:var(--text-3)">Data quality</strong>'
+      + ' &middot; <span style="color:var(--accent)">🟢 Direct</span> = the energy figure '
+      + 'above (P110 polling at the wall, validated method, GoS primary measurement). '
+      + '<span style="color:var(--warn)">🟡 Indicative</span> = this carbon block — '
+      + 'Wh × third-party grid intensity. Provided for context, not for citation as '
+      + 'GoS data. (Framework: <a href="/methodology" style="color:var(--text-3)">'
+      + 'Language Lab AI position paper, Jan 2026</a>.)'
+      + '</div>'
       + '<div style="margin-bottom:0.25rem"><strong style="color:var(--text-3)">How this is calculated</strong></div>'
       + 'gCO₂e&nbsp;=&nbsp;Wh × (g/kWh) ÷ 1000<br>'
       + '<span style="color:var(--text-3)">Scope: use phase only.</span> '
       + 'Energy drawn at the wall × grid intensity. Embodied carbon of the '
       + 'hardware — manufacturing, transport, end-of-life — is not included.<br>'
       + liveExplain + '<br>'
-      + 'Estimated (reference &amp; comparison zones): '
+      + 'Indicative (reference &amp; comparison zones): '
       + '<a href="https://ember-energy.org" target="_blank" rel="noopener" '
-      + 'style="color:var(--text-3)">Ember</a> 2024 annual mean grid carbon intensity, '
+      + 'style="color:var(--text-3)">Ember</a> 2025 annual mean grid carbon intensity, '
       + 'lifecycle basis. Static so values do not drift between page loads.<br>'
       + '<span style="color:var(--text-5)">Live and reference are on the same '
       + 'lifecycle boundary, so the two numbers are directly comparable. The gap '
@@ -1695,6 +1744,78 @@ _RESULT_JS = """<script>
          + '"' + prompt + '"</div>';
   }
 
+  // CR-038 — shared efficiency-winner verdict for compare-mode results.
+  // Takes a list of {label, energy, durationS?, qualityNote?} sub-runs and
+  // returns a single-line HTML banner with the winner + its margin vs the
+  // next-best (N=2 mode) or vs the spread (N≥3 mode), or
+  // "tied within noise" when the margin is <5%. Hidden (empty string) for
+  // fewer than 2 valid sub-runs.
+  //
+  // Energy-anchored: --accent green for the winner. This is a
+  // \U0001F7E2-direct framing per the data-quality vocabulary CR-036
+  // established, so we keep the green palette here in deliberate
+  // contrast to the amber carbon strip below.
+  //
+  // Quality caveats are appended only when the caller supplies one via
+  // best.qualityNote — the helper does not invent quality scoring
+  // (that's CR-039 territory).
+  //
+  // Caller picks the unit. LLM/RAG pass mWh/token; image passes Wh/image;
+  // video passes Wh. The ratio is unit-agnostic, the verdict reads
+  // naturally in whatever unit the result card displays.
+  window.wlEfficiencyVerdict = function(subRuns, opts){
+    var s = (subRuns || []).filter(function(x){
+      return x && x.label != null
+          && typeof x.energy === 'number' && isFinite(x.energy) && x.energy > 0;
+    });
+    if (s.length < 2) return '';
+    s = s.slice().sort(function(a, b){ return a.energy - b.energy; });
+    var best = s[0], next = s[1];
+    var ratio = next.energy / best.energy;
+    var marginPct = (ratio - 1) * 100;
+    var unit = (opts && opts.unit) || 'Wh';
+    var fmtN = function(v){
+      if (v <= 0)      return '0';
+      if (v < 0.001)   return v.toExponential(2);
+      if (v < 0.01)    return v.toFixed(4);
+      if (v < 1)       return v.toFixed(3);
+      if (v < 100)     return v.toFixed(2);
+      return v.toFixed(1);
+    };
+    var ratioStr = ratio >= 1.5 ? ratio.toFixed(1) + '×' : ratio.toFixed(2) + '×';
+    var verdict;
+    if (marginPct < 5) {
+      verdict = 'Tied within noise · '
+              + '<span style="color:var(--accent);font-weight:bold">' + best.label + '</span>'
+              + ' and ' + next.label + ' both ≈ '
+              + fmtN(best.energy) + ' ' + unit;
+    } else if (s.length === 2) {
+      verdict = 'Most efficient: '
+              + '<span style="color:var(--accent);font-weight:bold">' + best.label + '</span> '
+              + '· ' + fmtN(best.energy) + ' ' + unit
+              + ' · ' + ratioStr + ' less than ' + next.label;
+    } else {
+      var worst = s[s.length - 1];
+      var spread = worst.energy / best.energy;
+      var spreadStr = spread >= 1.5 ? spread.toFixed(1) + '×' : spread.toFixed(2) + '×';
+      verdict = 'Most efficient: '
+              + '<span style="color:var(--accent);font-weight:bold">' + best.label + '</span> '
+              + '· ' + fmtN(best.energy) + ' ' + unit
+              + ' · best of ' + s.length + ' · spread '
+              + spreadStr + ' across all sub-runs';
+    }
+    var qualityClause = '';
+    if (best.qualityNote) {
+      qualityClause = '<span style="color:var(--text-4);margin-left:0.5rem;'
+                    + 'font-style:italic">— ' + best.qualityNote + '</span>';
+    }
+    return '<div style="font-family:monospace;font-size:0.85rem;color:var(--text-2);'
+         + 'padding:0.55rem 0.75rem;background:rgba(0,255,153,0.05);'
+         + 'border-left:3px solid var(--accent);margin-bottom:0.85rem">'
+         + '⚡ ' + verdict + qualityClause
+         + '</div>';
+  };
+
   // \u2500\u2500\u2500 Video \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   window.wlRenderVideoCard = function(opts){
     var r = (opts && opts.result) || {};
@@ -1863,9 +1984,16 @@ _RESULT_JS = """<script>
         return {label: s.label, grams: s.e.co2e.grams,
                 deltaWh: s.e.delta_e_wh, durationS: s.e.delta_t_s};
       });
+      // CR-038 — efficiency verdict above the side-by-side KPI columns.
+      // mWh/token is the comparable unit visitors see in the cells below.
+      var llmVerdictHtml = wlEfficiencyVerdict([
+        ce ? {label: 'CPU', energy: ce.mwh_per_token} : null,
+        ge ? {label: 'GPU', energy: ge.mwh_per_token} : null
+      ], {unit: 'mWh/token'});
       html += '<div class="result-card">'
             + '<p class="headline">' + (a.finding || '') + '</p>'
             + _promptBlock(r.prompt, r.task_label)
+            + llmVerdictHtml
             + '<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1rem">'
             +   '<div style="flex:1;min-width:180px">'
             +     '<div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;'
@@ -1990,9 +2118,19 @@ _RESULT_JS = """<script>
                       (r.model_label || 'RAG') + ' \u00b7 best of 3 modes (' + bestLbl + ')',
                       bestE.delta_t_s, stripSavedG, subRuns)
       : '';
+    // CR-038 \u2014 efficiency verdict from the per-mode mWh/token numbers.
+    // 3 sub-runs (baseline / RAG / RAG-Large) \u2014 the verdict will report
+    // "best of 3 \u00b7 spread N\u00d7" when there's real divergence; "tied" when
+    // retrieval cost is within noise of baseline.
+    var ragVerdictHtml = wlEfficiencyVerdict(modes.map(function(m){
+      var res = results[m];
+      if (!res || !res.energy) return null;
+      return {label: labels[m], energy: res.energy.mwh_per_token};
+    }).filter(function(x){ return x != null; }), {unit: 'mWh/token'});
     html += '<div class="result-card">'
           + modelLine
           + questionLine
+          + ragVerdictHtml
           + '<div style="display:flex;gap:1rem;flex-wrap:wrap">' + cols + '</div>'
           + stripHtml
           + '<p class="scope-note" style="margin-top:1rem">'
@@ -2096,9 +2234,16 @@ _RESULT_JS = """<script>
         + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">' + largeLabel + '</div>'
         + '<img src="data:image/png;base64,' + lg.b64_png + '" '
         + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
+      // CR-038 — efficiency verdict above the per-model KPI row. Wh/image
+      // is the unit visitors see, and the variable between the two runs.
+      var imgCMVerdictHtml = wlEfficiencyVerdict([
+        se ? {label: smallLabel, energy: (se.wh_per_image || se.delta_e_wh)} : null,
+        le ? {label: largeLabel, energy: (le.wh_per_image || le.delta_e_wh)} : null
+      ], {unit: 'Wh/image'});
       html += '<div class="result-card">'
             + '<p class="headline">' + (ac.finding || '') + '</p>'
             + _promptBlock(r.full_prompt, null, 'Prompt')
+            + imgCMVerdictHtml
             + '<div class="kpi-row">'
             +   '<div class="kpi"><div class="val">' + _f(se && (se.wh_per_image || se.delta_e_wh),4) + ' Wh</div>'
             +     '<div class="lbl">' + smallLabel + ' / image</div></div>'
@@ -2143,9 +2288,15 @@ _RESULT_JS = """<script>
         + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">GPU</div>'
         + '<img src="data:image/png;base64,' + gg.b64_png + '" '
         + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
+      // CR-038 — efficiency verdict above the CPU/GPU KPI row.
+      var imgBothVerdictHtml = wlEfficiencyVerdict([
+        cpuWh != null ? {label: 'CPU', energy: cpuWh} : null,
+        gpuWh != null ? {label: 'GPU', energy: gpuWh} : null
+      ], {unit: 'Wh/image'});
       html += '<div class="result-card">'
             + '<p class="headline">' + (a.finding || '') + '</p>'
             + _promptBlock(r.full_prompt, null, 'Prompt')
+            + imgBothVerdictHtml
             + '<div class="kpi-row">'
             +   '<div class="kpi"><div class="val">' + _f(cpuWh,4) + ' Wh</div><div class="lbl">CPU / image</div></div>'
             +   '<div class="kpi"><div class="val">' + _f(gpuWh,4) + ' Wh</div><div class="lbl">GPU / image</div></div>'
@@ -3956,12 +4107,18 @@ async def llm_page(request: Request):
             deltaWh: s.e.delta_e_wh,
             durationS: s.e.delta_t_s
         }}));
+        // CR-038 — structured efficiency verdict, alongside a.finding prose.
+        const _llmBothVerdict = wlEfficiencyVerdict([
+          ce ? {{label: 'CPU', energy: ce.mwh_per_token}} : null,
+          ge ? {{label: 'GPU', energy: ge.mwh_per_token}} : null
+        ], {{unit: 'mWh/token'}});
         return `<div class="result-box">
             <h2>CPU vs GPU — ${{r.model_label}} · ${{r.task_label}}</h2>
             <div style="background:#0d1a0d;border:1px solid #00ff9933;
                         padding:1rem;margin-bottom:1.25rem;font-size:0.82rem;line-height:1.7">
               ${{a.finding}}
             </div>
+            ${{_llmBothVerdict}}
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.25rem">
               <div style="border:1px solid var(--border);padding:1rem">
                 <div style="color:var(--text-3);font-size:0.72rem;margin-bottom:0.75rem">CPU (num_gpu=0 · Ryzen 9 7900)</div>
@@ -4943,10 +5100,17 @@ async def rag_page(request: Request):
                 }};
             }})
             .filter(s => s != null);
+        // CR-038 \u2014 structured efficiency verdict above the per-mode cards.
+        const _ragVerdict = wlEfficiencyVerdict(MODES.map(m => {{
+            const res = (r.results||{{}})[m];
+            if (!res || !res.energy) return null;
+            return {{label: MODE_LABELS[m], energy: res.energy.mwh_per_token}};
+        }}).filter(x => x != null), {{unit: 'mWh/token'}});
         document.getElementById('status').innerHTML =
             '<div style="border:1px solid var(--border);padding:1.5rem">'
             + '<div style="color:var(--accent);font-size:1.1rem;margin-bottom:0.25rem">Comparison \u2014 ' + r.model_label + '</div>'
             + '<div style="color:var(--text-3);font-size:0.82rem;margin-bottom:1rem">' + r.question + '</div>'
+            + _ragVerdict
             + cards
             + wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG, _subRuns)
             + '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.75rem">' + (r.scope||'') + '</div>'
@@ -7293,12 +7457,18 @@ function renderImageBoth(r) {{
     deltaWh: s.e.delta_e_wh,
     durationS: s.e.delta_t_s
   }}));
+  // CR-038 — structured efficiency verdict above the per-device cards.
+  const _imgBothVerdict = wlEfficiencyVerdict([
+    r.cpu && r.cpu.energy ? {{label: 'CPU', energy: (r.cpu.energy.wh_per_image || r.cpu.energy.delta_e_wh)}} : null,
+    r.gpu && r.gpu.energy ? {{label: 'GPU', energy: (r.gpu.energy.wh_per_image || r.gpu.energy.delta_e_wh)}} : null
+  ], {{unit: 'Wh/image'}});
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>CPU vs GPU — Image Generation</h2>
       <div style="background:var(--panel);border:1px solid var(--border-3);padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.85rem;color:var(--text-2)">
         ${{a.finding}}
       </div>
+      ${{_imgBothVerdict}}
       <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
         ${{_imageCard('CPU · Ryzen 9 7900', r.cpu, cpuWinsEnergy)}}
         ${{_imageCard('GPU · RX 7800 XT', r.gpu, gpuWinsEnergy)}}
@@ -7352,12 +7522,24 @@ function renderCompareModels(r) {{
     deltaWh: s.e.delta_e_wh,
     durationS: s.e.delta_t_s
   }}));
+  // CR-038 — structured efficiency verdict above the per-model cards.
+  const _imgCMVerdict = wlEfficiencyVerdict([
+    r.small && r.small.energy
+      ? {{label: (r.small.generation && r.small.generation.model_label) || 'Small',
+          energy: (r.small.energy.wh_per_image || r.small.energy.delta_e_wh)}}
+      : null,
+    r.large && r.large.energy
+      ? {{label: (r.large.generation && r.large.generation.model_label) || 'Large',
+          energy: (r.large.energy.wh_per_image || r.large.energy.delta_e_wh)}}
+      : null
+  ], {{unit: 'Wh/image'}});
   document.getElementById('status').innerHTML = `
     <div class="result-box">
       <h2>SD-Turbo vs SDXL-Turbo — Same Prompt + Seed</h2>
       <div style="background:var(--panel);border:1px solid var(--border-3);padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.85rem;color:var(--text-2)">
         ${{a.finding}}
       </div>
+      ${{_imgCMVerdict}}
       <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;align-items:stretch">
         ${{_modelCard(r.small)}}
         ${{_modelCard(r.large)}}
@@ -8177,38 +8359,28 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>PSU efficiency curve.</strong> Wall power includes PSU conversion losses, which are non-linear (PSUs are less efficient at low and very high loads). Two tasks that consume the same <em>internal</em> power may report different wall-power deltas depending on where they sit on the PSU efficiency curve.</span></div>
 
-  <h2>From energy to CO<sub>2</sub>e</h2>
-  <p>Every Wh figure on this site is also shown as gCO<sub>2</sub>e &mdash; Wh &times; the carbon intensity of the electricity that produced it. The CO<sub>2</sub>e numbers are framed as <em>high-level estimates</em> on every result: the energy figure is what we measure at the wall; the carbon figure is derived from it for carbon-accounting comparison with other activities (driving an EV, etc.).</p>
-  <p>Three data sources arranged as a fallback ladder, with explicit <strong>LIVE</strong> or <strong>EST</strong> badges so the source is never ambiguous. <strong>All three are on a lifecycle boundary</strong> &mdash; nuclear fuel cycle, plant construction, methane upstream leaks, etc. &mdash; so the live and reference numbers in the comparison strip are directly comparable, and the gap between them reflects real diurnal grid variance rather than a methodology mismatch.</p>
-  <ol>
-    <li><strong>Live, primary (home zone, France):</strong> <a href="https://www.rte-france.com/eco2mix" style="color:var(--accent);text-decoration:none">Eco2mix</a> &mdash; the official RTE / Etalab French TSO real-time grid data. No authentication required; refreshed every <strong>15 minutes</strong>. We take the live production mix (nuclear, wind, solar, hydro, gas, coal, &hellip;) and compute a lifecycle intensity from it using <strong>IPCC AR6 WGIII (2022) lifecycle median emission factors</strong> per source. Eco2mix&rsquo;s own <code>taux_co2</code> field is direct combustion only (nuclear ~0, gas only counts the smokestack) and is preserved in the JSON for transparency, but is not what drives the displayed gCO<sub>2</sub>e &mdash; that would put live and reference on different boundaries and produce a misleading 4&times; gap. When this path resolves the UI shows a green <strong>LIVE</strong> badge and surfaces the live mix breakdown in the comparison-strip dropdown.</li>
-    <li><strong>Live, backup:</strong> <a href="https://www.electricitymaps.com" style="color:var(--accent);text-decoration:none">ElectricityMaps</a> &mdash; third-party aggregator covering many zones. Used only if Eco2mix is unreachable for the home zone. Requires an API token (configured in the lab&rsquo;s <code>.env</code>); free tier covers a single zone. Their published intensity is lifecycle.</li>
-    <li><strong>Estimated, fallback:</strong> annual mean grid carbon intensity per country, from <a href="https://ember-energy.org" style="color:var(--accent);text-decoration:none">Ember</a>&rsquo;s 2024 yearly electricity data, lifecycle basis. This is the floor when no live source is available, <em>and</em> it is also used for all comparison cities (Warsaw, London, Berlin, &hellip;) so those figures stay stable across page loads rather than drifting between two loads five minutes apart.</li>
-  </ol>
-  <p>Both source and value are recorded in the saved result JSON at measurement time, so any cited figure is traceable back to <em>which</em> intensity number was used. CSV exports include <code>co2e_g</code>, <code>co2e_intensity_g_per_kwh</code>, <code>co2e_source</code>, and <code>co2e_zone</code> columns. The raw module status (live cache, source, age, fallback state) is available at <a href="/carbon" style="color:var(--accent);text-decoration:none">/carbon</a>.</p>
-  <p style="color:var(--text-3);font-size:0.85rem">Why &ldquo;estimated&rdquo; sometimes? Comparison cities never go live by design (so they don&rsquo;t drift between page loads). The home zone falls back to estimated if Eco2mix and ElectricityMaps are both unreachable, or if the most recent live reading is older than 30 minutes. The ladder degrades gracefully: numbers stay sensible even when the network does not.</p>
-
-  <h3 style="margin-top:1.25rem">Through history (France)</h3>
-  <p>Each carbon-strip dropdown also shows the same Wh figure on a handful of past months &mdash; e.g. <em>Jun 2020</em>, <em>Jun 2022</em>, <em>Jun 2024</em>. These are computed from the Eco2mix <strong>consolidated</strong> dataset (the same fields as the realtime feed, going back to 2012) using <em>exactly the same lifecycle calculation</em> as the live number. Live and historical are therefore directly comparable; the rows show how France&rsquo;s grid has actually evolved.</p>
-  <p>The selection is curated to illustrate the range, not exhaustive. Five dates were chosen for narrative breadth (pre-Covid winter, Covid summer, energy-crisis-era summer, post-recovery winter, recent summer). The visitor-pickable any-month version is captured as a follow-up CR. The historical numbers are stored statically in <code>carbon.HISTORICAL_INTENSITY</code>; to add or refresh dates, run <code>bin/fetch-historical-mix --year YYYY --month MM</code> and paste the printed value into the table.</p>
+  <h2>From energy to CO<sub>2</sub>e &mdash; for reference only</h2>
+  <p>OWL measures <strong>energy</strong>: watts at the wall, watt-hours per task. That is the number GoS stands behind &mdash; <em>&ldquo;if it can&rsquo;t be measured, it shouldn&rsquo;t be asserted&rdquo;</em>, and what OWL measures directly is energy. Every result <em>also</em> carries a gCO<sub>2</sub>e figure (Wh &times; grid carbon intensity), but that is explicitly a <strong>reference estimate</strong> &mdash; a way to put the energy in context against everyday activities, not a carbon-accounting claim. Carbon attribution &mdash; allocation, boundaries, double-counting &mdash; is a hard problem that GoS deliberately leaves to the bodies whose job it is. Read the energy figure as the result; the CO<sub>2</sub>e is a footnote.</p>
+  <p style="background:rgba(255,170,0,0.06);border-left:3px solid var(--warn);padding:0.65rem 0.85rem">
+    <strong style="color:var(--accent)">🟢 Direct</strong> = the energy figure (P110 polling at the wall, validated method, GoS primary measurement &mdash; this is what we cite). <strong style="color:var(--warn)">🟡 Indicative</strong> = the gCO<sub>2</sub>e figure (Wh &times; third-party grid intensity &mdash; context, not citable as GoS data). Vocabulary follows the Greening of Streaming Language Lab AI position paper (Jan 2026), which proposes this 🟢/🟡/🔴 traffic-light for the entire ICT-energy-measurement landscape and rates IEA top-down energy figures as 🟡 Amber. OWL applies the same framework to its own outputs &mdash; every result-card carbon block carries the 🟡 chip; the energy headline retains the green palette.
+  </p>
+  <p>For what it&rsquo;s worth, the intensity used is lifecycle-basis (IPCC AR6 factors): the live French grid mix via <a href="https://www.rte-france.com/eco2mix" style="color:var(--accent);text-decoration:none">Eco2mix</a> when reachable, ElectricityMaps as a backup, and <a href="https://ember-energy.org" style="color:var(--accent);text-decoration:none">Ember</a> annual country means as the fallback (also used for the stable comparison cities). The value and which source produced it are recorded in every result JSON and CSV export (CSV header carries a leading comment marking the carbon columns indicative). A result&rsquo;s carbon dropdown also shows the same energy on a few past French grids for context. Module status &mdash; live cache, source, age, fallback &mdash; is at <a href="/carbon" style="color:var(--accent);text-decoration:none">/carbon</a>.</p>
 
   <h2 id="open">Open Questions</h2>
 
-  <p>These are questions WattLab has surfaced but not yet answered. They are published here in the interest of transparency.</p>
+  <p>These are questions OWL has surfaced but not yet answered. They are published here in the interest of transparency.</p>
 
   <div class="open-q"><span class="marker">?</span><span><strong>Confidence multipliers.</strong> The 5&times; / 2&times; noise multipliers for &#x1F7E2;/&#x1F7E1; are currently set by judgement. A working session with the measurement team is planned to derive statistically grounded values from repeated calibration runs across different workloads and thermal states.</span></div>
 
   <div class="open-q"><span class="marker">?</span><span><strong>Transcoding profile/GOP equivalence.</strong> ABR rate control now gives CPU and GPU the same bitrate target, and output file sizes match as confirmation. GOP structure and profile level are still default-per-encoder and have not been explicitly normalised. A working session is planned to confirm apples-to-apples at that level, and to add a second benchmark family at each codec&rsquo;s natural operating point (CRF for CPU, QP for GPU).</span></div>
 
-  <div class="open-q"><span class="marker">?</span><span><strong>LLM batch size effect.</strong> Does mWh/token change as batch count increases (thermal saturation, memory pressure)? Are the first and last runs in a batch energetically equivalent?</span></div>
-
-  <div class="open-q"><span class="marker">?</span><span><strong>RAG retrieval overhead.</strong> How much of the RAG energy delta is embedding lookup vs. increased context length? Can these be separated?</span></div>
+  <div class="open-q"><span class="marker">?</span><span><strong>AI-workload questions (beta).</strong> LLM: does mWh/token drift across a batch (thermal saturation, memory pressure)? Image / RAG: how much of each energy delta is fixed overhead (model load, embedding lookup) vs. work that scales with output or context length? Secondary to the video benchmark; not yet investigated in depth.</span></div>
 
   <div class="open-q"><span class="marker">?</span><span><strong>Cross-platform comparability.</strong> How should results from different hardware be compared? Normalisation by TDP? By performance tier? By workload-equivalent output quality?</span></div>
 
   <div class="footer-note">
-    WattLab is built and maintained by <a href="https://greeningofstreaming.org" style="color:var(--accent);text-decoration:none;">Greening of Streaming</a>, a French NGO (loi 1901).<br>
-    Methodology version 0.3 &middot; last updated 2026-05-04 &middot; Feedback: bs@ctoic.net<br>
+    OWL is built and maintained by <a href="https://greeningofstreaming.org" style="color:var(--accent);text-decoration:none;">Greening of Streaming</a>, a French NGO (loi 1901).<br>
+    Methodology version 0.4 &middot; last updated 2026-05-11 &middot; Feedback: bs@ctoic.net<br>
     Source: <a href="https://github.com/greeningofstreaming/wattlab" style="color:var(--accent);text-decoration:none;">github.com/greeningofstreaming/wattlab</a>
   </div>
 
