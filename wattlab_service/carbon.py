@@ -8,7 +8,7 @@ sub-dict so audit trail + UI rendering both have the data they need.
 
 Fallback ladder (no exception path; always returns a usable number):
   1. Live — ElectricityMaps API value, fresh (< LIVE_TTL_S)   → source="live"
-  2. Static — annual mean for the zone (Ember 2024)            → source="static"
+  2. Static — annual mean for the zone (Ember 2025)            → source="static"
 
 Live vs estimated is an explicit field in the returned dict — the UI shows
 a badge based on this so visitors know which they're looking at.
@@ -45,7 +45,7 @@ except Exception:
 HOME_ZONE = "FR"
 
 # Cities shown in the comparison strip (in display order).
-COMPARISON_ZONES = ["FR", "GB", "DE", "PL", "ES", "US", "CN"]
+COMPARISON_ZONES = ["FR", "DK", "GB", "DE", "PL", "ES", "US", "CN"]
 
 # Live cache freshness: values older than this are treated as stale and the
 # fallback to the static annual mean kicks in. Applied to BOTH our cache hit
@@ -83,27 +83,37 @@ EMISSION_FACTORS = {
 EMISSION_FACTORS_SOURCE = "IPCC AR6 WGIII (2022) lifecycle medians"
 
 
-# Annual mean grid carbon intensity, gCO2eq/kWh.
-# Source: Ember Yearly Electricity Data 2024 (ember-energy.org), lifecycle
-# values where available, otherwise direct emissions. These are the fallback
-# the UI shows as "estimated" and what comparison cities always use.
+# Annual mean grid carbon intensity, gCO2eq/kWh — lifecycle basis (Ember
+# generation mix × IPCC AR6 WGIII lifecycle factors), same basis as the
+# live FR path. These are the fallback the UI shows as "estimated" (now
+# badged 🟡 indicative per CR-036) and what the comparison cities always
+# use, so they're directly comparable to the live FR number.
+#
+# Source: Ember Yearly Electricity Data, 2025 release (full-year 2025),
+# via Our World in Data's "Lifecycle carbon intensity of electricity"
+# grapher (ourworldindata.org/grapher/carbon-intensity-electricity).
+# Refreshed 2026-05-12 from the raw CSV; rounded to whole g/kWh. To
+# refresh again: pull the OWID CSV, take each entity's latest full year,
+# update the values + `year` + STATIC_SOURCE + the "Ember <year> annual
+# mean(s)" copy in main.py's _CARBON_JS and methodology section.
 STATIC_INTENSITY = {
-    "FR":    {"label": "Paris (France)",       "g_per_kwh": 53,  "year": 2024},
-    "GB":    {"label": "London (UK)",          "g_per_kwh": 207, "year": 2024},
-    "DE":    {"label": "Berlin (Germany)",     "g_per_kwh": 363, "year": 2024},
-    "PL":    {"label": "Warsaw (Poland)",      "g_per_kwh": 597, "year": 2024},
-    "ES":    {"label": "Madrid (Spain)",       "g_per_kwh": 154, "year": 2024},
-    "NL":    {"label": "Amsterdam (NL)",       "g_per_kwh": 268, "year": 2024},
-    "IE":    {"label": "Dublin (Ireland)",     "g_per_kwh": 287, "year": 2024},
-    "IT":    {"label": "Rome (Italy)",         "g_per_kwh": 263, "year": 2024},
-    "SE":    {"label": "Stockholm (Sweden)",   "g_per_kwh": 41,  "year": 2024},
-    "NO":    {"label": "Oslo (Norway)",        "g_per_kwh": 30,  "year": 2024},
-    "US":    {"label": "United States avg",    "g_per_kwh": 369, "year": 2024},
-    "CN":    {"label": "China avg",            "g_per_kwh": 582, "year": 2024},
-    "IN":    {"label": "India avg",            "g_per_kwh": 713, "year": 2024},
-    "WORLD": {"label": "World average",        "g_per_kwh": 480, "year": 2024},
+    "FR":    {"label": "Paris (France)",       "g_per_kwh": 41,  "year": 2025},
+    "DK":    {"label": "Copenhagen (Denmark)", "g_per_kwh": 114, "year": 2025},
+    "GB":    {"label": "London (UK)",          "g_per_kwh": 217, "year": 2025},
+    "DE":    {"label": "Berlin (Germany)",     "g_per_kwh": 330, "year": 2025},
+    "PL":    {"label": "Warsaw (Poland)",      "g_per_kwh": 589, "year": 2025},
+    "ES":    {"label": "Madrid (Spain)",       "g_per_kwh": 154, "year": 2025},
+    "NL":    {"label": "Amsterdam (NL)",       "g_per_kwh": 254, "year": 2025},
+    "IE":    {"label": "Dublin (Ireland)",     "g_per_kwh": 257, "year": 2025},
+    "IT":    {"label": "Rome (Italy)",         "g_per_kwh": 285, "year": 2025},
+    "SE":    {"label": "Stockholm (Sweden)",   "g_per_kwh": 35,  "year": 2025},
+    "NO":    {"label": "Oslo (Norway)",        "g_per_kwh": 28,  "year": 2025},
+    "US":    {"label": "United States avg",    "g_per_kwh": 384, "year": 2025},
+    "CN":    {"label": "China avg",            "g_per_kwh": 525, "year": 2025},
+    "IN":    {"label": "India avg",            "g_per_kwh": 670, "year": 2025},
+    "WORLD": {"label": "World average",        "g_per_kwh": 458, "year": 2025},
 }
-STATIC_SOURCE = "Ember 2024 annual mean"
+STATIC_SOURCE = "Ember 2025 annual mean"
 
 
 # Curated historical France-grid data points (CR-018 Tier 1).
@@ -207,7 +217,7 @@ async def _fetch_eco2mix(client) -> Optional[dict]:
 
     Why lifecycle over Eco2mix's `taux_co2`: `taux_co2` only counts direct
     combustion emissions (nuclear ~0, gas ~smokestack only). Our static
-    table (Ember 2024 annual means) is on a lifecycle basis — including
+    table (Ember 2025 annual means) is on a lifecycle basis — including
     nuclear fuel cycle, plant construction, methane upstream leaks, etc.
     Mixing the two produced a ~4× live-vs-static gap that was almost
     entirely a methodology artefact (live 13 g/kWh vs static 53 g/kWh

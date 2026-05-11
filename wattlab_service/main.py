@@ -609,7 +609,7 @@ _CARBON_JS = """
          + 'border:1px solid var(--accent);border-radius:2px;margin-left:0.4rem">LIVE</span>';
   }
   function estBadge(){
-    return '<span title="Ember 2024 annual mean — fallback when live data is unavailable" '
+    return '<span title="Ember 2025 annual mean — fallback when live data is unavailable" '
          + 'style="color:var(--text-4);font-size:0.6rem;font-family:monospace;letter-spacing:0.06em;'
          + 'padding:0.05rem 0.3rem;border:1px solid var(--border-3);border-radius:2px;margin-left:0.4rem">EST</span>';
   }
@@ -973,7 +973,7 @@ _CARBON_JS = """
 
       // ── Per-side reference row (FR REF) ──
       // Row layout: label · mass · intensity. Trailing "·  YYYY mean" is
-      // dropped — the section heading above already says "Ember 2024
+      // dropped — the section heading above already says "Ember 2025
       // annual means" so the suffix is redundant and was forcing the row
       // wider than the parent column could accommodate.
       var sideRefRow = '';
@@ -1028,8 +1028,8 @@ _CARBON_JS = """
 
       // ── Other-grids comparison rows (per-side) ──
       // "× home" suffix is shortened to "×" + the section heading below
-      // ("Same X kWh, on other grids (Ember 2024 annual means)") provides
-      // the year context, so the trailing "· 2024 mean" per row is dropped.
+      // ("Same X kWh, on other grids (Ember 2025 annual means)") provides
+      // the year context, so the trailing "· 2025 mean" per row is dropped.
       // Full text is preserved in tooltips for accessibility.
       var sideComparisonRows = zones.filter(function(z){ return z !== home; }).map(function(z){
         var s2 = statics[z] || {};
@@ -1064,7 +1064,7 @@ _CARBON_JS = """
       var sideComparisonBlock =
           '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
         + 'text-transform:uppercase;margin-bottom:0.3rem">'
-        + 'Same ' + fmtEnergy(sideDisplayWh) + ', on other grids (Ember 2024 annual means)</div>'
+        + 'Same ' + fmtEnergy(sideDisplayWh) + ', on other grids (Ember 2025 annual means)</div>'
         + sideComparisonRows;
 
       // ── Historical rows (per-side, FR-only) ──
@@ -1259,7 +1259,7 @@ _CARBON_JS = """
         var compHeading =
             '<div style="margin-top:0.6rem;color:var(--text-5);font-size:0.65rem;'
           + 'letter-spacing:0.04em;text-transform:uppercase;margin-bottom:0.3rem">'
-          + 'Same energy (' + subWhSummary + '), on other grids (Ember 2024 annual means)'
+          + 'Same energy (' + subWhSummary + '), on other grids (Ember 2025 annual means)'
           + '</div>';
         var histHeading = sharedHistoricalRows
           ? ('<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2);'

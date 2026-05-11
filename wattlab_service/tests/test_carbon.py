@@ -48,12 +48,14 @@ def reset_live_cache():
 # --- Static fallback (the always-works floor) -------------------------------
 
 def test_intensity_static_for_known_zone():
-    """No live cache → returns the Ember 2024 annual mean for the zone."""
+    """No live cache → returns the Ember annual mean for the zone.
+    Year + value assert against the table itself so the test survives a
+    data refresh (the table is the source of truth, not a literal)."""
     out = carbon.intensity("FR")
     assert out["source"] == "static"
     assert out["zone"] == "FR"
     assert out["g_per_kwh"] == carbon.STATIC_INTENSITY["FR"]["g_per_kwh"]
-    assert out["year"] == 2024
+    assert out["year"] == carbon.STATIC_INTENSITY["FR"]["year"]
 
 
 def test_intensity_static_for_unknown_zone_falls_back_to_world():
@@ -72,16 +74,18 @@ def test_intensity_zone_string_is_case_insensitive():
 
 def test_wh_to_co2e_preserves_microgram_precision():
     """REGRESSION: Before 2026-05-01, `wh_to_co2e` rounded grams to 3 decimal
-    places. For a tiny LLM task (~0.001 Wh) on the French grid (~53 g/kWh
-    static, ~11 g/kWh live), the resulting grams value (5.3e-5) truncated
-    to 0.0, which the UI then rendered as '0 g'. The fix rounds at 9 decimal
-    places (nanogram precision, well below P110 measurement floor).
+    places. For a tiny LLM task (~0.001 Wh) on the French grid (low tens of
+    g/kWh), the resulting grams value (~5e-5) truncated to 0.0, which the UI
+    then rendered as '0 g'. The fix rounds at 9 decimal places (nanogram
+    precision, well below P110 measurement floor). Expected value is derived
+    from the FR static intensity so the test survives a data refresh.
     """
+    fr_g = carbon.STATIC_INTENSITY["FR"]["g_per_kwh"]
     out = carbon.wh_to_co2e(0.001, "FR")
-    # FR static = 53 g/kWh → 0.001 Wh × 53 / 1000 = 5.3e-5 g
+    # 0.001 Wh × fr_g / 1000 → ~4–5e-5 g, must not truncate to 0.
     assert out is not None
     assert out["grams"] > 0
-    assert out["grams"] == pytest.approx(5.3e-5, rel=1e-6)
+    assert out["grams"] == pytest.approx(0.001 * fr_g / 1000, rel=1e-6)
 
 
 def test_wh_to_co2e_handles_none_and_invalid():
