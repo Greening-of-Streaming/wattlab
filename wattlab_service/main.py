@@ -107,7 +107,7 @@ def _auth_page_shell(title: str, body_html: str) -> str:
 </head>
 <body>
   <div class="wrap">
-    <h1>WattLab</h1>
+    <h1>OWL</h1>
     <p class="sub">Greening of Streaming · Member sign-in</p>
     {body_html}
   </div>
@@ -449,9 +449,9 @@ _BACK = (
     'color:var(--text-3);text-decoration:none;font-size:0.82rem;margin-bottom:1.5rem;'
     'transition:color 0.2s" onmouseover="this.style.color=\'#00ff99\'"'
     ' onmouseout="this.style.color=\'#777\'">'
-    '<img src="/static/owl.svg" alt="WattLab" '
+    '<img src="/static/owl.svg" alt="OWL" '
     'style="height:26px;width:26px;display:block;flex-shrink:0">'
-    '<span style="font-weight:bold;letter-spacing:0.02em">WattLab</span>'
+    '<span style="font-weight:bold;letter-spacing:0.02em">OWL</span>'
     '<span style="color:var(--text-5);margin-left:0.35rem">&nbsp;&nbsp;&larr; Home</span>'
     '</a>'
 )
@@ -2207,7 +2207,7 @@ async def index(request: Request):
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>WattLab — GoS</title>
+  <title>OWL — GoS</title>
     <style>
         {_AUTH_CHIP_STYLES}
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -2262,9 +2262,9 @@ async def index(request: Request):
 <body>
     {_auth_chip_html(request)}
     <div class="hero-mark">
-        <img src="/static/owl.svg" alt="WattLab owl">
+        <img src="/static/owl.svg" alt="OWL">
         <div>
-            <div class="name">WattLab</div>
+            <div class="name">OWL</div>
             <span class="tagline">Online WattLab · GoS1</span>
         </div>
     </div>
@@ -2367,7 +2367,7 @@ async def video_page(request: Request):
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>WattLab — Video Test</title>
+  <title>OWL — Video Test</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: monospace; background: var(--bg); color: var(--text);
@@ -2446,7 +2446,7 @@ async def video_page(request: Request):
     {_BACK}
     {busy_banner}
     <h1>Video Transcode Energy Test</h1>
-    <div class="subtitle">Greening of Streaming · WattLab · GoS1</div>
+    <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>
@@ -3507,7 +3507,7 @@ async def llm_page(request: Request):
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>WattLab — LLM Inference Test</title>
+  <title>OWL — LLM Inference Test</title>
     <style>
         * {{ box-sizing:border-box; margin:0; padding:0; }}
         body {{ font-family:monospace; background:var(--bg); color:var(--text);
@@ -3557,7 +3557,7 @@ async def llm_page(request: Request):
 <body>
     {_BACK}
     <h1>LLM Inference Energy Test {_BETA_CHIP}</h1>
-    <div class="subtitle">Greening of Streaming · WattLab · GoS1</div>
+    <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>
@@ -4392,7 +4392,7 @@ async def rag_page(request: Request):
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>WattLab — RAG Energy Test</title>
+  <title>OWL — RAG Energy Test</title>
     <style>
         * {{ box-sizing:border-box; margin:0; padding:0; }}
         body {{ font-family:monospace; background:var(--bg); color:var(--text);
@@ -4449,7 +4449,7 @@ async def rag_page(request: Request):
     {_BACK}
     {busy_banner}
     <h1>RAG Energy Test {_BETA_CHIP}</h1>
-    <div class="subtitle">Greening of Streaming · WattLab · GoS1</div>
+    <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>
@@ -5314,7 +5314,7 @@ async def settings_page(request: Request):
                   'padding:0.75rem 2rem;cursor:pointer;font-family:monospace;font-size:1rem;margin-top:2rem">'
                   'Save Settings</button><div id="msg" style="margin-top:1rem;font-size:0.85rem"></div>'
                   if local else '')
-    subtitle = 'WattLab · GoS1 · Lab mode' if local else 'WattLab · GoS1 · Read-only'
+    subtitle = 'OWL · GoS1 · Lab mode' if local else 'OWL · GoS1 · Read-only'
 
     chart_js = ('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>'
                 '<script src="/static/wl-charts.js"></script>'
@@ -5323,7 +5323,7 @@ async def settings_page(request: Request):
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>WattLab — Settings</title>
+  <title>OWL — Settings</title>
     {chart_js}
     <style>
         * {{ box-sizing:border-box; margin:0; padding:0; }}
@@ -5553,7 +5553,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
 <html>
 <head>
 <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-<title>WattLab — Guided Tour · Greening of Streaming</title>
+<title>OWL — Guided Tour · Greening of Streaming</title>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);
@@ -5698,14 +5698,14 @@ _DEMO_HTML = f"""<!DOCTYPE html>
 
 <!-- Step 0: Welcome -->
 <div class="step active" id="step-0">
-  <h1>WattLab</h1>
+  <h1>OWL</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
     Greening of Streaming · Live energy measurement · GoS1</p>
 
   {{TIER_INDICATOR}}
 
   <p style="color:var(--text-2);line-height:1.8;max-width:560px">
-    WattLab measures the real energy cost of video transcoding and AI inference —
+    OWL measures the real energy cost of video transcoding and AI inference —
     using a calibrated smart plug, not estimates. Every number on this page
     comes from a live measurement on GoS1, a server in our lab in France.
   </p>
@@ -5728,7 +5728,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     <p>Streaming accounts for a significant and growing share of global internet
     traffic. Codec choice, inference model size, and hardware path all affect
     real energy use — but most published figures are estimates or averages.
-    WattLab produces primary measurement data that operators and researchers
+    OWL produces primary measurement data that operators and researchers
     can reproduce and cite.</p>
   </details>
 
@@ -6021,7 +6021,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
 <div class="step" id="step-6">
   <h1>Findings</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
-    Greening of Streaming · WattLab · GoS1</p>
+    Greening of Streaming · OWL · GoS1</p>
 
   <div id="summary-content">
     <p style="color:var(--text-3);font-size:0.85rem">Loading results…</p>
@@ -6948,7 +6948,7 @@ async def image_page(request: Request):
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>WattLab — Image Generation Test</title>
+  <title>OWL — Image Generation Test</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: monospace; background: var(--bg); color: var(--text);
@@ -7491,7 +7491,7 @@ async def queue_page(request: Request):
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>WattLab — Queue</title>
+  <title>OWL — Queue</title>
     <meta http-equiv="refresh" content="4">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -7602,7 +7602,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-<title>WattLab — Methodology</title>
+<title>OWL — Methodology</title>
 <style>
   :root {
     --bg: #0a0a0a;
@@ -7630,7 +7630,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     padding: 0;
   }
 
-  /* ── Header bar (matches other WattLab pages) ── */
+  /* ── Header bar (matches other OWL pages) ── */
   .topbar {
     display: flex;
     align-items: center;
@@ -7929,7 +7929,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <a href="/" class="home-link top">&larr; Home</a>
 
   <h1>Measurement Methodology</h1>
-  <p class="subtitle">How WattLab measures the energy cost of compute tasks &mdash; and what it doesn&rsquo;t measure.</p>
+  <p class="subtitle">How OWL measures the energy cost of compute tasks &mdash; and what it doesn&rsquo;t measure.</p>
 
   <div style="margin: -18px 0 32px; font-family: var(--mono); font-size: 12px; display: flex; gap: 18px; flex-wrap: wrap;">
     <a href="https://github.com/greeningofstreaming/wattlab" target="_blank" rel="noopener"
@@ -7964,13 +7964,13 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     LLM measurements do not include amortised training cost.
   </div>
 
-  <p>WattLab measures what happens inside one machine when it performs a real task. This is intentionally narrow. The energy cost of streaming is distributed across data centres, networks, and consumer devices &mdash; each with different measurement challenges and attribution problems. We start with the layer we can measure directly, at the wall, with no modelling assumptions.</p>
+  <p>OWL measures what happens inside one machine when it performs a real task. This is intentionally narrow. The energy cost of streaming is distributed across data centres, networks, and consumer devices &mdash; each with different measurement challenges and attribution problems. We start with the layer we can measure directly, at the wall, with no modelling assumptions.</p>
 
-  <p>This scoping decision means WattLab results are <em>not</em> lifecycle assessments and should not be cited as total-cost-of-delivery figures. They answer a specific question: how much additional energy does this server draw to perform this task, above its idle baseline?</p>
+  <p>This scoping decision means OWL results are <em>not</em> lifecycle assessments and should not be cited as total-cost-of-delivery figures. They answer a specific question: how much additional energy does this server draw to perform this task, above its idle baseline?</p>
 
   <h2 id="principle">Measurement Principle</h2>
 
-  <p>WattLab uses <strong>wall-power delta measurement</strong>: the difference between what the server draws at idle and what it draws under load, captured by an external smart plug.</p>
+  <p>OWL uses <strong>wall-power delta measurement</strong>: the difference between what the server draws at idle and what it draws under load, captured by an external smart plug.</p>
 
   <div class="callout green">
     The plug measures the entire system &mdash; not a model, not a software estimate, not a per-component reading. If the CPU fan spins faster, the PSU runs less efficiently, or the GPU draws from the 12V rail, it&rsquo;s all in the number.
@@ -7980,7 +7980,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <h2 id="protocol">Measurement Protocol</h2>
 
-  <p>Every test in WattLab &mdash; video, LLM, image generation, RAG &mdash; follows the same core protocol:</p>
+  <p>Every test in OWL &mdash; video, LLM, image generation, RAG &mdash; follows the same core protocol:</p>
 
   <ol class="protocol-steps">
     <li>
@@ -8039,7 +8039,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <h2 id="confidence">Confidence Framework</h2>
 
-  <p>Every WattLab result carries a traffic-light confidence flag based on a <strong>variance-relative signal-to-noise ratio</strong>. The noise floor is not assumed &mdash; it is characterised empirically by running the same workload repeatedly and computing the coefficient of variation (CV = &sigma;/&mu;) across all &Delta;W readings. This CV, expressed as a percentage of baseline power, captures total system measurement noise: P110 quantisation, Wi-Fi polling jitter, background OS processes, and thermal drift combined.</p>
+  <p>Every OWL result carries a traffic-light confidence flag based on a <strong>variance-relative signal-to-noise ratio</strong>. The noise floor is not assumed &mdash; it is characterised empirically by running the same workload repeatedly and computing the coefficient of variation (CV = &sigma;/&mu;) across all &Delta;W readings. This CV, expressed as a percentage of baseline power, captures total system measurement noise: P110 quantisation, Wi-Fi polling jitter, background OS processes, and thermal drift combined.</p>
 
   <p>The current system variance and threshold multipliers are configurable in Settings and can be updated via the built-in calibration tool (H.264 CPU &rarr; cooldown &rarr; H.265 GPU, repeated N times on Meridian).</p>
 
@@ -8076,7 +8076,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="callout">
-    <strong>P110 and total system noise:</strong> The Tapo P110 smart plug exposes power readings at <strong>1&nbsp;W resolution via its local API</strong> (the path WattLab currently uses, chosen for portability and the Python <code>tapo</code> library&rsquo;s reliability). The underlying instrument is more precise &mdash; <strong>~1&nbsp;mW resolution via direct device read</strong> &mdash; so future versions could lower the hardware noise floor by ~3 orders of magnitude if needed. In practice, however, the dominant noise sources are OS background processes (apt, cron, systemd timers) and thermal drift between runs, not hardware quantisation. Focus mode suppresses the worst offenders, but residual variance remains. The variance calibration process measures this combined noise empirically and stores it as the reference for all confidence calculations.
+    <strong>P110 and total system noise:</strong> The Tapo P110 smart plug exposes power readings at <strong>1&nbsp;W resolution via its local API</strong> (the path OWL currently uses, chosen for portability and the Python <code>tapo</code> library&rsquo;s reliability). The underlying instrument is more precise &mdash; <strong>~1&nbsp;mW resolution via direct device read</strong> &mdash; so future versions could lower the hardware noise floor by ~3 orders of magnitude if needed. In practice, however, the dominant noise sources are OS background processes (apt, cron, systemd timers) and thermal drift between runs, not hardware quantisation. Focus mode suppresses the worst offenders, but residual variance remains. The variance calibration process measures this combined noise empirically and stores it as the reference for all confidence calculations.
   </div>
 
   <p>The confidence framework follows GoS&rsquo;s broader principle: <em>if it can&rsquo;t be measured, it shouldn&rsquo;t be asserted.</em> A &#x1F534; result is not a failure &mdash; it&rsquo;s an honest signal that the measurement instrument isn&rsquo;t sensitive enough for that task. Publishing it transparently is more useful than hiding it.</p>
