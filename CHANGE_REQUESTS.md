@@ -64,27 +64,29 @@ Library choice is open: chart.js (small, easy), uPlot (faster, smaller, ugly def
 
 ## CR-005 · Software fan-speed control during tests
 
-**Status:** captured 2026-05-01 — pre-conference nice-to-have.
+**Status:** captured 2026-05-01; **investigated & resolved 2026-05-12 (S24) — not feasible as conceived on GoS1's hardware; no code planned.** Candidate to move to `CHANGE_REQUESTS_CLOSED.md`.
 **Triggered by:** Dom + owner (transcript ~T+1796s, ~T+1840s) + owner notes.
 
-### Problem
+### Original problem & direction (kept for the record)
 
-The GoS1 server lives in the owner's sitting room with fans set conservatively low for noise reasons. The 2% baseline drift currently visible in calibration runs is partly thermal (the chassis runs warmer over a session). Manually pre-cooling with a desk fan would help but isn't scientific or repeatable.
+GoS1 lives in the owner's sitting room with fans set conservatively low for noise. Some of the baseline drift seen in calibration runs is thermal — the chassis warms over a session. The proposed fix: programmatic fan control around tests — raise to an aggressive profile before a job, restore quiet after; `focus_mode_fan_profile: "aggressive" | "default" | "off"` in `settings.json` (default `"off"`); fan profile recorded in the result JSON. Open question at capture time: *exact mechanism on this hardware (Ryzen 9 7900 / RX 7800 XT / the chassis fans) — needs investigation.*
 
-### Agreed direction
+### Investigation (S24, 2026-05-12) — what's actually controllable on this box
 
-Programmatic fan-speed control around tests:
-1. **Before a test starts:** raise fan speed to an aggressive profile (e.g. AMD `pp_dpm_fclk` / `fancontrol` / `nbfc`-style sysfs writes — exact mechanism TBD on AMD/Linux).
-2. **After the test ends:** restore the default quiet profile.
-3. **Configurable in `settings.json`** — `focus_mode_fan_profile: "aggressive" | "default" | "off"`. Default `"off"` so users who don't want their server howling aren't surprised.
-4. **Bonus:** capture the fan-profile-used in the result JSON for reproducibility.
+`hwmon` enumeration + `lsmod` on GoS1:
 
-### Open questions
+- **GPU fans (RX 7800 XT)** — *controllable.* The `amdgpu` hwmon exposes `pwm1`, `pwm1_enable`, `fan1_input`, `fan1_target`: write `pwm1_enable=1` (manual), then `pwm1=0..255`; restore with `pwm1_enable=2` (firmware curve). Sysfs is root-owned → would need a sudoers entry like the focus-mode one. Currently `pwm1_enable=2`, fans at 0 RPM (zero-RPM idle).
+- **CPU fan + the 5 case fans** — *NOT controllable from Linux.* No super-I/O sensor driver is present (`nct6775` / `it87` / Nuvoton / ITE — none loaded, no matching hwmon device). The only platform hwmon is `asus` (via `asus_wmi`) and it's empty — no temp/fan/pwm files. `sensors -j` reports zero chassis fan RPMs. The motherboard fan controller runs its BIOS curve and Linux can't touch it. Reaching it would mean booting with `acpi_enforce_resources=lax` and hoping a super-I/O chip probes cleanly — the kernel warns that can corrupt the EC; not worth it on a headless server in a living room.
 
-- Exact mechanism on this hardware (Ryzen 9 7900 + RX 7800 XT + the chassis fans) — needs investigation. Likely a combination of GPU PWM (via `/sys/class/drm/card0/device/hwmon/`) and chassis fans (motherboard EC, possibly out of reach without IPMI/BMC).
-- Should this be exposed as part of focus mode (sudoers-gated stop-timers script) or as a separate sub-feature? Probably bundled into focus mode for cohesion.
+### BIOS fan curve (owner note, 2026-05-12)
 
-### Pre-conference: nice-to-have, improves measurement quality (lower baseline drift = tighter green-light thresholds).
+The case fans are configured in BIOS to stay quiet until ~70 °C, then ramp. Across all OWL testing to date the owner has never heard them spin up — the chassis never reaches the ramp threshold during a job, so the case fans sit at an effectively fixed low speed throughout. **Decision: leave the BIOS curve as-is.** Useful side effect: airflow during a calibration is a known constant, so a calibration stays valid as long as the BIOS curve isn't re-tuned (re-tuning it later → re-calibrate).
+
+### Conclusion
+
+The version of CR-005 that would help the baseline-drift problem — driving the *case* fans — isn't implementable in software on this hardware. GPU PWM control *is* possible but low-value: VAAPI encodes are ~15 s and barely warm the GPU (S21 thermal-recovery probe: post-GPU baselines converged by d≈5 s), and pinning GPU fans to max during a CPU job just adds a couple of watts of fan power to the measurement — worse for cleanliness, not better. The genuinely useful action — a fixed, documented BIOS fan state — is already in place (quiet-below-70 °C, never observed ramping) and is a BIOS setting, not OWL code.
+
+**No code planned.** If a future chassis/cooling change reopens this, GPU PWM is the only software lever and the BIOS-curve constant is the calibration precondition to re-check. Separately, CR-005's drift concern is partly addressed by the S24 re-enable of the 5th case fan via a Y-splitter (a fixed hardware change — see JOURNAL S24); its effect on within-session drift will show in the next thermal-recovery probe vs the S21 baseline (within-window CV ~2.14%).
 
 ---
 
@@ -1097,10 +1099,10 @@ Most of this track shipped in the 2026-05-12 sweep: **CR-034** (unified result c
 
 ### Track E — Polish (small, independent)
 
-- **CR-005** software fan-speed control during tests *(measurement quality)*
+- ~~**CR-005** software fan-speed control during tests~~ — *investigated S24 2026-05-12: not feasible as conceived (chassis/CPU fans are BIOS-managed, not Linux-exposed; GPU PWM is controllable but low-value). No code planned; staying with the current BIOS curve. Candidate to archive.*
 - **CR-007** carbon variance study *(also Track A downstream)*
 
-**Recommendation:** no dependencies. Slot whenever Track A–D are blocked.
+**Recommendation:** CR-007 has no dependencies; slot whenever Track A–D are blocked. CR-005 is effectively closed.
 
 ### Track F — Strategic / exploratory (longer horizon, captured-but-not-active)
 
