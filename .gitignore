@@ -1,6 +1,8 @@
 .env
-test_content/
-results/
+# test_content/ + results/ are symlinks to /srv/data/owl/ (4 TB disk, S24) —
+# no trailing slash so the patterns also match the symlinks, not just dirs.
+test_content
+results
 __pycache__/
 *.pyc
 
@@ -11,9 +13,10 @@ data/*
 
 # RAG runtime data (vectors regenerable from corpus; corpus is source PDFs
 # we don't want to bloat the repo with — and CR follow-up plans visitor
-# uploads landing here).
-.chroma/
-corpus/
+# uploads landing here). Both are symlinks to /srv/data/owl/ since S24 —
+# no trailing slash so the patterns match the symlinks too.
+.chroma
+corpus
 
 # Backup / scratch files left around by previous sessions.
 *.bak

@@ -7,6 +7,37 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 24 — 2026-05-12
+
+### What we did
+
+GoS1 storage expansion — a 4 TB NVMe SSD added as a dedicated data disk, and OWL's bulk/archival data relocated onto it.
+
+**Disk provisioning.** The new drive (`nvme1n1`, SPCC M.2 PCIe SSD, 3.6 TiB usable) shipped with a factory 128 MB Microsoft Reserved Partition — wiped (`wipefs -a` + `sgdisk --zap-all`), fresh GPT, single full-disk ext4 with reduced reserve (`mkfs.ext4 -m 1 -L tests`). Added to `/etc/fstab` by UUID with `nofail`, mounted at `/srv/data` (renamed from the operator's initial `/srv/wattlab-data` since it now hosts non-OWL media too). `wattlab.service` got a drop-in (`/etc/systemd/system/wattlab.service.d/mount.conf`) adding `RequiresMountsFor=/srv/data` so the service waits for the mount on boot rather than silently re-creating empty `results/` on the root fs.
+
+**OWL data relocation — symlinks, zero code changes.** `test_content/`, `results/`, `corpus/`, `.chroma/` moved from `~/wattlab/` to `/srv/data/owl/` and symlinked back into the repo. OWL hardcodes those paths (`persist.py` `RESULTS_DIR`, `sources.py`, `video.py:778`, `main.py` test-content map + `results/diagnostics`) and references two via `settings.json` (`rag_corpus_path`, `rag_chroma_path`), so symlinks were the zero-touch way to relocate — no code or settings edits. `/srv/data/owl/` is `chown gos:gos` so the (gos-run) service can write. Smoke test green: service `active (running)`, `/video` sees the 812 MB source, `/rag` corpus browser loads, `/llm` recent runs load.
+
+**Simon's REM clips.** `/home/simon/rem` (77 GB of REM display-test source — `DisplayTestVideos/*.mxf`, `videos/Clip8*`, `whitep30.yuv`, `Elfuente_*`) moved to `/srv/data/rem`, symlinked back at `/home/simon/rem` with ownership kept `simon:simon`. (Filed as "not related to OWL or REM" by the owner, but the path and clip names say otherwise — it's REM material; flagged for Simon.)
+
+**Net effect.** System disk (`nvme0n1`, 500 GB) went 249 GB → 170 GB used (264 GB free, 40%). `/srv/data` at 79 GB / 3.5 TB free. OWL result history can now accumulate indefinitely with no space pressure (there's no pruning logic in `persist.py` — that's the point).
+
+**Cooling change (same session).** Re-enabled a 5th case fan via a Y-splitter off an existing header (one had been left deactivated). GoS1 now runs 9 fans total: 5 case, 2 GPU (integrated), 1 CPU (header can take a 2nd), 1 PSU internal. Relevant to CR-005 (fan control) and to the recalibration note below — extra fan + extra NVMe both add a couple of watts at idle.
+
+**Housekeeping.** `.gitignore` had directory patterns (`test_content/` etc., trailing slash) which don't match symlinks — git started showing the four as untracked. Dropped the trailing slashes on those four entries. CLAUDE.md updated (GoS1 Server disk + cooling lines, Repo Structure block, S24 one-liner, "last updated" header). Methodology page Hardware Disclosure "Storage" row updated to "500 GB NVMe SSD (OS + working set) + 4 TB NVMe SSD (test media & result archive, /srv/data)".
+
+### Why it matters
+
+Removes the only real space constraint on the box (system disk was at 58%) and gives OWL a permanent home for test media + the result archive — which directly supports the "persistent, reproducible, primary data" positioning. The symlink approach means nothing in the codebase had to know about it.
+
+### Open / deferred
+
+- **Variance recalibration** — a second NVMe + the re-enabled 5th case fan both add a couple of watts to idle draw; the `~51–54W` idle figure in CLAUDE.md and the Hardware Disclosure "Idle power" row should be refreshed once a calibration run is done at the new baseline. (Not yet run.)
+- **Wattlab service was restarted** as part of the migration — no separate action needed.
+- **Talk to Simon** about his `rem/` tree having moved (symlink keeps his paths working regardless).
+- **GOS1_INFRA.md "Disk Layout"** section also updated to match.
+
+---
+
 ## Session 23 — 2026-05-07 / 2026-05-08
 
 ### What we did

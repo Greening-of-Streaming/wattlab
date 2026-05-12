@@ -8649,7 +8649,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <tr><td>CPU</td><td>AMD Ryzen 9 7900, 24 cores (12C/24T), 65W TDP</td></tr>
     <tr><td>GPU</td><td>AMD Radeon RX 7800 XT, 16GB VRAM (11.1GB usable), VAAPI + ROCm</td></tr>
     <tr><td>RAM</td><td>61 GB DDR5</td></tr>
-    <tr><td>Storage</td><td>457 GB (NVMe)</td></tr>
+    <tr><td>Storage</td><td>500 GB NVMe SSD (OS + working set) + 4 TB NVMe SSD (test media &amp; result archive, mounted <code>/srv/data</code>)</td></tr>
     <tr><td>Idle power</td><td>~51&ndash;54W (stable), occasional drift to 58W</td></tr>
     <tr><td>Measurement</td><td>Tapo P110 smart plug, 1-second polling via local API (tapo 0.8.12)</td></tr>
     <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code>, May 2026 &mdash; carries the upstream <code>scale_vaapi</code> surface-pool fix) &mdash; libx264, libx265, libsvtav1 (CPU); h264_vaapi, hevc_vaapi, av1_vaapi (GPU, full VAAPI pipeline)</td></tr>

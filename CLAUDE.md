@@ -1,6 +1,6 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current.
-# Last updated: 2026-05-08 (Session 23 closing — full doc + CR pass)
+# Last updated: 2026-05-12 (Session 24 — GoS1 4TB data disk added; OWL bulk/archival data moved to /srv/data)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also: GOS1_INFRA.md — server infrastructure, Nextcloud backup, personal stack context
 # See also: TESTING.md — three-tier testing strategy
@@ -30,13 +30,15 @@
 - OS: Ubuntu 24, kernel 6.17
 - CPU: AMD Ryzen 9 7900, 24 cores
 - GPU: AMD Radeon RX 7800 XT — VAAPI (video) + ROCm (AI), 12GB VRAM
-- RAM: 61GB · Disk: 457GB, 221GB free (April 2026)
+- RAM: 61GB
+- Disk: 500GB NVMe system disk (`nvme0n1`, `/` — ~264GB free, May 2026) + 4TB NVMe data disk (`nvme1n1`, ext4, mounted `/srv/data`, in fstab w/ `nofail` — added S24 2026-05-12). `/srv/data/owl/{test_content,results,corpus,.chroma}` hold OWL bulk/archival data, symlinked back into the repo; `/srv/data/rem/` holds Simon's REM display-test clips (symlinked from `/home/simon/rem`); `/srv/data/media/` is a general bucket.
+- Cooling: 9 fans total — 5 case (the 5th re-enabled via a Y-splitter S24 2026-05-12), 2 GPU (integrated), 1 CPU (header can take a 2nd), 1 PSU internal. Relevant to CR-005 (fan control).
 - Python: 3.12.3 · Node: 20.x
 - Claude Code: `~/.npm-global/bin/claude`, authenticated as nebul2
 - Git: bs@ctoic.net / nebul2
 - SSH users: simon, tania, dom, marisol, gos (owner)
 - External: `ssh -p 2222 user@gos1.duckdns.org`
-- Idle power: ~51-54W (stable), occasional drift to 58W
+- Idle power: ~51-54W (stable), occasional drift to 58W — figure predates the S24 NVMe + 5th case fan; recalibration pending will refresh it.
 
 ## Network Topology
 ```
@@ -68,7 +70,7 @@ BouyguesBox (192.168.1.x)
 ```
 wattlab/
 ├── .env                          # gitignored
-├── .gitignore                    # includes test_content/, results/
+├── .gitignore                    # ignores test_content, results, corpus, .chroma (now symlinks — no trailing slash so they still match)
 ├── README.md
 ├── CLAUDE.md
 ├── JOURNAL.md
@@ -77,11 +79,10 @@ wattlab/
 ├── data_analysis_nov25/          # Nov25 hackathon scripts
 ├── data_cleanup/
 │   └── clean_measures.py         # Tania — aligns Tapo CSVs
-├── test_content/
-│   └── meridian_4k.mp4           # Netflix Open Content, CC BY 4.0, 812MB
-├── results/                      # [to create] persistent JSON results
-│   ├── video/
-│   └── llm/
+├── test_content/   ->  /srv/data/owl/test_content   # symlink (S24, 4TB disk); meridian_4k.mp4 = Netflix Open Content CC BY 4.0, 812MB
+├── results/        ->  /srv/data/owl/results        # symlink (S24, 4TB disk); persistent result JSON — {video,llm,image,diagnostics}/
+├── corpus/         ->  /srv/data/owl/corpus         # symlink (S24); RAG source PDFs (papers/)
+├── .chroma/        ->  /srv/data/owl/.chroma        # symlink (S24); RAG vector store
 └── wattlab_service/
     ├── main.py                   # FastAPI routes + all HTML UI + queue worker
     ├── video.py                  # P110 + ffmpeg + thermals + focus mode
@@ -154,6 +155,7 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 - **S21 (2026-05-04):** **Variance-calibration integrity pass.** Owner queried inflated `variance_idle_pct` (11.03%) and `variance_gpu_pct` (3.00%) from overnight calibration; investigation surfaced two coupled bugs. **CR-022 — `scale_vaapi` surface-pool leak**: VAAPI filter chain (`-vf scale_vaapi=…`) leaks surfaces and crashes near end-of-stream on long inputs (~7000+ frames at 1080p). Reproducible in standalone ffmpeg on both `meridian_4k.mp4` (frame 43076) and `meridian_120s.mp4` (frame 7178). Affects `variance_gpu_cmd` + `PRESETS["h265_gpu"]/["av1_gpu"]/["gpu"]`. Fix: `gpu_encode_max_s=30` setting + `_maybe_cap_vaapi()` helper in `transcode()` injects `-t 30` before `-i` on VAAPI cmds; result dict gains `gpu_capped_at_s`. **CR-023 — silent-failure on calibration**: `run_variance_calibration` ignored `transcode_result["success"]`, so failed encodes silently produced ΔW from partial data. Fix: gate ΔW append on success, track `cpu_failed`/`gpu_failed`, abort settings update if ≥50% fail. **Diagnostic — `bin/probe-thermal-recovery`**: 12-distance × CPU+GPU thermal-recovery probe, ~65 min wall time, writes `results/diagnostics/recovery_<ts>.csv` + `_summary.csv`. Confirmed bimodal-idle hypothesis was wrong: post-CPU and post-GPU baselines converge by d=5s, mean within-window CV = 2.14% (calibration's 11% was inflated by CR-022 + CR-023, not by recovery time). **UI — "More calibration details" dropdown** on `/settings` (Lab tier): renders the recovery curve from the latest probe data via Chart.js 4.4.0 (matches REM). Factorisation shipped: `wattlab_service/static/wl-charts.js` is the shared chart helper (`WlCharts.line({canvas, datasets, xLabel, yLabel, yUnit})` with semantic colour names — `cpu`, `gpu`, `accent`, `warn`, `err` — resolved against the OWL palette). Future charts on `/methodology` etc. drop in with the same shape; swapping Chart.js for uPlot/ECharts is a one-file change. New endpoint `GET /precalibration/data` (Lab tier) serves the latest probe CSV as JSON. **CRs captured:** CR-024 (re-run probe button on the panel — half-day; route through `queue_control.enqueue`).
 - **S22 (2026-05-05):** **Bundle 2 — carbon-strip calibration + 24/7 projection.** Two commits. **Part 1** (variance integrity + CR archive split) confirmed n=24 / cooldown=90 calibration yielded clean idle 2.41% / cpu 1.33% / gpu 4.77% (`variance_pct=2.84`); created `CHANGE_REQUESTS_CLOSED.md` with 10 fully-shipped CRs (CR-001/001b/002/006/010/011/014/016/022/023); slimmed `CHANGE_REQUESTS.md` 1582→1098 lines; CLAUDE.md cross-refs updated. **Part 2** (Bundle 2) — closed **CR-030** (carbon UI calibration: typography shrink 1rem→0.85rem accent→text-3, EV-equivalence floor at 0.0005 g, `massTitle` µg/mg disambiguation tooltip with scientific notation across every mass cell, plus a NEW sub-#4 added during visual review — drift note when home-zone live grid intensity differs ≥1% from the run's saved intensity, surfaces the saved-vs-live temporal mismatch on 9 call sites) and **CR-017** (24/7 continuous-service projection toggle — V1 toggle-only with `as-measured / 1h / 1d / 1mo / 1y`, multiplier wires through headline + EV + reference + comparison + historical rows, URL hash state via `history.replaceState`, hidden when no `durationS`; `fmtEnergy` auto-switches Wh/kWh/MWh/GWh and `fmtMass` extended upward to kg/t for sane projection display). Plus bonus video compare-mode label fix ("best of CPU vs GPU" / "most efficient codec across all comparisons"). Use-phase scope clarifier added: caption now reads "HIGH-LEVEL CO₂e ESTIMATE · USE PHASE · for comparison with other activities" with tooltip + formula `<details>` line spelling out manufacturing/embodied carbon are not included. **Captured:** CR-032 (per-mode CO₂e rows inside the carbon strip details for compare results — half-day; deferred). 181 tests passing throughout. Branched off main onto `feature/bundle-2-carbon-ui` after merging `feature/cr-001-two-tier` to local main.
 - **S23 (2026-05-07 / 2026-05-08):** **Polish + closure marathon — twelve commits on `main`.** Three CRs fully closed (CR-022, CR-026, CR-019), three more closed via the quick-wins bundle (CR-021, CR-015, _HEADER factorisation), three new CRs captured (CR-033, CR-034, CR-035), parameters audit doc shipped for Tania, /demo refactored across six iterative polish commits, and the active CR list pruned 21 → 19. **CR-022 fully resolved** (`9e1d076`) by upstream ffmpeg master fixing the `scale_vaapi` leak; `_maybe_cap_vaapi` and `gpu_encode_max_s` deleted; new `ffmpeg_bin` setting routes every preset + custom command through `/usr/local/bin/ffmpeg-master`; n=6 verification calibration confirms idle 2.26% / cpu 0.66% / gpu 0.95% (S22's 4.77% was the cap producing only ~30 polls per run). **`docs/wattlab_parameters_audit.md`** (`6d14f1e`) responds to Tania's meeting question — every parameter classified Arbitrary / Empirical / Calibrated / Constrained with a "path to principled" column. **CR-026 anon-integrity** (`caa025b`): persistence layer scopes own-jobs by `visitor_key`; CUSTOM_UPLOAD moved to Member; new WORKING_NAV cap retires the home-redirect tier compare; route audit test asserts every endpoint is gated. **Quick-wins bundle** (`2db2cbd`): CR-021 sign-in CTA chip variant + `_HEADER` factorisation (`/queue-status` and `/methodology` adopt unified chrome) + CR-015 maintenance-flag watchdog (Lab middleware + bash script + systemd timer + `max_idle_mins` setting). **CR-019** (`2484599`): `/demo`'s four poll loops use the shared `wlRenderProgress` widget; `_job_status()` helper injects live watts; resume-job hook deferred. **/demo polish** (`c68f4ac` → `e76824d`): predetermined small video job (`meridian_120s` + `h265_both`); `/demo/last/{type}` carve-out endpoint; `_PROGRESS_JS` finally appended to `_DEMO_HTML` (had landed in `queue_page()` instead — masked until run-handler try/catch surfaced it); explicit "Run a standard <task>" button labels; methodology link in footer + Welcome-step inline; LLM/RAG/image/video result cards gain prompt blockquote + carbon strip; RAG progress shows `Mode 1/2/3 of 3 — No retrieval / RAG / RAG Large`; video progress shows `Side 1/2 of 2 — CPU/GPU encode`. **CR-035 captured** (`7c58893`) — encode progress bar via `ffmpeg -progress pipe:1`. **Final docs pass** (Session 23 part 12+): all `.md` files reviewed for staleness; README access section rewritten to reflect three-tier model; WATTLAB_SPEC.md gains historical-spec disclaimer at top; TESTING.md picks up CR-026 + /demo regression checks; JOURNAL.md gets full S20/S22/S23 entries. 196 tests passing throughout.
+- **S24 (2026-05-12):** **GoS1 storage expansion.** 4TB NVMe (`nvme1n1`, SPCC) added as a dedicated data disk — wiped the factory MSR partition, fresh GPT, single ext4 (`-m 1`), in `/etc/fstab` by UUID with `nofail`, mounted `/srv/data`; `wattlab.service` drop-in adds `RequiresMountsFor=/srv/data`. OWL bulk/archival data relocated: `test_content/` `results/` `corpus/` `.chroma/` moved under `/srv/data/owl/` and **symlinked** back into the repo (zero code/settings changes — paths are hardcoded in `persist.py`/`sources.py`/`video.py`/`main.py` + `settings.json`). Simon's 77 GB of REM display-test clips moved `/home/simon/rem` → `/srv/data/rem` (symlinked back, kept `simon:simon`). System disk freed 249 GB → 170 GB used. `.gitignore` trailing slashes dropped on the four relocated dirs so the patterns still match symlinks. Methodology page Hardware Disclosure "Storage" row updated. Also S24: re-enabled a 5th case fan via a Y-splitter (was deactivated) — GoS1 now runs 9 fans (5 case / 2 GPU / 1 CPU / 1 PSU). **Still pending:** variance recalibration (2nd NVMe + extra fan nudge idle draw up a few W — the `~51–54W` idle figure and the Hardware Disclosure "Idle power" row will want refreshing once that's run).
 
 ### Deferred / open
 - [ ] **Confidence multiplier grounding** — see **CR-028 Phase 2** (`variance_green_x`/`variance_yellow_x` 5×/2× threshold values absorbed into the unified statistical model).
