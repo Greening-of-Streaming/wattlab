@@ -25,6 +25,10 @@ corpus
 # One-off OS install artifacts that landed in the working tree.
 amdgpu-install_*.deb
 
+# macOS Finder cruft (lands here when the repo is browsed from a Mac).
+.DS_Store
+._*
+
 # Sibling project (REM has its own repo at dom-robinson/stats; this is
 # just a working copy here for cross-project context).
 REM/

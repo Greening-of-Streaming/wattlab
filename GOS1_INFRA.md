@@ -38,8 +38,8 @@ fstab entry: `UUID=3b621612-f3fa-4873-8c10-0cea94105591  /srv/data  ext4  defaul
 
 **Backup-cron note:** `/etc/cron.d/wattlab-results-backup` syncs `/home/gos/wattlab/results/` (now a symlink) to Nextcloud. Verified S24 that rclone 1.73.2 follows the symlink when it's the root source path, so the nightly sync still works. Optional hardening: repoint it at the real path `/srv/data/owl/results/` to remove any fragility — `sudo sed -i 's|/home/gos/wattlab/results/|/srv/data/owl/results/|' /etc/cron.d/wattlab-results-backup`.
 
-## Cooling (S24, 2026-05-12)
-9 fans total: **5 case** (the 5th re-enabled via a Y-splitter off an existing header — had been left deactivated), **2 GPU** (integrated on the RX 7800 XT), **1 CPU** (the board header can drive a 2nd if thermals warrant), **1 PSU internal**. The whole envelope is inside the P110 measurement boundary, so the extra fan shows up in idle/active draw — see the recalibration note above. Relevant to WattLab CR-005 (fan control).
+## Cooling (S24, 2026-05-13)
+9 fans total: **5 case** (the 5th re-enabled via a Y-splitter off an existing header — had been left deactivated), **2 GPU** (integrated on the RX 7800 XT), **1 CPU** (the board header can drive a 2nd if thermals warrant), **1 PSU internal**. The case + CPU fans run a BIOS curve (quiet below ~70 °C; never observed ramping in any OWL run) and are **not Linux-controllable** — no super-I/O sensor driver (`nct6775`/`it87`/…), the only platform hwmon is an empty `asus` node. So they're an effectively fixed-airflow constant; only the GPU fans (`amdgpu` hwmon) expose PWM. The whole envelope is inside the P110 boundary — the extra fan added ~1-2 W (the S24 thermal-recovery probe puts steady idle at ~56-58 W, vs the old ~51-54 W; combined NVMe + fan). See WattLab `CHANGE_REQUESTS_CLOSED.md` CR-005 for the full fan-control investigation.
 
 ## Other Users
 dom, marisol, simon, tania — home dirs exist but unreadable by gos user.

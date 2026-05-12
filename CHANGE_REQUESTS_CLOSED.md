@@ -179,6 +179,34 @@ Three inaccuracies on `/methodology` need fixing before the page is shown to a p
 
 ---
 
+## CR-005 · Software fan-speed control during tests
+
+**Status:** captured 2026-05-01; **resolved 2026-05-13 (S24) by investigation — not feasible as conceived on GoS1's hardware; no code shipped.** Closing commit `54e724a` (CR entry rewritten with the findings); moved here in the S24 doc-tidy pass.
+**Triggered by:** Dom + owner (transcript ~T+1796s, ~T+1840s) + owner notes.
+
+### Original problem & direction (kept for the record)
+
+GoS1 lives in the owner's sitting room with fans set conservatively low for noise. Some of the baseline drift seen in calibration runs is thermal — the chassis warms over a session. The proposed fix: programmatic fan control around tests — raise to an aggressive profile before a job, restore quiet after; `focus_mode_fan_profile: "aggressive" | "default" | "off"` in `settings.json` (default `"off"`); fan profile recorded in the result JSON. Open question at capture time: *exact mechanism on this hardware (Ryzen 9 7900 / RX 7800 XT / the chassis fans) — needs investigation.*
+
+### Investigation (S24, 2026-05-13) — what's actually controllable on this box
+
+`hwmon` enumeration + `lsmod` on GoS1:
+
+- **GPU fans (RX 7800 XT)** — *controllable.* The `amdgpu` hwmon exposes `pwm1`, `pwm1_enable`, `fan1_input`, `fan1_target`: write `pwm1_enable=1` (manual), then `pwm1=0..255`; restore with `pwm1_enable=2` (firmware curve). Sysfs is root-owned → would need a sudoers entry like the focus-mode one. Currently `pwm1_enable=2`, fans at 0 RPM (zero-RPM idle).
+- **CPU fan + the 5 case fans** — *NOT controllable from Linux.* No super-I/O sensor driver is present (`nct6775` / `it87` / Nuvoton / ITE — none loaded, no matching hwmon device). The only platform hwmon is `asus` (via `asus_wmi`) and it's empty — no temp/fan/pwm files. `sensors -j` reports zero chassis fan RPMs. The motherboard fan controller runs its BIOS curve and Linux can't touch it. Reaching it would mean booting with `acpi_enforce_resources=lax` and hoping a super-I/O chip probes cleanly — the kernel warns that can corrupt the EC; not worth it on a headless server in a living room.
+
+### BIOS fan curve (owner note, 2026-05-13)
+
+The case fans are configured in BIOS to stay quiet until ~70 °C, then ramp. Across all OWL testing to date the owner has never heard them spin up — the chassis never reaches the ramp threshold during a job, so the case fans sit at an effectively fixed low speed throughout. **Decision: leave the BIOS curve as-is.** Useful side effect: airflow during a calibration is a known constant, so a calibration stays valid as long as the BIOS curve isn't re-tuned (re-tuning it later → re-calibrate).
+
+### Conclusion
+
+The version of CR-005 that would help the baseline-drift problem — driving the *case* fans — isn't implementable in software on this hardware. GPU PWM control *is* possible but low-value: VAAPI encodes are ~15 s and barely warm the GPU (S21 thermal-recovery probe: post-GPU baselines converged by d≈5 s), and pinning GPU fans to max during a CPU job just adds a couple of watts of fan power to the measurement — worse for cleanliness, not better. The genuinely useful action — a fixed, documented BIOS fan state — is already in place (quiet-below-70 °C, never observed ramping) and is a BIOS setting, not OWL code.
+
+**No code planned.** If a future chassis/cooling change reopens this, GPU PWM is the only software lever and the BIOS-curve constant is the calibration precondition to re-check. Separately, CR-005's drift concern is partly addressed by the S24 re-enable of the 5th case fan via a Y-splitter (a fixed hardware change — see JOURNAL S24); the S24 thermal-recovery probe showed it did *not* move within-session drift (mean within-window CV ~2.0%, essentially the S21 ~2.14%) — expected, since the BIOS curve never ramps the fans.
+
+---
+
 ## CR-006 · Move AI workloads (LLM, RAG, image-gen) to a "beta / skunkworks" area
 
 **Status:** ✅ done 2026-05-03 (Session 18 part 2 — `4c0b496`). Landing nav re-framed, h1 chips on `/llm` `/rag` `/image`, Demo Tour entering-beta band on steps 2/3/4. `_BETA_CHIP` constant introduced as single source of truth so the framing copy stays consistent.
