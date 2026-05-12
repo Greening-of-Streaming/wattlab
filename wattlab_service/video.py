@@ -8,7 +8,7 @@ from collections import deque
 from pathlib import Path
 from typing import Callable, Optional
 import settings as cfg
-from power import get_power_watts
+from power import get_power_watts, read_sensors_dict
 UPLOAD_DIR = Path("/tmp/wattlab_uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 LOCK_FILE = Path("/tmp/gos-measure.lock")
@@ -264,19 +264,10 @@ def _preset_bps(preset_key: str, s: dict) -> int:
 
 POLL_INTERVAL = 1.0
 
-# --- Sensors ---
+# --- Sensors ---  (chip resolution + parsing lives in power.read_sensors_dict)
 
 def read_sensors() -> dict:
-    try:
-        result = subprocess.run(['sensors', '-j'], capture_output=True, text=True)
-        data = json.loads(result.stdout)
-        return {
-            "cpu_tctl": data['k10temp-pci-00c3']['Tctl']['temp1_input'],
-            "gpu_junction": data['amdgpu-pci-0300']['junction']['temp2_input'],
-            "gpu_ppt_w": data['amdgpu-pci-0300']['PPT']['power1_average'],
-        }
-    except Exception as e:
-        return {"cpu_tctl": None, "gpu_junction": None, "gpu_ppt_w": None, "error": str(e)}
+    return read_sensors_dict()
 
 async def measure_baseline(polls: int = 10) -> dict:
     power_readings = []

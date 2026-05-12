@@ -50,9 +50,9 @@ BouyguesBox (192.168.1.x)
 ```
 
 ## Thermal Sensors
-- CPU: `data['k10temp-pci-00c3']['Tctl']['temp1_input']`
-- GPU junction: `data['amdgpu-pci-0300']['junction']['temp2_input']`
-- GPU PPT: `data['amdgpu-pci-0300']['PPT']['power1_average']`
+- One source of truth: `power.read_sensors_dict()` → `{cpu_tctl, gpu_junction, gpu_ppt_w}`. The per-module `read_sensors()` wrappers (video/llm/image_gen/rag) just delegate to it.
+- CPU: `data['k10temp-pci-00c3']['Tctl']['temp1_input']` (k10temp is on the CPU bus — name is stable).
+- GPU: chip key is **resolved dynamically** via `power.amdgpu_chip(data)` — the one amdgpu chip with a `junction` sub-key (the discrete RX 7800 XT; the iGPU has only `edge`/`PPT`). *Do not hardcode the PCI address* — it shifts on PCIe re-enumeration (the S24 NVMe add moved it `amdgpu-pci-0300` → `amdgpu-pci-0400`, which silently broke the old lookups). Then `data[gpu]['junction']['temp2_input']` and `data[gpu]['PPT']['power1_average']`.
 - Read via: `subprocess.run(['sensors', '-j'], ...)`
 
 ## Environment

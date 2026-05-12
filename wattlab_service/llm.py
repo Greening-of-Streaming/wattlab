@@ -6,7 +6,7 @@ import json
 import urllib.request
 from pathlib import Path
 import settings as cfg
-from power import get_power_watts
+from power import get_power_watts, read_sensors_dict
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -51,15 +51,7 @@ async def poll_during_task(stop_event: asyncio.Event) -> list:
     return readings
 
 def read_sensors() -> dict:
-    try:
-        result = subprocess.run(['sensors', '-j'], capture_output=True, text=True)
-        data = json.loads(result.stdout)
-        return {
-            "cpu_tctl": data['k10temp-pci-00c3']['Tctl']['temp1_input'],
-            "gpu_junction": data['amdgpu-pci-0300']['junction']['temp2_input'],
-        }
-    except:
-        return {"cpu_tctl": None, "gpu_junction": None}
+    return read_sensors_dict()
 
 def confidence(delta_w: float, poll_count: int, w_base: float) -> dict:
     s = cfg.load()

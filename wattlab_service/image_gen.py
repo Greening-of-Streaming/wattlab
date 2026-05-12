@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from video import focus_mode_enter, focus_mode_exit
 import settings as cfg
-from power import get_power_watts
+from power import get_power_watts, read_sensors_dict
 
 # Required for gfx1101 (RX 7800 XT) with PyTorch ROCm — must be set before torch import
 os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "11.0.0")
@@ -97,15 +97,7 @@ async def poll_during_task(stop_event: asyncio.Event) -> list:
     return readings
 
 def read_sensors() -> dict:
-    try:
-        result = subprocess.run(['sensors', '-j'], capture_output=True, text=True)
-        data = json.loads(result.stdout)
-        return {
-            "cpu_tctl": data['k10temp-pci-00c3']['Tctl']['temp1_input'],
-            "gpu_junction": data['amdgpu-pci-0300']['junction']['temp2_input'],
-        }
-    except Exception:
-        return {"cpu_tctl": None, "gpu_junction": None}
+    return read_sensors_dict()
 
 def confidence(delta_w: float, poll_count: int, w_base: float) -> dict:
     s = cfg.load()
