@@ -25,9 +25,22 @@ GoS1 storage expansion — a 4 TB NVMe SSD added as a dedicated data disk, and O
 
 **Housekeeping.** `.gitignore` had directory patterns (`test_content/` etc., trailing slash) which don't match symlinks — git started showing the four as untracked. Dropped the trailing slashes on those four entries. CLAUDE.md updated (GoS1 Server disk + cooling lines, Repo Structure block, S24 one-liner, "last updated" header). Methodology page Hardware Disclosure "Storage" row updated to "500 GB NVMe SSD (OS + working set) + 4 TB NVMe SSD (test media & result archive, /srv/data)".
 
+**Electricity Maps trial — one-off FR cross-check.** The long-pending EM trial token landed (Matthew @ EM, 2026-05-12), scoped FR-only and expiring 18 May. In practice it's narrower than advertised: only `/v3/carbon-intensity/latest` works (`/past`, `/history` → 401), and the live FR value comes back **hourly and `isEstimated: true`** (`TIME_SLICER_AVERAGE`), not the "5-minute real-time" the email promised. Ran a single FR snapshot to compare against what OWL already has, ~22:30 CEST 2026-05-12 (a low-carbon hour — full nuclear + hydro, no solar, ~0 fossil):
+
+| Source | gCO₂eq/kWh | Basis |
+|---|---:|---|
+| Ember 2025 — annual mean | 41 | lifecycle, full-year 2025 average |
+| Eco2mix — lifecycle *(OWL's carbon strip)* | 21.0 | lifecycle, production-based, RTE real-time mix × IPCC AR6 |
+| Eco2mix — direct (`taux_co2`) | 11.0 | direct combustion only, production-based |
+| Electricity Maps — live | 18 | lifecycle, consumption-based, **estimated**, hourly |
+
+EM (18) and OWL's Eco2mix-derived lifecycle (21.0) agree to ~3 g/kWh (~15%); the gap is methodology — consumption- vs production-based accounting, a slightly lower nuclear factor in EM, and EM's value being a modeled estimate rather than measured. The lifecycle-vs-direct gap on Eco2mix (21.0 vs 11.0, ~2×) is the CR-016 point made concrete. Tonight's live ~18–21 is roughly half the Ember annual mean (41) — expected diurnal/seasonal spread.
+
+**Decision: don't integrate, don't pay.** For FR specifically the free Eco2mix path is the *better* source — actual RTE 15-min telemetry vs EM's modeled hourly estimate — and EM's real value-add (global zones, forecasts, consumption accounting) isn't in this trial and isn't OWL's use case. Aligns with the board steer (carbon = indicative add-on, budget year) and the long-standing "energy is the headline, CO₂e is reference-only" line. The old plan to wire EM in as the live FR source (bump `carbon.py` to the `.com`/v4 host, flip the Paris row to `LIVE`) is dropped; `carbon.py`'s ElectricityMaps tier stays the dormant fallback stub it is. No 5-day logger — the snapshot is enough. Token is parked in `.env` (gitignored); should be pulled after 18 May, low urgency (if left it just 401s and falls through to Ember static).
+
 ### Why it matters
 
-Removes the only real space constraint on the box (system disk was at 58%) and gives OWL a permanent home for test media + the result archive — which directly supports the "persistent, reproducible, primary data" positioning. The symlink approach means nothing in the codebase had to know about it.
+Removes the only real space constraint on the box (system disk was at 58%) and gives OWL a permanent home for test media + the result archive — which directly supports the "persistent, reproducible, primary data" positioning. The symlink approach means nothing in the codebase had to know about it. The Electricity Maps cross-check closes a year-old "should we use a commercial carbon API?" question with data: no — the free Eco2mix-derived lifecycle number tracks a commercial reference within ~15% and is more real-time/granular for France than the paid feed.
 
 ### Open / deferred
 
@@ -35,6 +48,7 @@ Removes the only real space constraint on the box (system disk was at 58%) and g
 - **Wattlab service was restarted** as part of the migration — no separate action needed.
 - **Talk to Simon** about his `rem/` tree having moved (symlink keeps his paths working regardless).
 - **GOS1_INFRA.md "Disk Layout"** section also updated to match.
+- **Pull `ELECTRICITYMAPS_TOKEN` from `.env` after 18 May 2026** — trial expires; harmless if left (401 → Ember fallback), just tidy.
 
 ---
 
