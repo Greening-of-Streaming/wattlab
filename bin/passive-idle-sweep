@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""One-shot passive idle sweep.
+
+Polls P110 at 1Hz for N seconds with NO workload, logs (ts, watts,
+igpu_ppt, dgpu_temp), prints summary CV. Used to isolate whether the
+hour-long variance calibration's idle CV is dominated by repeated-encode
+thermal drift or by genuine idle-side noise from background daemons.
+"""
+import asyncio, csv, json, statistics, subprocess, sys, time
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, "/home/gos/wattlab/wattlab_service")
+from power import get_power_watts, read_sensors_dict, amdgpu_chip
+
+
+async def main(duration_s: int = 600):
+    out_dir = Path("/srv/data/owl/results/diagnostics")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out = out_dir / f"passive_idle_{ts}.csv"
+
+    rows = []
+    t0 = time.monotonic()
+    print(f"sampling for {duration_s}s -> {out}", flush=True)
+    for i in range(duration_s):
+        target = t0 + i
+        now = time.monotonic()
+        if now < target:
+            await asyncio.sleep(target - now)
+        try:
+            w = await get_power_watts()
+        except Exception as e:
+            w = None
+        # cheap sensor read alongside (every 5s to keep noise down)
+        igpu_ppt = dgpu_temp = igpu_temp = None
+        if i % 5 == 0:
+            try:
+                s = read_sensors_dict_full()
+                igpu_ppt = s.get("igpu_ppt")
+                igpu_temp = s.get("igpu_edge")
+                dgpu_temp = s.get("dgpu_junction")
+            except Exception:
+                pass
+        rows.append((i, datetime.now().isoformat(timespec="seconds"), w, igpu_ppt, igpu_temp, dgpu_temp))
+        if i % 60 == 0 and i:
+            ws = [r[2] for r in rows if r[2] is not None]
+            print(f"  t={i}s  n={len(ws)}  mean={statistics.mean(ws):.2f}W  "
+                  f"cv={(statistics.stdev(ws)/statistics.mean(ws))*100:.2f}%", flush=True)
+
+    with out.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["i", "ts", "watts", "igpu_ppt", "igpu_edge_c", "dgpu_junction_c"])
+        w.writerows(rows)
+
+    watts = [r[2] for r in rows if r[2] is not None]
+    mean = statistics.mean(watts)
+    sd   = statistics.stdev(watts)
+    cv   = (sd / mean) * 100
+    mn, mx = min(watts), max(watts)
+    print()
+    print(f"DONE  n={len(watts)}  mean={mean:.3f}W  sd={sd:.3f}W  cv={cv:.2f}%  "
+          f"min={mn:.2f}W  max={mx:.2f}W  range={mx-mn:.2f}W")
+    print(f"csv: {out}")
+
+
+def read_sensors_dict_full() -> dict:
+    """Pull iGPU + dGPU temps + iGPU PPT in one shot."""
+    r = subprocess.run(['sensors', '-j'], capture_output=True, text=True)
+    data = json.loads(r.stdout)
+    out = {}
+    dgpu = amdgpu_chip(data)
+    for k, v in data.items():
+        if not k.startswith("amdgpu"):
+            continue
+        # discrete vs integrated
+        if k == dgpu:
+            out["dgpu_junction"] = v.get("junction", {}).get("temp2_input")
+            out["dgpu_ppt"]      = v.get("PPT", {}).get("power1_average")
+        else:
+            out["igpu_edge"]     = v.get("edge", {}).get("temp1_input")
+            out["igpu_ppt"]      = v.get("PPT", {}).get("power1_average")
+    return out
+
+
+if __name__ == "__main__":
+    dur = int(sys.argv[1]) if len(sys.argv) > 1 else 600
+    asyncio.run(main(dur))

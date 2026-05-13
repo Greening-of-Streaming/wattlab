@@ -14,7 +14,10 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
 
-# Services to pause during measurement
+# Services to pause during measurement.
+# owl-maintenance-watchdog.timer (CR-015) fires every 60s and produced a
+# ~10W bump that landed in roughly every variance-calibration baseline
+# window. Suppressing it during a run drops idle CV by several percent.
 FOCUS_MODE_UNITS = [
     "sysstat-collect.timer",
     "anacron.timer",
@@ -24,6 +27,7 @@ FOCUS_MODE_UNITS = [
     "man-db.timer",
     "motd-news.timer",
     "update-notifier-download.timer",
+    "owl-maintenance-watchdog.timer",
 ]
 
 def focus_mode_enter():
@@ -774,7 +778,20 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
     gpu_tpl = s["variance_gpu_cmd"]
 
     stopped = focus_mode_enter()
-    idle_readings: list[float] = []   # raw P110 watts during all baselines
+    # Idle samples are kept *per window* (one inner list per baseline) so
+    # we can compute the metric two ways:
+    #   variance_idle_pct       = mean of within-window CVs (the noise
+    #                             floor an actual measurement faces in
+    #                             its ~8s baseline)
+    #   variance_idle_drift_pct = CV across window *means* (slow drift /
+    #                             periodic external events between
+    #                             windows — diagnostic, not consumed by
+    #                             the confidence flag)
+    # Pre-2026-05-13 the code pooled all baselines into one flat list and
+    # ran a single CV over them, which conflated the two and let a 60s
+    # external bump (e.g. owl-maintenance-watchdog) inflate the noise
+    # floor.
+    idle_windows: list[list[float]] = []
     cpu_delta_w: list[float] = []     # ΔW per CPU run (successful encodes only)
     gpu_delta_w: list[float] = []     # ΔW per GPU run (successful encodes only)
     cpu_failed = 0                    # CR-023: failed-encode counter
@@ -809,8 +826,8 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
             for _ in range(n_base):
                 w = await get_power_watts()
                 raw_cpu_base.append(w)
-                idle_readings.append(w)
                 await asyncio.sleep(POLL_INTERVAL)
+            idle_windows.append(list(raw_cpu_base))
             w_base_cpu = sum(raw_cpu_base) / len(raw_cpu_base)
 
             # --- CPU encode ---
@@ -844,8 +861,8 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
             for _ in range(n_base):
                 w = await get_power_watts()
                 raw_gpu_base.append(w)
-                idle_readings.append(w)
                 await asyncio.sleep(POLL_INTERVAL)
+            idle_windows.append(list(raw_gpu_base))
             w_base_gpu = sum(raw_gpu_base) / len(raw_gpu_base)
 
             # --- GPU encode ---
@@ -879,11 +896,16 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
     if jobs:
         jobs[job_id]["stage"] = "computing"
 
-    idle_cv = _cv(idle_readings)
+    # Per-window stats — see the comment on idle_windows above for the rationale.
+    window_cvs   = [c for c in (_cv(w) for w in idle_windows) if c is not None]
+    window_means = [sum(w) / len(w) for w in idle_windows if w]
+    idle_cv = round(sum(window_cvs) / len(window_cvs), 2) if window_cvs else None
+    idle_drift_cv = _cv(window_means)
     cpu_cv  = _cv(cpu_delta_w)
     gpu_cv  = _cv(gpu_delta_w)
     available = [v for v in [idle_cv, cpu_cv, gpu_cv] if v is not None]
     mean_cv = round(sum(available) / len(available), 2) if available else None
+    total_idle_polls = sum(len(w) for w in idle_windows)
 
     # CR-023: half-or-more failures on either side = poisoned data, refuse
     # to update settings. The result still gets returned for forensics.
@@ -893,18 +915,20 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
 
     result = {
         "runs_completed": len(cpu_delta_w),
-        "idle_readings_n": len(idle_readings),
+        "idle_readings_n": total_idle_polls,
+        "idle_windows_n":  len(idle_windows),
         "cpu_delta_w_values": cpu_delta_w,
         "gpu_delta_w_values": gpu_delta_w,
         "cpu_failed": cpu_failed,
         "gpu_failed": gpu_failed,
         "failure_stderr": failure_stderr[:5],   # cap to keep result small
-        "variance_idle_pct": idle_cv,
-        "variance_cpu_pct":  cpu_cv,
-        "variance_gpu_pct":  gpu_cv,
-        "variance_mean_pct": mean_cv,
-        "variance_updated": False,
-        "abort_reason": None,
+        "variance_idle_pct":       idle_cv,
+        "variance_idle_drift_pct": idle_drift_cv,
+        "variance_cpu_pct":        cpu_cv,
+        "variance_gpu_pct":        gpu_cv,
+        "variance_mean_pct":       mean_cv,
+        "variance_updated":        False,
+        "abort_reason":            None,
     }
 
     if too_many_failed:
@@ -916,10 +940,11 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
         )
     elif mean_cv is not None:
         current = cfg.load()
-        current["variance_idle_pct"] = idle_cv
-        current["variance_cpu_pct"]  = cpu_cv
-        current["variance_gpu_pct"]  = gpu_cv
-        current["variance_pct"]      = mean_cv
+        current["variance_idle_pct"]       = idle_cv
+        current["variance_idle_drift_pct"] = idle_drift_cv
+        current["variance_cpu_pct"]        = cpu_cv
+        current["variance_gpu_pct"]        = gpu_cv
+        current["variance_pct"]            = mean_cv
         cfg.save(current)
         result["variance_updated"] = True
 

@@ -16,9 +16,14 @@ DEFAULTS = {
     "variance_green_x": 5.0,    # 🟢  ΔW must exceed this × noise_w
     "variance_yellow_x": 2.0,   # 🟡  ΔW must exceed this × noise_w
     # Variance calibration outputs (written by calibration run, not user-edited)
-    "variance_idle_pct": None,   # CV of raw idle P110 readings across all baseline periods
-    "variance_cpu_pct": None,    # CV of ΔW across H264-CPU runs
-    "variance_gpu_pct": None,    # CV of ΔW across H265-GPU runs
+    "variance_idle_pct": None,        # mean of within-window CVs across all baselines —
+                                      # noise floor a single measurement actually faces
+                                      # (feeds the confidence flag via variance_pct)
+    "variance_idle_drift_pct": None,  # CV across the *means* of each baseline window —
+                                      # diagnostic for slow drift or periodic external
+                                      # events between windows; not consumed by confidence
+    "variance_cpu_pct": None,         # CV of ΔW across H264-CPU runs
+    "variance_gpu_pct": None,         # CV of ΔW across H265-GPU runs
     # Variance calibration run parameters
     "variance_runs": 10,         # how many H264-CPU + H265-GPU pairs to run
     "variance_cooldown_s": 60,   # seconds between each run pair

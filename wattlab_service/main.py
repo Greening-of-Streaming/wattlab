@@ -516,7 +516,7 @@ _CARBON_JS = """
   function loadZones(){
     if (_zonesPromise) return _zonesPromise;
     _zonesPromise = fetch('/carbon').then(function(r){return r.json();})
-      .catch(function(){return null;});
+      .catch(function(){ _zonesPromise = null; return null; });
     return _zonesPromise;
   }
   // Warm the cache on every page that loads the footer.
@@ -5864,10 +5864,11 @@ async def settings_page(request: Request):
     {field("av1_bitrate_kbps",  s['av1_bitrate_kbps'],  500, 20000, "kbps", "AV1 target bitrate (libsvtav1 + av1_vaapi)", step=100)}
 
     <div class="section">Confidence thresholds</div>
-    {calib_field("variance_idle_pct", s['variance_idle_pct'], "CV of raw idle P110 readings — set by calibration")}
-    {calib_field("variance_cpu_pct",  s['variance_cpu_pct'],  "CV of ΔW across H264-CPU runs — set by calibration")}
-    {calib_field("variance_gpu_pct",  s['variance_gpu_pct'],  "CV of ΔW across H265-GPU runs — set by calibration")}
-    {field("variance_pct",     s['variance_pct'],     0, 50,  "%",     "composite variance (mean of above) — editable override", step=0.1)}
+    {calib_field("variance_idle_pct",       s['variance_idle_pct'],       "mean of within-window idle CVs — noise floor a single measurement faces (feeds composite below)")}
+    {calib_field("variance_idle_drift_pct", s.get('variance_idle_drift_pct'), "CV across baseline window means — diagnostic for between-window drift; NOT consumed by confidence")}
+    {calib_field("variance_cpu_pct",        s['variance_cpu_pct'],        "CV of ΔW across H264-CPU runs — set by calibration")}
+    {calib_field("variance_gpu_pct",        s['variance_gpu_pct'],        "CV of ΔW across H265-GPU runs — set by calibration")}
+    {field("variance_pct",     s['variance_pct'],     0, 50,  "%",     "composite variance (mean of above three; drift excluded) — editable override", step=0.1)}
     {field("variance_green_x", s['variance_green_x'], 1, 20,  "× noise", "🟢 ΔW must exceed this multiple of noise floor", step=0.5)}
     {field("variance_yellow_x",s['variance_yellow_x'],1, 10,  "× noise", "🟡 ΔW must exceed this multiple of noise floor", step=0.5)}
     {field("conf_green_polls", s['conf_green_polls'],  1, 100, "polls", "🟢 minimum poll count")}
