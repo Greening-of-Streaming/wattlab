@@ -27,17 +27,10 @@ DEFAULTS = {
     # Variance calibration run parameters
     "variance_runs": 10,         # how many H264-CPU + H265-GPU pairs to run
     "variance_cooldown_s": 60,   # seconds between each run pair
-    "variance_cpu_cmd": (
-        "ffmpeg -y -i {input} -c:v libx264 -crf 23"
-        " -vf scale=-2:1080 -c:a aac -b:a 128k {output}"
-    ),
-    "variance_gpu_cmd": (
-        "ffmpeg -y -hwaccel vaapi -hwaccel_output_format vaapi"
-        " -extra_hw_frames 32"
-        " -vaapi_device /dev/dri/renderD128 -i {input}"
-        " -vf scale_vaapi=w=-2:h=1080:format=nv12"
-        " -c:v hevc_vaapi -qp 28 -c:a aac -b:a 128k {output}"
-    ),
+    # Variance commands derive from video.PRESETS["cpu"] / ["h265_gpu"] at
+    # run time (see video.variance_template). Hardcoded strings used to live
+    # here but drifted out of sync with /video after S13's ABR migration —
+    # calibration was on -crf 23 / -qp 28 while /video ran -b:v Nk.
     # Encoding targets — ABR bitrate per codec (applied to both CPU and GPU presets)
     "h264_bitrate_kbps": 4000,
     "h265_bitrate_kbps": 2000,

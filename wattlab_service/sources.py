@@ -4,6 +4,12 @@ import json
 
 # Pre-loaded test content registry
 PRELOADED = {
+    "gos_in_50s": {
+        "label": "GoS promo — 50s HD",
+        "description": "Greening of Streaming promo · 1920×1080 · 30fps · H.264 · 50s",
+        "path": Path("/home/gos/wattlab/test_content/GoS-in-50s.mp4"),
+        "credit": "Greening of Streaming",
+    },
     "meridian_4k": {
         "label": "Meridian 4K — full",
         "description": "Netflix Open Content · 3840×2160 · 59.94fps · H.264 · 12min · CC BY 4.0",

@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
 from power import get_power_watts, read_sensors_dict
+import video as vid
 from video import run_video_measurement, run_both_measurement, run_all_measurement, run_video_measurement_path, run_both_measurement_path, UPLOAD_DIR, LOCK_FILE
 from sources import get_all_sources, PRELOADED
 from llm import run_llm_measurement, run_llm_batch_measurement, run_llm_both_measurement, MODELS, TASKS
@@ -2392,22 +2393,6 @@ async def index(request: Request):
                         border: 1px solid var(--accent); padding: 0.55rem 2rem;
                         font-size: 1rem; display: inline-block; }}
         .nav-video a:hover {{ background: #00ff9922; }}
-        /* CR-042 — Pixop placeholder tile. Peer-shape to nav-video but amber
-           (--warn) so it visibly reads as "placeholder, not measured". Sub-label
-           is the second signal; the third lives on the page itself. */
-        .nav-enhance {{ display: flex; flex-direction: column; align-items: center;
-                        gap: 0.3rem; }}
-        .nav-enhance a {{ color: var(--warn); text-decoration: none;
-                          border: 1px solid var(--warn); padding: 0.55rem 2rem;
-                          font-size: 1rem; display: inline-flex; align-items: baseline;
-                          gap: 0.5rem; }}
-        .nav-enhance a:hover {{ background: rgba(255,170,0,0.12); }}
-        .nav-enhance .enhance-tag {{ font-size: 0.55rem; letter-spacing: 0.08em;
-                                     color: var(--warn); border: 1px solid var(--warn);
-                                     padding: 0.05rem 0.3rem; border-radius: 2px;
-                                     text-transform: uppercase; }}
-        .nav-enhance-sub {{ font-size: 0.7rem; color: var(--text-5);
-                            letter-spacing: 0.04em; }}
         .nav-beta-note {{ font-size: 0.72rem; color: var(--text-5); text-align: center;
                           line-height: 1.55; max-width: 460px; margin-top: -0.5rem; }}
         .nav-ai {{ display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }}
@@ -2455,10 +2440,6 @@ async def index(request: Request):
     <div class="nav">
         <div class="nav-tour"><a href="/demo">◆ Guided Tour</a></div>
         <div class="nav-video"><a href="/video">▶ Video transcode</a></div>
-        <div class="nav-enhance">
-            <a href="/video-enhance">▶ Video enhancement <span class="enhance-tag">Placeholder</span></a>
-            <div class="nav-enhance-sub">Demo · illustrative · awaiting partner integration</div>
-        </div>
         <div class="nav-label">Beta · exploratory</div>
         <div class="nav-beta-note">
             Energy / quality / faithfulness tradeoffs we're investigating.<br>
@@ -2468,6 +2449,7 @@ async def index(request: Request):
             <a href="/image">Image generation <span class="beta-tag">BETA</span></a>
             <a href="/llm">LLM inference <span class="beta-tag">BETA</span></a>
             <a href="/rag">RAG energy test <span class="beta-tag">BETA</span></a>
+            <a href="/video-enhance">Video enhancement <span class="beta-tag">Concept demo</span></a>
         </div>
         <div class="nav-util">
             <a href="/queue-status">⏱ Queue</a>
@@ -2723,13 +2705,25 @@ async def video_page(request: Request):
             </label>
             <label style="display:flex;align-items:flex-start;gap:0.75rem;
                           border:1px solid var(--border-3);padding:0.75rem;cursor:pointer">
+                <input type="radio" name="source" value="gos_in_50s"
+                       onchange="selectSource('gos_in_50s')"
+                       style="margin-top:0.2rem;accent-color:var(--accent)">
+                <div>
+                    <div style="color:var(--text);font-size:0.85rem">50s · GoS promo in HD</div>
+                    <div style="color:var(--text-3);font-size:0.75rem">
+                        1920×1080 · H.264 · 50s · &lt;100MB
+                    </div>
+                </div>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:0.75rem;
+                          border:1px solid var(--border-3);padding:0.75rem;cursor:pointer">
                 <input type="radio" name="source" value="meridian_120s"
                        onchange="selectSource('meridian_120s')"
                        style="margin-top:0.2rem;accent-color:var(--accent)">
                 <div>
                     <div style="color:var(--text);font-size:0.85rem">Meridian 4K — 2 min extract</div>
                     <div style="color:var(--text-3);font-size:0.75rem">
-                        3840×2160 · H.264 · 2min · ~200MB · fast demo · CC BY 4.0
+                        3840×2160 · H.264 · 2min · ~122MB · fast demo · CC BY 4.0
                     </div>
                 </div>
             </label>
@@ -2742,7 +2736,7 @@ async def video_page(request: Request):
                 <div>
                     <div style="color:var(--text);font-size:0.85rem">Meridian 4K — full 12 min</div>
                     <div style="color:var(--text-3);font-size:0.75rem">
-                        3840×2160 · 59.94fps · H.264 · 12min · 812MB · CC BY 4.0 · ⚠ Both mode ~6-8 min
+                        3840×2160 · 59.94fps · H.264 · 12min · ~812MB · CC BY 4.0 · ⚠ Both mode ~6-8 min
                     </div>
                 </div>
             </label>
@@ -5882,8 +5876,16 @@ async def settings_page(request: Request):
     </div>
     {slider_field("variance_runs",      s['variance_runs'],      2,  100, 1,  "runs",    "number of H264-CPU + H265-GPU run pairs")}
     {slider_field("variance_cooldown_s",s['variance_cooldown_s'],10, 300, 10, "s",       "cooldown between each run pair")}
-    {textarea_field("variance_cpu_cmd", s['variance_cpu_cmd'], "H.264 CPU command — {input} and {output} are substituted at runtime")}
-    {textarea_field("variance_gpu_cmd", s['variance_gpu_cmd'], "H.265 GPU command — {input} and {output} are substituted at runtime")}
+    <div style="padding:0.5rem 0;border-bottom:1px solid var(--panel-2)">
+      <label style="color:var(--text-2);font-size:0.85rem">H.264 CPU command (derived)</label>
+      <div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem;margin-bottom:0.3rem">Mirrors the <code>/video</code> H.264 CPU preset · bitrate from <code>h264_bitrate_kbps</code> · {{input}}/{{output}} substituted at runtime</div>
+      <div style="background:var(--panel-2);border:1px solid var(--border-2);padding:0.4rem 0.5rem;font-family:monospace;font-size:0.72rem;color:var(--text-4);word-break:break-all;line-height:1.5">{vid.variance_template("cpu", s)}</div>
+    </div>
+    <div style="padding:0.5rem 0;border-bottom:1px solid var(--panel-2)">
+      <label style="color:var(--text-2);font-size:0.85rem">H.265 GPU command (derived)</label>
+      <div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem;margin-bottom:0.3rem">Mirrors the <code>/video</code> H.265 GPU preset · bitrate from <code>h265_bitrate_kbps</code> · {{input}}/{{output}} substituted at runtime</div>
+      <div style="background:var(--panel-2);border:1px solid var(--border-2);padding:0.4rem 0.5rem;font-family:monospace;font-size:0.72rem;color:var(--text-4);word-break:break-all;line-height:1.5">{vid.variance_template("h265_gpu", s)}</div>
+    </div>
     {'<button onclick="runVarianceCalibration()" id="varCalBtn" style="background:var(--border);color:var(--accent);border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">▶ Run variance calibration</button><div id="var-cal-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>' if local else '<div style="color:var(--text-5);font-size:0.78rem;margin-top:0.5rem">Calibration requires lab access.</div>'}
 
     {('''<details class="calib-details" id="precalDetails">
@@ -5897,6 +5899,14 @@ async def settings_page(request: Request):
         <div id="precal-stats" style="margin-top:0.75rem;font-size:0.78rem;color:var(--text-3);line-height:1.7"></div>
       </div>
     </details>''') if local else ''}
+
+    {(f'''<div class="section">Members</div>
+    <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
+      Magic-link allowlist (<code>data/members.json</code>) — one email per line.
+      Lowercased, stripped, deduped and sorted on save. Reloaded into the running service
+      automatically; no restart needed. <span style="color:var(--text-3)">{len(auth.list_members())} email(s)</span>
+    </div>
+    {textarea_field("members", chr(10).join(auth.list_members()), "", rows=12)}''') if local else ''}
 
     <div class="section">Tier limits</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
@@ -5918,7 +5928,7 @@ async def settings_page(request: Request):
                             'variance_runs','variance_cooldown_s',
                             'queue_anonymous_cap','queue_member_cap',
                             'upload_size_anonymous_mb','upload_size_member_mb'];
-        const str_fields = ['variance_cpu_cmd','variance_gpu_cmd'];
+        const str_fields = ['members'];
         const body = {{}};
         for (const f of num_fields) {{
             const el = document.getElementById(f);
@@ -6038,8 +6048,10 @@ async def settings_page(request: Request):
 
 @app.post("/settings", dependencies=[Depends(requires(SETTINGS_WRITE))])
 async def settings_save(request: Request, data: dict):
+    members_raw = data.pop("members", None)
+    member_count = auth.write_members(members_raw) if members_raw is not None else None
     saved = cfg.save(data)
-    return {"ok": True, "settings": saved}
+    return {"ok": True, "settings": saved, "member_count": member_count}
 
 
 # --- Demo mode ---

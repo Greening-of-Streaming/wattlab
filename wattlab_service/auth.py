@@ -110,6 +110,45 @@ def is_member(email: str) -> bool:
     return email.strip().lower() in _members
 
 
+def list_members() -> list[str]:
+    """Current allowlist as a sorted list. Reads in-memory state, not disk."""
+    return sorted(_members)
+
+
+def _members_file_path() -> Path:
+    return Path(
+        _ENV.get("OWL_MEMBERS_FILE")
+        or os.environ.get("OWL_MEMBERS_FILE")
+        or _DEFAULT_MEMBERS_FILE
+    )
+
+
+def write_members(emails) -> int:
+    """Replace the allowlist. Accepts an iterable of strings or one newline-
+    separated string. Lowercases, strips, dedupes, sorts; keeps only entries
+    containing '@'. Atomic rewrite that preserves any sibling fields (e.g.
+    `_comment`); calls reload_members(). Returns the new count."""
+    if isinstance(emails, str):
+        emails = emails.splitlines()
+    cleaned = sorted({
+        e.strip().lower()
+        for e in emails
+        if isinstance(e, str) and "@" in e.strip()
+    })
+    path = _members_file_path()
+    try:
+        existing = json.loads(path.read_text())
+        if not isinstance(existing, dict):
+            existing = {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        existing = {}
+    existing["members"] = cleaned
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(existing, indent=2) + "\n")
+    tmp.replace(path)
+    return reload_members()
+
+
 # --- Token primitives -------------------------------------------------------
 #
 # Wire format: base64url(payload_json) + "." + base64url(hmac_sha256(payload_b64))

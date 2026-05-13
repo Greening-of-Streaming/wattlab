@@ -266,6 +266,19 @@ PRESETS = {
 def _preset_bps(preset_key: str, s: dict) -> int:
     return int(s.get(PRESETS[preset_key]["bitrate_key"], 4000))
 
+
+def variance_template(preset_key: str, s: dict) -> str:
+    """Render a PRESETS entry as a {input}/{output} command template, using
+    the current bitrate from settings. Variance calibration consumes these
+    so its workload is identical to what users see on /video — fix the
+    drift that crept in when /video moved to ABR (S13) but the variance
+    textareas stayed on -crf/-qp."""
+    import shlex
+    args = PRESETS[preset_key]["cmd_fn"](
+        Path("{input}"), Path("{output}"), _preset_bps(preset_key, s)
+    )
+    return shlex.join(args)
+
 POLL_INTERVAL = 1.0
 
 # --- Sensors ---  (chip resolution + parsing lives in power.read_sensors_dict)
@@ -774,8 +787,8 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
     n_runs = int(s["variance_runs"])
     cooldown = float(s["variance_cooldown_s"])
     n_base = int(s["baseline_polls"])
-    cpu_tpl = s["variance_cpu_cmd"]
-    gpu_tpl = s["variance_gpu_cmd"]
+    cpu_tpl = variance_template("cpu", s)
+    gpu_tpl = variance_template("h265_gpu", s)
 
     stopped = focus_mode_enter()
     # Idle samples are kept *per window* (one inner list per baseline) so

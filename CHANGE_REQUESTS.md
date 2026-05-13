@@ -998,6 +998,53 @@ Leverage: low until a chip exists. When one does, the finding is a sharper versi
 
 ---
 
+## CR-043 · Input/output video preview in the result card (defer until CR-039 lands quality plumbing)
+
+**Status:** captured 2026-05-14. Deferred — re-evaluate once CR-039 (energy-vs-quality axis) lands its retention plumbing.
+**Triggered by:** owner question — "what's the feasibility of a video display in the results card? optional, input and output side by side in a dropdown — the 4K→HD downscale might be visible."
+
+### Problem
+
+The result card today is metrics + carbon strip + scope notes — no media. A visitor reading "GPU used 81% less energy than CPU on H.265" has to trust that the two encodes produced equivalent output. Showing the actual transcoded video (or at least the input) would make the energy claim visceral and answer the implicit "is this still good enough to ship?" question that comes up around every codec-comparison number.
+
+### Why this was deferred, not built
+
+The pushback that landed it here:
+
+1. **The "4K→1080p downscale" intuition doesn't survive contact with the presets.** Every preset already runs `-vf scale=-2:1080` on both CPU and GPU paths. A side-by-side player would not reveal that downscale — both sides are downscaled identically. What it *would* reveal is the codec-engine delta (libx264 vs h264_vaapi at the same ABR), which at 1080p in a browser tab is usually too subtle to see without still-frame zoom or a proper PSNR/VMAF treatment.
+2. **Retention is a lifecycle flip.** Today `run_job(..., delete_after=True)` clears outputs the moment metrics are computed. Keeping them needs (a) a scoped-by-`visitor_key` serving route (CR-026 just tightened this), (b) a janitor for disk pressure — a Member `all_codecs` sweep retains six files at ~4 Mbps × N min = multi-GB per run, (c) per-tier retention policy. None of this is hard individually, but it's a small system, not a one-file change.
+3. **The "quality" question already has a home.** CR-039 (frontier-model-as-judge / energy-vs-quality axis) is the right place for a structured quality treatment of all the comparison results, and it will need its own output-retention plumbing anyway. Building a generic dual-player here forks the retention machinery before CR-039 has set its shape.
+
+### Cheap-fallback option (~15 lines, if owner ever wants the visceral beat sooner)
+
+**Input-only preview, preloaded sources only.** Three fixed known files in `test_content/`, served via the existing `/video-enhance/asset/` allowlist pattern (extend the allowlist). A `<details>` block on the result card lazy-mounts a single `<video>` element when opened. No retention changes, no per-job scoping, no janitor — because nothing new is stored. The visitor sees what went into the encoder, which is the lesser half of the comparison but the *only* half that scales without a retention rebuild.
+
+### Agreed direction (when picked back up)
+
+Ride on CR-039's plumbing once it lands:
+
+1. Reuse CR-039's per-job output retention (it needs the encoded artefact for any quality-judge pass anyway — PSNR/VMAF/LLM-judge all consume the actual encoded file).
+2. Reuse its serving route (visitor_key-scoped) and its janitor.
+3. The dual-player UI then becomes a thin add: a `<details>` on the card, two `<video>` elements with synchronised seek, lazy-mounted on open. Audio off by default. Add a "freeze frame at t=" picker to make codec-engine artefacts visible — that's where the eye actually sees the delta.
+4. Gate behind a per-result `keep_output` flag so most runs still default to `delete_after=True` and don't pay the disk cost.
+
+### Watch-outs
+
+- **Don't ship retention without a janitor.** Even with the Member `queue_member_cap=4` and Anonymous `queue_anonymous_cap=1`, a busy day stacks GB-scale residue fast. Hours-old auto-purge is fine; the visitor's window for "still useful preview" is short.
+- **Don't serve outputs via a guessable URL.** Per-`visitor_key` scoping + token in URL, not just job_id.
+- **The 4K→1080p framing was misleading** — see above. If the eventual UI ships, name and frame it as "codec-engine comparison preview," not "see the downscale."
+- **Mobile-data viewer concern:** if a visitor opens the result card on a phone and the dual-player auto-loads, that's tens of MB streamed without consent. Lazy-mount on `<details>` open, and label the disclosure.
+
+### Cross-references
+
+- **CR-039** — owns the retention plumbing this CR rides on. Don't build before CR-039 sets its shape.
+- **CR-029** — encoding rigor / apples-to-apples GOP+profile work. A dual-player without CR-029's validation is just two videos that *look* similar; the rigor pass is what makes the comparison meaningful.
+- **CR-026** — anon-integrity pass that explicitly scopes own-jobs by `visitor_key`. Any output-serving route must honour this.
+
+### Priority: deferred. Re-evaluate when CR-039 picks up.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
