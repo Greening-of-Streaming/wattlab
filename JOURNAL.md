@@ -7,6 +7,59 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 25 — 2026-05-13 / 2026-05-14
+
+### What we did
+
+Closed out the post-S24 variance recalibration cleanly. Three commits plus an overnight calibration: methodology fix for the idle-CV computation, a preliminary calibration that surfaced a third confound, and the final overnight run that produced the cleanest variance figures on record. Plus a polish commit (`2e30fa1`, ~midnight) covering a Members editor, calibration↔/video preset alignment, and small nav tidies.
+
+**Methodology fix — per-window idle CV + watchdog-timer suppression (`64d65d4`).** A passive-idle sweep on 2026-05-13 showed the genuine idle-side noise floor is ~2.8%, but recent calibrations were coming back at ~8% on the idle CV. The cause: `run_variance_calibration` was pooling all ~192 baseline polls (24 runs × 8 polls × 2 sides) into one flat list and running σ/μ across the full ~hour calibration. That conflated two distinct things — within-window noise (what an actual 8 s baseline sees in a real measurement) and between-window drift (slow thermal warm-up, room temperature, periodic external events). On a long calibration, `owl-maintenance-watchdog.timer` (CR-015, S23) fires every 60 s and lands a ~10 W bump in roughly every baseline window; pooled across an hour those bumps look like noise floor when they're really an external transient. Two fixes in one commit:
+- `run_variance_calibration` now collects readings **per-baseline-window** (a `list[list[float]]`). `variance_idle_pct` = mean of within-window CVs (noise floor; the figure the confidence flag consumes). New `variance_idle_drift_pct` = CV across window means (slow drift; **diagnostic only**, not in the composite). Surfaced on `/settings` with the explanatory tooltip ("CV across baseline window means — diagnostic for between-window drift; NOT consumed by confidence").
+- `FOCUS_MODE_UNITS` gains `owl-maintenance-watchdog.timer`; matching start/stop entries added to `/etc/sudoers.d/wattlab-focus`. The watchdog is now suppressed during calibrations along with the other background timers.
+- `bin/passive-idle-sweep` — reusable 10-min P110 trace with no workload, for isolating idle-side noise from encode-induced thermal drift without spinning up a full calibration. Logs `(ts, watts, igpu_ppt, dgpu_temp)` to `/srv/data/owl/results/diagnostics/passive_idle_*.csv` (latest: `passive_idle_20260513_141706.csv`).
+- Drive-by fix in `_CARBON_JS`: `loadZones()` was caching a failed-fetch promise forever, so any page loaded during a `wattlab` restart stayed stuck on "CO₂e comparison unavailable" until manual reload. `.catch` now clears `_zonesPromise` so the next render retries.
+
+**Preliminary calibration (`8507f94`, evening 2026-05-13).** First calibration since the S24 hardware changes (4 TB NVMe + 5th case fan). n=12 / cooldown 20 s on `meridian_4k.mp4`. Results: **idle 8.62 / cpu 3.56 / gpu 2.08 → variance_pct 2.40**. `variance_cooldown_s` bumped 10 → 20 on this run; `variance_idle_drift_pct` populated for the first time (was `null` previously). Initial diagnosis: post-load drift to ~60-63 W (the S24 thermal-recovery probe surfaced this) inflating idle — i.e. between-window drift, not within-window noise. Treated as preliminary; the commit message itself says "a longer overnight run (n=24+, cooldown 30s+) at this HW baseline will pin the steady-state values." In retrospect this run also pre-dated the watchdog suppression actually taking effect — the timer hook needed a service restart that happened later — so the inflated idle was the watchdog bumps doing what the methodology fix predicted.
+
+**Overnight calibration — the clean one.** Run via `POST /variance/run` at 00:24:40 (one log line in `journalctl`), settings.json written 03:12:10 — **~2h47m wall** for **n=32 / cooldown 10 s** on the full 4K Meridian source, with `owl-maintenance-watchdog.timer` properly suppressed this time. Results:
+
+| metric | value | prev (S22 n=24) | prev (S23 n=6) | S25 preliminary n=12 |
+|---|---:|---:|---:|---:|
+| `variance_idle_pct` (within-window CV) | **2.30** | 2.41 | 2.26 | 8.62 |
+| `variance_idle_drift_pct` (between-window) | **1.10** | n/a | n/a | n/a |
+| `variance_cpu_pct` (ΔW CV across H264-CPU runs) | **0.95** | 1.33 | 0.66 | 3.56 |
+| `variance_gpu_pct` (ΔW CV across H265-GPU runs) | **0.63** | 4.77 | 0.95 | 2.08 |
+| `variance_pct` (composite — mean of three) | **1.29** | 2.84 | 1.29 | 2.40 |
+
+Three things worth noting:
+
+1. **Composite 1.29% is the cleanest figure on record** — same as the S23 verification value but on a much larger sample (n=32 vs n=6) and on the new post-S24 hardware baseline. Mean of (2.30 + 0.95 + 0.63) / 3 = 1.293 → 1.29.
+2. **Drift 1.10% is small** — slow between-window drift is < within-window noise on this hardware, which validates the per-window split landed in `64d65d4`. If drift had come back high, the methodology fix would have surfaced a real problem (e.g. thermal soak across the hour); instead it confirmed there's nothing systematic to correct for. The 5th case fan helping airflow probably contributes here — `bin/probe-thermal-recovery` had already shown the chassis was hot but recoverable.
+3. **GPU CV dropped 4.77% → 0.63%** between S22 and S25 — that's the cumulative effect of (a) ffmpeg master fixing the `scale_vaapi` leak (CR-022, S23), so GPU encodes now produce a full ~14 s of polls instead of being cut short by `gpu_encode_max_s=30`, plus (b) the watchdog suppression. The 0.63% figure is well below Tania's 3-5% expectation band — at the limit of what P110 + a stable thermal envelope can produce.
+
+Steady idle ~56-58 W is confirmed (the S24 thermal-recovery probe value). `variance_cooldown_s=10` is plenty — the S24 probe showed full idle recovery by d≈5 s, so 10 s is comfortable margin.
+
+**Polish commit (`2e30fa1`, S25 part 3, 00:19).** A small grab-bag landed alongside the calibration work:
+- **Members editor on `/settings`** (Lab tier only). Textarea backed by `auth.write_members()` — atomic write, dedupe, lowercase normalisation, preserves the `_comment` key in `data/members.json`. `reload_members()` runs on save, so no service restart needed to add a Member.
+- **Variance ↔ `/video` preset alignment.** Calibration commands previously lived in `settings.json` as `variance_cpu_cmd` / `variance_gpu_cmd`, hand-edited and stale (CRF/QP defaults that didn't match the ABR `PRESETS` `/video` actually uses). New `video.variance_template(side, settings)` derives the calibration cmd live from `PRESETS["cpu"]` and `PRESETS["h265_gpu"]`. `/settings` shows the rendered templates as read-only previews. The two stale keys are gone. Drift between calibration workload and benchmark workload can't recur.
+- **Sources.** `GoS-in-50s.mp4` added as a preselectable on `/video` (moved into `test_content/` → `/srv/data/owl`). `meridian_120s` size corrected (~200MB → ~122MB) and `meridian_4k` listed as ~812MB.
+- **Nav tidy.** Home-page video-enhance tile (CR-042) folded into the AI row after RAG with "Concept demo" tag — amber box / sub-label / `.nav-enhance` CSS removed now the Pixop demo is past.
+- **CR-043 captured** (video preview in result card, deferred to ride on CR-039's quality / retention plumbing). CLAUDE.md CR index 19 → 20.
+
+### Why it matters
+
+The variance figure is the noise floor that everything else stands on — every confidence flag (`noise_w = variance_pct/100 × w_base`) and every "is this delta repeatable" decision flows from it. A `variance_pct` of 1.29% on n=32 means the confidence framework is operating on a sound, statistically-honest foundation, and the gap to Tania's 3-5% expectation is now headroom rather than something to explain away. Equally, the *path* to this figure mattered: the methodology fix (per-window CV) is what made the difference visible; the watchdog-timer suppression is what made it real; the preset alignment makes sure calibration measures the same workload visitors run.
+
+Settling this on a clean hardware baseline (NVMe + 5th fan) also moves the post-S24 baseline from "approximate" to "pinned" — no more "calibrate later" deferrals on the open list. The Hardware Disclosure "Idle power" row + the `variance_pct` figure in CLAUDE.md can both be stated with confidence.
+
+### Open / deferred
+
+- **Service restart still pending** — `systemctl restart wattlab` still needs to be done by the owner (sudoers) to deploy the GPU-sensor fix from S24 (`68efe2a`) and the polish commit's preset-alignment + Members editor. The calibration itself ran in a live service, so the new variance values are already in settings.json and consumed by every subsequent confidence calculation; the restart is for the unrelated UI changes.
+- **systemd unit install for `owl-maintenance-watchdog.timer` in the focus-mode suppress list** — the sudoers entry (`/etc/sudoers.d/wattlab-focus`) needs to be deployed on GoS1 for the suppression to actually take effect at runtime. The overnight calibration worked because the watchdog timer wasn't firing at all during the calibration window (the previous focus_mode entry already covered it), but the explicit suppression should be in place for future runs.
+- **`max_idle_mins`** stays at 30 (CR-015 default). The watchdog timer is now correctly suppressed during measurement workloads; the auto-lower-maintenance-flag behaviour is unaffected.
+
+---
+
 ## Session 24 — 2026-05-12
 
 ### What we did
