@@ -190,323 +190,95 @@ For a stronger statistical methodology, WattLab would need repeated runs per con
 
 ## 9. Proposed Improvement: CI-Based Single-Run Confidence
 
-The current rule compares `delta_w` against empirical thresholds:
+This section is a proposed replacement for the current single-run traffic light. It is scoped to **single-run measurability**: "can this one run be distinguished from idle?" It is not a repeatability test across many runs.
+
+### 9.1 Correct Use of Existing Calibration Fields
+
+The current calibration fields do not all describe the same statistical object:
+
+| Field | Current meaning | Use in single-run CI? |
+|---|---|---|
+| `variance_idle_pct` | CV of individual 1-second idle P110 readings during calibration | Yes, as the calibrated idle noise floor. |
+| `variance_cpu_pct` | CV of run-level mean `delta_w` across repeated H.264 CPU calibration runs | No, reserve for aggregate/repeated-run confidence. |
+| `variance_gpu_pct` | CV of run-level mean `delta_w` across repeated H.265 GPU calibration runs | No, reserve for aggregate/repeated-run confidence. |
+
+So the corrected single-run method should **not** use:
 
 ```text
-yellow_threshold = variance_yellow_x * noise_w
-green_threshold  = variance_green_x  * noise_w
+max(variance_idle_pct, variance_cpu_pct)
+max(variance_idle_pct, variance_gpu_pct)
 ```
 
-This is useful, but the multipliers `variance_yellow_x` and `variance_green_x` are not currently tied to a formal confidence interval. A more statistically solid single-run method would express both calibrated uncertainty and per-run uncertainty as confidence intervals.
-
-### 9.1 Use Workload-Specific Calibrated Variance
-
-Instead of averaging all calibration outputs into one global `variance_pct`, use the more conservative calibrated variance for the relevant workload class:
+Those values are not directly comparable. For the first CI-based implementation, use:
 
 ```text
-effective_calibrated_variance_pct =
-  max(variance_idle_pct, variance_for_this_workload_type)
+calibrated_cv_pct = variance_idle_pct
 ```
 
-For video:
+### 9.2 Required Per-Run Samples
+
+Persist these arrays in every video result JSON:
 
 ```text
-CPU video run:
-  variance_for_this_workload_type = variance_cpu_pct
-
-GPU video run:
-  variance_for_this_workload_type = variance_gpu_pct
+baseline_samples_w
+task_samples_w
 ```
 
-With the current checked-in values:
+Then each run can compute:
 
 ```text
-variance_idle_pct = 1.79 %
-variance_cpu_pct  = 0.82 %
-variance_gpu_pct  = 0.64 %
+w_base = mean(baseline_samples_w)
+w_task = mean(task_samples_w)
+delta_w = w_task - w_base
 
-CPU calibrated variance = max(1.79, 0.82) = 1.79 %
-GPU calibrated variance = max(1.79, 0.64) = 1.79 %
+n_base = count(baseline_samples_w)
+n_task = count(task_samples_w)
+
+std_base = sample standard deviation of baseline_samples_w
+std_task = sample standard deviation of task_samples_w
 ```
 
-Rationale: every measurement contains idle/background/instrument noise, so `variance_idle_pct` should act as a floor. Workload-specific variance can only increase that floor if the workload calibration is noisier.
+This uses the actual noise observed during the run instead of relying only on calibration.
 
-### 9.2 Calibrated Confidence Interval
+### 9.3 Two Uncertainty Estimates
 
-Convert the calibrated variance percentage into watts:
+Compute a calibrated uncertainty from the idle calibration:
 
 ```text
 sigma_calibrated_w =
-  effective_calibrated_variance_pct / 100 * w_base
-```
+  variance_idle_pct / 100 * w_base
 
-If we treat this as the calibrated standard deviation of watt-level measurement noise, then the standard error of the difference between baseline mean and task mean is:
-
-```text
 SE_calibrated =
   sigma_calibrated_w * sqrt((1 / n_base) + (1 / n_task))
 ```
 
-Then the calibrated 95% confidence interval for `delta_w` is:
-
-```text
-CI_calibrated_95 =
-  delta_w +/- t_critical * SE_calibrated
-```
-
-For a simple first implementation, `t_critical = 1.96` is acceptable when sample counts are reasonably large. For small sample counts, use a Student-t critical value with approximate degrees of freedom.
-
-### 9.3 Per-Run Confidence Interval
-
-For the specific run, keep all baseline and task samples:
-
-```text
-baseline samples: b1, b2, ..., bn
-task samples:     t1, t2, ..., tm
-```
-
-Compute:
-
-```text
-w_base = mean(baseline_samples)
-w_task = mean(task_samples)
-delta_w = w_task - w_base
-
-std_base = sample_standard_deviation(baseline_samples)
-std_task = sample_standard_deviation(task_samples)
-```
-
-Then estimate the per-run standard error:
+Compute a per-run uncertainty from the actual samples:
 
 ```text
 SE_per_run =
   sqrt((std_base^2 / n_base) + (std_task^2 / n_task))
 ```
 
-The per-run 95% confidence interval is:
-
-```text
-CI_per_run_95 =
-  delta_w +/- t_critical * SE_per_run
-```
-
-This catches a run that was unusually noisy even if the historical calibration is quiet.
-
-### 9.4 Conservative Combined Confidence Interval
-
-The calibrated interval and per-run interval answer different questions:
-
-| Interval | Question |
-|---|---|
-| Calibrated CI | How uncertain should we be based on historical lab noise? |
-| Per-run CI | How uncertain was this particular run? |
-
-For a traffic-light decision, use the more conservative standard error:
+Use the conservative one:
 
 ```text
 SE_final =
   max(SE_calibrated, SE_per_run)
-```
-
-Then:
-
-```text
-CI_final_95 =
-  delta_w +/- t_critical * SE_final
-```
-
-This preserves the calibrated floor while allowing a noisy run to widen the uncertainty interval.
-
-The same interval can be converted into energy terms:
-
-```text
-delta_e_wh =
-  delta_w * duration_s / 3600
-
-CI_energy_95 =
-  CI_final_95 * duration_s / 3600
-```
-
-### 9.5 Confidence Score Instead of Empirical Multipliers
-
-A cleaner mathematical option is to replace `variance_yellow_x` and `variance_green_x` with a direct confidence score.
-
-Define:
-
-```text
-z =
-  delta_w / SE_final
-```
-
-Then convert `z` into a one-sided confidence that the true workload delta is above zero:
-
-```text
-confidence_positive =
-  Phi(z)
-```
-
-where `Phi()` is the standard normal cumulative distribution function.
-
-Interpretation:
-
-```text
-confidence_positive = 0.50
-  means the measured delta is indistinguishable from zero.
-
-confidence_positive = 0.95
-  means the run gives about 95% one-sided confidence that task power is above baseline.
-
-confidence_positive = 0.99
-  means the run gives about 99% one-sided confidence that task power is above baseline.
-```
-
-Then traffic lights can be thresholded directly:
-
-```text
-Green:
-  confidence_positive >= 0.95
-  and n_effective >= n_green_min
-
-Yellow:
-  confidence_positive >= 0.80
-  and n_effective >= n_yellow_min
-
-Red:
-  otherwise
-```
-
-This is cleaner than saying "`delta_w` must exceed 5 times the noise floor" because the score has a direct statistical meaning.
-
-### 9.6 What Replaces `variance_yellow_x` and `variance_green_x`?
-
-In the current system:
-
-```text
-variance_yellow_x = 2
-variance_green_x  = 5
-```
-
-These are empirical signal-to-noise multipliers:
-
-```text
-yellow means delta_w is at least 2x the estimated noise
-green means delta_w is at least 5x the estimated noise
-```
-
-In the CI-based system, these can be replaced by confidence thresholds:
-
-```text
-confidence_yellow = 0.80
-confidence_green  = 0.95
-```
-
-or, more conservative:
-
-```text
-confidence_yellow = 0.90
-confidence_green  = 0.975
-```
-
-Recommended first version:
-
-```text
-Yellow: confidence_positive >= 0.80
-Green:  confidence_positive >= 0.95
 ```
 
 Rationale:
 
-| Threshold | Meaning |
+| Estimate | Protects against |
 |---|---|
-| `0.80` | Directional evidence; useful for "early insight", but not enough to cite strongly. |
-| `0.95` | Conventional statistical threshold for "detected above baseline" in a single-run measurement. |
+| `SE_calibrated` | Overconfidence when this run looks artificially quiet. |
+| `SE_per_run` | Background spikes or instability during this specific run. |
+| `max(...)` | Always uses the wider uncertainty estimate. |
 
-### 9.7 How Many Polls Are Appropriate?
+### 9.4 Confidence Score
 
-The current system uses:
-
-```text
-conf_yellow_polls = 5
-conf_green_polls  = 10
-```
-
-These are operational safeguards. They prevent a very short task from turning green based on one or two lucky samples.
-
-In a CI-based system, sample count already affects confidence through:
+Convert the measured power increase into a one-sided confidence score:
 
 ```text
-SE = standard_deviation / sqrt(n)
-```
-
-So, as `n_task` grows, the confidence interval naturally gets narrower. That means fewer hard poll-count thresholds are needed.
-
-However, a minimum sample count is still useful because 1-second power readings are autocorrelated: adjacent samples are not fully independent. A 10-second task does not provide the same evidence as 10 independent laboratory repetitions.
-
-Recommended first version:
-
-```text
-n_yellow_min = 5 task samples
-n_green_min  = 10 task samples
-```
-
-This keeps the current operational guardrails while moving the actual decision from empirical multipliers to confidence intervals.
-
-More robust future version:
-
-Use effective sample count instead of raw sample count:
-
-```text
-block_s = 5
-n_effective = floor(duration_s / block_s)
-```
-
-Then use:
-
-```text
-Yellow:
-  n_effective >= 1 or 2
-
-Green:
-  n_effective >= 2 or 3
-```
-
-Rationale: if power readings are correlated over several seconds, 5-second blocks are closer to independent evidence than raw 1-second samples.
-
-### 9.8 Proposed Single-Run Function
-
-The confidence function could be:
-
-```text
-single_run_confidence(
-  delta_w,
-  n_base,
-  n_task,
-  std_base,
-  std_task,
-  w_base,
-  variance_idle_pct,
-  variance_workload_pct
-) -> confidence_positive
-```
-
-With:
-
-```text
-effective_calibrated_variance_pct =
-  max(variance_idle_pct, variance_workload_pct)
-
-sigma_calibrated_w =
-  effective_calibrated_variance_pct / 100 * w_base
-
-SE_calibrated =
-  sigma_calibrated_w * sqrt((1 / n_base) + (1 / n_task))
-
-SE_per_run =
-  sqrt((std_base^2 / n_base) + (std_task^2 / n_task))
-
-SE_final =
-  max(SE_calibrated, SE_per_run)
-
 z =
   delta_w / SE_final
 
@@ -514,25 +286,81 @@ confidence_positive =
   Phi(z)
 ```
 
-Then:
+`Phi()` is the standard normal cumulative distribution function.
+
+Interpretation:
+
+| `confidence_positive` | Meaning |
+|---|---|
+| `0.50` | The run is indistinguishable from zero extra power. |
+| `0.80` | Directional evidence that the task is above idle. |
+| `0.95` | Conventional single-run detection threshold. |
+| `0.99` | Strong single-run detection. |
+
+This replaces the old `variance_yellow_x` and `variance_green_x` signal-to-noise multipliers with a directly interpretable confidence value.
+
+### 9.5 Traffic-Light Thresholds
+
+Recommended first pass:
 
 ```text
 Green:
-  confidence_positive >= confidence_green
-  and n_task >= n_green_min
+  confidence_positive >= 0.95
+  and n_task >= 10
 
 Yellow:
-  confidence_positive >= confidence_yellow
-  and n_task >= n_yellow_min
+  confidence_positive >= 0.80
+  and n_task >= 5
 
 Red:
   otherwise
 ```
 
-This makes the traffic light more solid because:
+The minimum sample counts remain useful because 1-second power samples are autocorrelated. A very short task should not turn green from one or two lucky readings, even if the formula returns a high score.
 
-1. It uses the historical lab calibration as a floor.
-2. It uses the actual variance observed during the specific run.
-3. It produces an interpretable confidence value.
-4. It avoids arbitrary "2x" and "5x" multipliers.
-5. It still preserves minimum-duration safeguards for very short tasks.
+Future refinement: replace raw sample count with effective sample count, for example 5-second blocks:
+
+```text
+n_effective = floor(duration_s / 5)
+```
+
+### 9.6 Result Fields to Store
+
+Store the computed values so old results can be reflagged later:
+
+```text
+confidence_method
+baseline_samples_w
+task_samples_w
+std_base_w
+std_task_w
+se_calibrated_w
+se_per_run_w
+se_final_w
+confidence_positive
+ci_delta_w_95
+ci_delta_e_wh_95
+```
+
+The 95% intervals are:
+
+```text
+ci_delta_w_95 =
+  delta_w +/- 1.96 * SE_final
+
+ci_delta_e_wh_95 =
+  ci_delta_w_95 * duration_s / 3600
+```
+
+For small sample counts, a Student-t critical value can replace `1.96`.
+
+### 9.7 Short Implementation Guidance
+
+For CR-028 Phase 2, scoped to video:
+
+1. Persist raw `baseline_samples_w` and `task_samples_w` for every video run.
+2. Build the CI-based single-run flag from actual run samples plus `variance_idle_pct`.
+3. Do not use `variance_cpu_pct` or `variance_gpu_pct` in the single-run CI formula.
+4. Keep `variance_cpu_pct` and `variance_gpu_pct` for a later aggregate/repeated-run confidence layer.
+5. Replace the old `variance_yellow_x` / `variance_green_x` decision with `confidence_positive` thresholds.
+6. Keep minimum task-sample safeguards for short runs.
