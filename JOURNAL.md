@@ -7,6 +7,28 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 26 — 2026-05-20
+
+### What we did
+
+The "credibility & recruitment" CR bundle (the documented top-3 Tania-independent priorities), plus an external-links cleanup and a session-close skill — work picked deliberately while CR-028/CR-029 stay blocked on Tania's §9 v2.
+
+**External-links registry + a carbon-strip regression caught and fixed.** Fixed a stale link first (the carbon strip's "Framework: Language Lab AI position paper" pointed at `/methodology`, not the paper PDF), then centralised every external URL in `main.py` into one registry (`POSITION_PAPER_URL`, `GOS_URL`, `JOIN_GOS_URL`, `GOS_LOGO_URL`, `GITHUB_REPO_URL`, `GITHUB_ISSUES_URL`, `ECO2MIX_URL`, `ELECTRICITYMAPS_URL`, `EMBER_URL`, `CHARTJS_URL`) — 22 call sites across f-strings, JS string-builders, and the methodology `.replace()` chain, replacing three previously-scattered constants. **Regression:** the carbon-strip block (`_CARBON_JS`) is JavaScript inside a *plain Python string*, so `+ ECO2MIX_URL +` injected undefined JS variables → ReferenceError → every CO₂e strip stuck on "loading grid intensity…". `py_compile` and the suite passed (valid Python, broken JS). Fixed via import-time token substitution (`__ECO2MIX_URL__` baked after `_CARBON_JS` is defined). Added `tests/test_external_links.py` (4 guards: no bare registry identifier or unsubstituted token in `_CARBON_JS` / `_DEMO_HTML` / methodology output) so it can't recur.
+
+**Phase 0 — pinned canonical reference (`canonical.py`).** `canonical/video_baseline.json` pins the H.265 GPU Meridian-120s encode (0.2814 Wh / 15.1 s, 🟢) **committed in the source tree** (not the gitignored `results/`, so the pin is version-controlled), with the source result kept as provenance. `times_vs_video()` + `video_baseline_wh_per_minute()` helpers, all fail-soft. Keystone for CR-037's multiplier.
+
+**CR-037 — AI workloads tethered to streaming (closed).** Per-page streaming-context band + shared "How to read AI energy in a streaming context" expander (the position paper's 5 principles, verbatim on the contested "neither inherently sustainable nor unsustainable" headline) on `/llm` `/image` `/rag`; methodology AI-framing paragraph; all linked to the paper via `POSITION_PAPER_URL`. Per-result readout *"This run ≈ N× a 120 s 1080p H.265 GPU encode"* on `/llm` + `/image` single results — enriched server-side at save (`canonical.enrich_result`, mirroring `carbon.walk_and_enrich`) so **no Python names touch the JS**; the renderer just displays the field. RAG gets the meta-demo label only (no readout — weakest streaming link, per the CR).
+
+**CR-040 — "Reproduce this result" bundle (closed, video-only V1).** `reproduce.py` builds a per-result zip: `cmd.sh` (runnable with `INPUT=<clip>`, privileged `nice` dropped, binary/input parameterised), `expected.json` (k=3σ envelope from `variance_pct` + GoS1 hardware fingerprint), stdlib `compare.py` (green/yellow/red verdict against the envelope), `README.md` (the "within OWL's variance envelope, not cross-hardware identicality" framing). `GET /results/{type}/{id}/reproduce.zip` (RESULTS_DOWNLOAD-gated, 400 for non-video) + "↓ Reproduce this" button on video cards. Meridian linked, not shipped (812 MB). `POST /reproduce/contribute` deferred. Verified `compare.py` actually executes (template on no input; all-GREEN verdict with OWL's own numbers). Shape-agnostic: walks for any block with both `transcode` + `energy`, so single / both / all_codecs all work.
+
+**CR-027 — tier explanation copy (found already shipped, closed).** Discovered the three-column Public / GoS-member / Lab matrix, the settings-wired upload caps (`{UPLOAD_MEMBER_MB}`), and the first-step `_tier_indicator_html` were already implemented in a prior session but never closed in the CR file. Verified rendering (≤ 1024 MB cap, Lab column, tier indicator, no stray tokens) and closed it; no new code.
+
+**Testing.** 218 → **234** (canonical 7, reproduce 5, external-links 4). Discipline tightened after the carbon-JS regression: every touched page is now render-checked via `TestClient` for leaked tokens/identifiers, not just `py_compile`d.
+
+**Process note.** Also added `.claude/skills/session-close/SKILL.md` — a user-invoked skill that automates this very ritual (JOURNAL + CLAUDE "Recent sessions" + header + CR/state sync + commit) for future sessions.
+
+---
+
 ## Session 25 — 2026-05-13 / 2026-05-14
 
 ### What we did

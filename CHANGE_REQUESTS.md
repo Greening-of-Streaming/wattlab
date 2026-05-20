@@ -401,7 +401,7 @@ Worth a 30-minute discussion with the measurement team rather than a unilateral 
 
 ## CR-027 · Tier explanation pass
 
-**Status:** captured 2026-05-04 (post-meeting). Medium priority. Bundles items 8 + 9 — both are tier-explanation copy/UX on the same surface.
+**Status:** ✅ CLOSED S26 (2026-05-20) — found already-implemented; verified + closed. Full closing entry in `CHANGE_REQUESTS_CLOSED.md`. *(Original capture below for reference.)* Captured 2026-05-04 (post-meeting). Medium priority. Bundles items 8 + 9 — both are tier-explanation copy/UX on the same surface.
 **Triggered by:** team meeting 2026-05-04 — current "Why this matters" / tier explanation is too buried at the end of the demo, partly outdated, and the public/member/lab text still describes anonymous upload as allowed and shows the wrong member upload cap. Lab column is missing entirely.
 
 ### Problem
@@ -751,7 +751,7 @@ Not strictly blocking but a real polish item for Members operating long encodes 
 
 ## CR-037 · Tether the AI jobs to streaming workflows (anchor to the Language Lab AI position paper)
 
-**Status:** captured 2026-05-11 (board meeting + AI position paper review). High priority — board-endorsed quick-win.
+**Status:** ✅ CLOSED S26 (2026-05-20) — shipped. Full closing entry in `CHANGE_REQUESTS_CLOSED.md`. *(Original capture below for reference.)* Captured 2026-05-11 (board meeting + AI position paper review). High priority — board-endorsed quick-win.
 **Triggered by:** GoS board meeting 2026-05-11. Tania: *"we did publish a paper about the uses of AI in the context of video… maybe the inclusion of AI in our [tool] should be kind of in that context. We can take some of those applications, at least the simpler ones, link it and maybe compare — encoding in the bad standard way takes that, compares to a prompt of that length or complexity — rather than just 'here's the AI tab which has nothing to do with streaming.'"* Dom seconded with the "25 fps × 15 min" personalisation-energy framing. Cross-references the Language Lab Jan-2026 position paper *"Artificial Intelligence in Streaming Media Sustainability: Distinguishing Impact from Innovation"* (v1.4 final).
 
 ### Problem
@@ -889,7 +889,7 @@ If CR-037 and CR-038 land first, CR-039 reads as natural continuation. If they d
 
 ## CR-040 · "Reproduce this result" downloadable bundle
 
-**Status:** captured 2026-05-11 (board meeting). Medium priority — addresses the explicit trust / buy-in concern from Marisol and Barbara.
+**Status:** ✅ CLOSED S26 (2026-05-20) — shipped (video-only V1). Full closing entry in `CHANGE_REQUESTS_CLOSED.md`. *(Original capture below for reference.)* Captured 2026-05-11 (board meeting). Medium priority — addresses the explicit trust / buy-in concern from Marisol and Barbara.
 **Triggered by:** GoS board meeting 2026-05-11. Marisol: *"verification and trust of those data — it would be really good to have some of the members buy in and see if we can do some tests. We were talking to Telefónica — probably just verify and demonstrate that you can trust those data is something that can be worked out."* Stan: OWL is the recruitment loss-leader; reproducibility is what makes it convincing to a sceptical operator. The AI position paper itself says GoS has *"our own early proof-of-concept working models that we are encouraging the wider community to experiment with."* Reproducibility is what makes that invitation real.
 
 ### Problem

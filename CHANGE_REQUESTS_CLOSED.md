@@ -769,3 +769,28 @@ The home tile lives at `/` which redirects Anonymous → `/demo`. So Pixop sees 
 - **CR-036 (captured):** carbon "indicative only" hardening — when it lands, the amber `--warn` palette used here becomes the site-wide indicative vocabulary, and the placeholder fits the standard.
 - **CR-040 (captured):** reproducibility kit — if/when CR-042 becomes a real measurement, the kit covers it from day one.
 - **AI position paper (Jan 2026 Language Lab):** specialised CNNs (denoise, super-resolution) are the paper's headline efficient-AI category. The placeholder is shaped to that exactly.
+
+---
+
+<!-- S26 close-out (2026-05-20). Appended out of strict numeric order; a future
+     sweep can reorder + lift the full original bodies from CHANGE_REQUESTS.md,
+     which still hold the complete problem statements + agreed directions. -->
+
+## CR-027 · Tier explanation pass
+
+**Status:** ✅ shipped (found already-implemented in a prior session; verified + closed S26 2026-05-20). All three changes landed: (1) `/demo` Findings capability matrix refreshed against the CR-026 policy + settings (anonymous upload removed, member cap correct); (2) **Lab column added** — the matrix is now three columns (Public / GoS member / Lab operator); (3) first-step **tier indicator** via `_tier_indicator_html(request)`, server-rendered, wired through the demo `.replace()` chain. Upload caps render from `settings.json` via the `{UPLOAD_MEMBER_MB}` placeholder so the copy can't drift. Verified rendering S26 (≤ 1024 MB cap, Lab column, indicator, no stray tokens). No new code in S26.
+**Triggered by:** team meeting 2026-05-04 — the tier explanation was buried + stale. Full original problem statement + agreed direction remain in `CHANGE_REQUESTS.md`.
+
+---
+
+## CR-037 · Tether the AI jobs to streaming workflows (anchor to the Language Lab AI position paper)
+
+**Status:** ✅ shipped S26 (2026-05-20). Board-endorsed quick-win, delivered as reframing only (no new measurement). Per-page one-line streaming-context band + shared "How to read AI energy in a streaming context" expander (the paper's 5 principles, verbatim on the "neither inherently sustainable nor unsustainable" headline) on `/llm` `/image` `/rag`; methodology AI-framing paragraph; all linked to the paper via the centralised `POSITION_PAPER_URL`. Per-result **"This run ≈ N× a 120 s 1080p H.265 GPU encode"** on `/llm` + `/image` single results — computed server-side at save via `canonical.enrich_result()` (mirrors `carbon.walk_and_enrich`), against the pinned canonical reference (`canonical.py` + committed `canonical/video_baseline.json`, Phase 0). RAG carries the meta-demo label only (no readout — weakest streaming link). `tests/test_canonical.py` (7). Watch-out honoured: canonical pinned to a committed file, not "latest."
+**Triggered by:** GoS board meeting 2026-05-11 (Tania + Dom). Full original problem statement + agreed direction remain in `CHANGE_REQUESTS.md`.
+
+---
+
+## CR-040 · "Reproduce this result" downloadable bundle
+
+**Status:** ✅ shipped S26 (2026-05-20), video-only V1. `reproduce.py` builds a per-result zip — `cmd.sh` (runnable with `INPUT=<clip>`, privileged `nice` dropped, binary/input parameterised), `expected.json` (k=3σ envelope from `variance_pct` + GoS1 hardware fingerprint), stdlib `compare.py` (green/yellow/red verdict against the envelope), `README.md` (the "within OWL's variance envelope, not cross-hardware identicality" framing). `GET /results/{type}/{id}/reproduce.zip` (RESULTS_DOWNLOAD-gated; 400 for non-video) + "↓ Reproduce this" button on video result cards. Meridian linked (CC BY 4.0), not shipped (812 MB). Shape-agnostic (walks for any `transcode`+`energy` block → single / both / all_codecs). `tests/test_reproduce.py` (5). **Deferred:** `POST /reproduce/contribute` (member-side comparison upload) — promote to a follow-up CR if a member asks.
+**Triggered by:** GoS board meeting 2026-05-11 (Marisol verification/trust + Stan recruitment loss-leader). Full original problem statement + agreed direction remain in `CHANGE_REQUESTS.md`.
