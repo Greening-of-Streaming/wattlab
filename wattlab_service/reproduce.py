@@ -245,6 +245,7 @@ def build_bundle(job_type, job_id, result, variance_pct):
     } for e in encodes]
     expected = {
         "owl_result": f"{job_type}/{job_id}",
+        "owl_version": result.get("owl_version"),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "hardware": {**_HARDWARE, "ffmpeg_version": ffmpeg_version},
         "source_asset": _MERIDIAN,

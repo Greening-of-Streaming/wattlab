@@ -25,6 +25,7 @@ import audience
 import auth
 import curated
 import email_send
+import version
 from capabilities import (
     requires, can, gate,
     PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
@@ -1630,7 +1631,10 @@ _BASE_STYLES = (
 _FOOTER = (
     f'{_BASE_STYLES}'
     f'<footer style="margin-top:3rem;padding-top:1rem;border-top:1px solid var(--panel)">'
-    f'{_LOGO}{_METHODOLOGY_LINK}{_ISSUES_LINK}</footer>'
+    f'{_LOGO}{_METHODOLOGY_LINK}{_ISSUES_LINK}'
+    f'<div style="margin-top:0.75rem;color:var(--text-5);font-size:0.68rem;'
+    f'font-family:monospace">{version.version_string()}</div>'
+    f'</footer>'
     f'{_QUEUE_BADGE}{_LIVE_JS}{_CARBON_JS}'
 )
 
@@ -4433,6 +4437,7 @@ async def llm_page(request: Request):
                 <div class="metric"><span>GPU (start→end)</span>
                     <span class="val">${{t.gpu_base}}→${{t.gpu_end}}°C</span></div>
                 <div class="conf-badge" style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+                ${{e.video_relative ? '<div style="font-size:0.78rem;color:var(--text-3);margin-top:0.5rem">This run ' + e.video_relative.text + '</div>' : ''}}
                 <div class="section-title">Response preview</div>
                 <div class="response-box">${{i.response}}</div>
                 ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + r.task_label, e.delta_t_s, e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)}}
@@ -4588,6 +4593,7 @@ async def llm_page(request: Request):
                 <div class="metric"><span>mWh/token</span><span class="val">${{e.mwh_per_token}}</span></div>
                 <div class="metric"><span>ΔW</span><span class="val">${{e.delta_w}} W</span></div>
                 <div class="conf-badge" style="margin-top:0.5rem;font-size:0.82rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+                ${{e.video_relative ? '<div style="font-size:0.76rem;color:var(--text-3);margin-top:0.4rem">This run ' + e.video_relative.text + '</div>' : ''}}
                 <div class="section-title" style="margin-top:0.75rem">Response preview</div>
                 <div class="response-box">${{i.response}}</div>
             </div>`;
@@ -8055,6 +8061,7 @@ function renderResult(r) {{
         </div>
       </div>
       <div class="conf-badge">${{e.confidence.flag}} ${{e.confidence.label}}</div>
+      ${{e.video_relative ? '<div style="font-size:0.78rem;color:var(--text-3);margin-top:0.5rem">This run ' + e.video_relative.text + '</div>' : ''}}
       ${{imgHtml}}
       <div class="modifier-note" style="color:var(--text-4);font-size:0.75rem;margin-top:0.75rem">
         Modifier applied this run: "<em>${{r.modifier}}</em>"

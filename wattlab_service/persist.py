@@ -6,6 +6,7 @@ from pathlib import Path
 
 import carbon
 import canonical
+import version
 
 RESULTS_DIR = Path("/home/gos/wattlab/results")
 
@@ -45,6 +46,9 @@ def save_result(job_type: str, job_id: str, data: dict,
         "visitor_key": visitor_key,
         **data,
     }
+    # Stamp the exact code that produced this result (provenance for CR-040
+    # reproduce bundles + Track A analytics / re-flagging after formula changes).
+    payload["owl_version"] = version.version_dict()
     carbon.walk_and_enrich(payload)
     # CR-037 — anchor AI energy to a real video encode ("≈ N× a 120s encode").
     # AI result types only; video would just read "≈ 1×" of itself.
