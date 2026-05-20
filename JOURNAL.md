@@ -7,6 +7,22 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 27 — 2026-05-21
+
+### What we did
+
+A short follow-up session: a versioning / build-stamp feature, the CR-037 readout bug, and the deferred CR close-out migration.
+
+**CR-037 readout bug fixed.** The S26 per-result *"This run ≈ N× a 120 s 1080p H.265 GPU encode"* line wasn't appearing on the live `/llm` and `/image` cards. Root cause: enrichment was always correct (the field is on disk — `result.energy.video_relative`), but the readout had only been wired into the *shared* CR-034 renderers (`wlRenderLLMCard` / `wlRenderImageCard`, which drive `/demo` + prev-row click-to-expand), while the **live** cards on the main pages use separate bespoke renderers (`renderLLMSingle`, `renderLLMAll`, the `/image` `renderResult`). Added the one-liner to those three too — now shows on every surface.
+
+**Versioning + build stamp.** `VERSION` (0.4.0) + `version.py`, resolved once at startup: prefers a committed `version.json` (container-friendly, CR-031), falls back to live git (short SHA + commit date + dirty flag), then a `"dev"` fallback — all fail-soft. The footer on every page now carries `OWL v0.4.0 · <sha> · <date>`, with a `-local` marker when the running tree is dirty (OWL runs straight from the working tree, so uncommitted edits go live on restart — the flag keeps the stamp honest). `persist.save_result()` stamps every result with `owl_version = {version, sha, dirty, built_at}` — code provenance for CR-040 reproduce bundles and Track A analytics (re-flagging after a formula change); the reproduce `expected.json` carries it too. Methodology version (0.4) deliberately kept separate (citable measurement-protocol version vs. code provenance). `tests/test_version.py` (3). 234 → **237 tests**.
+
+**CR close-out migration.** Moved the full **CR-027 / CR-037 / CR-040** bodies from `CHANGE_REQUESTS.md` to `CHANGE_REQUESTS_CLOSED.md` (S26 marked them closed but left the bodies in active for a sweep). `CHANGE_REQUESTS.md` is back to active-only — **17 entries**. The Groupings & dependencies appendix was re-based: Track D and Track G are now fully shipped, and the cross-track diagram + Suggested order point at the remaining work (next up: CR-029 prep + the Track A storage/DB decision, then Track C).
+
+**Process note.** The `session-close` skill (added S26) isn't registered with the harness until a Claude Code restart, so this entry was produced by running its procedure directly.
+
+---
+
 ## Session 26 — 2026-05-20
 
 ### What we did
