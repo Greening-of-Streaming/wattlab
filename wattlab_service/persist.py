@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 import carbon
+import canonical
 
 RESULTS_DIR = Path("/home/gos/wattlab/results")
 
@@ -45,6 +46,10 @@ def save_result(job_type: str, job_id: str, data: dict,
         **data,
     }
     carbon.walk_and_enrich(payload)
+    # CR-037 — anchor AI energy to a real video encode ("≈ N× a 120s encode").
+    # AI result types only; video would just read "≈ 1×" of itself.
+    if job_type in ("llm", "image"):
+        canonical.enrich_result(payload)
     path.write_text(json.dumps(payload, indent=2))
     return path
 

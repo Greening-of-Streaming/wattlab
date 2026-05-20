@@ -1,0 +1,22 @@
+{
+  "_comment": "PINNED canonical video-encode reference. Used by CR-037 for the AI-page 'this AI job ≈ N× a 120s 1080p hardware encode' multiplier, and by /methodology. This is a deliberate, commit-tagged pin — NOT 'whatever's latest'. Re-pin only on purpose (e.g. after CR-029 re-runs canonical bitrates), and redo the multiplier review when you do. Extracted from the GPU side of the source run below; full provenance in source_h265_gpu_meridian_120s.json.",
+  "codec": "H.265",
+  "preset_key": "h265_gpu",
+  "preset_label": "H.265 GPU",
+  "preset_detail": "hevc_vaapi · 2000 kbps ABR · 1080p · full VAAPI pipeline",
+  "source_asset": "meridian_120s.mp4",
+  "source_duration_s": 120,
+  "delta_e_wh": 0.2814,
+  "duration_s": 15.1,
+  "confidence_flag": "🟢",
+  "confidence_label": "Repeatable",
+  "ffmpeg_version": "ffmpeg version N-124403-g28ecb07e55-20260507",
+  "hardware": {
+    "cpu": "AMD Ryzen 9 7900 (24 cores)",
+    "gpu": "AMD Radeon RX 7800 XT (VAAPI)",
+    "kernel": "6.17"
+  },
+  "pinned_from_result": "2026-05-13_dc962963.json",
+  "pinned_at": "2026-05-20",
+  "pinned_note": "post-CR-022 ffmpeg-master; post-S24 HW baseline; variance_pct 1.29% (S25)"
+}

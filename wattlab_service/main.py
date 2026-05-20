@@ -39,6 +39,26 @@ app = FastAPI()
 # Serve bundled assets (owl logo, favicon) from wattlab_service/static/.
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# ── External links — single source of truth ─────────────────────────────────
+# Every externally-hosted URL the UI points at lives here, so a changed link is
+# a one-line edit. Referenced three ways, depending on the template mechanism:
+#   • HTML f-strings (_LOGO, _DEMO_HTML, auth body)              → {CONST}
+#   • JS string builders (carbon strip, chart_js)               → ' + CONST + '
+#   • plain templates rendered via .replace() (_METHODOLOGY_HTML) → {TOKEN}, baked
+#     in the route's .replace() chain
+# The Language Lab AI position paper is a filesusr.com asset that can move —
+# keep it here, never inline.
+POSITION_PAPER_URL  = "https://555e2619-4a3d-4f25-8303-8fb567f350a1.filesusr.com/ugd/ecf0e7_a46203016e4e40c7aa638232bce16486.pdf"
+GOS_URL             = "https://greeningofstreaming.org"
+JOIN_GOS_URL        = "https://www.greeningofstreaming.org/membership"
+GOS_LOGO_URL        = "https://static.wixstatic.com/media/b1006e_f5e9aff607cf4133abf7089207dc3cab~mv2.png"
+GITHUB_REPO_URL     = "https://github.com/greeningofstreaming/wattlab"
+GITHUB_ISSUES_URL   = "https://github.com/greeningofstreaming/wattlab/issues"
+ECO2MIX_URL         = "https://www.rte-france.com/eco2mix"
+ELECTRICITYMAPS_URL = "https://www.electricitymaps.com"
+EMBER_URL           = "https://ember-energy.org"
+CHARTJS_URL         = "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+
 
 # CR-015 — auto-lower maintenance flag on Lab-tier inactivity.
 # When `/tmp/owl-maintenance` exists (staging mode raised by `stage-on`),
@@ -131,7 +151,7 @@ async def auth_sign_in_page(next: str = "/", error: str = ""):
     </form>
     <p class="body" style="font-size:0.8rem;color:var(--text-4);margin-top:2rem">
       Not a GoS member yet?
-      <a href="https://www.greeningofstreaming.org/membership">Join GoS</a> · or
+      <a href="{JOIN_GOS_URL}">Join GoS</a> · or
       <a href="/">browse OWL anonymously</a>.</p>
     """
     return _auth_page_shell("Sign in · OWL", body)
@@ -336,8 +356,6 @@ def _tier_indicator_html(request: Request) -> str:
 # into their <style> block, then call `_lock_badge_html()` per locked
 # control and add the `_lock_class()` to the parent block.
 
-JOIN_GOS_URL = "https://www.greeningofstreaming.org/membership"
-
 _LOCK_STYLES = (
     ".lock-badge{display:inline-flex;align-items:center;gap:0.35rem;"
     "border:1px solid var(--border-3);background:rgba(255,170,0,0.05);"
@@ -433,9 +451,8 @@ async def startup():
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, rag_module.check_index)
 
-GOS_LOGO_URL = "https://static.wixstatic.com/media/b1006e_f5e9aff607cf4133abf7089207dc3cab~mv2.png"
 _LOGO = (
-    f'<a href="https://greeningofstreaming.org" target="_blank"'
+    f'<a href="{GOS_URL}" target="_blank"'
     f' style="display:inline-flex;align-items:center;gap:0.6rem;'
     f'text-decoration:none;margin-bottom:1.5rem;opacity:0.75;'
     f'transition:opacity 0.2s" onmouseover="this.style.opacity=1"'
@@ -456,10 +473,6 @@ _BACK = (
     '<span style="color:var(--text-5);margin-left:0.35rem">&nbsp;&nbsp;&larr; Home</span>'
     '</a>'
 )
-
-# GitHub issue tracker — used by the footer "Report an issue" link and on
-# the methodology page so viewers / collaborators can raise bugs or requests.
-GITHUB_ISSUES_URL = "https://github.com/greeningofstreaming/wattlab/issues"
 
 # Floating badge: shows watts + CPU + GPU temps + queue depth on every page.
 # Values are filled in by the shared _LIVE_JS poller below via data-live hooks.
@@ -1391,15 +1404,15 @@ _CARBON_JS = """
     var homeLabel = (homeI.zone_label || home);
     var liveExplain = (home === 'FR')
       ? 'Live (home zone, ' + homeLabel + '): production mix from '
-        + '<a href="https://www.rte-france.com/eco2mix" target="_blank" rel="noopener" '
+        + '<a href="__ECO2MIX_URL__" target="_blank" rel="noopener" '
         + 'style="color:var(--text-3)">Eco2mix</a> (RTE/Etalab — official French TSO, '
         + 'refreshed every 15 min) × IPCC AR6 lifecycle emission factors per source. '
         + 'Falls back to '
-        + '<a href="https://www.electricitymaps.com" target="_blank" rel="noopener" '
+        + '<a href="__ELECTRICITYMAPS_URL__" target="_blank" rel="noopener" '
         + 'style="color:var(--text-3)">ElectricityMaps</a>, then to the static '
         + 'annual mean if both are unavailable.'
       : 'Live (home zone, ' + homeLabel + '): '
-        + '<a href="https://www.electricitymaps.com" target="_blank" rel="noopener" '
+        + '<a href="__ELECTRICITYMAPS_URL__" target="_blank" rel="noopener" '
         + 'style="color:var(--text-3)">ElectricityMaps</a> real-time grid intensity. '
         + 'Falls back to the static annual mean if unavailable.';
 
@@ -1416,7 +1429,7 @@ _CARBON_JS = """
       + 'above (P110 polling at the wall, validated method, GoS primary measurement). '
       + '<span style="color:var(--warn)">🟡 Indicative</span> = this carbon block — '
       + 'Wh × third-party grid intensity. Provided for context, not for citation as '
-      + 'GoS data. (Framework: <a href="/methodology" style="color:var(--text-3)">'
+      + 'GoS data. (Framework: <a href="__POSITION_PAPER_URL__" target="_blank" rel="noopener" style="color:var(--text-3)">'
       + 'Language Lab AI position paper, Jan 2026</a>.)'
       + '</div>'
       + '<div style="margin-bottom:0.25rem"><strong style="color:var(--text-3)">How this is calculated</strong></div>'
@@ -1426,7 +1439,7 @@ _CARBON_JS = """
       + 'hardware — manufacturing, transport, end-of-life — is not included.<br>'
       + liveExplain + '<br>'
       + 'Indicative (reference &amp; comparison zones): '
-      + '<a href="https://ember-energy.org" target="_blank" rel="noopener" '
+      + '<a href="__EMBER_URL__" target="_blank" rel="noopener" '
       + 'style="color:var(--text-3)">Ember</a> 2025 annual mean grid carbon intensity, '
       + 'lifecycle basis. Static so values do not drift between page loads.<br>'
       + '<span style="color:var(--text-5)">Live and reference are on the same '
@@ -1470,6 +1483,15 @@ _CARBON_JS = """
 </script>
 """
 
+# The carbon-strip JS above is a plain JS-in-a-string template, so the registry
+# URL constants can't be referenced via JS '+'. Bake them in at import via token
+# substitution — keeps these links centralised without breaking the JS.
+_CARBON_JS = (_CARBON_JS
+              .replace("__ECO2MIX_URL__",         ECO2MIX_URL)
+              .replace("__ELECTRICITYMAPS_URL__", ELECTRICITYMAPS_URL)
+              .replace("__POSITION_PAPER_URL__",  POSITION_PAPER_URL)
+              .replace("__EMBER_URL__",           EMBER_URL))
+
 # Small "BETA" chip used next to h1 on AI-workload pages and Guided Tour
 # steps 2/3/4 (LLM, image, RAG). Single source of truth so the framing copy
 # stays consistent: video is production-grade, AI workloads are exploratory.
@@ -1479,6 +1501,72 @@ _BETA_CHIP = (
     'border-radius:2px;vertical-align:middle;margin-left:0.5rem;'
     'font-family:monospace">BETA</span>'
 )
+
+# CR-037 — tether the AI pages to streaming. Each AI page gets a one-line
+# streaming-anchored framing band plus a shared "how to read AI energy in a
+# streaming context" expander drawn from the Language Lab AI position paper
+# (Jan 2026). Reframing only — no new measurement. Centralised here so the five
+# framing principles read identically on /llm, /image and /rag and can't drift
+# from the paper (CR-037 watch-out). Built with plain `+` concatenation, not an
+# f-string, so the URL splice can't be mistaken for an undefined name.
+_AI_BAND_COPY = {
+    "image": ("AI-generated frames are the <strong>personalisation axis</strong>: "
+              "per-viewer generated content breaks the cached-edge / multicast "
+              "model and pushes delivery back to expensive unicast."),
+    "llm":   ("Chat-style LLMs have <strong>limited direct use</strong> in streaming "
+              "workflows (which lean on small specialised models) — this tab measures "
+              "the expensive end of the spectrum as an upper bound, not the typical case."),
+    "rag":   ("A controlled look at a <strong>retrieval / context layer</strong> — a "
+              "meta-demo run over GoS&rsquo;s own ~100 papers, not generic Q&amp;A."),
+}
+
+
+def _ai_streaming_band(kind):
+    """One-line streaming-context framing band for an AI page (CR-037)."""
+    copy = _AI_BAND_COPY.get(kind, "")
+    return (
+        '<div style="margin-bottom:1rem;font-size:0.8rem;line-height:1.55;'
+        'color:var(--text-3);border-left:2px solid var(--accent);padding-left:0.85rem">'
+        '<span style="color:var(--text-4);font-size:0.7rem;letter-spacing:0.06em;'
+        'text-transform:uppercase">In a streaming context</span><br>' + copy
+        + ' <a href="' + POSITION_PAPER_URL + '" target="_blank" rel="noopener" '
+        'style="color:var(--accent);text-decoration:none;white-space:nowrap">'
+        'Language Lab AI paper ↗</a></div>'
+    )
+
+
+_AI_ABOUT_DETAILS = (
+    '<details style="margin-bottom:1.5rem;border-left:2px solid #222;padding-left:1rem">'
+    '<summary style="cursor:pointer;color:var(--text-3);font-size:0.82rem;'
+    'list-style:none;outline:none">ⓘ How to read AI energy in a streaming context '
+    '<span style="color:var(--text-4);font-size:0.72rem">(click to expand)</span></summary>'
+    '<div style="color:var(--text-3);font-size:0.82rem;line-height:1.6;margin-top:0.75rem">'
+    'Framing from the Greening of Streaming '
+    '<a href="' + POSITION_PAPER_URL + '" target="_blank" rel="noopener" '
+    'style="color:var(--accent);text-decoration:none">Language Lab AI position paper</a> '
+    '(Jan 2026), <em>&ldquo;Distinguishing Impact from Innovation&rdquo;</em>:'
+    '<ul style="margin:0.6rem 0 0 1.1rem;padding:0;line-height:1.7">'
+    '<li><strong>AI is neither inherently sustainable nor unsustainable</strong> — type, '
+    'size and deployment context decide net impact.</li>'
+    '<li><strong>The type of AI matters enormously</strong> — small specialised CNNs '
+    '(per-title encoding, scene classification, super-resolution) are orders of magnitude '
+    'cheaper than general-purpose LLMs and diffusion models. Streaming mostly uses the '
+    'former; these tabs measure the latter.</li>'
+    '<li><strong>Data volume &ne; energy consumption.</strong></li>'
+    '<li>OWL measures the energy AI <strong>adds</strong> — not the infrastructure energy '
+    'AI <strong>avoids</strong> through better compression, caching or routing. Both halves '
+    'are needed for net impact; OWL has the first.</li>'
+    '<li><strong>Inference cost only</strong> — no amortised training cost.</li>'
+    '<li>Watch for <strong>rebound effects</strong>: efficiency gains can be offset by '
+    'expanded use (more variations, more personalisation).</li>'
+    '</ul></div></details>'
+)
+
+
+def _ai_intro(kind):
+    """CR-037 streaming-framing band + shared 'about' expander for an AI page."""
+    return _ai_streaming_band(kind) + _AI_ABOUT_DETAILS
+
 
 # Footer links — methodology + GitHub issue tracker. Methodology added 2026-05-08
 # for universal access from every page; was previously only reachable via the
@@ -2054,6 +2142,7 @@ _RESULT_JS = """<script>
             + '</div>'
             + '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + ' \u00b7 '
             + (r.model_label || '') + ' \u00b7 ' + modeNote + '</div>'
+            + (e.video_relative ? '<div style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)">This run ' + e.video_relative.text + '</div>' : '')
             + (inf && inf.response ? '<div class="response-preview">' + inf.response + '</div>' : '')
             + wlCarbonStrip(e.delta_e_wh, stripLabel, e.delta_t_s, savedG)
             + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
@@ -2331,6 +2420,7 @@ _RESULT_JS = """<script>
             +   '<div class="kpi"><div class="val">' + _f(e.delta_w,1) + ' W</div><div class="lbl">delta above idle</div></div>'
             + '</div>'
             + '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</div>'
+            + (e.video_relative ? '<div style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)">This run ' + e.video_relative.text + '</div>' : '')
             + imgHtml
             + wlCarbonStrip(wh, (r.model_label || 'Image generation') + ' \u00b7 single', e.delta_t_s, savedG)
             + '</div>';
@@ -3304,6 +3394,9 @@ async def video_page(request: Request):
             <a href="${{base}}/download.csv" download
                style="color:var(--accent);font-size:0.8rem;border:1px solid #00ff9944;
                       padding:0.3rem 0.75rem;text-decoration:none">↓ CSV</a>
+            <a href="${{base}}/reproduce.zip" download
+               style="color:var(--accent);font-size:0.8rem;border:1px solid #00ff9944;
+                      padding:0.3rem 0.75rem;text-decoration:none">↓ Reproduce this</a>
         </div>`;
     }}
 
@@ -4033,6 +4126,8 @@ async def llm_page(request: Request):
     {_BACK}
     <h1>LLM Inference Energy Test {_BETA_CHIP}</h1>
     <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
+
+    {_ai_intro('llm')}
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>
@@ -4932,6 +5027,8 @@ async def rag_page(request: Request):
     <h1>RAG Energy Test {_BETA_CHIP}</h1>
     <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
 
+    {_ai_intro('rag')}
+
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>
     </div>
@@ -5722,6 +5819,26 @@ async def results_download_csv(job_type: str, job_id: str, request: Request):
     )
 
 
+@app.get("/results/{job_type}/{job_id}/reproduce.zip", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def results_reproduce_zip(job_type: str, job_id: str, request: Request):
+    # CR-040 — video-only V1 (AI results are far less reproducible across GPU
+    # driver / ROCm / cuDNN versions than a video encode is).
+    if job_type != "video":
+        return JSONResponse({"error": "Reproduce bundles are video-only in V1"}, status_code=400)
+    data = load_result(job_type, job_id, visitor_key=queue_control.visitor_key(request))
+    if not data:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    import reproduce
+    blob = reproduce.build_bundle(job_type, job_id, data, cfg.load().get("variance_pct"))
+    if blob is None:
+        return JSONResponse({"error": "No reproducible encode in this result"}, status_code=422)
+    return StreamingResponse(
+        io.BytesIO(blob),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=owl_reproduce_{job_id}.zip"},
+    )
+
+
 # --- Settings ---
 
 @app.get("/settings", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -5804,7 +5921,7 @@ async def settings_page(request: Request):
                   if local else '')
     subtitle = 'OWL · GoS1 · Lab mode' if local else 'OWL · GoS1 · Read-only'
 
-    chart_js = ('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>'
+    chart_js = ('<script src="' + CHARTJS_URL + '"></script>'
                 '<script src="/static/wl-charts.js"></script>'
                 if local else '')
     return f"""<!DOCTYPE html>
@@ -6616,7 +6733,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     bench itself.
   </p>
   <div class="cap-cta">
-    <a href="https://www.greeningofstreaming.org/membership" target="_blank"
+    <a href="{JOIN_GOS_URL}" target="_blank"
        class="btn btn-primary" style="text-decoration:none;display:inline-block;line-height:1">
       Join GoS — unlock the middle column ↗</a>
     <a href="/auth/sign-in" class="btn btn-secondary"
@@ -6631,7 +6748,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   <div class="btn-row">
     <button class="btn btn-secondary" onclick="goStep(5)">← Confidence</button>
     <button class="btn btn-secondary" onclick="goStep(1)">↺ Start over</button>
-    <a href="https://greeningofstreaming.org" target="_blank"
+    <a href="{GOS_URL}" target="_blank"
        class="btn btn-secondary" style="text-decoration:none;display:inline-block;line-height:1">
       greeningofstreaming.org ↗</a>
   </div>
@@ -7506,6 +7623,8 @@ async def image_page(request: Request):
     {busy_banner}
     <h1>Image Generation Test {_BETA_CHIP}</h1>
     <div class="subtitle">SD-Turbo (~1B) · SDXL-Turbo (~3.5B) · 512×512 · ROCm fp16 on RX 7800 XT</div>
+
+    {_ai_intro('image')}
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>
@@ -8433,7 +8552,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   }
 {AUTH_CHIP_STYLES}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="{CHARTJS_URL}"></script>
 <script src="/static/wl-charts.js"></script>
 </head>
 <body>
@@ -8444,8 +8563,8 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <a href="/" title="OWL home" style="display:inline-flex;align-items:center;gap:0.5rem;text-decoration:none">
     <img src="/static/owl.svg" alt="OWL" style="height:32px;width:32px;border-radius:0;flex-shrink:0">
   </a>
-  <a href="https://greeningofstreaming.org" target="_blank" title="Greening of Streaming">
-    <img src="https://static.wixstatic.com/media/b1006e_f5e9aff607cf4133abf7089207dc3cab~mv2.png" alt="GoS">
+  <a href="{GOS_URL}" target="_blank" title="Greening of Streaming">
+    <img src="{GOS_LOGO_URL}" alt="GoS">
   </a>
   <span class="title">OWL · Methodology</span>
   <a href="/" class="back">&larr; Home</a>
@@ -8459,11 +8578,11 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <p class="subtitle">How OWL measures the energy cost of compute tasks &mdash; and what it doesn&rsquo;t measure.</p>
 
   <div style="margin: -18px 0 32px; font-family: var(--mono); font-size: 12px; display: flex; gap: 18px; flex-wrap: wrap;">
-    <a href="https://github.com/greeningofstreaming/wattlab" target="_blank" rel="noopener"
+    <a href="{GITHUB_REPO_URL}" target="_blank" rel="noopener"
        style="color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(0,255,153,0.3);">
       Source on GitHub &rarr;
     </a>
-    <a href="https://github.com/greeningofstreaming/wattlab/issues" target="_blank" rel="noopener"
+    <a href="{GITHUB_ISSUES_URL}" target="_blank" rel="noopener"
        style="color: var(--warning); text-decoration: none; border-bottom: 1px solid rgba(255,170,0,0.3);">
       Report an issue / feature request &rarr;
     </a>
@@ -8690,6 +8809,8 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <li><strong>RAG</strong> &mdash; the energy delta of retrieval: baseline (no retrieval) vs RAG with 3 context chunks vs 8, retrieved from a document corpus via ChromaDB + sentence-transformer embeddings, compared side by side.</li>
   </ul>
 
+  <p><strong>Framing (GoS Language Lab position paper, Jan 2026):</strong> AI in streaming is <strong>neither inherently sustainable nor unsustainable</strong> &mdash; type, size and deployment decide net impact. The type matters enormously: streaming leans on <strong>small specialised CNNs</strong> (per-title encoding, scene classification, super-resolution) that are orders of magnitude cheaper than the general-purpose LLMs and diffusion models these tabs measure as an upper bound. OWL measures the energy AI <strong>adds</strong> (inference only); it does not measure the infrastructure energy AI <strong>avoids</strong> through better compression, caching or routing &mdash; both halves are needed for net impact, and OWL has the first. Each AI result is also shown as a multiple of a real video encode (the pinned canonical H.265&nbsp;GPU encode of Meridian-120s) so the number stays anchored to a streaming workload rather than floating free. Full framing: <a href="{POSITION_PAPER_URL}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Language Lab AI position paper &rarr;</a>.</p>
+
   <h2 id="limits">Known Limitations</h2>
 
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 temporal resolution.</strong> 1-second polling means tasks shorter than ~5 seconds produce few data points. Very fast models (e.g., TinyLlama single inference at 1&ndash;4 seconds) are at the edge of measurability. Batching mitigates this but changes what&rsquo;s being measured (batch cost, not single-inference cost). The same constraint puts a floor on any artificially-shortened encode: a workload that finishes in 3&ndash;4 seconds yields only 3&ndash;4 P110 polls, and the resulting per-run &Delta;W mean becomes noisy enough to inflate the coefficient of variation independently of any real measurement issue.</span></div>
@@ -8705,9 +8826,9 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <h2>From energy to CO<sub>2</sub>e &mdash; for reference only</h2>
   <p>OWL measures <strong>energy</strong>: watts at the wall, watt-hours per task. That is the number GoS stands behind &mdash; <em>&ldquo;if it can&rsquo;t be measured, it shouldn&rsquo;t be asserted&rdquo;</em>, and what OWL measures directly is energy. Every result <em>also</em> carries a gCO<sub>2</sub>e figure (Wh &times; grid carbon intensity), but that is explicitly a <strong>reference estimate</strong> &mdash; a way to put the energy in context against everyday activities, not a carbon-accounting claim. Carbon attribution &mdash; allocation, boundaries, double-counting &mdash; is a hard problem that GoS deliberately leaves to the bodies whose job it is. Read the energy figure as the result; the CO<sub>2</sub>e is a footnote.</p>
   <p style="background:rgba(255,170,0,0.06);border-left:3px solid var(--warn);padding:0.65rem 0.85rem">
-    <strong style="color:var(--accent)">🟢 Direct</strong> = the energy figure (P110 polling at the wall, validated method, GoS primary measurement &mdash; this is what we cite). <strong style="color:var(--warn)">🟡 Indicative</strong> = the gCO<sub>2</sub>e figure (Wh &times; third-party grid intensity &mdash; context, not citable as GoS data). Vocabulary follows the Greening of Streaming Language Lab AI position paper (Jan 2026), which proposes this 🟢/🟡/🔴 traffic-light for the entire ICT-energy-measurement landscape and rates IEA top-down energy figures as 🟡 Amber. OWL applies the same framework to its own outputs &mdash; every result-card carbon block carries the 🟡 chip; the energy headline retains the green palette.
+    <strong style="color:var(--accent)">🟢 Direct</strong> = the energy figure (P110 polling at the wall, validated method, GoS primary measurement &mdash; this is what we cite). <strong style="color:var(--warn)">🟡 Indicative</strong> = the gCO<sub>2</sub>e figure (Wh &times; third-party grid intensity &mdash; context, not citable as GoS data). Vocabulary follows the Greening of Streaming <a href="{POSITION_PAPER_URL}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Language Lab AI position paper (Jan 2026)</a>, which proposes this 🟢/🟡/🔴 traffic-light for the entire ICT-energy-measurement landscape and rates IEA top-down energy figures as 🟡 Amber. OWL applies the same framework to its own outputs &mdash; every result-card carbon block carries the 🟡 chip; the energy headline retains the green palette.
   </p>
-  <p>For what it&rsquo;s worth, the intensity used is lifecycle-basis (IPCC AR6 factors): the live French grid mix via <a href="https://www.rte-france.com/eco2mix" style="color:var(--accent);text-decoration:none">Eco2mix</a> when reachable, ElectricityMaps as a backup, and <a href="https://ember-energy.org" style="color:var(--accent);text-decoration:none">Ember</a> annual country means as the fallback (also used for the stable comparison cities). The value and which source produced it are recorded in every result JSON and CSV export (CSV header carries a leading comment marking the carbon columns indicative). A result&rsquo;s carbon dropdown also shows the same energy on a few past French grids for context. Module status &mdash; live cache, source, age, fallback &mdash; is at <a href="/carbon" style="color:var(--accent);text-decoration:none">/carbon</a>.</p>
+  <p>For what it&rsquo;s worth, the intensity used is lifecycle-basis (IPCC AR6 factors): the live French grid mix via <a href="{ECO2MIX_URL}" style="color:var(--accent);text-decoration:none">Eco2mix</a> when reachable, ElectricityMaps as a backup, and <a href="{EMBER_URL}" style="color:var(--accent);text-decoration:none">Ember</a> annual country means as the fallback (also used for the stable comparison cities). The value and which source produced it are recorded in every result JSON and CSV export (CSV header carries a leading comment marking the carbon columns indicative). A result&rsquo;s carbon dropdown also shows the same energy on a few past French grids for context. Module status &mdash; live cache, source, age, fallback &mdash; is at <a href="/carbon" style="color:var(--accent);text-decoration:none">/carbon</a>.</p>
 
   <h2 id="open">Open Questions</h2>
 
@@ -8722,9 +8843,9 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <div class="open-q"><span class="marker">?</span><span><strong>Cross-platform comparability.</strong> How should results from different hardware be compared? Normalisation by TDP? By performance tier? By workload-equivalent output quality?</span></div>
 
   <div class="footer-note">
-    OWL is built and maintained by <a href="https://greeningofstreaming.org" style="color:var(--accent);text-decoration:none;">Greening of Streaming</a>, a French NGO (loi 1901).<br>
+    OWL is built and maintained by <a href="{GOS_URL}" style="color:var(--accent);text-decoration:none;">Greening of Streaming</a>, a French NGO (loi 1901).<br>
     Methodology version 0.4 &middot; last updated 2026-05-11 &middot; Feedback: bs@ctoic.net<br>
-    Source: <a href="https://github.com/greeningofstreaming/wattlab" style="color:var(--accent);text-decoration:none;">github.com/greeningofstreaming/wattlab</a>
+    Source: <a href="{GITHUB_REPO_URL}" style="color:var(--accent);text-decoration:none;">github.com/greeningofstreaming/wattlab</a>
   </div>
 
   <a href="/" class="home-link bottom">&larr; Home</a>
@@ -8792,4 +8913,12 @@ async def methodology_page(request: Request):
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
             .replace("{VARIANCE_RUNS}",      str(s.get("variance_runs",      "—")))
             .replace("{VARIANCE_COOLDOWN_S}",str(s.get("variance_cooldown_s","—")))
-            .replace("{RECOVERY_CHART_DATA}", json.dumps(recovery)))
+            .replace("{RECOVERY_CHART_DATA}", json.dumps(recovery))
+            .replace("{POSITION_PAPER_URL}",  POSITION_PAPER_URL)
+            .replace("{GOS_URL}",             GOS_URL)
+            .replace("{GOS_LOGO_URL}",        GOS_LOGO_URL)
+            .replace("{GITHUB_REPO_URL}",     GITHUB_REPO_URL)
+            .replace("{GITHUB_ISSUES_URL}",   GITHUB_ISSUES_URL)
+            .replace("{ECO2MIX_URL}",         ECO2MIX_URL)
+            .replace("{EMBER_URL}",           EMBER_URL)
+            .replace("{CHARTJS_URL}",         CHARTJS_URL))
