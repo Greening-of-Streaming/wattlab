@@ -37,3 +37,6 @@ TRAINING_REM_5MIN.md
 # Local spreadsheet artifacts (Numbers/Excel exports of result CSVs)
 *.numbers
 *.xlsx
+# Result CSVs downloaded into the working tree (named wattlab_<type>_<id>.csv
+# by the /download.csv route). Generated artifacts, not source.
+wattlab_*.csv

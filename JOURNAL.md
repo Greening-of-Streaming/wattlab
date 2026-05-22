@@ -7,6 +7,20 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 28 — 2026-05-22
+
+Big session: the measurement-quality axis (VMAF) and the confidence-model rebuild, plus member comms and a doc/CR cleanup.
+
+- **CR-044 — VMAF perceptual quality on comparison cards.** Added `video.compute_vmaf()` (fail-soft, routes through `ffmpeg_bin`'s libvmaf — the embedded `vmaf_v0.6.1` model, no model file needed). Runs as a **terminal pass after measurement closes** (in `run_both` / `run_all`, after lock release + focus exit) so its CPU draw is never polled — energy numbers stay clean. A live trial caught the key gotcha: `av1_vaapi`/VAAPI outputs decode to 1088px (macroblock padding ffprobe hides), so the distorted is **cropped** (not scaled) to the reference dims before scoring. Surfaced below output size in `renderBoth`, the all-codecs matrix + per-codec detail, and the shared `wlRenderVideoCard` (prev-rows/`/demo`). Settings `vmaf_enabled` / `vmaf_n_subsample` (temporal only) / `vmaf_n_threads`. `analyse()` gains a `quality_note`. Verified CPU 91.48 / GPU 91.31 on a real H.265 run.
+- **CR-028 Phase 2 — unified CI confidence (Tania §9 v2).** New shared `confidence.py` replacing the four near-identical variance-threshold copies: `SE_final = max(SE_calibrated, SE_per_run) + SE_drift` (additive worst-case drift — Ben's call), `confidence_positive = Φ(ΔW/SE_final)`, 🟢 ≥0.95 & ≥`conf_green_polls` / 🟡 ≥0.80 & ≥`conf_yellow_polls`. Raw `baseline_samples_w` + `task_samples_w` now persisted in every result energy dict (all four modules; `measure_baseline` returns a dict). Option C: only `variance_idle_pct` feeds the single-run flag; cpu/gpu CVs reserved for a future aggregate layer. **Legacy fallback** keeps old results' badges (`method` = `ci` | `variance`). Absorbed CR-020 + the 5×/2× grounding. Copy rewritten: popover, `/methodology` Confidence Framework, `/llm` band, `/settings` (CI vs legacy split + calibration blurb). Two follow-up fixes: short runs (1 task poll) now use the CI model → 🔴 instead of leaking to legacy-🟡; null positive-thresholds coalesce to defaults so a config typo can't crash a run.
+- **Key Finding ⭐ — AV1 hardware vs software.** Clean ≥10s all-🟢 run `e18a9d57`: at the same 1500 kbps target, `libsvtav1` (sw) 14.51 MB / VMAF 92.74 / 0.71 Wh vs `av1_vaapi` (hw) 20.34 MB / VMAF 90.79 / 0.32 Wh. Hardware AV1 uses ~55% less energy but ~2 VMAF lower + ~40% larger — SVT-AV1 is markedly more bit-efficient. First OWL result pairing energy with a measured quality axis. Recorded in CLAUDE.md Key Findings; cross-ref'd in CR-045 + CR-029.
+- **CSV export fixes.** Numbers was collapsing the export to ~2 columns: it sniffs the whole file for a delimiter and the leading `#` disclaimer carried a semicolon. Moved the disclaimer to a trailing `#` line and removed the semicolon entirely (comma is now the only delimiter-like char); added the `vmaf` column.
+- **CR-045 captured** — "Same Bitrate / Same Quality" toggle on all-codecs compare. Framed as two honest designs: V1 "Constant quality (per-codec)" (CRF/QP = the deferred Benchmark 2; VMAF shows the real spread) and V2 "Match quality (target VMAF)" (iso-VMAF bitrate search). Caveat front-and-centre: CRF is not comparable across codecs, so never label CRF-equal as "Same Quality." Gate with/after CR-029.
+- **Housekeeping.** Versioning footer + reproduce bundle already in place from S26/S27. Member email drafted (covering VMAF, AV1 finding, CI confidence, carbon, AI-tethering, and the magic-link sign-in change). CR-028 + CR-044 migrated to `CHANGE_REQUESTS_CLOSED.md` (active CRs 17); appendix re-based; CLAUDE.md / WATTLAB_SPEC.md confidence copy brought current; deferred list pruned. `settings.json` now carries the new `vmaf_*` + `conf_positive_*` keys with `conf_green/yellow_polls` back at the documented 10/5.
+- **Tests:** 237 → **272 passing** (new `test_vmaf.py`, `test_confidence.py`).
+
+---
+
 ## Session 27 — 2026-05-21
 
 ### What we did

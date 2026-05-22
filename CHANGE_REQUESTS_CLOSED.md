@@ -959,3 +959,154 @@ Leverage: Marisol said it directly — *"trust those data is something that can 
 ### Priority: medium-high (scoped tight, video-only V1).
 
 A working "reproduce this" button is the single most convincing artefact for a sceptical member or stakeholder. Don't gold-plate it.
+
+---
+
+## CR-044 · VMAF quality score on video comparison cards
+
+**Status:** ✅ **SHIPPED 2026-05-22** — `feature/cr-044-vmaf`, merged to `main` (`07e03ad`); CSV column + methodology follow-ups in `298097c` / `d208758`. Feasibility was proven by a live trial on GoS1 the same day (see below).
+**Triggered by:** owner request — "for any video job involving more than one video (CPU vs GPU, or comparing codecs), show a VMAF score, just below output file size in the comparison result cards."
+
+### Problem
+
+OWL's video comparisons report energy, speed, and output size — but never *quality*. A visitor reading "H.265 GPU used 81% less energy than CPU" can't tell whether the two encodes are perceptually equivalent. Output-size parity (today's implicit proxy) only confirms the bitrate target was hit; it says nothing about how well each encoder spent those bits. VMAF (Netflix's perceptual quality metric, 0–100) is the industry-standard answer and turns every comparison into a defensible energy-vs-quality statement — squarely the GoS framing ("if it can't be measured, it shouldn't be asserted").
+
+### Scope
+
+**Comparison modes only** — `mode: "both"` (CPU vs GPU) and `mode: "all_codecs"`. Single-encode runs (`run_single` / `renderSingle`) get no VMAF: there is no second encode and the value is the *delta*. Per owner.
+
+### Feasibility — proven by live trial 2026-05-22 (not theory)
+
+Ran the real filtergraph on two retained outputs from an actual CPU-vs-GPU H.265 run (`GoS-in-50s.mp4`, 1080p30):
+
+- **Embedded model works with no model file** — `/usr/local/bin/ffmpeg-master` is built `--enable-libvmaf` with `vmaf_v0.6.1` compiled in; bare `libvmaf` scores without a `model=` arg. System `/usr/bin/ffmpeg` 6.1.1 lacks libvmaf, so this **must** route through `_ffmpeg_bin()`.
+- **Result: CPU 91.48 / GPU 91.31** — within 0.17 VMAF (JND ≈ 6 points), i.e. visually identical. Paired with the known ~81% GPU energy saving, that *is* the headline.
+- **Cost: ~7 s per 50 s/1080p30 clip** at `n_threads=12` (~215 fps). ≈17 s for a 120 s clip; ≈100 s for a 6-file all-codecs sweep.
+- **Bug caught before building (the reason to trial first):** the naive "scale the reference only" graph **failed on the GPU/VAAPI output** with `input height must match`. The hardware HEVC encoder pads the decoded surface (CTB alignment, 1080→1088) in a way ffprobe does *not* surface (it reports 1080). It breaks precisely the GPU half of every comparison. **Fix (verified):** `crop` the distorted to the exact target dims — removes padding **without resampling the measured signal** — then `libvmaf`. The sensible 91.31 confirms the crop alignment is correct (a misaligned crop would tank the score).
+
+Proven filtergraph (crop dims derived from the reference, not hardcoded, so it survives non-16:9 sources):
+```
+[0:v]crop=<refW>:<refH>:0:0,setpts=PTS-STARTPTS[d];
+[1:v]scale=-2:<refH>:flags=bicubic,setpts=PTS-STARTPTS[r];
+[d][r]libvmaf=n_threads=N[:n_subsample=K]:log_fmt=json:log_path=<tmp>
+```
+
+### Energy integrity (the load-bearing constraint)
+
+VMAF is CPU-heavy and **must never enter the reported energy number.** It runs as a **terminal pass after the whole job's measurement is over** — after `stop_event.set()` stops polling, after `LOCK_FILE` is released and `focus_mode_exit` runs in each compare function's `finally`. No P110 poll is taken while VMAF runs, so its draw is excluded by construction. It must run *after the job's last baseline*, never interleaved between encodes — otherwise VMAF heat biases the next encode's baseline (second-order leak). The measured workload is the encode; VMAF is offline QA, legitimately out of scope, same as OWL's own web-serving overhead.
+
+### Subsampling: temporal, not spatial
+
+If wall-time ever bites, subsample **temporally** (`libvmaf n_subsample=K` — every Kth frame, each at full resolution). **Never spatially** — downscaling frames before scoring corrupts the metric (VMAF is trained for a presentation resolution) and breaks comparability, the same reason we crop rather than scale the distorted. Ship `vmaf_n_subsample` defaulting to 1 (full); raise only if needed, and identically across all sides of a comparison.
+
+### Design / implementation
+
+1. `video.compute_vmaf(distorted, reference, s) -> float | None` — fail-soft (None on any error, like other optional metrics), uses `_ffmpeg_bin()` + the proven graph, parses pooled mean from the JSON log.
+2. Terminal VMAF pass in `run_both_measurement` + `run_all_measurement` (after the `finally`); attach `vmaf` to each side's result dict. Flows automatically into persisted JSON, reproduce bundles, and the `owl_version` stamp — no schema change.
+3. Settings: `vmaf_enabled` (default true), `vmaf_n_subsample` (default 1). Lab can disable/tune.
+4. UI — VMAF just below output size in all four compare-card sites: `renderBoth` (`main.py:3186`), `renderAllCodecs` matrix (`3281`/`3284`) + miniCol detail (`3306`), stored all-codecs prev-run table (`1949`). (CR-037 lesson: update live *and* stored renderers.)
+5. Optional but recommended: a quality note in `analyse()` / `analyse_all()` — e.g. "GPU within 0.2 VMAF of CPU at 81 % less energy." It *is* the GoS story.
+6. Tests: parse-from-captured-JSON unit + fail-soft path + renderer smoke (TestClient).
+
+### Cost / leverage
+
+~half a day. Adds wall-time *after* measurement (queue occupancy, not energy). Disk: outputs are already retained by `run_single`; VMAF doesn't change that (latent cleanup concern noted separately under CR-043 watch-outs). Leverage: high — turns every comparison into an energy-vs-quality statement, the missing third axis.
+
+### Cross-references
+
+- **CR-029** (encoding rigor) — VMAF is how you *prove* CPU and GPU are doing comparable work; this CR delivers the measurement, CR-029 the parameter validation. Natural pair.
+- **CR-039** (energy-vs-quality axis for AI) — this is the video sibling: VMAF is for video what the frontier-model judge is for AI.
+- **CR-043** (video preview in card) — both make the energy claim visceral; VMAF is the cheaper, more rigorous half (a number, not a player) and needs no retention rebuild.
+
+### Watch-outs
+
+- Crop, don't scale, the distorted (resampling the measured signal corrupts the score).
+- VMAF only on `ffmpeg_bin` (master), never system ffmpeg.
+- Keep it a terminal pass after the last baseline — never interleaved.
+- Methodology note: VMAF measured at the delivered 1080p against the source downscaled to 1080p.
+
+### Priority: ✅ shipped. Residual: per-mode VMAF inside V2 of CR-045; CSV/JSON already carry the column.
+
+---
+
+---
+
+## CR-028 · Confidence model evolution (interim re-weighting + Tania's unified redesign)
+
+**Status:** ✅ **Phase 2 SHIPPED 2026-05-22** (`feature/cr-028-confidence`, merged to `main` `713bf3a`; hardening `cc792db` + `044fc68`) — `confidence.py` CI model per Tania §9 v2, all four modules, raw samples persisted, legacy fallback, docs + tests. Phase 1 (interim re-weighting) was overtaken by Phase 2. Absorbed CR-020 + the 5×/2× threshold grounding. Two-phase history kept below for the design record.
+**Triggered by:** team meeting 2026-05-04 — items 11 (statistical redesign — Tania) and 14 (variance composite weighting decision: 60/20/20 instead of mean of three).
+
+### Problem
+
+The current `variance_pct = mean(idle_cv, cpu_cv, gpu_cv)` mixes two different things:
+
+- `idle_cv` is the noise floor — CV of raw idle watts during baselines.
+- `cpu_cv` / `gpu_cv` are run-to-run reproducibility — CV of *ΔW values across runs*. Already a "noise of a noise" measurement.
+
+Averaging them gives equal weight to a noise-floor measurement and a reproducibility measurement, which has no statistical defence. The S21 calibration data made this concrete: with 4.4% idle, 2.11% CPU, 17.22% GPU, mean = 7.91% — but the relevant noise for the confidence formula `noise_w = variance_pct/100 × W_base` is *idle*, not the average.
+
+The meeting also identified a deeper problem: the entire confidence model relies on **three independent thresholds** (poll count + ΔW vs noise + the unstated "is the baseline itself behaving") that aren't unified into a single statistical claim. Tania proposed redesigning to a unified confidence calculation.
+
+### Agreed direction
+
+**Phase 1 — interim re-weighting (no working session needed).**
+
+1. Change the composite formula:
+   ```
+   variance_pct = 0.6 × idle_cv + 0.2 × cpu_cv + 0.2 × gpu_cv
+   ```
+   in `wattlab_service/video.py:run_variance_calibration` (the line that currently does `mean_cv = round(sum(available)/len(available), 2)`).
+2. Update the `/methodology` page's "Calibration integrity" prose to document the new weighting + why (idle is the noise floor; CPU/GPU contribute reproducibility signal but shouldn't dominate).
+3. Update the `/settings` page's "Variance %" hint text similarly.
+4. **Test**: a unit test that asserts the weighted formula on known inputs returns the expected composite, so future drift gets caught.
+
+Effect on current settings: with idle 4.4%, CPU 2.11%, GPU 17.22%, the new composite is `0.6×4.4 + 0.2×2.11 + 0.2×17.22 = 2.64 + 0.42 + 3.44 = 6.51%` (vs current 7.91%). Once GPU CV recovers (after the `gpu_encode_max_s` tweak — see "Caught during the session"), the GPU contribution shrinks proportionally and the composite settles in the 3-4% range, very close to the probe's 2.96% pooled CV.
+
+**Phase 2 — Tania's unified statistical redesign — SHIPPED 2026-05-22 (`feature/cr-028-confidence`).** `confidence.py` implements the §9 CI model exactly as specced below; `baseline_samples_w` + `task_samples_w` now persisted in every result energy dict; all four modules call the shared function; popover + `/methodology` + `/llm` band + `/settings` copy updated; legacy variance flag retained as fallback for pre-change results; `confidence.py` test suite added (268 tests total). Decisions captured below were implemented verbatim.
+
+Tania's §9 v2 (`docs/wattlab_traffic_light_confidence.md` §9.1–9.7) is now on `main` (commit `d3d78e9`, cherry-picked 2026-05-22). It specifies a **CI-based single-run confidence**, scoped to *single-run measurability* ("can this one run be distinguished from idle?"), not run-to-run repeatability:
+
+- **Inputs (option C, confirmed):** build the flag from persisted `baseline_samples_w` + `task_samples_w` plus `variance_idle_pct` as the calibrated idle noise floor. **Do not** use `variance_cpu_pct` / `variance_gpu_pct` in the single-run formula — they're run-level repeatability CVs, reserved for a later aggregate-confidence layer.
+- **Uncertainty (§9.3):** `SE_calibrated = (variance_idle_pct/100·w_base)·√(1/n_base + 1/n_task)`; `SE_per_run = √(std_base²/n_base + std_task²/n_task)`; take the conservative one.
+- **Score (§9.4):** `z = delta_w / SE_final`; `confidence_positive = Φ(z)` — one continuous score replacing the three-flag patchwork.
+- **Thresholds (§9.5):** 🟢 `confidence_positive ≥ 0.95 ∧ n_task ≥ 10`; 🟡 `≥ 0.80 ∧ n_task ≥ 5`; 🔴 otherwise. Retires `variance_yellow_x` / `variance_green_x` from the single-run path.
+- **Store (§9.6):** persist `confidence_method`, the raw sample arrays, the SE breakdown, `confidence_positive`, and 95% CI on ΔW + ΔE so old results can be reflagged.
+
+**Decisions taken 2026-05-22 (Ben, with Tania present on-screen):**
+1. **Baseline↔task drift → worst-case / safest.** §9.3's `SE_final = max(SE_calibrated, SE_per_run)` is extended to also carry an inter-window drift term: `SE_drift = variance_idle_drift_pct/100 · w_base` (the S25 drift CV, currently 1.10%), combined **additively** (most conservative): `SE_final = max(SE_calibrated, SE_per_run) + SE_drift`. Closes the original Phase-2 concern that drift between the time-separated baseline and task windows was ignored. (Tania may swap additive→quadrature if she prefers; default is additive = safest.)
+2. **Autocorrelation → first pass uses raw `n` + 1.96.** Ship the simple version; `n_effective = floor(duration_s/5)` and the Student-t critical value remain documented future refinements (§9.5/§9.6).
+3. **Apply to all four modules, not video-only.** §9 is written for video, but the same CI logic is applied to LLM, image_gen, and RAG. `confidence()` is shared by all four; the detection question ("above idle?") is ΔW-based in every module (LLM's mWh/token is downstream of the same ΔW).
+4. Factor the four per-module `confidence(...)` copies into a shared `confidence.py` as the new model lands (as previously agreed).
+
+**Implementation prerequisite (our work):** raw `baseline_samples_w` / `task_samples_w` are **not persisted today** — `confidence()` currently receives only `(delta_w, poll_count, w_base)`. Phase 2 therefore starts by adding that persistence (ties into Track A storage), then the shared `confidence.py`, then re-validating every result page renders the new flag.
+
+This phase was **a design exercise first, code second** — the design is now agreed, so implementation can proceed.
+
+### Cost / leverage
+
+Phase 1: ~30 min code + 30 min docs + 30 min tests = **~1.5 hours**. No-regret quick win. Leverage: variance composite stops over-weighting reproducibility; meeting decision honoured immediately.
+
+Phase 2: half-week minimum — design session, then implementation, then re-validating every existing result page renders the new confidence correctly. High leverage but requires Tania.
+
+### Cross-references
+
+- **CR-020** (per-run baseline CV gate): the in-run baseline-noise check Tania discussed is exactly what CR-020 captured. Phase 2 here probably *supersedes* CR-020 by absorbing it into the unified model, but Phase 1 + CR-020 are independent.
+- **CLAUDE.md deferred** (5×/2× threshold grounding): same Tania session covers this. Phase 2 likely changes whether `variance_green_x` / `variance_yellow_x` even survive as parameters.
+- **CR-022 + CR-023** (CR-022 cap + calibration gating): both shipped; Phase 1 sits on top of those fixes.
+
+### Watch-outs
+
+- **Don't ship Phase 1 without re-running calibration.** The composite formula change interacts with the current GPU CV anomaly (17.22% from too-short encodes). Land the `gpu_encode_max_s: 30 → 90` settings tweak first, re-calibrate, *then* ship Phase 1 — otherwise the team sees one number change and can't tell which fix moved it.
+- **Phase 2 is a science problem disguised as a UI change.** Don't prototype implementation before the model is on paper. The danger pattern is "let's just try X and see if it looks right" — that produces a model nobody can defend.
+
+### Not in scope
+
+- Multi-machine / cross-platform confidence (different hardware, different P110 baseline) — separate problem.
+- Carbon-side confidence (uncertainty bounds on gCO₂e) — separate again.
+
+### Open questions (added 2026-05-04 after multiple calibrations; updated 2026-05-05)
+
+- **GPU CV at `gpu_encode_max_s = 90`: ~~4.77% (n=3) or 24.5% (n=10)?~~** **Resolved 2026-05-05.** Overnight calibration at `variance_runs=24, variance_cooldown_s=90` produced **idle 2.41% / cpu 1.33% / gpu 4.77%** (`variance_pct=2.84`). At n=24, SE on the CV figure is ~14% of value — statistically real, not sampling luck. GPU lives near the bottom of Tania's 3–5% expectation; the n=10 24.5% reading was a small-sample artefact. Settings.json staged at the new runs/cooldown values; CV fields written by the calibration. Clean GPU figure available as Phase 2 design-session input.
+- **Idle and CPU CV settling?** Across the 2026-05-04 calibrations, idle CV ranged 1.92–7.42% and CPU 0.71–5.28%. The morning's clean baseline (idle ~2%, CPU ~1%) is what we'd expect on a quiet box; the higher numbers correlated with active work elsewhere. The 2026-05-05 overnight n=24 calibration landed at idle 2.41% / cpu 1.33% — clean-baseline range, consistent with "no other active work on the box." ~~Open question for Phase 2: should the confidence model account for *time-of-day* idle baseline drift, or treat it as out-of-scope and rely on a fresh per-run baseline?~~ **Resolved 2026-05-22 (worst-case / safest):** the model carries an additive inter-window drift term (`SE_drift = variance_idle_drift_pct/100 · w_base`) on top of the per-run/calibrated `max()`, so drift between the time-separated baseline and task windows is accounted for rather than assumed away. See Phase 2 decisions above.
+
+---
