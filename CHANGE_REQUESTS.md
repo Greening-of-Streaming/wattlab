@@ -933,6 +933,50 @@ If wall-time ever bites, subsample **temporally** (`libvmaf n_subsample=K` — e
 
 ---
 
+## CR-045 · "Same Bitrate / Same Quality" toggle on the all-codecs comparison
+
+**Status:** captured 2026-05-22 (owner idea). Rides on the VMAF axis (CR-044, shipped). Sequence after / alongside CR-029.
+**Triggered by:** owner — *"the compare-all-codecs button could have a toggle: Same Bitrate OR Same Quality."*
+
+### Problem / opportunity
+
+The all-codecs comparison runs **ABR at a fixed per-codec bitrate** ("Same Bitrate"): it answers *"at this bitrate, which codec/device is most efficient, and what quality results?"* That's one of the two questions operators ask. The other — the one that actually drives codec adoption — is the inverse: *"to deliver **this** perceptual quality, which codec/device uses least energy?"* Modern codecs (H.265, AV1) earn their keep precisely here: same VMAF at lower bitrate. Now that VMAF ships on every comparison (CR-044), OWL has the missing half of the picture and can offer an iso-quality mode. This is the iso-quality sibling of CR-003 (iso-energy), surfaced as a clean UX toggle on the existing button.
+
+### The rigor gotcha (must be designed in, not bolted on)
+
+**"Same Quality" is harder than it looks, and the label has to be honest** — straight into GoS's own "if it can't be measured, it shouldn't be asserted":
+
+- The cheap implementation is to swap ABR for **CRF / CQP constant-quality** rate control. But CRF values are **not comparable across codecs** — libx264 CRF 23 ≠ libx265 CRF 23 ≠ SVT-AV1 CRF 23 ≠ VAAPI `qp`/`global_quality`. "Same CRF" is **not** "same quality." A button labelled "Same Quality" that just sets equal CRF asserts something untrue.
+- **True** same-quality = **same VMAF**, which ffmpeg cannot target directly. It needs a per-codec **bitrate search** (encode → measure VMAF → adjust → re-encode, ~3–5 passes), i.e. N× the encodes (and N× the energy/time). VMAF (CR-044) is exactly the instrument that makes the search possible.
+
+### Agreed direction — two honest designs, not one mislabelled button
+
+1. **V1 — "Constant quality (per-codec)".** Native CQ rate control per encoder (CRF for libx264/libx265/SVT-AV1, `qp` / `global_quality` for the VAAPI encoders). The VMAF column (CR-044) is shown prominently so the visitor *sees* the resulting quality is close-but-not-identical across codecs — the honesty is in surfacing the real VMAF, not in claiming equality. This is essentially the long-deferred **"Benchmark 2 — codec-natural rate control (CRF/QP)"** from the roadmap. Cheap: same number of encodes as today.
+2. **V2 — "Match quality (target VMAF)".** The rigorous iso-VMAF version: binary-search each codec's bitrate to hit a target VMAF ± tolerance, then report the energy to deliver it. Bigger build (N× encodes, search loop, abort/convergence guards, much longer wall-time — keep VMAF scoring as the terminal pass per CR-044 so the search encodes don't pollute energy readings of the *final* accepted encode).
+
+UX: a two-state toggle on the all-codecs control — `Same bitrate` (today's ABR, default) / `Constant quality` (V1) — with V2 as a later third state once it exists. The result card's framing line and the carbon/energy headline must state which mode produced the numbers.
+
+### Cost / leverage
+
+V1 ~1 day (new preset variants with CRF/QP + a mode flag through `run_all_measurement` + result framing). V2 ~2–4 days (search loop + convergence handling + longer-run UX). Leverage: high — answers the codec-adoption question directly and showcases the VMAF axis. The energy-vs-quality story becomes "AV1 delivers VMAF 93 at X Wh vs H.264 at Y Wh," which is the headline operators care about.
+
+### Cross-references
+
+- **CR-044** (VMAF) — the enabling measurement; V2's search loop consumes it.
+- **CR-029** (encoding rigor) — overlaps heavily: defining "equivalent quality" (GOP/profile, the CRF-isn't-comparable point) is Tania's apples-to-apples territory. **Sequence CR-045 after/with CR-029** so encode-parameter changes aren't re-validated against a moving target.
+- **CR-003** (iso-energy bitrate sweep) — the mirror-image axis (fix energy, vary quality).
+- **"Benchmark 2 — codec-natural rate control (CRF/QP)"** (CLAUDE.md deferred / WATTLAB_SPEC) — V1 *is* this, surfaced as a toggle.
+
+### Watch-outs
+
+- **Never label CRF-equal as "Same Quality."** Call V1 "Constant quality (per-codec)" and let VMAF show the spread.
+- **VMAF stays a terminal pass** (CR-044) even inside V2's search, so the accepted encode's reported energy excludes all the search re-encodes' draw.
+- VAAPI CQ rate control differs by driver/codec — verify `qp` vs `global_quality` behaviour per `*_vaapi` encoder during V1.
+
+### Priority: captured; gate V1 behind (or run alongside) CR-029. V2 is a later, larger follow-up.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
@@ -1036,9 +1080,14 @@ Tania §9 v2 ✅ landed     CR-028 Phase 2  ─→  CR-029 (encoding rigor — d
 CR-037 ✅ (shipped S26)  ──→  CR-039  (quality scoring lives on the now-tethered AI pages)
 CR-029 §6 "external PQA"  ─?→  CR-039  (carve-out needed, or drop CR-039)
 
-CR-044 (VMAF, in build)  ──→  CR-029  (VMAF proves CPU/GPU do comparable work)
+CR-044 (VMAF ✅ shipped)  ──→  CR-029  (VMAF proves CPU/GPU do comparable work)
                          ──→  CR-039  (VMAF is the video sibling of the AI quality judge)
                          ──→  CR-043  (cheaper, rigorous half of "make the claim visceral")
+                         ──→  CR-045  (enables the iso-VMAF "Match quality" search)
+
+CR-045 (Same Bitrate /   ──→  CR-029  (defining "equivalent quality" is Tania's territory)
+        Same Quality)    ──→  CR-003  (mirror axis: fix energy, vary quality)
+                         ↳ V1 = the deferred "Benchmark 2" (CRF/QP) surfaced as a toggle
 
 CR-026 ✅  ─→  CR-027 ✅  (tier explanation — both shipped)
 ```
