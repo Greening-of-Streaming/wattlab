@@ -260,6 +260,15 @@ def test_video_csv_disclaimer_preserved_as_trailing_comment():
     assert any(l.startswith("#") and "methodology" in l for l in lines)
 
 
+def test_csv_has_no_semicolon_anywhere():
+    # Numbers/Excel sniff the WHOLE file for a delimiter — a single ';' even in
+    # the trailing disclaimer makes them pick ';' and collapse to ~2 columns.
+    # Comma must be the only delimiter-like char in the entire output.
+    import persist
+    for jt, data in (("video", _both_result()),):
+        assert ";" not in persist.to_csv(jt, data), f"{jt} CSV contains a semicolon"
+
+
 # ── renderer smoke ──────────────────────────────────────────────────────────
 
 def test_video_page_ships_vmaf_renderer():

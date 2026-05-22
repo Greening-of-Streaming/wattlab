@@ -158,9 +158,13 @@ def to_csv(job_type: str, data: dict) -> str:
     # With the real comma-delimited header now on line 1, sniffers detect
     # commas correctly; parsers using `comment='#'` (pandas etc.) still skip
     # the trailing disclaimer.
+    # No semicolon (or any non-comma delimiter) anywhere in this line: Numbers
+    # sniffs the *whole* file for a delimiter, so a single ';' in the trailing
+    # disclaimer was enough to make it pick ';' and collapse the sheet to ~2
+    # columns. Comma must be the only delimiter-like char in the file.
     disclaimer = (
         "# OWL CSV export — energy columns (w_*, delta_*) are 🟢 direct "
-        "measurements; co2e_* columns are 🟡 indicative (Wh × third-party "
+        "measurements. co2e_* columns are 🟡 indicative (Wh × third-party "
         "grid intensity, not measured). See /methodology."
     )
     return output.getvalue() + disclaimer + "\n"
