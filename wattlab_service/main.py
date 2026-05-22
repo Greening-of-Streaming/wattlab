@@ -6008,9 +6008,12 @@ async def settings_page(request: Request):
 
     <div class="section">Variance calibration</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
-      Runs H.264 CPU then H.265 GPU on Meridian N times. Computes three coefficients of
-      variation: idle (raw P110 baseline readings), CPU (ΔW per H264 run), GPU (ΔW per H265 run).
-      Their mean is written to Variance % above. Queue is blocked for the duration.
+      Runs H.264 CPU then H.265 GPU on Meridian N times, sampling raw P110 readings throughout.
+      Writes <strong>Variance Idle %</strong> (the idle noise floor) and <strong>Variance Idle Drift %</strong>
+      (between-window drift) — these feed the <strong>live CI confidence model</strong> (SE_calibrated + SE_drift).
+      Also records per-codec repeatability CVs (CPU/GPU ΔW), reserved for a future aggregate layer — not used in
+      the single-run flag. The composite <strong>Variance %</strong> (mean of the three) now feeds only the
+      <em>legacy</em> fallback for results saved without raw samples. Queue is blocked for the duration.
     </div>
     {slider_field("variance_runs",      s['variance_runs'],      2,  100, 1,  "runs",    "number of H264-CPU + H265-GPU run pairs")}
     {slider_field("variance_cooldown_s",s['variance_cooldown_s'],10, 300, 10, "s",       "cooldown between each run pair")}
