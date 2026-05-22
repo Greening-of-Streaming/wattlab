@@ -430,14 +430,25 @@ The meeting also identified a deeper problem: the entire confidence model relies
 
 Effect on current settings: with idle 4.4%, CPU 2.11%, GPU 17.22%, the new composite is `0.6×4.4 + 0.2×2.11 + 0.2×17.22 = 2.64 + 0.42 + 3.44 = 6.51%` (vs current 7.91%). Once GPU CV recovers (after the `gpu_encode_max_s` tweak — see "Caught during the session"), the GPU contribution shrinks proportionally and the composite settles in the 3-4% range, very close to the probe's 2.96% pooled CV.
 
-**Phase 2 — Tania's unified statistical redesign (working session required).**
+**Phase 2 — Tania's unified statistical redesign — SPEC LANDED + DECISIONS AGREED 2026-05-22.**
 
-The shape isn't decided yet, but candidate ingredients:
-- Replace `noise_w = variance_pct × W_base` with a per-run uncertainty bound derived from observed baseline CV *during this run* (overlaps with CR-020).
-- Replace the three-flag traffic light with a single confidence number (e.g. effective signal-to-noise ratio) and a continuous mapping to badge colours, so adjacent runs aren't artificially binned.
-- Properly account for the dependence between baseline and task readings — they're separated in time, so drift between them is a real noise contributor that the current formula ignores.
+Tania's §9 v2 (`docs/wattlab_traffic_light_confidence.md` §9.1–9.7) is now on `main` (commit `d3d78e9`, cherry-picked 2026-05-22). It specifies a **CI-based single-run confidence**, scoped to *single-run measurability* ("can this one run be distinguished from idle?"), not run-to-run repeatability:
 
-This phase is **a design exercise first, code second**. Working session with Tania to align on the model before any implementation. Once the model is agreed, factor the existing `confidence(...)` function in each measurement module into a shared `confidence.py` module so the new model lives in one place.
+- **Inputs (option C, confirmed):** build the flag from persisted `baseline_samples_w` + `task_samples_w` plus `variance_idle_pct` as the calibrated idle noise floor. **Do not** use `variance_cpu_pct` / `variance_gpu_pct` in the single-run formula — they're run-level repeatability CVs, reserved for a later aggregate-confidence layer.
+- **Uncertainty (§9.3):** `SE_calibrated = (variance_idle_pct/100·w_base)·√(1/n_base + 1/n_task)`; `SE_per_run = √(std_base²/n_base + std_task²/n_task)`; take the conservative one.
+- **Score (§9.4):** `z = delta_w / SE_final`; `confidence_positive = Φ(z)` — one continuous score replacing the three-flag patchwork.
+- **Thresholds (§9.5):** 🟢 `confidence_positive ≥ 0.95 ∧ n_task ≥ 10`; 🟡 `≥ 0.80 ∧ n_task ≥ 5`; 🔴 otherwise. Retires `variance_yellow_x` / `variance_green_x` from the single-run path.
+- **Store (§9.6):** persist `confidence_method`, the raw sample arrays, the SE breakdown, `confidence_positive`, and 95% CI on ΔW + ΔE so old results can be reflagged.
+
+**Decisions taken 2026-05-22 (Ben, with Tania present on-screen):**
+1. **Baseline↔task drift → worst-case / safest.** §9.3's `SE_final = max(SE_calibrated, SE_per_run)` is extended to also carry an inter-window drift term: `SE_drift = variance_idle_drift_pct/100 · w_base` (the S25 drift CV, currently 1.10%), combined **additively** (most conservative): `SE_final = max(SE_calibrated, SE_per_run) + SE_drift`. Closes the original Phase-2 concern that drift between the time-separated baseline and task windows was ignored. (Tania may swap additive→quadrature if she prefers; default is additive = safest.)
+2. **Autocorrelation → first pass uses raw `n` + 1.96.** Ship the simple version; `n_effective = floor(duration_s/5)` and the Student-t critical value remain documented future refinements (§9.5/§9.6).
+3. **Apply to all four modules, not video-only.** §9 is written for video, but the same CI logic is applied to LLM, image_gen, and RAG. `confidence()` is shared by all four; the detection question ("above idle?") is ΔW-based in every module (LLM's mWh/token is downstream of the same ΔW).
+4. Factor the four per-module `confidence(...)` copies into a shared `confidence.py` as the new model lands (as previously agreed).
+
+**Implementation prerequisite (our work):** raw `baseline_samples_w` / `task_samples_w` are **not persisted today** — `confidence()` currently receives only `(delta_w, poll_count, w_base)`. Phase 2 therefore starts by adding that persistence (ties into Track A storage), then the shared `confidence.py`, then re-validating every result page renders the new flag.
+
+This phase was **a design exercise first, code second** — the design is now agreed, so implementation can proceed.
 
 ### Cost / leverage
 
@@ -464,7 +475,7 @@ Phase 2: half-week minimum — design session, then implementation, then re-vali
 ### Open questions (added 2026-05-04 after multiple calibrations; updated 2026-05-05)
 
 - **GPU CV at `gpu_encode_max_s = 90`: ~~4.77% (n=3) or 24.5% (n=10)?~~** **Resolved 2026-05-05.** Overnight calibration at `variance_runs=24, variance_cooldown_s=90` produced **idle 2.41% / cpu 1.33% / gpu 4.77%** (`variance_pct=2.84`). At n=24, SE on the CV figure is ~14% of value — statistically real, not sampling luck. GPU lives near the bottom of Tania's 3–5% expectation; the n=10 24.5% reading was a small-sample artefact. Settings.json staged at the new runs/cooldown values; CV fields written by the calibration. Clean GPU figure available as Phase 2 design-session input.
-- **Idle and CPU CV settling?** Across the 2026-05-04 calibrations, idle CV ranged 1.92–7.42% and CPU 0.71–5.28%. The morning's clean baseline (idle ~2%, CPU ~1%) is what we'd expect on a quiet box; the higher numbers correlated with active work elsewhere. The 2026-05-05 overnight n=24 calibration landed at idle 2.41% / cpu 1.33% — clean-baseline range, consistent with "no other active work on the box." Open question for Phase 2: should the confidence model account for *time-of-day* idle baseline drift, or treat it as out-of-scope and rely on a fresh per-run baseline?
+- **Idle and CPU CV settling?** Across the 2026-05-04 calibrations, idle CV ranged 1.92–7.42% and CPU 0.71–5.28%. The morning's clean baseline (idle ~2%, CPU ~1%) is what we'd expect on a quiet box; the higher numbers correlated with active work elsewhere. The 2026-05-05 overnight n=24 calibration landed at idle 2.41% / cpu 1.33% — clean-baseline range, consistent with "no other active work on the box." ~~Open question for Phase 2: should the confidence model account for *time-of-day* idle baseline drift, or treat it as out-of-scope and rely on a fresh per-run baseline?~~ **Resolved 2026-05-22 (worst-case / safest):** the model carries an additive inter-window drift term (`SE_drift = variance_idle_drift_pct/100 · w_base`) on top of the per-run/calibrated `max()`, so drift between the time-separated baseline and task windows is accounted for rather than assumed away. See Phase 2 decisions above.
 
 ---
 
@@ -901,11 +912,11 @@ Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a l
 
 ### Track B — Confidence model (CR-028 Phase 2)
 
-- **CR-028 Phase 2** is the spec — Tania's `wattlab_traffic_light_confidence.md` §9. Awaiting her reply on the units question (sent 2026-05-07).
-- **CR-029** encoding rigor *partially* depends on Phase 2: apples-to-apples encode comparisons get more credible once confidence flags rest on a unified statistical model.
+- **CR-028 Phase 2** spec is now **landed and agreed** — Tania's `wattlab_traffic_light_confidence.md` §9 v2 is on `main` (`d3d78e9`) and the units question is resolved (option C). Design done; implementation can proceed (see Phase 2 decisions in the CR-028 entry above). The implementation-prereq is persisting raw `baseline_samples_w` + `task_samples_w`, which ties back into the Track A storage decision.
+- **CR-029** encoding rigor *partially* depends on Phase 2: apples-to-apples encode comparisons get more credible once confidence flags rest on a unified statistical model. Per 2026-05-22 decision, CR-029 stays a **separate, deferred** issue — not kicked off now even though the §9 v2 gate is lifted.
 - The CR-020 retirement absorbed the per-run baseline-CV gate into Phase 2's `SE_per_run`. Storage of raw `baseline_samples_w` + `task_samples_w` is folded into Phase 2 scope so historical results can be re-flagged after the formula change.
 
-**Recommendation:** Phase 2 is the longest-pole item on this track. Wait for Tania's v2 doc; do not start CR-029 implementation before then or the encode-parameter changes will be re-validated against a moving target.
+**Recommendation:** Phase 2's spec gate is cleared. The longest-pole work is now the implementation — start with sample persistence (Track A) + shared `confidence.py`, then re-validate every result page. CR-029 remains intentionally deferred.
 
 ### Track C — Widget / progress extensions (post-CR-019)
 
@@ -952,8 +963,8 @@ All three touch `wlRenderProgress` but the work is independent:
 CR-031 storage decision  ─┬─→  CR-012  (calibration history persistence)
                          └─→  Track A analytics: CR-003, CR-007
 
-Tania §9 v2  ─────────→  CR-028 Phase 2  ─→  CR-029 (encoding rigor)
-                                          ─→  retire CR-020 fully
+Tania §9 v2 ✅ landed     CR-028 Phase 2  ─→  CR-029 (encoding rigor — deferred by decision 2026-05-22)
+(spec agreed 2026-05-22) ─→ (impl ready)  ─→  retire CR-020 fully
 
 CR-037 ✅ (shipped S26)  ──→  CR-039  (quality scoring lives on the now-tethered AI pages)
 CR-029 §6 "external PQA"  ─?→  CR-039  (carve-out needed, or drop CR-039)
@@ -967,9 +978,9 @@ CR-026 ✅  ─→  CR-027 ✅  (tier explanation — both shipped)
 
 The S26 credibility bundle shipped what were the top three (CR-037, CR-040, CR-027). Remaining order:
 
-1. **CR-029 prep + Track A storage decision** — CR-029 still gated on Tania's §9 v2; the storage/DB-family decision (CR-031 §1, REM coherence) unblocks CR-012 + the Track A analytics layer (CR-003, CR-007).
+1. **CR-028 Phase 2 implementation + Track A storage decision** — §9 v2 spec is landed and agreed (2026-05-22), so the confidence track is unblocked. Start with sample persistence (`baseline_samples_w` / `task_samples_w`) which shares the storage/DB-family decision (CR-031 §1, REM coherence) that also unblocks CR-012 + the Track A analytics layer (CR-003, CR-007); then the shared `confidence.py`; then re-validate every result page. **CR-029** stays deferred by decision — separate issue to look into later, not part of this push.
 2. **Track C (CR-035 → CR-024)** — encode progress bar, then re-run-probe button.
 3. **CR-039 / CR-041** as exploratory follow-ups (CR-039 now lands on the shipped tethered AI pages).
 4. **CR-007** carbon variance · **CR-004** graphing · longer-horizon Track F (CR-008 / 009 / 018 T2-3 / 025) as capacity allows.
 
-If only one thing per week: in the order above. The confidence track (CR-028 → CR-029) resumes when Tania's §9 v2 lands.
+If only one thing per week: in the order above. The confidence track's spec gate cleared 2026-05-22; CR-028 Phase 2 is now implementation, and CR-029 is intentionally held as a later, separate issue.
