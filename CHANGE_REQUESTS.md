@@ -866,6 +866,73 @@ Ride on CR-039's plumbing once it lands:
 
 ---
 
+## CR-044 · VMAF quality score on video comparison cards
+
+**Status:** captured 2026-05-22. **Feasibility proven same day** by a live trial on GoS1 (see below); owner-directed to implement.
+**Triggered by:** owner request — "for any video job involving more than one video (CPU vs GPU, or comparing codecs), show a VMAF score, just below output file size in the comparison result cards."
+
+### Problem
+
+OWL's video comparisons report energy, speed, and output size — but never *quality*. A visitor reading "H.265 GPU used 81% less energy than CPU" can't tell whether the two encodes are perceptually equivalent. Output-size parity (today's implicit proxy) only confirms the bitrate target was hit; it says nothing about how well each encoder spent those bits. VMAF (Netflix's perceptual quality metric, 0–100) is the industry-standard answer and turns every comparison into a defensible energy-vs-quality statement — squarely the GoS framing ("if it can't be measured, it shouldn't be asserted").
+
+### Scope
+
+**Comparison modes only** — `mode: "both"` (CPU vs GPU) and `mode: "all_codecs"`. Single-encode runs (`run_single` / `renderSingle`) get no VMAF: there is no second encode and the value is the *delta*. Per owner.
+
+### Feasibility — proven by live trial 2026-05-22 (not theory)
+
+Ran the real filtergraph on two retained outputs from an actual CPU-vs-GPU H.265 run (`GoS-in-50s.mp4`, 1080p30):
+
+- **Embedded model works with no model file** — `/usr/local/bin/ffmpeg-master` is built `--enable-libvmaf` with `vmaf_v0.6.1` compiled in; bare `libvmaf` scores without a `model=` arg. System `/usr/bin/ffmpeg` 6.1.1 lacks libvmaf, so this **must** route through `_ffmpeg_bin()`.
+- **Result: CPU 91.48 / GPU 91.31** — within 0.17 VMAF (JND ≈ 6 points), i.e. visually identical. Paired with the known ~81% GPU energy saving, that *is* the headline.
+- **Cost: ~7 s per 50 s/1080p30 clip** at `n_threads=12` (~215 fps). ≈17 s for a 120 s clip; ≈100 s for a 6-file all-codecs sweep.
+- **Bug caught before building (the reason to trial first):** the naive "scale the reference only" graph **failed on the GPU/VAAPI output** with `input height must match`. The hardware HEVC encoder pads the decoded surface (CTB alignment, 1080→1088) in a way ffprobe does *not* surface (it reports 1080). It breaks precisely the GPU half of every comparison. **Fix (verified):** `crop` the distorted to the exact target dims — removes padding **without resampling the measured signal** — then `libvmaf`. The sensible 91.31 confirms the crop alignment is correct (a misaligned crop would tank the score).
+
+Proven filtergraph (crop dims derived from the reference, not hardcoded, so it survives non-16:9 sources):
+```
+[0:v]crop=<refW>:<refH>:0:0,setpts=PTS-STARTPTS[d];
+[1:v]scale=-2:<refH>:flags=bicubic,setpts=PTS-STARTPTS[r];
+[d][r]libvmaf=n_threads=N[:n_subsample=K]:log_fmt=json:log_path=<tmp>
+```
+
+### Energy integrity (the load-bearing constraint)
+
+VMAF is CPU-heavy and **must never enter the reported energy number.** It runs as a **terminal pass after the whole job's measurement is over** — after `stop_event.set()` stops polling, after `LOCK_FILE` is released and `focus_mode_exit` runs in each compare function's `finally`. No P110 poll is taken while VMAF runs, so its draw is excluded by construction. It must run *after the job's last baseline*, never interleaved between encodes — otherwise VMAF heat biases the next encode's baseline (second-order leak). The measured workload is the encode; VMAF is offline QA, legitimately out of scope, same as OWL's own web-serving overhead.
+
+### Subsampling: temporal, not spatial
+
+If wall-time ever bites, subsample **temporally** (`libvmaf n_subsample=K` — every Kth frame, each at full resolution). **Never spatially** — downscaling frames before scoring corrupts the metric (VMAF is trained for a presentation resolution) and breaks comparability, the same reason we crop rather than scale the distorted. Ship `vmaf_n_subsample` defaulting to 1 (full); raise only if needed, and identically across all sides of a comparison.
+
+### Design / implementation
+
+1. `video.compute_vmaf(distorted, reference, s) -> float | None` — fail-soft (None on any error, like other optional metrics), uses `_ffmpeg_bin()` + the proven graph, parses pooled mean from the JSON log.
+2. Terminal VMAF pass in `run_both_measurement` + `run_all_measurement` (after the `finally`); attach `vmaf` to each side's result dict. Flows automatically into persisted JSON, reproduce bundles, and the `owl_version` stamp — no schema change.
+3. Settings: `vmaf_enabled` (default true), `vmaf_n_subsample` (default 1). Lab can disable/tune.
+4. UI — VMAF just below output size in all four compare-card sites: `renderBoth` (`main.py:3186`), `renderAllCodecs` matrix (`3281`/`3284`) + miniCol detail (`3306`), stored all-codecs prev-run table (`1949`). (CR-037 lesson: update live *and* stored renderers.)
+5. Optional but recommended: a quality note in `analyse()` / `analyse_all()` — e.g. "GPU within 0.2 VMAF of CPU at 81 % less energy." It *is* the GoS story.
+6. Tests: parse-from-captured-JSON unit + fail-soft path + renderer smoke (TestClient).
+
+### Cost / leverage
+
+~half a day. Adds wall-time *after* measurement (queue occupancy, not energy). Disk: outputs are already retained by `run_single`; VMAF doesn't change that (latent cleanup concern noted separately under CR-043 watch-outs). Leverage: high — turns every comparison into an energy-vs-quality statement, the missing third axis.
+
+### Cross-references
+
+- **CR-029** (encoding rigor) — VMAF is how you *prove* CPU and GPU are doing comparable work; this CR delivers the measurement, CR-029 the parameter validation. Natural pair.
+- **CR-039** (energy-vs-quality axis for AI) — this is the video sibling: VMAF is for video what the frontier-model judge is for AI.
+- **CR-043** (video preview in card) — both make the energy claim visceral; VMAF is the cheaper, more rigorous half (a number, not a player) and needs no retention rebuild.
+
+### Watch-outs
+
+- Crop, don't scale, the distorted (resampling the measured signal corrupts the score).
+- VMAF only on `ffmpeg_bin` (master), never system ffmpeg.
+- Keep it a terminal pass after the last baseline — never interleaved.
+- Methodology note: VMAF measured at the delivered 1080p against the source downscaled to 1080p.
+
+### Priority: ready to implement (owner-directed, feasibility proven 2026-05-22).
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:
@@ -968,6 +1035,10 @@ Tania §9 v2 ✅ landed     CR-028 Phase 2  ─→  CR-029 (encoding rigor — d
 
 CR-037 ✅ (shipped S26)  ──→  CR-039  (quality scoring lives on the now-tethered AI pages)
 CR-029 §6 "external PQA"  ─?→  CR-039  (carve-out needed, or drop CR-039)
+
+CR-044 (VMAF, in build)  ──→  CR-029  (VMAF proves CPU/GPU do comparable work)
+                         ──→  CR-039  (VMAF is the video sibling of the AI quality judge)
+                         ──→  CR-043  (cheaper, rigorous half of "make the claim visceral")
 
 CR-026 ✅  ─→  CR-027 ✅  (tier explanation — both shipped)
 ```
