@@ -127,7 +127,7 @@ def to_csv(job_type: str, data: dict) -> str:
     elif job_type == "video":
         fieldnames = [
             "job_id", "saved_at", "mode", "preset", "duration_s",
-            "output_size_mb",
+            "output_size_mb", "vmaf",
             "w_base", "w_task", "delta_w", "delta_e_wh",
             "co2e_g", "co2e_intensity_g_per_kwh", "co2e_source", "co2e_zone",
             "poll_count", "confidence",
@@ -149,18 +149,21 @@ def to_csv(job_type: str, data: dict) -> str:
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
     writer.writeheader()
     writer.writerows(rows)
-    # CR-036 — leading-comment line warning downstream consumers that the
-    # `co2e_*` columns are indicative (third-party grid factors × Wh), not
-    # a GoS primary measurement. Most parsers that respect `comment='#'`
-    # (pandas.read_csv etc.) will skip this line; vanilla csv.reader sees
-    # it as a row, which is fine — anyone parsing without disclaimer
-    # awareness still sees the disclaimer before they parse the numbers.
-    return (
+    # CR-036 — disclaimer that the `co2e_*` columns are indicative (third-party
+    # grid factors × Wh), not a GoS primary measurement.
+    # CR-044 follow-up: emit it as a TRAILING `#` line, not a leading one.
+    # The leading variant put a non-data row (carrying a semicolon + stray
+    # commas) on line 1, which made spreadsheet delimiter-sniffers
+    # (Numbers/Excel) guess ";" and collapse the whole sheet to ~2 columns.
+    # With the real comma-delimited header now on line 1, sniffers detect
+    # commas correctly; parsers using `comment='#'` (pandas etc.) still skip
+    # the trailing disclaimer.
+    disclaimer = (
         "# OWL CSV export — energy columns (w_*, delta_*) are 🟢 direct "
         "measurements; co2e_* columns are 🟡 indicative (Wh × third-party "
-        "grid intensity, not measured). See /methodology.\n"
-        + output.getvalue()
+        "grid intensity, not measured). See /methodology."
     )
+    return output.getvalue() + disclaimer + "\n"
 
 
 # --- Internal helpers ---
@@ -364,6 +367,7 @@ def _video_result_row(common: dict, r: dict) -> dict:
         "preset": r.get("preset_label"),
         "duration_s": e.get("delta_t_s"),
         "output_size_mb": r.get("output_size_mb"),
+        "vmaf": r.get("vmaf"),
         "w_base": e.get("w_base"), "w_task": e.get("w_task"),
         "delta_w": e.get("delta_w"), "delta_e_wh": e.get("delta_e_wh"),
         **_co2e_fields(e),

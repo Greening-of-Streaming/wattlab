@@ -196,6 +196,70 @@ def test_analyse_quality_note_absent_without_vmaf():
     assert a["quality_note"] is None
 
 
+# ── CSV export (CR-044 follow-up: spreadsheet-safe + vmaf column) ────────────
+
+def _both_result():
+    def side(key, label, vmaf, de, dt, conf):
+        return {
+            "preset_key": key, "preset_label": label, "vmaf": vmaf,
+            "transcode": {"ffmpeg_cmd": "ffmpeg -i in out"},
+            "energy": {"w_base": 57.0, "w_task": 100.0, "delta_w": 43.0,
+                       "delta_e_wh": de, "delta_t_s": dt, "poll_count": 7,
+                       "confidence": {"label": conf}},
+            "thermals": {"cpu_base": 52, "cpu_peak": 58, "cpu_mean": 56,
+                         "gpu_base": 37, "gpu_peak": 44, "gpu_mean": 41,
+                         "gpu_ppt_mean_w": 18, "gpu_ppt_peak_w": 20},
+        }
+    return {
+        "job_id": "t1", "saved_at": "2026-05-22T00:00:00", "mode": "both",
+        "cpu": side("cpu", "H.265 CPU", 91.48, 1.58, 70, "Repeatable"),
+        "gpu": side("gpu", "H.265 GPU", 91.31, 0.29, 14, "Early insight"),
+    }
+
+
+def test_video_csv_header_is_first_line_not_a_comment():
+    # The disclaimer must NOT be line 1 — a leading non-data line carrying a
+    # semicolon made spreadsheets sniff ";" and collapse to ~2 columns.
+    import persist
+    lines = persist.to_csv("video", _both_result()).splitlines()
+    assert lines[0].startswith("job_id,")
+    assert ";" not in lines[0]
+
+
+def test_video_csv_table_is_comma_consistent_and_semicolon_free():
+    import csv as _csv
+    import io
+    import persist
+    lines = persist.to_csv("video", _both_result()).splitlines()
+    table = [l for l in lines if not l.startswith("#")]   # drop disclaimer
+    # no semicolons anywhere in the actual data → sniffers can't pick ";"
+    assert all(";" not in l for l in table)
+    rows = list(_csv.reader(io.StringIO("\n".join(table))))
+    counts = {len(r) for r in rows}
+    assert len(counts) == 1, f"ragged columns: {counts}"
+    assert len(rows[0]) > 20   # full wide table, not 2 columns
+
+
+def test_video_csv_has_vmaf_column_with_values():
+    import csv as _csv
+    import io
+    import persist
+    lines = persist.to_csv("video", _both_result()).splitlines()
+    table = [l for l in lines if not l.startswith("#")]
+    rows = list(_csv.reader(io.StringIO("\n".join(table))))
+    header = rows[0]
+    assert "vmaf" in header
+    vi = header.index("vmaf")
+    assert rows[1][vi] == "91.48"
+    assert rows[2][vi] == "91.31"
+
+
+def test_video_csv_disclaimer_preserved_as_trailing_comment():
+    import persist
+    lines = persist.to_csv("video", _both_result()).splitlines()
+    assert any(l.startswith("#") and "methodology" in l for l in lines)
+
+
 # ── renderer smoke ──────────────────────────────────────────────────────────
 
 def test_video_page_ships_vmaf_renderer():
