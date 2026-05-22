@@ -186,6 +186,14 @@ Identical-bitrate ABR (H.264 4000 kbps · H.265 2000 kbps · AV1 1500 kbps). GPU
 - AV1 CPU beats H.265 CPU on speed AND energy — SVT-AV1 multi-core advantage.
 - Results within 1% across 3 runs; supersedes all CRF/QP comparisons.
 
+### Video — AV1 hardware vs software: the energy↔quality tradeoff ⭐ (S28, CR-044 VMAF, clean ≥10s 🟢 run `e18a9d57` 2026-05-22)
+At the **same 1500 kbps ABR target**, on Meridian-120s, all six encodes 🟢:
+- **SVT-AV1 (CPU, libsvtav1):** 14.51 MB · **VMAF 92.74** · 0.71 Wh
+- **av1_vaapi (GPU, RX 7800 XT):** 20.34 MB · **VMAF 90.79** · 0.32 Wh
+- **Headline:** hardware AV1 uses **~55% less energy** (and is ~2.3× faster) **but** delivers **~2 VMAF lower** *and* a **~40% larger file** — it hits the bitrate target while SVT-AV1 undershoots it (~967 kbps actual) yet still scores higher. So SVT-AV1 is markedly more **bit-efficient**; the hardware encoder buys speed/energy by giving up compression quality. The direction is consistent on a noisier tiny-clip run (7.63 vs 9.16 MB; 91.51 vs 89.70 VMAF), slightly more pronounced at length.
+- AV1 is the codec where the hw/sw gap shows; for H.264/H.265 the CPU↔GPU VMAF gap is ≤2 and within noise (H.264 94.0/92.1, H.265 94.1/92.0). **First OWL result that pairs energy with a measured quality axis** — the canonical use-case for CR-044 (VMAF) and the motivation for CR-045 (same-quality compare).
+- *Caveat:* cross-codec VMAF here is NOT apples-to-apples (different per-codec bitrate targets); only the within-AV1 CPU-vs-GPU comparison (same 1500 kbps) is a fair quality read. Tiny clips (≤~4 s) are unreliable for this and now correctly flag 🔴.
+
 ### LLM Cold Inference 🟢/🟡
 - Mistral 7B T3: **0.943 mWh/token** 🟢
 - TinyLlama T3: **0.061 mWh/token** 🟡 (~15× more efficient — but generic-boilerplate answers).

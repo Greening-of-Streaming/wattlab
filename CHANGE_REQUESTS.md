@@ -499,6 +499,7 @@ The current `/video` flow runs presets that look comparable but haven't been for
 
 1. **Document the pipeline** on `/methodology` — new subsection under "Video transcoding". Cover: input read, decode (CPU vs `hwaccel vaapi`), pixel-format handling (`scale_vaapi` + `format=nv12`), encoder defaults this deployment relies on, output container. One pass per codec/path. Source from the actual command, not from memory.
 2. **Validate CPU vs GPU encode parameters** (Tania-led). For each codec, compare what the CPU and GPU encoders actually produce: profile, level, B-frames, GOP, refs, slices. Write findings to `WATTLAB_SPEC.md` and adjust commands as needed to bring them into apples-to-apples shape (or document explicitly where they can't be).
+   - **VMAF already exposes a concrete instance to chase down (2026-05-22, clean 🟢 run `e18a9d57`):** at the same 1500 kbps AV1 target, `av1_vaapi` (hw) hit the target (20.34 MB) while `libsvtav1` (sw) undershot to ~967 kbps (14.51 MB) yet scored *higher* VMAF (92.74 vs 90.79). So "same bitrate target" is not being honoured equally across encoders, and the hw encoder is less bit-efficient. This is exactly the apples-to-apples gap this item is meant to characterise — the VMAF axis (CR-044) now makes it measurable. See CLAUDE.md Key Findings (AV1 hardware vs software).
 3. **Verify sample output files.** Pick at least two recent encodes per codec. Inspect with `ffprobe -show_format -show_streams` and `mediainfo`. Confirm: bitrate matches target, codec matches command, profile/level reasonable, file size in expected range. Once-off audit; capture findings.
 4. **Add two comparison modes to `/video`.**
    - **"Compare all codecs · apples-to-apples"** — current behaviour, identical bitrate per codec from settings.
@@ -941,6 +942,8 @@ If wall-time ever bites, subsample **temporally** (`libvmaf n_subsample=K` — e
 ### Problem / opportunity
 
 The all-codecs comparison runs **ABR at a fixed per-codec bitrate** ("Same Bitrate"): it answers *"at this bitrate, which codec/device is most efficient, and what quality results?"* That's one of the two questions operators ask. The other — the one that actually drives codec adoption — is the inverse: *"to deliver **this** perceptual quality, which codec/device uses least energy?"* Modern codecs (H.265, AV1) earn their keep precisely here: same VMAF at lower bitrate. Now that VMAF ships on every comparison (CR-044), OWL has the missing half of the picture and can offer an iso-quality mode. This is the iso-quality sibling of CR-003 (iso-energy), surfaced as a clean UX toggle on the existing button.
+
+**Already visible (motivating data, 2026-05-22 clean 🟢 run `e18a9d57`):** at the same 1500 kbps target, `av1_vaapi` (hw) scored VMAF 90.79 in a 20.34 MB file while `libsvtav1` (sw) scored 92.74 in 14.51 MB — VMAF already exposes that the cross-codec/-device comparison is happening at different *effective* quality. A "same quality" mode is what turns that into a fair, operator-facing answer. See CLAUDE.md Key Findings (AV1 hardware vs software).
 
 ### The rigor gotcha (must be designed in, not bolted on)
 
