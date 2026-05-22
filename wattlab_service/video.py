@@ -10,6 +10,7 @@ from collections import deque
 from pathlib import Path
 from typing import Callable, Optional
 import settings as cfg
+from confidence import confidence
 from power import get_power_watts, read_sensors_dict
 UPLOAD_DIR = Path("/tmp/wattlab_uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -395,6 +396,7 @@ async def measure_baseline(polls: int = 10) -> dict:
         await asyncio.sleep(POLL_INTERVAL)
     return {
         "w_base": round(sum(power_readings) / len(power_readings), 2),
+        "baseline_samples_w": [round(w, 2) for w in power_readings],
         "cpu_temp_base": round(sum(s["cpu_tctl"] for s in sensor_readings
                                    if s["cpu_tctl"]) / len(sensor_readings), 1),
         "gpu_temp_base": round(sum(s["gpu_junction"] for s in sensor_readings
@@ -415,28 +417,10 @@ async def poll_during_task(stop_event: asyncio.Event) -> list:
     return readings
 
 # --- Confidence ---
-
-def confidence(delta_w: float, poll_count: int, w_base: float) -> dict:
-    """Variance-based confidence: noise_w = variance_pct/100 * w_base.
-    Green if ΔW > green_x × noise_w AND polls ≥ green_polls.
-    Yellow if ΔW ≥ yellow_x × noise_w OR polls ≥ yellow_polls.
-    Red otherwise.
-    """
-    s = cfg.load()
-    noise_w = s["variance_pct"] / 100.0 * max(w_base, 1.0)
-    green_thresh = s["variance_green_x"] * noise_w
-    yellow_thresh = s["variance_yellow_x"] * noise_w
-    if delta_w > green_thresh and poll_count >= s["conf_green_polls"]:
-        return {"flag": "🟢", "label": "Repeatable"}
-    elif delta_w >= yellow_thresh or poll_count >= s["conf_yellow_polls"]:
-        result = {"flag": "🟡", "label": "Early insight"}
-        if delta_w > green_thresh and poll_count < s["conf_green_polls"]:
-            ratio = int(round(delta_w / noise_w))
-            result["hint"] = (f"Strong signal ({ratio}× noise floor) — task too short for 🟢. "
-                              f"Use a longer clip or batch mode.")
-        return result
-    else:
-        return {"flag": "🔴", "label": "Need more data"}
+# Unified single-run confidence lives in confidence.py (CR-028 Phase 2);
+# `confidence` is imported at module top. Pass baseline_samples_w +
+# task_samples_w for the CI model; without them it falls back to the legacy
+# variance-threshold flag.
 
 # --- ffmpeg ---
 
@@ -593,10 +577,14 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
 
     delta_t = round(t_end - t_start, 1)
     w_base = baseline["w_base"]
+    task_samples_w = [round(r["watts"], 2) for r in readings]
+    baseline_samples_w = baseline.get("baseline_samples_w")
     w_task = sum(r["watts"] for r in readings) / len(readings) if readings else w_base
     delta_w = round(w_task - w_base, 2)
     delta_e_wh = round(delta_w * (delta_t / 3600), 4)
-    conf = confidence(delta_w, len(readings), w_base)
+    conf = confidence(delta_w, len(readings), w_base,
+                      baseline_samples_w=baseline_samples_w,
+                      task_samples_w=task_samples_w)
 
     cpu_temps = [r["cpu_tctl"] for r in readings if r.get("cpu_tctl")]
     gpu_temps = [r["gpu_junction"] for r in readings if r.get("gpu_junction")]
@@ -618,6 +606,8 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
             "delta_t_s": delta_t,
             "delta_e_wh": delta_e_wh,
             "poll_count": len(readings),
+            "baseline_samples_w": baseline_samples_w,
+            "task_samples_w": task_samples_w,
             "confidence": conf,
         },
         "thermals": {

@@ -401,7 +401,7 @@ Worth a 30-minute discussion with the measurement team rather than a unilateral 
 
 ## CR-028 · Confidence model evolution (interim re-weighting + Tania's unified redesign)
 
-**Status:** captured 2026-05-04 (post-meeting). Two-phase. **Phase 1** is small and shippable now; **Phase 2** needs a working session with Tania. One CR with both phases keeps the design conversation in one place.
+**Status:** **Phase 2 SHIPPED 2026-05-22** (`feature/cr-028-confidence`) — `confidence.py` CI model per Tania §9 v2, all four modules, raw samples persisted, legacy fallback, docs + tests. Phase 1 (interim re-weighting) was overtaken by Phase 2. Absorbed CR-020 + the 5×/2× threshold grounding. Two-phase history kept below for the design record.
 **Triggered by:** team meeting 2026-05-04 — items 11 (statistical redesign — Tania) and 14 (variance composite weighting decision: 60/20/20 instead of mean of three).
 
 ### Problem
@@ -430,7 +430,7 @@ The meeting also identified a deeper problem: the entire confidence model relies
 
 Effect on current settings: with idle 4.4%, CPU 2.11%, GPU 17.22%, the new composite is `0.6×4.4 + 0.2×2.11 + 0.2×17.22 = 2.64 + 0.42 + 3.44 = 6.51%` (vs current 7.91%). Once GPU CV recovers (after the `gpu_encode_max_s` tweak — see "Caught during the session"), the GPU contribution shrinks proportionally and the composite settles in the 3-4% range, very close to the probe's 2.96% pooled CV.
 
-**Phase 2 — Tania's unified statistical redesign — SPEC LANDED + DECISIONS AGREED 2026-05-22.**
+**Phase 2 — Tania's unified statistical redesign — SHIPPED 2026-05-22 (`feature/cr-028-confidence`).** `confidence.py` implements the §9 CI model exactly as specced below; `baseline_samples_w` + `task_samples_w` now persisted in every result energy dict; all four modules call the shared function; popover + `/methodology` + `/llm` band + `/settings` copy updated; legacy variance flag retained as fallback for pre-change results; `confidence.py` test suite added (268 tests total). Decisions captured below were implemented verbatim.
 
 Tania's §9 v2 (`docs/wattlab_traffic_light_confidence.md` §9.1–9.7) is now on `main` (commit `d3d78e9`, cherry-picked 2026-05-22). It specifies a **CI-based single-run confidence**, scoped to *single-run measurability* ("can this one run be distinguished from idle?"), not run-to-run repeatability:
 

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from video import focus_mode_enter, focus_mode_exit
 import settings as cfg
+from confidence import confidence
 from power import get_power_watts, read_sensors_dict
 
 # Required for gfx1101 (RX 7800 XT) with PyTorch ROCm — must be set before torch import
@@ -82,12 +83,13 @@ IMAGE_MODELS = {
     },
 }
 
-async def measure_baseline(polls: int = 10) -> float:
+async def measure_baseline(polls: int = 10) -> dict:
     readings = []
     for _ in range(polls):
         readings.append(await get_power_watts())
         await asyncio.sleep(1)
-    return round(sum(readings) / len(readings), 2)
+    return {"w_base": round(sum(readings) / len(readings), 2),
+            "samples_w": [round(w, 2) for w in readings]}
 
 async def poll_during_task(stop_event: asyncio.Event) -> list:
     readings = []
@@ -99,15 +101,7 @@ async def poll_during_task(stop_event: asyncio.Event) -> list:
 def read_sensors() -> dict:
     return read_sensors_dict()
 
-def confidence(delta_w: float, poll_count: int, w_base: float) -> dict:
-    s = cfg.load()
-    noise_w = s["variance_pct"] / 100.0 * max(w_base, 1.0)
-    if delta_w > s["variance_green_x"] * noise_w and poll_count >= s["conf_green_polls"]:
-        return {"flag": "🟢", "label": "Repeatable"}
-    elif delta_w >= s["variance_yellow_x"] * noise_w or poll_count >= s["conf_yellow_polls"]:
-        return {"flag": "🟡", "label": "Early insight"}
-    else:
-        return {"flag": "🔴", "label": "Need more data"}
+# confidence() is imported from confidence.py (CR-028 Phase 2).
 
 # --- Generation ---
 
@@ -204,12 +198,15 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
 
 
 def _calc_energy(w_base: float, w_task: float, delta_t: float,
-                 readings: list, batch: int) -> dict:
+                 readings: list, batch: int, baseline_samples: list = None) -> dict:
     poll_count = len(readings)
     delta_w = round(w_task - w_base, 2)
     delta_e_wh = round(delta_w * (delta_t / 3600), 4)
     wh_per_image = round(delta_e_wh / batch, 4)
-    conf = confidence(delta_w, poll_count, w_base)
+    task_samples = [round(r[1], 2) for r in readings]
+    conf = confidence(delta_w, poll_count, w_base,
+                      baseline_samples_w=baseline_samples,
+                      task_samples_w=task_samples)
     return {
         "w_base": round(w_base, 2),
         "w_task": round(w_task, 2),
@@ -218,6 +215,8 @@ def _calc_energy(w_base: float, w_task: float, delta_t: float,
         "delta_e_wh": delta_e_wh,
         "wh_per_image": wh_per_image,
         "poll_count": poll_count,
+        "baseline_samples_w": baseline_samples,
+        "task_samples_w": task_samples,
         "confidence": conf,
     }
 
@@ -236,7 +235,9 @@ async def _run_single_image(prompt: str, device: str, job_id: str,
         jobs[job_id]["stage"] = f"{stage_prefix}_baseline"
 
     sensors_base = read_sensors()
-    w_base = await measure_baseline(polls=s["baseline_polls"])
+    _baseline = await measure_baseline(polls=s["baseline_polls"])
+    w_base = _baseline["w_base"]
+    baseline_samples_w = _baseline["samples_w"]
 
     if jobs is not None:
         jobs[job_id]["stage"] = f"{stage_prefix}_generating"
@@ -256,7 +257,7 @@ async def _run_single_image(prompt: str, device: str, job_id: str,
     batch = gen_result["batch_size"]
     delta_t = gen_result["gen_s"]   # measure only generation time, not load time
     w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
-    energy = _calc_energy(w_base, w_task, delta_t, readings, batch)
+    energy = _calc_energy(w_base, w_task, delta_t, readings, batch, baseline_samples_w)
 
     return {
         "device": device,
@@ -295,7 +296,9 @@ async def run_image_measurement(prompt: str, job_id: str,
 
     stopped = focus_mode_enter()
     sensors_base = read_sensors()
-    w_base = await measure_baseline(polls=s["baseline_polls"])
+    _baseline = await measure_baseline(polls=s["baseline_polls"])
+    w_base = _baseline["w_base"]
+    baseline_samples_w = _baseline["samples_w"]
 
     LOCK_FILE.write_text(job_id)
 
@@ -323,7 +326,7 @@ async def run_image_measurement(prompt: str, job_id: str,
     batch = gen_result["batch_size"]
     delta_t = gen_result["gen_s"]
     w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
-    energy = _calc_energy(w_base, w_task, delta_t, readings, batch)
+    energy = _calc_energy(w_base, w_task, delta_t, readings, batch, baseline_samples_w)
 
     device_label = "GPU (RX 7800 XT, ROCm)" if device == "gpu" else "CPU (Ryzen 9 7900)"
     scope = (f"Device layer only (GoS1). {device_label}. "

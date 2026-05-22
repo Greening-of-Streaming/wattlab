@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 import settings as cfg
+from confidence import confidence
 from power import get_power_watts, read_sensors_dict
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
@@ -241,12 +242,13 @@ def corpus_list() -> list[dict]:
     return docs
 
 
-async def measure_baseline(polls: int = 10) -> float:
+async def measure_baseline(polls: int = 10) -> dict:
     readings = []
     for _ in range(polls):
         readings.append(await get_power_watts())
         await asyncio.sleep(1)
-    return round(sum(readings) / len(readings), 2)
+    return {"w_base": round(sum(readings) / len(readings), 2),
+            "samples_w": [round(w, 2) for w in readings]}
 
 
 async def poll_during_task(stop_event: asyncio.Event) -> list:
@@ -273,15 +275,7 @@ def unload_model(model_key: str):
         pass
 
 
-def confidence(delta_w: float, poll_count: int, w_base: float) -> dict:
-    s = cfg.load()
-    noise_w = s["variance_pct"] / 100.0 * max(w_base, 1.0)
-    if delta_w > s["variance_green_x"] * noise_w and poll_count >= s["conf_green_polls"]:
-        return {"flag": "🟢", "label": "Repeatable"}
-    elif delta_w >= s["variance_yellow_x"] * noise_w or poll_count >= s["conf_yellow_polls"]:
-        return {"flag": "🟡", "label": "Early insight"}
-    else:
-        return {"flag": "🔴", "label": "Need more data"}
+# confidence() is imported from confidence.py (CR-028 Phase 2).
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +407,9 @@ async def run_rag_measurement(model_key: str, rag_mode: str, question: str,
 
     unload_model(model_key)
     await asyncio.sleep(s["llm_unload_settle_s"])
-    w_base = await measure_baseline(polls=s["baseline_polls"])
+    _b = await measure_baseline(polls=s["baseline_polls"])
+    w_base = _b["w_base"]
+    baseline_samples_w = _b["samples_w"]
     sensors_base = read_sensors()
 
     if jobs and job_id:
@@ -434,12 +430,15 @@ async def run_rag_measurement(model_key: str, rag_mode: str, question: str,
 
     duration_s    = query_result["duration_s"]
     output_tokens = query_result["output_tokens"]
+    task_samples_w = [round(r[1], 2) for r in readings]
     w_task   = sum(r[1] for r in readings) / len(readings) if readings else w_base
     delta_w  = round(w_task - w_base, 2)
     delta_e_wh = round(delta_w * (duration_s / 3600), 4)
     mwh_per_token = round((delta_e_wh * 1000) / max(output_tokens, 1), 4) \
         if output_tokens else None
-    conf = confidence(delta_w, len(readings), w_base)
+    conf = confidence(delta_w, len(readings), w_base,
+                      baseline_samples_w=baseline_samples_w,
+                      task_samples_w=task_samples_w)
 
     if jobs and job_id:
         jobs[job_id]["stage"] = "done"
@@ -474,6 +473,8 @@ async def run_rag_measurement(model_key: str, rag_mode: str, question: str,
             "delta_e_wh":   delta_e_wh,
             "mwh_per_token": mwh_per_token,
             "poll_count":   len(readings),
+            "baseline_samples_w": baseline_samples_w,
+            "task_samples_w": task_samples_w,
             "confidence":   conf,
         },
         "thermals": {

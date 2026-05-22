@@ -11,10 +11,16 @@ DEFAULTS = {
     # Confidence — poll count thresholds (kept)
     "conf_green_polls": 10,
     "conf_yellow_polls": 5,
-    # Confidence — variance-based ΔW thresholds (replace old conf_*_delta_w)
+    # Confidence — CR-028 Phase 2 CI model (Tania §9): one-sided P(task > idle).
+    # Used when a run carries raw per-poll samples; see confidence.py.
+    "conf_positive_green": 0.95,   # 🟢  confidence_positive ≥ this AND n_task ≥ conf_green_polls
+    "conf_positive_yellow": 0.80,  # 🟡  confidence_positive ≥ this AND n_task ≥ conf_yellow_polls
+    # Confidence — legacy variance-based ΔW thresholds. Retained as the
+    # fallback for results saved before raw samples were persisted (the CI
+    # model needs baseline_samples_w + task_samples_w).
     "variance_pct": 2.0,        # measured system variance as % of baseline power
-    "variance_green_x": 5.0,    # 🟢  ΔW must exceed this × noise_w
-    "variance_yellow_x": 2.0,   # 🟡  ΔW must exceed this × noise_w
+    "variance_green_x": 5.0,    # 🟢  ΔW must exceed this × noise_w  (legacy)
+    "variance_yellow_x": 2.0,   # 🟡  ΔW must exceed this × noise_w  (legacy)
     # Variance calibration outputs (written by calibration run, not user-edited)
     "variance_idle_pct": None,        # mean of within-window CVs across all baselines —
                                       # noise floor a single measurement actually faces

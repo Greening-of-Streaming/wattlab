@@ -1649,17 +1649,18 @@ _CONF_HELP_WIDGET = (
     '<div style="margin-bottom:0.5rem">'
     '<span style="font-family:monospace">🟢 Repeatable</span>'
     '<span style="color:var(--text-3);display:block;font-size:0.75rem;padding-left:1.4rem">'
-    'ΔW well above measured noise, with enough polls to confirm. Reliable enough to cite.</span></div>'
+    '≥95% confident the task draws above idle, with enough task polls to confirm. '
+    'Reliable enough to cite.</span></div>'
     '<div style="margin-bottom:0.5rem">'
     '<span style="font-family:monospace">🟡 Early insight</span>'
     '<span style="color:var(--text-3);display:block;font-size:0.75rem;padding-left:1.4rem">'
-    'ΔW above noise, or partial poll count. Directional, needs more runs.</span></div>'
+    '≥80% confident above idle, or too few polls for green. Directional, needs a longer run.</span></div>'
     '<div>'
     '<span style="font-family:monospace">🔴 Need more data</span>'
     '<span style="color:var(--text-3);display:block;font-size:0.75rem;padding-left:1.4rem">'
-    'Near the noise floor. Don\'t cite yet.</span></div>'
+    'Not yet distinguishable from idle. Don\'t cite yet.</span></div>'
     '<div style="color:var(--text-5);font-size:0.7rem;margin-top:0.75rem;font-family:monospace">'
-    'noise = (variance% / 100) × W<sub>base</sub> · thresholds on '
+    'confidence = Φ(ΔW / SE), SE from this run\'s noise + the calibrated idle floor · '
     '<a href="/methodology" style="color:var(--text-3)">methodology</a></div>'
     '</div>'
     '<script>(function(){'
@@ -5991,16 +5992,19 @@ async def settings_page(request: Request):
     {field("h265_bitrate_kbps", s['h265_bitrate_kbps'], 500, 20000, "kbps", "H.265 target bitrate (libx265 + hevc_vaapi)", step=100)}
     {field("av1_bitrate_kbps",  s['av1_bitrate_kbps'],  500, 20000, "kbps", "AV1 target bitrate (libsvtav1 + av1_vaapi)", step=100)}
 
-    <div class="section">Confidence thresholds</div>
-    {calib_field("variance_idle_pct",       s['variance_idle_pct'],       "mean of within-window idle CVs — noise floor a single measurement faces (feeds composite below)")}
-    {calib_field("variance_idle_drift_pct", s.get('variance_idle_drift_pct'), "CV across baseline window means — diagnostic for between-window drift; NOT consumed by confidence")}
-    {calib_field("variance_cpu_pct",        s['variance_cpu_pct'],        "CV of ΔW across H264-CPU runs — set by calibration")}
-    {calib_field("variance_gpu_pct",        s['variance_gpu_pct'],        "CV of ΔW across H265-GPU runs — set by calibration")}
-    {field("variance_pct",     s['variance_pct'],     0, 50,  "%",     "composite variance (mean of above three; drift excluded) — editable override", step=0.1)}
-    {field("variance_green_x", s['variance_green_x'], 1, 20,  "× noise", "🟢 ΔW must exceed this multiple of noise floor", step=0.5)}
-    {field("variance_yellow_x",s['variance_yellow_x'],1, 10,  "× noise", "🟡 ΔW must exceed this multiple of noise floor", step=0.5)}
-    {field("conf_green_polls", s['conf_green_polls'],  1, 100, "polls", "🟢 minimum poll count")}
-    {field("conf_yellow_polls",s['conf_yellow_polls'], 1, 50,  "polls", "🟡 minimum poll count")}
+    <div class="section">Confidence thresholds — CI model (CR-028 Phase 2)</div>
+    {field("conf_positive_green",  s.get('conf_positive_green', 0.95),  0.5, 0.999, "P", "🟢 min confidence_positive Φ(z) that task draws above idle", step=0.01)}
+    {field("conf_positive_yellow", s.get('conf_positive_yellow', 0.80), 0.5, 0.999, "P", "🟡 min confidence_positive", step=0.01)}
+    {field("conf_green_polls", s['conf_green_polls'],  1, 100, "polls", "🟢 minimum task polls (both models)")}
+    {field("conf_yellow_polls",s['conf_yellow_polls'], 1, 50,  "polls", "🟡 minimum task polls (both models)")}
+    {calib_field("variance_idle_pct",       s['variance_idle_pct'],       "calibrated idle noise floor — feeds the CI model (SE_calibrated)")}
+    {calib_field("variance_idle_drift_pct", s.get('variance_idle_drift_pct'), "between-window drift CV — feeds SE_drift in the CI model")}
+    {calib_field("variance_cpu_pct",        s['variance_cpu_pct'],        "run-level repeatability CV — NOT used in the single-run flag (reserved for aggregate layer)")}
+    {calib_field("variance_gpu_pct",        s['variance_gpu_pct'],        "run-level repeatability CV — NOT used in the single-run flag (reserved for aggregate layer)")}
+    <div class="section">Confidence thresholds — legacy variance model (fallback for results without raw samples)</div>
+    {field("variance_pct",     s['variance_pct'],     0, 50,  "%",     "legacy composite variance — used only when a run has no raw samples", step=0.1)}
+    {field("variance_green_x", s['variance_green_x'], 1, 20,  "× noise", "🟢 (legacy) ΔW must exceed this multiple of noise floor", step=0.5)}
+    {field("variance_yellow_x",s['variance_yellow_x'],1, 10,  "× noise", "🟡 (legacy) ΔW must exceed this multiple of noise floor", step=0.5)}
 
     <div class="section">Variance calibration</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
@@ -6058,6 +6062,7 @@ async def settings_page(request: Request):
         const num_fields = ['baseline_polls','video_cooldown_s','llm_rest_s','llm_unload_settle_s',
                             'h264_bitrate_kbps','h265_bitrate_kbps','av1_bitrate_kbps',
                             'variance_pct','variance_green_x','variance_yellow_x',
+                            'conf_positive_green','conf_positive_yellow',
                             'conf_green_polls','conf_yellow_polls',
                             'variance_runs','variance_cooldown_s',
                             'queue_anonymous_cap','queue_member_cap',
@@ -6613,39 +6618,41 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   <div class="band">
     <div class="band-label">The system</div>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px;margin-bottom:1rem">
-      Every result carries a traffic light. Thresholds are <em>variance-relative</em>:
-      anchored to empirically measured system noise, not fixed watt values.
-      <code style="font-family:monospace;font-size:0.82rem;color:var(--text-3)">noise = (variance% / 100) × W_base</code>
+      Every result carries a traffic light. As of CR-028 Phase 2 it's a <em>per-run
+      confidence interval</em> — "can this run be told apart from idle?" — not a fixed
+      watt rule.
+      <code style="font-family:monospace;font-size:0.82rem;color:var(--text-3)">confidence = Φ(ΔW / SE), SE from this run's noise + the calibrated idle floor</code>
     </p>
     <div style="display:flex;flex-direction:column;gap:0.75rem;max-width:480px">
       <div style="border-left:2px solid #1a3a1a;padding:0.6rem 1rem">
         <div style="font-family:monospace;font-size:0.9rem">🟢 Repeatable</div>
         <div style="color:var(--text-3);font-size:0.82rem;margin-top:0.25rem">
-          ΔW &gt; {{CONF_GREEN_X}}× noise <em>and</em> ≥ {{CONF_GREEN_POLLS}} polls. Well above noise floor. Reliable enough to cite.</div>
+          ≥95% confident above idle <em>and</em> ≥ {{CONF_GREEN_POLLS}} task polls. Reliable enough to cite.</div>
       </div>
       <div style="border-left:2px solid #3a3a00;padding:0.6rem 1rem">
         <div style="font-family:monospace;font-size:0.9rem">🟡 Early insight</div>
         <div style="color:var(--text-3);font-size:0.82rem;margin-top:0.25rem">
-          ΔW ≥ {{CONF_YELLOW_X}}× noise <em>or</em> ≥ {{CONF_YELLOW_POLLS}} polls. Directional signal, but needs more runs
+          ≥80% confident above idle <em>and</em> ≥ {{CONF_YELLOW_POLLS}} task polls. Directional, but needs a longer run
           before we'd stake a public claim on it.</div>
       </div>
       <div style="border-left:2px solid #2a0000;padding:0.6rem 1rem">
         <div style="font-family:monospace;font-size:0.9rem">🔴 Need more data</div>
         <div style="color:var(--text-3);font-size:0.82rem;margin-top:0.25rem">
-          Below yellow threshold. Could be measurement artefact.
+          Not yet distinguishable from idle.
           We publish it anyway — but we won't cite it yet.</div>
       </div>
     </div>
   </div>
 
   <div class="band">
-    <div class="band-label">Why variance-relative?</div>
+    <div class="band-label">Why a confidence interval?</div>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px;margin-bottom:0.75rem">
       Fixed thresholds (e.g. "5W = green") don't adapt to the machine's actual noise
-      level. Our calibration run measures idle variance, CPU encode variance, and GPU
-      encode variance separately — then sets the noise floor from real data.
-      At 55W idle with 2% variance: noise ≈ 1.1W, green threshold ≈ 5.5W.
-      As the system is calibrated further, these thresholds tighten automatically.
+      level. Instead we take this run's own baseline + task power samples, form a
+      standard error on ΔW (worst case of the run's observed noise and the calibrated
+      idle floor, plus a drift term), and turn ΔW into a one-sided confidence that the
+      task draws above idle. A short run can't go green on a couple of lucky readings —
+      it also needs enough task polls.
     </p>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px">
       On any result page, click a 🟢 🟡 🔴 badge for a quick reminder of the formula.
@@ -8703,9 +8710,19 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <h2 id="confidence">Confidence Framework</h2>
 
-  <p>Every OWL result carries a traffic-light confidence flag based on a <strong>variance-relative signal-to-noise ratio</strong>. The noise floor is not assumed &mdash; it is characterised empirically by running the same workload repeatedly and computing the coefficient of variation (CV = &sigma;/&mu;) across all &Delta;W readings. This CV, expressed as a percentage of baseline power, captures total system measurement noise: P110 quantisation, Wi-Fi polling jitter, background OS processes, and thermal drift combined.</p>
+  <p>Every OWL result carries a traffic-light confidence flag. Under the CR-028 Phase 2 model (designed with Tania Pouli), the flag answers one defensible question per run: <strong>can this run be distinguished from idle?</strong> It is a per-run confidence interval, not a fixed-watt rule of thumb.</p>
 
-  <p>The current system variance and threshold multipliers are configurable in Settings and can be updated via the built-in calibration tool (H.264 CPU &rarr; cooldown &rarr; H.265 GPU, repeated N times on Meridian).</p>
+  <p>We keep the raw per-poll power samples from both the baseline window and the task window, form a standard error on the measured power increase &Delta;W, then convert &Delta;W into a one-sided confidence that the task really draws above idle:</p>
+
+  <div class="formula">
+    <span class="label">Standard error &mdash; conservative (worst case of the calibrated and per-run estimates, plus drift)</span>
+    SE<sub>final</sub> = max(SE<sub>calibrated</sub>, SE<sub>per-run</sub>) + SE<sub>drift</sub><br>
+    SE<sub>calibrated</sub> = (<span class="var">variance_idle_pct</span>/100 &middot; W<sub>base</sub>) &times; &radic;(1/n<sub>base</sub> + 1/n<sub>task</sub>)<br>
+    SE<sub>per-run</sub> = &radic;(&sigma;&sup2;<sub>base</sub>/n<sub>base</sub> + &sigma;&sup2;<sub>task</sub>/n<sub>task</sub>)<br>
+    SE<sub>drift</sub> = (<span class="var">variance_idle_drift_pct</span>/100) &middot; W<sub>base</sub>
+    <span class="label" style="margin-top:0.6rem">Confidence the task draws above idle</span>
+    <span class="var">confidence<sub>positive</sub></span> = &Phi;(&Delta;W / SE<sub>final</sub>)
+  </div>
 
   <table class="confidence-table">
     <tr>
@@ -8715,28 +8732,31 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     </tr>
     <tr>
       <td><span class="badge">&#x1F7E2;</span></td>
-      <td><strong>Repeatable</strong> &mdash; Signal clearly exceeds the measured noise floor with enough poll samples to be reliable.</td>
-      <td>&Delta;W &gt; <code>{CONF_GREEN_X}</code> &times; noise<sub>W</sub> and &ge; <code>{CONF_GREEN_POLLS}</code> polls</td>
+      <td><strong>Repeatable</strong> &mdash; the task is almost certainly above idle, with enough samples to be reliable.</td>
+      <td>confidence<sub>positive</sub> &ge; 95% and &ge; <code>{CONF_GREEN_POLLS}</code> task polls</td>
     </tr>
     <tr>
       <td><span class="badge">&#x1F7E1;</span></td>
-      <td><strong>Early insight</strong> &mdash; Signal is detectable above noise but more data or a longer run would strengthen the result.</td>
-      <td>&Delta;W &ge; <code>{CONF_YELLOW_X}</code> &times; noise<sub>W</sub> or &ge; <code>{CONF_YELLOW_POLLS}</code> polls</td>
+      <td><strong>Early insight</strong> &mdash; directional evidence; a longer run would strengthen it.</td>
+      <td>confidence<sub>positive</sub> &ge; 80% and &ge; <code>{CONF_YELLOW_POLLS}</code> task polls</td>
     </tr>
     <tr>
       <td><span class="badge">&#x1F534;</span></td>
-      <td><strong>Need more data</strong> &mdash; Signal is at or below the noise floor; result cannot be reliably distinguished from measurement variance.</td>
-      <td>Below yellow threshold</td>
+      <td><strong>Need more data</strong> &mdash; cannot yet be distinguished from idle.</td>
+      <td>below the yellow threshold</td>
     </tr>
   </table>
 
-  <div class="formula">
-    <span class="label">Noise floor (watts) from configured variance</span>
-    <span class="var">noise<sub>W</sub></span> = (<span class="var">variance_pct</span> / 100) &times; <span class="var">W<sub>base</sub></span>
+  <div class="callout green">
+    <strong>Why a confidence interval, not a fixed-watt rule?</strong> The flag uses this run&rsquo;s own observed noise (<code>SE<sub>per-run</sub></code>), takes the worst case against a calibrated idle floor (<code>SE<sub>calibrated</sub></code>), and adds a drift term for the time gap between the baseline and task windows &mdash; so it reflects real signal quality on the day, not an assumed noise floor. The minimum task-sample counts remain because 1&nbsp;s power samples are autocorrelated: a very short task should not turn green on one or two lucky readings.
   </div>
 
-  <div class="callout green">
-    <strong>Why variance-relative thresholds?</strong> Fixed watt thresholds (e.g. &ldquo;&Delta;W &gt; 5W&rdquo;) do not account for the actual noise of the measurement system on a given day. A server with high background process noise requires a larger signal to be trustworthy. By anchoring thresholds to empirically measured variance, the confidence flag reflects real signal quality rather than an assumed noise floor.
+  <div class="callout">
+    <strong>Inputs (CR-028 Phase 2, &ldquo;option C&rdquo;).</strong> The single-run flag uses only <code>variance_idle_pct</code> as the calibrated idle noise floor. The per-codec calibration CVs (<code>variance_cpu_pct</code> / <code>variance_gpu_pct</code>) are run-to-run repeatability measures, reserved for a future aggregate-confidence layer rather than mixed into the single-run formula. The first pass uses raw sample counts and a 1.96 (95%) critical value; an autocorrelation correction (effective sample count) and a Student-t critical value are documented future refinements.
+  </div>
+
+  <div class="callout">
+    <strong>Legacy results.</strong> Results saved before raw per-poll samples were persisted fall back to the earlier variance-threshold flag (&Delta;W against a multiple of <code>variance_pct</code> &times; W<sub>base</sub>), so historical runs keep their badge.
   </div>
 
   <div class="callout">

@@ -111,12 +111,12 @@ man-db, motd-news, update-notifier-download
 Sudoers: `/etc/sudoers.d/wattlab-focus`
 
 ## Traffic Light Confidence
-Variance-relative thresholds (Session 11). `noise_w = variance_pct/100 × w_base`
-- 🟢 Repeatable: ΔW > variance_green_x × noise_w AND ≥conf_green_polls polls (defaults: 5×, 10 polls)
-- 🟡 Early insight: ΔW ≥ variance_yellow_x × noise_w OR ≥conf_yellow_polls polls (defaults: 2×, 5 polls)
-- 🔴 Need more data: below yellow threshold
-- `variance_pct` default 2.0% — auto-updated by variance calibration run
-- `confidence(delta_w, poll_count, w_base)` — all four modules (video, llm, image_gen, rag)
+CR-028 Phase 2 CI model (Tania §9 v2, shipped) — single implementation in `confidence.py`, shared by all four modules. Per-run "can this be told apart from idle?":
+- `SE_final = max(SE_calibrated, SE_per_run) + SE_drift`; `SE_calibrated = variance_idle_pct/100·w_base·√(1/n_base+1/n_task)`; `SE_per_run = √(σ²_base/n_base + σ²_task/n_task)`; `SE_drift = variance_idle_drift_pct/100·w_base` (additive = worst-case, per the 2026-05-22 decision).
+- `confidence_positive = Φ(ΔW/SE_final)`. 🟢 `≥conf_positive_green (0.95)` AND `n_task≥conf_green_polls (10)`; 🟡 `≥conf_positive_yellow (0.80)` AND `n_task≥conf_yellow_polls (5)`; 🔴 otherwise.
+- Option C: only `variance_idle_pct` feeds the single-run flag; `variance_cpu_pct`/`variance_gpu_pct` are run-level repeatability CVs reserved for a future aggregate layer. First pass: raw n + 1.96 (autocorrelation/Student-t are future refinements).
+- Requires raw `baseline_samples_w` + `task_samples_w` (now persisted in every result's energy dict). **Legacy fallback:** results without raw samples keep the old variance-threshold flag (`variance_green_x`/`variance_yellow_x`); `confidence()` records `method` = `ci` | `variance`.
+- `confidence(delta_w, poll_count, w_base, baseline_samples_w=…, task_samples_w=…)` — `from confidence import confidence` in video / llm / image_gen / rag. Absorbed CR-020 (per-run baseline-CV gate) and the 5×/2× threshold grounding.
 
 ## Scope Statements
 Video: "Device layer only (GoS1 server). Network, CDN, and CPE excluded."
@@ -161,7 +161,7 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 - **S27 (2026-05-21):** Short follow-up — versioning, the CR-037 readout bug, and the deferred CR migration. **Versioning + build stamp:** `VERSION` (0.4.0) + `version.py` (startup-resolved: committed `version.json` → live git short-SHA + commit date + dirty flag → `"dev"`; fail-soft). Footer on every page shows `OWL v0.4.0 · <sha> · <date>` (+ `-local` when the working tree is dirty — OWL runs from the tree, so uncommitted edits go live on restart). `persist.save_result()` stamps every result `owl_version = {version, sha, dirty, built_at}` (provenance for CR-040 bundles + Track A analytics; reproduce `expected.json` carries it); methodology version (0.4) kept separate. **CR-037 readout bug fixed:** the per-result "≈ N× a video encode" line was only wired into the shared CR-034 renderers (`/demo` + prev-rows), not the bespoke live renderers (`renderLLMSingle` / `renderLLMAll` / `/image` `renderResult`) — added there too; enrichment was always correct. **CR migration:** full CR-027/CR-037/CR-040 bodies moved `CHANGE_REQUESTS.md` → `CHANGE_REQUESTS_CLOSED.md` (S26 left them in active for a sweep); active back to **17** entries; Groupings appendix re-based (Track D + G shipped; next up CR-029 prep + Track A storage). 234 → **237 tests passing**.
 
 ### Deferred / open
-- [ ] **Confidence multiplier grounding** — see **CR-028 Phase 2** (`variance_green_x`/`variance_yellow_x` 5×/2× threshold values absorbed into the unified statistical model).
+- [x] **Confidence multiplier grounding** — done 2026-05-22 (**CR-028 Phase 2** shipped). The 5×/2× `variance_green_x`/`variance_yellow_x` multipliers are replaced by `confidence_positive` (Φ(z)) thresholds in `confidence.py`; the old multipliers survive only as the legacy fallback for pre-change results. CR-020 (per-run baseline-CV gate) absorbed into `SE_per_run`.
 - [ ] **Transcoding apples-to-apples (GOP / profile)** — see **CR-029** sub-item 2 (Tania-led CPU-vs-GPU encode-parameter validation).
 - [ ] **Benchmark 2** — codec-natural rate control (CRF/QP) alongside Benchmark 1 (ABR). Add to `WATTLAB_SPEC.md`. *Distinct from CR-029: CR-029 normalises the existing ABR benchmark; Benchmark 2 is a sibling family.*
 - [x] **Access spine refactor** (audit's #1 recommendation) — `audience.py` + `capabilities.py` + `queue_control.py` shipped S17 parts A/3 + B/3 + C/3. Spine seam (`enqueue(request=None)`) ready for CR-001b.

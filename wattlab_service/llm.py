@@ -6,6 +6,7 @@ import json
 import urllib.request
 from pathlib import Path
 import settings as cfg
+from confidence import confidence
 from power import get_power_watts, read_sensors_dict
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
@@ -36,12 +37,13 @@ MODELS = {
     "gemma3:12b": {"label": "Gemma 3 12B", "size": "8.1GB", "params": "12B"},
 }
 
-async def measure_baseline(polls: int = 10) -> float:
+async def measure_baseline(polls: int = 10) -> dict:
     readings = []
     for _ in range(polls):
         readings.append(await get_power_watts())
         await asyncio.sleep(1)
-    return round(sum(readings) / len(readings), 2)
+    return {"w_base": round(sum(readings) / len(readings), 2),
+            "samples_w": [round(w, 2) for w in readings]}
 
 async def poll_during_task(stop_event: asyncio.Event) -> list:
     readings = []
@@ -53,15 +55,7 @@ async def poll_during_task(stop_event: asyncio.Event) -> list:
 def read_sensors() -> dict:
     return read_sensors_dict()
 
-def confidence(delta_w: float, poll_count: int, w_base: float) -> dict:
-    s = cfg.load()
-    noise_w = s["variance_pct"] / 100.0 * max(w_base, 1.0)
-    if delta_w > s["variance_green_x"] * noise_w and poll_count >= s["conf_green_polls"]:
-        return {"flag": "🟢", "label": "Repeatable"}
-    elif delta_w >= s["variance_yellow_x"] * noise_w or poll_count >= s["conf_yellow_polls"]:
-        return {"flag": "🟡", "label": "Early insight"}
-    else:
-        return {"flag": "🔴", "label": "Need more data"}
+# confidence() is imported from confidence.py (CR-028 Phase 2).
 
 # --- Ollama helpers ---
 
@@ -135,7 +129,8 @@ async def _run_single_inference(model_key: str, task_key: str,
                                 baseline: float, sensors_base: dict,
                                 device: str, effective_prompt: str,
                                 jobs: dict, job_id: str,
-                                stage_prefix: str) -> dict:
+                                stage_prefix: str,
+                                baseline_samples: list = None) -> dict:
     """Run one inference pass against an already-measured baseline."""
     model = MODELS[model_key]
     task = TASKS[task_key]
@@ -160,13 +155,16 @@ async def _run_single_inference(model_key: str, task_key: str,
 
     sensors_end = read_sensors()
     delta_t = inference_result["duration_s"]
+    task_samples_w = [round(r[1], 2) for r in readings]
     w_task = sum(r[1] for r in readings) / len(readings) if readings else baseline
     delta_w = round(w_task - baseline, 2)
     delta_e_wh = round(delta_w * (delta_t / 3600), 4)
     output_tokens = inference_result["output_tokens"]
     mwh_per_token = round((delta_e_wh * 1000) / max(output_tokens, 1), 4) \
         if output_tokens else None
-    conf = confidence(delta_w, len(readings), baseline)
+    conf = confidence(delta_w, len(readings), baseline,
+                      baseline_samples_w=baseline_samples,
+                      task_samples_w=task_samples_w)
 
     return {
         "device": device,
@@ -179,6 +177,8 @@ async def _run_single_inference(model_key: str, task_key: str,
             "delta_e_wh": delta_e_wh,
             "mwh_per_token": mwh_per_token,
             "poll_count": len(readings),
+            "baseline_samples_w": baseline_samples,
+            "task_samples_w": task_samples_w,
             "confidence": conf,
         },
         "thermals": {
@@ -203,13 +203,15 @@ async def run_llm_measurement(model_key: str, task_key: str,
     if not warm:
         unload_model(model_key)
         await asyncio.sleep(s["llm_unload_settle_s"])
-    w_base = await measure_baseline(polls=s["baseline_polls"])
+    _b = await measure_baseline(polls=s["baseline_polls"])
+    w_base = _b["w_base"]
     sensors_base = read_sensors()
 
     LOCK_FILE.write_text(job_id or "llm")
     result = await _run_single_inference(
         model_key, task_key, w_base, sensors_base,
-        device, effective_prompt, jobs, job_id, device
+        device, effective_prompt, jobs, job_id, device,
+        baseline_samples=_b["samples_w"]
     )
     LOCK_FILE.unlink(missing_ok=True)
     if jobs and job_id: jobs[job_id]["stage"] = "done"
@@ -245,13 +247,15 @@ async def run_llm_both_measurement(model_key: str, task_key: str,
     if not warm:
         unload_model(model_key)
         await asyncio.sleep(s["llm_unload_settle_s"])
-    w_base_cpu = await measure_baseline(polls=s["baseline_polls"])
+    _b_cpu = await measure_baseline(polls=s["baseline_polls"])
+    w_base_cpu = _b_cpu["w_base"]
     sensors_base_cpu = read_sensors()
 
     LOCK_FILE.write_text(job_id or "llm")
     cpu_result = await _run_single_inference(
         model_key, task_key, w_base_cpu, sensors_base_cpu,
-        "cpu", effective_prompt, jobs, job_id, "cpu"
+        "cpu", effective_prompt, jobs, job_id, "cpu",
+        baseline_samples=_b_cpu["samples_w"]
     )
 
     # --- Cooldown + re-baseline ---
@@ -261,13 +265,15 @@ async def run_llm_both_measurement(model_key: str, task_key: str,
     if jobs and job_id: jobs[job_id]["stage"] = "baseline_gpu"
     unload_model(model_key)
     await asyncio.sleep(s["llm_unload_settle_s"])
-    w_base_gpu = await measure_baseline(polls=s["baseline_polls"])
+    _b_gpu = await measure_baseline(polls=s["baseline_polls"])
+    w_base_gpu = _b_gpu["w_base"]
     sensors_base_gpu = read_sensors()
 
     # --- GPU pass ---
     gpu_result = await _run_single_inference(
         model_key, task_key, w_base_gpu, sensors_base_gpu,
-        "gpu", effective_prompt, jobs, job_id, "gpu"
+        "gpu", effective_prompt, jobs, job_id, "gpu",
+        baseline_samples=_b_gpu["samples_w"]
     )
     LOCK_FILE.unlink(missing_ok=True)
     if jobs and job_id: jobs[job_id]["stage"] = "done"
@@ -340,7 +346,9 @@ async def run_llm_batch_measurement(model_key: str, task_key: str, repeats: int,
     if not warm:
         unload_model(model_key)
         await asyncio.sleep(s["llm_unload_settle_s"])
-    w_base = await measure_baseline(polls=s["baseline_polls"])
+    _b = await measure_baseline(polls=s["baseline_polls"])
+    w_base = _b["w_base"]
+    baseline_samples_w = _b["samples_w"]
     sensors_base = read_sensors()
 
     LOCK_FILE.write_text(job_id or "llm")
@@ -369,6 +377,7 @@ async def run_llm_batch_measurement(model_key: str, task_key: str, repeats: int,
         readings = await poll_task
 
         delta_t = inference_result["duration_s"]
+        task_samples_w = [round(r[1], 2) for r in readings]
         w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
         delta_w = round(w_task - w_base, 2)
         delta_e_wh = round(delta_w * (delta_t / 3600), 4)
@@ -386,7 +395,11 @@ async def run_llm_batch_measurement(model_key: str, task_key: str, repeats: int,
                 "delta_e_wh": delta_e_wh,
                 "mwh_per_token": mwh_per_token,
                 "poll_count": len(readings),
-                "confidence": confidence(delta_w, len(readings), w_base),
+                "baseline_samples_w": baseline_samples_w,
+                "task_samples_w": task_samples_w,
+                "confidence": confidence(delta_w, len(readings), w_base,
+                                         baseline_samples_w=baseline_samples_w,
+                                         task_samples_w=task_samples_w),
             },
         })
 
