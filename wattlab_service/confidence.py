@@ -104,8 +104,14 @@ def confidence(delta_w: float, poll_count: int, w_base: float,
     else:
         cp = _phi(delta / se_final)
 
-    green_p = s.get("conf_positive_green", 0.95)
-    yellow_p = s.get("conf_positive_yellow", 0.80)
+    # Coalesce None as well as missing: load() supplies the DEFAULTS, but a
+    # hand-edited settings.json with an explicit `null` would otherwise make
+    # `cp >= None` crash the whole measurement. Confidence is the credibility
+    # core — a config typo must never take a run down.
+    green_p = s.get("conf_positive_green")
+    green_p = 0.95 if green_p is None else green_p
+    yellow_p = s.get("conf_positive_yellow")
+    yellow_p = 0.80 if yellow_p is None else yellow_p
     green_n = s["conf_green_polls"]
     yellow_n = s["conf_yellow_polls"]
     ci95 = 1.96 * se_final

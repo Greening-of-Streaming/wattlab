@@ -39,6 +39,14 @@ def test_legacy_used_when_no_samples():
     assert r["flag"] == "🟢"  # noise=1.0, green=5; 10>5 and 15>=10
 
 
+def test_null_positive_thresholds_do_not_crash():
+    # A hand-edited settings.json with explicit null thresholds must coalesce
+    # to defaults, not raise (regression — `cp >= None` would crash a run).
+    s = _settings(conf_positive_green=None, conf_positive_yellow=None)
+    r = C.confidence(40, 8, 57, [57] * 8, [97] * 8, s)
+    assert r["flag"] in ("🟢", "🟡", "🔴") and r["method"] == "ci"
+
+
 def test_legacy_used_only_when_samples_absent():
     # None or empty arrays -> legacy (old results). A present array, even with
     # one element, uses the CI model (see test_single_task_poll_uses_ci_and_is_red).
