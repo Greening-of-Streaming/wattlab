@@ -33,3 +33,7 @@ amdgpu-install_*.deb
 # just a working copy here for cross-project context).
 REM/
 TRAINING_REM_5MIN.md
+
+# Local spreadsheet artifacts (Numbers/Excel exports of result CSVs)
+*.numbers
+*.xlsx
