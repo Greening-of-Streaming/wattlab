@@ -41,6 +41,13 @@ DEFAULTS = {
     # what fixes the scale_vaapi surface-pool leak that previously
     # required a -t cap on every VAAPI encode.
     "ffmpeg_bin": "/usr/local/bin/ffmpeg-master",
+    # CR-044 — VMAF perceptual quality score on >1-video comparison cards.
+    # Computed as a TERMINAL pass after a job's measurement window closes,
+    # so its CPU draw never enters a reported energy figure. Requires the
+    # libvmaf-enabled ffmpeg_bin (system /usr/bin/ffmpeg lacks it).
+    "vmaf_enabled": True,
+    "vmaf_n_subsample": 1,   # score every Nth frame (TEMPORAL only). 1 = full.
+    "vmaf_n_threads": 12,    # libvmaf worker threads (box has 24 cores).
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
     # CR-015 — auto-lower the maintenance flag after this many minutes of

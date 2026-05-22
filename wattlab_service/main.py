@@ -1947,6 +1947,8 @@ _RESULT_JS = """<script>
                 + _f(e.delta_e_wh,4) + ' Wh' + (isWinner ? ' \u2713' : '') + '</td>'
                 + '<td style="text-align:right;color:var(--text-3);padding:0.3rem 0.5rem">'
                 + _f(sub.output_size_mb,2) + ' MB</td>'
+                + '<td style="text-align:right;color:var(--text-3);padding:0.3rem 0.5rem">'
+                + _f(sub.vmaf,1) + '</td>'
                 + '<td style="text-align:center;padding:0.3rem 0.5rem">' + conf + '</td>'
                 + '</tr>';
           if (e.co2e) {
@@ -1996,6 +1998,7 @@ _RESULT_JS = """<script>
             + '<th style="text-align:right;padding:0.3rem 0.5rem">Time</th>'
             + '<th style="text-align:right;padding:0.3rem 0.5rem">Energy</th>'
             + '<th style="text-align:right;padding:0.3rem 0.5rem">Output</th>'
+            + '<th style="text-align:right;padding:0.3rem 0.5rem">VMAF</th>'
             + '<th style="text-align:center;padding:0.3rem 0.5rem">Conf</th>'
             + '</tr></thead>'
             + '<tbody>' + rows + '</tbody>'
@@ -2037,6 +2040,7 @@ _RESULT_JS = """<script>
             + '</div>'
             + '<div class="conf-badge">' + (ce.confidence && ce.confidence.flag) + ' CPU \u00b7 '
             + (ge.confidence && ge.confidence.flag) + ' GPU \u00b7 ' + (a.confidence_note || '') + '</div>'
+            + (a.quality_note ? '<div class="conf-badge" style="color:var(--accent)">\u25c6 ' + a.quality_note + '</div>' : '')
             + wlCarbonStrip(bestE.delta_e_wh, stripLabel, bestE.delta_t_s, bestSavedG, subRuns)
             + '<p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>'
             + '</div>';
@@ -3184,6 +3188,7 @@ async def video_page(request: Request):
                 <div class="section-title">Encode</div>
                 ${{metricRow('Duration', e.delta_t_s + (isSpeedWinner ? ' \U0001F3C1' : ''), 's')}}
                 ${{metricRow('Output size', res.output_size_mb, 'MB')}}
+                ${{metricRow('VMAF', res.vmaf != null ? res.vmaf : '—')}}
                 ${{cmdNote}}
                 <div class="section-title">Power (P110)</div>
                 ${{metricRow('Baseline', e.w_base, 'W')}}
@@ -3246,6 +3251,7 @@ async def video_page(request: Request):
                 <h3>Finding</h3>
                 <div class="finding">${{a.finding}}</div>
                 <div class="conf-note">${{a.confidence_note}}</div>
+                ${{a.quality_note ? '<div class="conf-note" style="color:var(--accent)">◆ ' + a.quality_note + '</div>' : ''}}
             </div>
             <div class="cols">
                 ${{col(cpu)}}
@@ -3279,9 +3285,11 @@ async def video_page(request: Request):
                 <td style="text-align:right">${{fmt(ce.delta_t_s)}}s</td>
                 <td style="color:${{ew==='CPU'?'#00ff99':'#888'}};text-align:right">${{fmt(ce.delta_e_wh)}} Wh ${{cpuWin}}</td>
                 <td style="color:var(--text-3);font-size:0.75rem;text-align:right">${{fmt(cd.cpu.output_size_mb)}} MB</td>
+                <td style="color:var(--text-3);font-size:0.75rem;text-align:right">${{fmt(cd.cpu.vmaf)}}</td>
                 <td style="text-align:right">${{fmt(ge.delta_t_s)}}s</td>
                 <td style="color:${{ew==='GPU'?'#00ff99':'#888'}};text-align:right">${{fmt(ge.delta_e_wh)}} Wh ${{gpuWin}}</td>
                 <td style="color:var(--text-3);font-size:0.75rem;text-align:right">${{fmt(cd.gpu.output_size_mb)}} MB</td>
+                <td style="color:var(--text-3);font-size:0.75rem;text-align:right">${{fmt(cd.gpu.vmaf)}}</td>
                 <td class="conf-badge" style="font-size:0.78rem;text-align:center">${{ce.confidence.flag}} ${{ge.confidence.flag}}</td>
             </tr>`;
         }}).join('');
@@ -3304,6 +3312,7 @@ async def video_page(request: Request):
                     <div style="color:var(--text-3);font-size:0.72rem;margin-bottom:0.4rem">${{tag}}</div>
                     ${{metricRow('Duration', e.delta_t_s, 's')}}
                     ${{metricRow('Output size', res.output_size_mb, 'MB')}}
+                    ${{metricRow('VMAF', res.vmaf != null ? res.vmaf : '—')}}
                     ${{metricRow('Baseline', e.w_base, 'W')}}
                     ${{metricRow('ΔW', e.delta_w, 'W')}}
                     ${{metricRow('ΔE', e.delta_e_wh, 'Wh')}}
@@ -3373,14 +3382,16 @@ async def video_page(request: Request):
                     <th style="text-align:right;padding:0.3rem 0.5rem">CPU time</th>
                     <th style="text-align:right;padding:0.3rem 0.5rem">CPU energy</th>
                     <th style="text-align:right;padding:0.3rem 0.5rem">CPU out</th>
+                    <th style="text-align:right;padding:0.3rem 0.5rem">CPU VMAF</th>
                     <th style="text-align:right;padding:0.3rem 0.5rem">GPU time</th>
                     <th style="text-align:right;padding:0.3rem 0.5rem">GPU energy</th>
                     <th style="text-align:right;padding:0.3rem 0.5rem">GPU out</th>
+                    <th style="text-align:right;padding:0.3rem 0.5rem">GPU VMAF</th>
                     <th style="text-align:center;padding:0.3rem 0.5rem">Conf</th>
                 </tr></thead>
                 <tbody style="font-family:monospace">${{tableRows}}</tbody>
             </table>
-            <div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.25rem">✓ energy winner · \U0001F3C1 speed winner · CPU out / GPU out should match — confirms same bitrate target</div>
+            <div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.25rem">✓ energy winner · \U0001F3C1 speed winner · CPU out / GPU out should match — confirms same bitrate target · VMAF = perceptual quality 0–100 (higher better)</div>
             ${{highlights}}
             <div style="margin-top:1rem;color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Per-codec detail</div>
             ${{details}}

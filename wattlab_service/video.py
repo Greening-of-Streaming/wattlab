@@ -1,9 +1,11 @@
 import asyncio
+import os
 import shlex
 import subprocess
 import threading
 import time
 import json
+import tempfile
 from collections import deque
 from pathlib import Path
 from typing import Callable, Optional
@@ -95,6 +97,104 @@ def _probe_duration(input_path) -> Optional[float]:
         return float(out.stdout.strip())
     except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
         return None
+
+
+def _ffprobe_bin() -> str:
+    """ffprobe sibling of the configured ffmpeg, else PATH `ffprobe`."""
+    bin_path = _ffmpeg_bin()
+    candidate = Path(bin_path).with_name("ffprobe") if "/" in bin_path else Path("ffprobe")
+    return str(candidate) if (candidate.exists() or "/" not in bin_path) else "ffprobe"
+
+
+def _probe_dims(path) -> Optional[tuple]:
+    """(width, height) of the first video stream's display frame, or None."""
+    try:
+        out = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0",
+             str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        parts = out.stdout.strip().split("x")
+        if out.returncode == 0 and len(parts) >= 2:
+            return int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+    return None
+
+
+def _parse_vmaf_log(log_path) -> Optional[float]:
+    """Pull the pooled-mean VMAF from a libvmaf json log; None if unparseable."""
+    try:
+        data = json.loads(Path(log_path).read_text())
+        mean = data.get("pooled_metrics", {}).get("vmaf", {}).get("mean")
+        if mean is not None:
+            return round(float(mean), 2)
+        scores = [f.get("metrics", {}).get("vmaf") for f in data.get("frames", [])]
+        scores = [x for x in scores if x is not None]
+        if scores:
+            return round(sum(scores) / len(scores), 2)
+    except Exception:
+        pass
+    return None
+
+
+def compute_vmaf(distorted, reference, s: Optional[dict] = None) -> Optional[float]:
+    """Pooled-mean VMAF (0-100) of `distorted` vs `reference`, or None on any
+    failure (fail-soft, like other optional metrics).
+
+    QA only. Callers MUST invoke this as a TERMINAL pass — after a job's
+    measurement window has closed (lock released, focus exited). Its CPU
+    draw is never polled, so it cannot enter a reported energy figure
+    (CR-044). Routes through ffmpeg_bin, the only build with libvmaf.
+
+    Dimension handling: the distorted is *cropped* (not scaled) to its own
+    delivered WxH and the reference is scaled to match. Cropping strips
+    VAAPI macroblock padding — the GPU HEVC path decodes 1080->1088, which
+    otherwise trips libvmaf with "input height must match" — without
+    resampling the signal we're measuring. Verified on a real CPU-vs-GPU
+    H.265 run 2026-05-22 (CPU 91.48 / GPU 91.31).
+    """
+    if s is None:
+        s = cfg.load()
+    if not s.get("vmaf_enabled", True):
+        return None
+    distorted, reference = Path(distorted), Path(reference)
+    if not (distorted.exists() and reference.exists()):
+        return None
+
+    dims = _probe_dims(distorted)   # display dims (1920x1080 for every preset)
+    if dims is None:
+        return None
+    tw, th = dims
+
+    sub = int(s.get("vmaf_n_subsample", 1) or 1)
+    nt = int(s.get("vmaf_n_threads", 12) or 12)
+    sub_opt = f":n_subsample={sub}" if sub > 1 else ""
+
+    fd, log = tempfile.mkstemp(prefix="owl_vmaf_", suffix=".json")
+    os.close(fd)
+    log = Path(log)
+    lavfi = (
+        f"[0:v]crop={tw}:{th}:0:0,setpts=PTS-STARTPTS[d];"
+        f"[1:v]scale={tw}:{th}:flags=bicubic,setpts=PTS-STARTPTS[r];"
+        f"[d][r]libvmaf=n_threads={nt}{sub_opt}:log_fmt=json:log_path={log}"
+    )
+    cmd = [_ffmpeg_bin(), "-y", "-i", str(distorted), "-i", str(reference),
+           "-lavfi", lavfi, "-f", "null", "-"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        score = _parse_vmaf_log(log)
+        if score is None and proc.stderr and "VMAF score:" in proc.stderr:
+            try:
+                score = round(float(proc.stderr.split("VMAF score:")[-1].split()[0]), 2)
+            except Exception:
+                score = None
+        return score
+    except Exception:
+        return None
+    finally:
+        log.unlink(missing_ok=True)
 
 
 # CR-035 — parse a single line from `ffmpeg -progress pipe:1` into the
@@ -583,6 +683,20 @@ def analyse(cpu: dict, gpu: dict) -> dict:
     confidence_note = "Both runs 🟢 Repeatable." if conf_both else \
         "⚠ One or both runs below Repeatable threshold — treat comparison as Early insight."
 
+    # CR-044 — quality note when both sides carry a VMAF score. Present only
+    # when _attach_vmaf ran before analyse() (compare/both flow); None
+    # otherwise (e.g. all-codecs per-pair analysis runs before the VMAF pass).
+    cv, gv = cpu.get("vmaf"), gpu.get("vmaf")
+    quality_note = None
+    if cv is not None and gv is not None:
+        diff = round(abs(cv - gv), 2)
+        if diff < 1.0:
+            quality_note = (f"Perceptually equivalent quality — VMAF {cv} vs {gv} "
+                            f"(Δ{diff}, within just-noticeable-difference).")
+        else:
+            q_winner = "CPU" if cv > gv else "GPU"
+            quality_note = f"{q_winner} higher perceptual quality — VMAF {cv} vs {gv} (Δ{diff})."
+
     return {
         "energy_winner": energy_winner,
         "speed_winner": speed_winner,
@@ -590,6 +704,7 @@ def analyse(cpu: dict, gpu: dict) -> dict:
         "speed_diff_pct": speed_diff_pct,
         "finding": finding,
         "confidence_note": confidence_note,
+        "quality_note": quality_note,
     }
 
 def analyse_all(codecs: dict) -> dict:
@@ -625,6 +740,28 @@ def analyse_all(codecs: dict) -> dict:
         "fastest": fastest,
         "codec_summaries": codec_summaries,
     }
+
+
+async def _attach_vmaf(sides: list, input_path: Path, job_id: str,
+                       s: dict, jobs: Optional[dict] = None) -> None:
+    """CR-044 — terminal quality pass: score each side's retained encode
+    against the source and attach `vmaf`. MUST be called only after the
+    measurement lock is released and focus mode has exited, so VMAF's CPU
+    draw is never polled (it cannot enter any reported energy figure). The
+    encodes are already on disk; nothing here touches the P110.
+    """
+    if not s.get("vmaf_enabled", True):
+        return
+    if jobs is not None and job_id in jobs:
+        jobs[job_id]["stage"] = "vmaf"
+    loop = asyncio.get_event_loop()
+    for r in sides:
+        if not isinstance(r, dict) or not r.get("preset_key"):
+            continue
+        out = UPLOAD_DIR / f"{job_id}_{r['preset_key']}_out.mp4"
+        r["vmaf"] = await loop.run_in_executor(
+            None, lambda o=out: compute_vmaf(o, input_path, s)
+        )
 
 
 async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) -> dict:
@@ -665,6 +802,12 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) 
         LOCK_FILE.unlink(missing_ok=True)
         loop = asyncio.get_event_loop()
         loop.run_in_executor(None, focus_mode_exit, stopped)
+
+    # CR-044 — terminal VMAF pass (lock released, focus exiting): score all
+    # six retained encodes against the source. Never polled, never billed.
+    all_sides = [data[side] for data in results.values()
+                 for side in ("cpu", "gpu") if side in data]
+    await _attach_vmaf(all_sides, input_path, job_id, s, jobs)
 
     if jobs: jobs[job_id]["stage"] = "done"
     return {
@@ -728,6 +871,10 @@ async def run_both_measurement(input_path: Path, job_id: str, jobs: dict = None,
         LOCK_FILE.unlink(missing_ok=True)
         loop = asyncio.get_event_loop()
         loop.run_in_executor(None, focus_mode_exit, stopped)
+
+    # CR-044 — terminal VMAF pass after the lock is released; feeds analyse()
+    # so the quality note rides along with the energy/speed finding.
+    await _attach_vmaf([cpu_result, gpu_result], input_path, job_id, s, jobs)
 
     analysis = analyse(cpu_result, gpu_result)
 
