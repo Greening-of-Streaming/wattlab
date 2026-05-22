@@ -39,9 +39,12 @@ def test_legacy_used_when_no_samples():
     assert r["flag"] == "🟢"  # noise=1.0, green=5; 10>5 and 15>=10
 
 
-def test_legacy_used_when_task_samples_too_few():
-    r = C.confidence(10.0, 1, 50.0, [50, 50, 50], [60], _settings())
-    assert r["method"] == "variance"
+def test_legacy_used_only_when_samples_absent():
+    # None or empty arrays -> legacy (old results). A present array, even with
+    # one element, uses the CI model (see test_single_task_poll_uses_ci_and_is_red).
+    assert C.confidence(10.0, 5, 50.0, None, [60] * 5, _settings())["method"] == "variance"
+    assert C.confidence(10.0, 5, 50.0, [50] * 5, None, _settings())["method"] == "variance"
+    assert C.confidence(10.0, 5, 50.0, [50] * 5, [], _settings())["method"] == "variance"
 
 
 # ── CI model: SE_final formula ──────────────────────────────────────────────
@@ -88,6 +91,24 @@ def test_near_idle_is_red_with_straddling_ci():
     lo, hi = r["ci_delta_w_95"]
     assert lo < 0 < hi          # interval includes zero -> not distinguishable
     assert "hint" in r
+
+
+def test_single_task_poll_uses_ci_and_is_red():
+    # Regression: a 1-poll run HAS samples, so it must use the CI model (not
+    # fall back to legacy). n_task=1 fails the yellow poll-guard -> 🔴, even
+    # when ΔW is large. Previously it leaked to legacy and flagged 🟡.
+    base = [57.0] * 10
+    task = [110.0]            # single strong task poll
+    r = C.confidence(53, 1, 57, base, task, _settings())
+    assert r["method"] == "ci"
+    assert r["flag"] == "🔴"
+
+
+def test_few_task_polls_below_yellow_guard_is_red():
+    base, task = [57.0] * 10, [110.0, 109.0, 111.0]   # n_task=3 < yellow polls 5
+    r = C.confidence(53, 3, 57, base, task, _settings())
+    assert r["method"] == "ci"
+    assert r["flag"] == "🔴"
 
 
 def test_zero_delta_is_half_confidence():

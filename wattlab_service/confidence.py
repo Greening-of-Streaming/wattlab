@@ -74,8 +74,13 @@ def confidence(delta_w: float, poll_count: int, w_base: float,
     if s is None:
         s = cfg.load()
 
-    # Legacy fallback: no usable samples (older results / un-migrated callers).
-    if not baseline_samples_w or not task_samples_w or len(task_samples_w) < 2:
+    # Legacy fallback ONLY when raw samples are entirely absent (older results
+    # saved before persistence, or an un-migrated caller). A *new* run with
+    # samples — even a single task poll — must use the CI model, where the
+    # minimum-poll guards correctly drive a too-short run to 🔴 rather than
+    # leaking to the legacy model's looser OR-thresholds (which flag 🟡 on a
+    # strong ΔW regardless of poll count). std_* are guarded for n < 2 below.
+    if not baseline_samples_w or not task_samples_w:
         return _legacy(delta_w, poll_count, w_base, s)
 
     n_base = len(baseline_samples_w)
