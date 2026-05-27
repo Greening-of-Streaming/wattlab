@@ -5973,6 +5973,10 @@ async def rag_page(request: Request):
         "<div style='color:var(--text-5);font-size:0.72rem;margin-bottom:0.4rem' id='upload-quota'>Loading quota…</div>"
         "<input type='file' id='upload-file' accept='application/pdf,.pdf' "
         "style='font-family:monospace;font-size:0.78rem;color:var(--text-3);background:#0f0f0f;"
+        "border:1px solid var(--border-3);padding:0.35rem;width:100%;margin-bottom:0.4rem'>"
+        "<input type='text' id='upload-title' maxlength='200' "
+        "placeholder='Optional note / qualifier (e.g. &quot;Internal GoS working document&quot;)' "
+        "style='font-family:monospace;font-size:0.78rem;color:var(--text-3);background:#0f0f0f;"
         "border:1px solid var(--border-3);padding:0.35rem;width:100%;margin-bottom:0.5rem'>"
         "<button onclick='uploadDoc()' style='background:var(--accent);color:#000;border:none;"
         "padding:0.45rem 1rem;cursor:pointer;font-family:monospace;font-size:0.78rem'>Upload + index</button>"
@@ -6137,9 +6141,16 @@ async def rag_page(request: Request):
                       + 'style="background:none;border:1px solid var(--border-3);color:var(--err);'
                       + 'font-size:0.7rem;padding:0 0.4rem;cursor:pointer;font-family:monospace" title="Delete this document">×</button>'
                     : '';
+                // CR-051 — optional title shown inline after filename. Both
+                // get individual `title` HTML attributes so a long-name OR a
+                // long-note still surfaces fully on hover.
+                const titleHtml = doc.title
+                    ? '<span style="color:var(--text-5);font-style:italic" title="' + (doc.title.replace(/"/g, '&quot;')) + '"> · ' + doc.title + '</span>'
+                    : '';
                 return '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.2rem 0;border-bottom:1px solid var(--border-2)">'
                     + '<span style="flex-shrink:0">' + flag + '</span>'
-                    + '<span style="flex:1;font-family:monospace;font-size:0.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + doc.rel_path + '</span>'
+                    + '<span style="flex:1;font-family:monospace;font-size:0.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + doc.rel_path + '">'
+                    + doc.rel_path + titleHtml + '</span>'
                     + '<span style="flex-shrink:0">' + originChip + '</span>'
                     + '<span style="flex-shrink:0;color:var(--text-5);font-size:0.7rem;width:5.5rem;text-align:right">' + addedShort + '</span>'
                     + '<span style="flex-shrink:0;color:var(--text-4);font-size:0.72rem;width:5rem;text-align:right">' + sizeStr + '</span>'
@@ -6159,12 +6170,15 @@ async def rag_page(request: Request):
 
     async function uploadDoc() {{
         const fileEl = document.getElementById('upload-file');
+        const titleEl = document.getElementById('upload-title');
         const status = document.getElementById('upload-status');
         const file = fileEl.files[0];
         if (!file) {{ status.style.color = 'var(--err)'; status.textContent = 'pick a PDF first'; return; }}
         status.style.color = 'var(--warn)'; status.textContent = 'uploading…';
         const fd = new FormData();
         fd.append('file', file);
+        const t = (titleEl.value || '').trim();
+        if (t) fd.append('title', t);
         try {{
             const r = await fetch('/rag/upload', {{method: 'POST', body: fd}});
             const d = await r.json();
@@ -6177,6 +6191,7 @@ async def rag_page(request: Request):
             const chunks = d.indexed && d.indexed.chunks_added;
             status.textContent = '✓ ' + d.filename + (chunks ? ' (' + chunks + ' chunks indexed)' : ' (indexing…)');
             fileEl.value = '';
+            titleEl.value = '';
             // Refresh the corpus list to show the new entry.
             setTimeout(loadCorpus, 500);
         }} catch(e) {{
@@ -6615,6 +6630,7 @@ async def rag_corpus_list(request: Request):
             **d,
             "origin":      origin,                       # "Lab" | "Member"  (Anonymous never appears as owner)
             "added_at":    meta.get("added_at"),
+            "title":       meta.get("title"),            # CR-051 — uploader's optional note/qualifier
             "can_delete":  can_del,
         })
     s = cfg.load()
@@ -6633,7 +6649,8 @@ async def rag_corpus_list(request: Request):
 
 
 @app.post("/rag/upload", dependencies=[Depends(requires(RAG_CORPUS_UPLOAD))])
-async def rag_upload(request: Request, file: UploadFile = File(...)):
+async def rag_upload(request: Request, file: UploadFile = File(...),
+                     title: str = Form(None)):
     """CR-051 — Member uploads a PDF to the corpus.
 
     Hardened upload path: filename sanitised, %PDF- magic-byte sniff, per-file
@@ -6687,8 +6704,9 @@ async def rag_upload(request: Request, file: UploadFile = File(...)):
     # 5. Manifest + audit.
     origin = "Lab" if visitor_tier == "Lab" else "Member"
     actor  = visitor_email if visitor_email else "Lab"
+    clean_title = (title or "").strip()[:200] or None   # cap at 200 chars
     corpus_manifest.record_upload(safe_name, added_by=actor, origin=origin,
-                                   size_bytes=len(blob))
+                                   size_bytes=len(blob), title=clean_title)
 
     # 6. Incremental index in background (don't block the POST response).
     loop = asyncio.get_event_loop()
