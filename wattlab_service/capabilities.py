@@ -48,7 +48,8 @@ CUSTOM_UPLOAD      = "custom_upload"      # video upload — Member+ (CR-026); p
 # Member-tier — the "members shape inputs" half of the CR-001 capability matrix
 CUSTOM_PROMPT      = "custom_prompt"      # free-form LLM/image prompt OR custom ffmpeg args
 BATCH_COMPARE      = "batch_compare"      # all-codecs sweep, LLM all-tasks, CPU-vs-GPU compare, RAG 3-mode compare
-RAG_CORPUS_UPLOAD  = "rag_corpus_upload"  # PDF upload into the RAG corpus
+RAG_CORPUS_UPLOAD     = "rag_corpus_upload"      # PDF upload into the RAG corpus
+RAG_CORPUS_DELETE_OWN = "rag_corpus_delete_own"  # CR-051 — delete a corpus PDF you uploaded (Lab can delete any via tier override)
 RESULTS_EXPORT_CSV = "results_export_csv" # bulk CSV/JSON export of run history (≠ RESULTS_DOWNLOAD)
 
 # Lab-only
@@ -80,8 +81,9 @@ _REQUIRED_TIER: dict[str, Tier] = {
     WORKING_NAV:        Tier.Member,
     CUSTOM_PROMPT:      Tier.Member,
     BATCH_COMPARE:      Tier.Member,
-    RAG_CORPUS_UPLOAD:  Tier.Member,
-    RESULTS_EXPORT_CSV: Tier.Member,
+    RAG_CORPUS_UPLOAD:     Tier.Member,
+    RAG_CORPUS_DELETE_OWN: Tier.Member,
+    RESULTS_EXPORT_CSV:    Tier.Member,
 
     # Lab — instrument operators
     SETTINGS_READ_FULL: Tier.Lab,

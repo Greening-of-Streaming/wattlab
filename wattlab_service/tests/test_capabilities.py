@@ -256,8 +256,9 @@ def test_required_tier_table_snapshot():
         "working_nav":         Tier.Member,
         "custom_prompt":       Tier.Member,
         "batch_compare":       Tier.Member,
-        "rag_corpus_upload":   Tier.Member,
-        "results_export_csv":  Tier.Member,
+        "rag_corpus_upload":     Tier.Member,
+        "rag_corpus_delete_own": Tier.Member,  # CR-051
+        "results_export_csv":    Tier.Member,
         # Lab — instrument operators
         "settings_read_full":  Tier.Lab,
         "settings_write":      Tier.Lab,

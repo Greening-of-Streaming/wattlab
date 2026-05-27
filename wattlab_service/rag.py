@@ -149,6 +149,78 @@ def _chunk_pages(pages: list[dict]) -> list[dict]:
     return chunks
 
 
+def add_doc_to_index(filename: str) -> dict:
+    """CR-051 — incremental add: index ONE pdf in corpus/papers/<filename>
+    without touching the rest of the collection. ~3-8 s per typical doc.
+
+    Returns {"chunks_added": int, "pages": int} or raises on failure.
+    Uses globally-unique ids (`<filename>#<i>`) so an add can't collide
+    with the seed corpus's integer ids OR with a later add of another doc.
+    """
+    from pypdf import PdfReader
+    s = cfg.load()
+    corpus_path = Path(s["rag_corpus_path"])
+    pdf_path = corpus_path / filename
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"corpus/papers/{filename}")
+
+    reader = PdfReader(str(pdf_path))
+    pages = []
+    for page_num, page in enumerate(reader.pages):
+        text = (page.extract_text() or "").strip()
+        if text:
+            pages.append({"text": text, "source": filename, "page": page_num})
+    if not pages:
+        return {"chunks_added": 0, "pages": 0}
+
+    chunks = _chunk_pages(pages)
+    if not chunks:
+        return {"chunks_added": 0, "pages": len(pages)}
+
+    collection = _get_collection(s["rag_chroma_path"])
+    # Pre-delete any stale chunks for this filename (in case of re-add).
+    try:
+        collection.delete(where={"source": filename})
+    except Exception:
+        pass
+
+    model = _get_embed_model()
+    texts = [c["text"] for c in chunks]
+    ids   = [f"{filename}#{i}" for i in range(len(chunks))]
+    metas = [{"source": filename, "page": c["page"], "chunk_index": i}
+             for i, c in enumerate(chunks)]
+
+    batch = 256
+    for i in range(0, len(texts), batch):
+        embeddings = model.encode(texts[i:i+batch], show_progress_bar=False).tolist()
+        collection.add(
+            documents=texts[i:i+batch],
+            embeddings=embeddings,
+            ids=ids[i:i+batch],
+            metadatas=metas[i:i+batch],
+        )
+
+    global index_doc_count
+    index_doc_count = collection.count()
+    return {"chunks_added": len(chunks), "pages": len(pages)}
+
+
+def remove_doc_from_index(filename: str) -> dict:
+    """CR-051 — incremental delete: drop ALL chunks for `filename` from the
+    ChromaDB collection. Idempotent (no-op if no chunks match).
+    Returns {"removed": True, "remaining_doc_count": int}.
+    """
+    s = cfg.load()
+    collection = _get_collection(s["rag_chroma_path"])
+    try:
+        collection.delete(where={"source": filename})
+    except Exception:
+        pass
+    global index_doc_count
+    index_doc_count = collection.count()
+    return {"removed": True, "remaining_doc_count": index_doc_count}
+
+
 def build_index(rebuild: bool = False):
     """Build (or rebuild) the ChromaDB index from the corpus PDFs.
     Runs synchronously — call from a thread to avoid blocking the event loop.

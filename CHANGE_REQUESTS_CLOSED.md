@@ -1371,6 +1371,73 @@ Page mirrors `/llm/compare` styling exactly. Upload note is a dashed-border bloc
 
 ---
 
+## CR-051 · RAG corpus self-service: Member upload + delete, manifest + audit
+
+**Status:** Shipped 2026-05-27 (Session 32). New `corpus_manifest.py` module + `POST /rag/upload` + `DELETE /rag/doc/{filename}` + `GET /rag/audit` (Lab) + UI on `/rag` corpus browser. New `RAG_CORPUS_DELETE_OWN` capability (Member). 15 new tests in `tests/test_corpus_manifest.py`. Existing 101 PDFs migrated to `origin=Lab` via `corpus_manifest.migrate_existing_corpus()`.
+**Triggered by:** owner, 2026-05-27 — *"I want to implement the possibility to add documets to the corpus."*
+
+### Problem
+
+Phase 2 #1 carry-over from CR-049: the `/rag` corpus was seeded once and only growable by dropping PDFs into `corpus/papers/` on the server, then triggering `/rag/build-index`. No tiered self-service; no audit trail; no way for a Member to contribute (or to undo a contribution). Owner explicitly raised the trust/audit angle — *"to protect against any (unlikely) bad intentions, we need to be able to remove documents too, but also track when a doc was added and who by."*
+
+### Agreed tier model
+
+- **Anonymous:** read-only view of the corpus list (origin tag visible, uploader email **not** shown — aggregate label only, "Member" or "Lab", protects member privacy).
+- **Member (RAG_CORPUS_UPLOAD + RAG_CORPUS_DELETE_OWN):** upload PDFs; delete their own uploads; cannot delete Lab-origin docs.
+- **Lab:** all of the above, plus delete any doc and read the audit log.
+- **Delete semantics:** hard delete (file unlinked, ChromaDB chunks dropped, manifest entry removed). The append-only audit log preserves the upload/delete history.
+- **Existing 101 PDFs:** migrated as `origin=Lab` via a one-shot `migrate_existing_corpus()` call from the manifest module. Self-healing for any PDF added out-of-band: `ensure_entry()` stamps it as Lab using the file's mtime.
+
+### What shipped
+
+**`corpus_manifest.py`** (new) — single source of truth:
+- `corpus/manifest.json` keyed by filename, each entry `{origin, added_by, added_at, size_bytes, title}`.
+- `corpus/audit.log` append-only NDJSON, one event per add/delete.
+- `can_delete(filename, tier, email)` — the tier × ownership matrix in one place. 15 tests pin it.
+- `sanitise_filename()` strips path components, restricts to `[A-Za-z0-9._-]`, ensures `.pdf`. Defends against `../../etc/passwd` style attempts even if the upload endpoint trusts Content-Disposition.
+- `unique_filename()` auto-suffixes `-2`, `-3`, … on collision so an upload can never silently overwrite an existing doc.
+- `member_usage(email)` → `{file_count, total_bytes}` for quota enforcement.
+- `migrate_existing_corpus()` idempotent one-shot to seed manifest entries for the existing 101 PDFs.
+
+**`rag.py`** — incremental index helpers (no more full rebuild per upload):
+- `add_doc_to_index(filename)` — load one PDF, chunk, embed, `collection.add()` with globally-unique ids (`<filename>#<i>`). ~3–8 s per typical doc.
+- `remove_doc_from_index(filename)` — `collection.delete(where={"source": filename})`. Idempotent.
+
+**`main.py`** — endpoints + UI:
+- `GET /rag/corpus-list` enriched with origin, added_at, per-row `can_delete`, member usage counters, caps.
+- `POST /rag/upload` (RAG_CORPUS_UPLOAD-gated): size cap, %PDF-magic-byte sniff, per-Member quota, sanitised + unique filename, manifest record, incremental index, audit log.
+- `DELETE /rag/doc/{filename:path}` (RAG_CORPUS_DELETE_OWN-gated, in-handler ownership check): defensive basename + traversal guards, unlink file, drop chunks, audit log.
+- `GET /rag/audit` (SETTINGS_READ_FULL = Lab) returns last 200 events.
+- `/rag` page corpus browser: per-row origin chip (green Member / muted Lab), added-on date, `×` delete button (only shown when `can_delete`), upload form (Member-only, with live quota display) above the list. Member-uploaded docs sort to the top so users find their own first.
+
+**`settings.json`** — three new caps (Lab uncapped):
+- `rag_upload_max_mb`: 50 (per-file)
+- `rag_member_doc_count_cap`: 10 (per Member email)
+- `rag_member_total_mb_cap`: 200 (per Member email)
+
+**`capabilities.py`** — new `RAG_CORPUS_DELETE_OWN` (Tier.Member). Snapshot test updated.
+
+### Hardening notes (worth re-reviewing if the public URL is ever opened beyond OWL_AUTH_SECRET-gated access)
+
+1. **Path traversal** — sanitise_filename + os.basename + traversal-guard in the DELETE handler. Test pinned.
+2. **Magic bytes** — first 5 bytes must be `%PDF-`; renamed-binary attempts rejected at the gateway.
+3. **Size cap** — per-file enforced before write (50 MB default).
+4. **Per-Member quota** — 10 files / 200 MB total per Member email. Lab uncapped.
+5. **Filename collision** — auto-suffix `-2`, `-3`. Never overwrites.
+6. **No executable indexing** — pypdf is the parser; we never `exec` content. The largest residual risk is a malicious PDF exploiting pypdf or ChromaDB parsers — both are widely-used libs but worth tracking for CVEs.
+
+### Phase 2 — open work
+
+1. **Optional title field on upload.** Manifest already has the slot; UI just doesn't expose it yet. Cheap.
+2. **Lab audit-log viewer page.** Endpoint exists (`/rag/audit`); no UI. A small `/rag/audit` page rendering the events as a table is a half-hour add.
+3. **Background re-index on disk drift.** Today `ensure_entry()` self-heals manifest gaps for out-of-band file drops, but the chunks aren't auto-added until someone hits `/rag/build-index`. A periodic check that compares disk contents to ChromaDB sources and incrementally adds the missing ones would close the loop.
+
+### Lab look & feel constraint
+
+Corpus browser sits inside the existing `<details>` block; no new top-level surface. Origin chip is one of two colours (green = Member, muted = Lab), 0.65 rem font, single-line per row. Delete button is a tiny `×` — only renders for rows the visitor can act on, so visitors don't see clickable targets they're not authorised for. Upload form sits behind a dashed border above the list (signals "not the main content, but here when you want it").
+
+---
+
 ## CR-050 · Dynamic model catalog · adding / removing a model is no longer a code change
 
 **Status:** Shipped 2026-05-27 (Session 31). New `model_catalog.py` module; LLM/RAG/Image `MODELS` dicts replaced with live views; Models section added to `/settings`. Subsequent follow-ups (active-probe thermal floor, Ollama keep_alive eviction, asymmetric settle, ±3 W tolerance, 4 Hz UI ticker, N-way `/image/compare`) all landed under this CR.

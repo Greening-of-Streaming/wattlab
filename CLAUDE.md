@@ -1,6 +1,6 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current.
-# Last updated: 2026-05-27 (Session 31 — AI-comparison trilogy closed: CR-048 /llm/compare hybrid showcase + try-your-own, CR-049 /rag/compare sibling, CR-050 dynamic model catalog (auto-detect from ollama list + HF cache, per-surface enable lists on /settings), active-probe thermal floor with Ollama keep_alive eviction, N-way /image/compare, 4 Hz cooldown UI ticker. Current state: active 15 CRs, 290 tests.)
+# Last updated: 2026-05-27 (Session 32 — CR-051 RAG corpus self-service: Member upload + delete, corpus_manifest.py with audit log + ownership matrix, per-Member quotas, hardened upload path (size cap, %PDF magic, sanitisation, traversal guards). 101 existing PDFs migrated as origin=Lab. New RAG_CORPUS_DELETE_OWN capability. Active 15 CRs, 307 tests.)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - JOURNAL.md — session-by-session change log (full detail; not auto-loaded)

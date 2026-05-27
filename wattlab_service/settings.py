@@ -82,6 +82,12 @@ DEFAULTS = {
     "llm_enabled_models":   [],
     "rag_enabled_models":   [],
     "image_enabled_models": [],
+    # CR-051 — RAG corpus upload caps. Members can self-serve add/remove
+    # documents on the corpus; without ceilings the corpus could be flooded
+    # (each upload also triggers re-embed work). Lab is uncapped.
+    "rag_upload_max_mb":         50,    # per-file size cap (Members)
+    "rag_member_doc_count_cap":  10,    # max files per Member email
+    "rag_member_total_mb_cap":   200,   # max total bytes per Member email
 }
 
 

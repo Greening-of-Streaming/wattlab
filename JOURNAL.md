@@ -7,6 +7,22 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 32 — 2026-05-27
+
+CR-051 RAG corpus self-service shipped end-to-end. Owner asked to enable Member-tier doc upload with audit trail (*"to protect against any (unlikely) bad intentions, we need to be able to remove documents too, but also track when a doc was added and who by"*); design + implement + tests + close all in one session.
+
+- **`corpus_manifest.py`** (new) — single-file source of truth for corpus provenance. `corpus/manifest.json` keyed by filename, `corpus/audit.log` append-only NDJSON. Helpers for `can_delete(tier, email)` (the security boundary in one place — 8 tests pin it), `sanitise_filename()` (strips `../`, restricts to `[A-Za-z0-9._-]`, `.pdf` extension), `unique_filename()` (auto-suffix on collision), `member_usage()` (for quota enforcement), `ensure_entry()` (self-heals manifest gaps for files dropped in out-of-band), `migrate_existing_corpus()` (idempotent one-shot — ran once, stamped 101 existing PDFs as `origin=Lab`).
+- **`rag.py`** — incremental index helpers: `add_doc_to_index(filename)` chunks + embeds + `collection.add()` with globally-unique ids (`<filename>#<i>`) so a single upload re-indexes in 3–8 s instead of the full 60+ s rebuild. `remove_doc_from_index(filename)` is one `collection.delete(where={"source": filename})` call.
+- **Three new endpoints in `main.py`:** `POST /rag/upload` (RAG_CORPUS_UPLOAD-gated; size cap, %PDF magic-byte sniff, per-Member quota check, sanitised filename, manifest record, background incremental index, audit log entry); `DELETE /rag/doc/{filename:path}` (RAG_CORPUS_DELETE_OWN-gated; in-handler tier×ownership check because the rule mixes tier with per-row ownership; defensive basename + traversal guards; unlink + chunk drop + audit); `GET /rag/audit` (Lab-only; last 200 events).
+- **`/rag/corpus-list` enriched** with `origin` ("Lab" | "Member" — aggregate label only, no email exposure to non-Lab callers), `added_at`, per-row `can_delete` tailored to the visitor, member usage counters, and caps.
+- **`/rag` page UI** — corpus browser inside the existing `<details>` block: per-row origin chip (green Member / muted Lab), added-on date, `×` delete button (only rendered for rows the visitor can act on), upload form (Member-only, with live quota display, dashed-border block above the list). Member-uploaded docs sort to the top so users find their own first.
+- **`capabilities.py`** — new `RAG_CORPUS_DELETE_OWN` (Tier.Member). Snapshot test updated.
+- **`settings.json`** — three new caps (Lab uncapped): `rag_upload_max_mb=50`, `rag_member_doc_count_cap=10`, `rag_member_total_mb_cap=200`.
+- **15 new tests** in `tests/test_corpus_manifest.py` pinning the sanitisation defences (path traversal, charset restriction, extension enforcement, empty-name handling), the collision-suffix logic, the can_delete tier×ownership matrix (Anonymous never; Lab anything; Member own only; Member blocked from Lab-origin docs even though they have the cap), manifest round-trip, `ensure_entry()` self-healing, `member_usage()` per-email aggregation, and migration idempotency. **Tests: 292 → 307.**
+- **CR housekeeping.** CR-051 shipped one-session so went straight to `CHANGE_REQUESTS_CLOSED.md` with full writeup including hardening notes (the 6 security musts) + Phase 2 follow-ups (title field UI, audit-log viewer page, background re-index on disk drift). Active CRs: 15. CLAUDE.md header updated. VERSION 0.7.2 → 0.8.0.
+
+---
+
 ## Session 31 — 2026-05-27 (overnight autonomous run)
 
 AI-comparison trilogy close-out — CR-048 / CR-049 / CR-050 all landed and shipped under one umbrella session, running parallel to S30's picker UX work. The conversation arc was: define the energy-per-correct-answer framing for LLM (CR-048), mirror it on RAG (CR-049), then notice that the per-surface model dicts are drifting and refactor everything to a dynamic catalog (CR-050). The thermal-floor + Ollama-eviction + 🔴-filter follow-ups all rolled into CR-050 once it became clear they were one coherent measurement-quality story.

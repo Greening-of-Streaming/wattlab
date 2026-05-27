@@ -1,4 +1,5 @@
 import asyncio
+import os
 import io
 import json
 import uuid
@@ -19,6 +20,7 @@ from image_gen import (run_image_measurement, run_image_both_measurement,
                         IMAGE_STEPS_CPU, IMAGE_STEPS_GPU, GPU_BATCH_SIZE)
 import rag as rag_module
 import model_catalog
+import corpus_manifest
 import settings as cfg
 import carbon
 import queue_control
@@ -31,7 +33,7 @@ from capabilities import (
     requires, can, gate,
     PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
     VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD, WORKING_NAV,
-    CUSTOM_PROMPT, BATCH_COMPARE, RAG_CORPUS_UPLOAD, RESULTS_EXPORT_CSV,
+    CUSTOM_PROMPT, BATCH_COMPARE, RAG_CORPUS_UPLOAD, RAG_CORPUS_DELETE_OWN, RESULTS_EXPORT_CSV,
     SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN,
 )
 
@@ -5966,6 +5968,16 @@ async def rag_page(request: Request):
       <summary style="cursor:pointer;color:var(--text-2);list-style:none">
         <span id="corpus-summary-text">▸ Browse corpus documents</span>
       </summary>
+      {("<div id='upload-form' style='margin-top:0.75rem;padding:0.6rem 0.75rem;border:1px dashed var(--border-3);background:var(--panel-2)'>"
+        "<div style='color:var(--text-2);font-size:0.8rem;margin-bottom:0.4rem;font-weight:bold'>Upload a PDF to the corpus</div>"
+        "<div style='color:var(--text-5);font-size:0.72rem;margin-bottom:0.4rem' id='upload-quota'>Loading quota…</div>"
+        "<input type='file' id='upload-file' accept='application/pdf,.pdf' "
+        "style='font-family:monospace;font-size:0.78rem;color:var(--text-3);background:#0f0f0f;"
+        "border:1px solid var(--border-3);padding:0.35rem;width:100%;margin-bottom:0.5rem'>"
+        "<button onclick='uploadDoc()' style='background:var(--accent);color:#000;border:none;"
+        "padding:0.45rem 1rem;cursor:pointer;font-family:monospace;font-size:0.78rem'>Upload + index</button>"
+        "<span id='upload-status' style='margin-left:0.75rem;color:var(--text-4);font-size:0.78rem'></span>"
+        "</div>") if can_corpus_upload else ""}
       <div id="corpus-list" style="margin-top:0.6rem;color:var(--text-3);font-size:0.78rem;line-height:1.6">
         <p style="color:var(--text-4)">Loading…</p>
       </div>
@@ -6081,36 +6093,110 @@ async def rag_page(request: Request):
     async function loadCorpus() {{
         const el = document.getElementById('corpus-list');
         const sumEl = document.getElementById('corpus-summary-text');
+        const quotaEl = document.getElementById('upload-quota');
         try {{
             const r = await fetch('/rag/corpus-list');
             const d = await r.json();
             sumEl.textContent = '▾ Browse corpus documents — ' + d.total + ' PDFs (' + d.indexed + ' indexed)';
+            // CR-051 — Member quota display (above upload form)
+            if (quotaEl) {{
+                const u = d.member_usage, c = d.caps || {{}};
+                if (u && c.member_doc_count != null) {{
+                    const mb = (u.total_bytes / 1024 / 1024).toFixed(1);
+                    quotaEl.textContent = 'Your uploads: ' + u.file_count + '/' + c.member_doc_count
+                        + ' files · ' + mb + ' / ' + c.member_total_mb + ' MB · '
+                        + 'per-file cap: ' + c.per_file_mb + ' MB';
+                }} else {{
+                    quotaEl.textContent = 'Lab tier — uncapped. Per-file cap: ' + (c.per_file_mb || '?') + ' MB.';
+                }}
+            }}
             if (!d.docs || d.docs.length === 0) {{
                 el.innerHTML = '<p style="color:var(--text-4)">No PDFs found in the corpus directory.</p>';
                 return;
             }}
-            // sort: pending first (so visitors notice), then alpha
-            d.docs.sort((a,b) => (a.indexed - b.indexed) || a.rel_path.localeCompare(b.rel_path));
+            // CR-051 — sort: Member-uploaded first (so they find their own quickly), then pending, then alpha.
+            d.docs.sort((a,b) => {{
+                const aM = (a.origin === 'Member') ? 0 : 1;
+                const bM = (b.origin === 'Member') ? 0 : 1;
+                return aM - bM || (a.indexed - b.indexed) || a.rel_path.localeCompare(b.rel_path);
+            }});
             const rows = d.docs.map(doc => {{
                 const flag = doc.indexed
-                    ? '<span style="color:var(--accent)">●</span>'
-                    : '<span style="color:var(--warn)">○</span>';
+                    ? '<span style="color:var(--accent)" title="indexed">●</span>'
+                    : '<span style="color:var(--warn)" title="not yet indexed — rebuild">○</span>';
                 const tag = doc.indexed ? 'indexed' : 'pending — rebuild to add';
                 const sizeStr = doc.size_kb >= 1024
                     ? (doc.size_kb / 1024).toFixed(1) + ' MB'
                     : doc.size_kb + ' KB';
-                return '<div style="display:flex;align-items:baseline;gap:0.5rem;padding:0.15rem 0;border-bottom:1px solid var(--border-2)">'
+                const originChip = doc.origin === 'Member'
+                    ? '<span style="color:var(--accent);border:1px solid var(--accent);font-size:0.65rem;padding:0 0.3rem;border-radius:2px">Member</span>'
+                    : '<span style="color:var(--text-4);border:1px solid var(--border-3);font-size:0.65rem;padding:0 0.3rem;border-radius:2px">Lab</span>';
+                const addedShort = (doc.added_at || '').slice(0, 10);  // YYYY-MM-DD
+                const delBtn = doc.can_delete
+                    ? '<button onclick="deleteDoc(\\'' + doc.rel_path.replace(/\\\\/g, "\\\\\\\\").replace(/'/g, "\\\\'") + '\\')" '
+                      + 'style="background:none;border:1px solid var(--border-3);color:var(--err);'
+                      + 'font-size:0.7rem;padding:0 0.4rem;cursor:pointer;font-family:monospace" title="Delete this document">×</button>'
+                    : '';
+                return '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.2rem 0;border-bottom:1px solid var(--border-2)">'
                     + '<span style="flex-shrink:0">' + flag + '</span>'
                     + '<span style="flex:1;font-family:monospace;font-size:0.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + doc.rel_path + '</span>'
-                    + '<span style="flex-shrink:0;color:var(--text-4);font-size:0.72rem">' + sizeStr + '</span>'
-                    + '<span style="flex-shrink:0;color:var(--text-4);font-size:0.72rem;width:11rem;text-align:right">' + tag + '</span>'
+                    + '<span style="flex-shrink:0">' + originChip + '</span>'
+                    + '<span style="flex-shrink:0;color:var(--text-5);font-size:0.7rem;width:5.5rem;text-align:right">' + addedShort + '</span>'
+                    + '<span style="flex-shrink:0;color:var(--text-4);font-size:0.72rem;width:5rem;text-align:right">' + sizeStr + '</span>'
+                    + '<span style="flex-shrink:0;color:var(--text-4);font-size:0.7rem;width:8rem;text-align:right">' + tag + '</span>'
+                    + '<span style="flex-shrink:0;width:1.5rem;text-align:right">' + delBtn + '</span>'
                     + '</div>';
             }}).join('');
-            el.innerHTML = '<div style="max-height:24rem;overflow-y:auto;padding-right:0.4rem">' + rows + '</div>'
+            el.innerHTML = '<div style="max-height:28rem;overflow-y:auto;padding-right:0.4rem">' + rows + '</div>'
                 + '<p style="color:var(--text-4);font-size:0.72rem;margin-top:0.5rem">'
-                + 'Add PDFs to <code>/home/gos/wattlab/corpus/papers/</code> (subdirectories are scanned). Hit <strong>Rebuild</strong> above to add pending docs to the index.</p>';
+                + 'Origin: <span style="color:var(--accent)">Member</span> = uploaded via the form above (Members can delete their own). '
+                + '<span style="color:var(--text-4)">Lab</span> = seeded by the GoS team. '
+                + 'Names of Member uploaders are not shown publicly.</p>';
         }} catch(e) {{
             el.innerHTML = '<p style="color:var(--err)">Failed to load corpus: ' + e + '</p>';
+        }}
+    }}
+
+    async function uploadDoc() {{
+        const fileEl = document.getElementById('upload-file');
+        const status = document.getElementById('upload-status');
+        const file = fileEl.files[0];
+        if (!file) {{ status.style.color = 'var(--err)'; status.textContent = 'pick a PDF first'; return; }}
+        status.style.color = 'var(--warn)'; status.textContent = 'uploading…';
+        const fd = new FormData();
+        fd.append('file', file);
+        try {{
+            const r = await fetch('/rag/upload', {{method: 'POST', body: fd}});
+            const d = await r.json();
+            if (!r.ok || d.error) {{
+                status.style.color = 'var(--err)';
+                status.textContent = d.error || ('HTTP ' + r.status);
+                return;
+            }}
+            status.style.color = 'var(--accent)';
+            const chunks = d.indexed && d.indexed.chunks_added;
+            status.textContent = '✓ ' + d.filename + (chunks ? ' (' + chunks + ' chunks indexed)' : ' (indexing…)');
+            fileEl.value = '';
+            // Refresh the corpus list to show the new entry.
+            setTimeout(loadCorpus, 500);
+        }} catch(e) {{
+            status.style.color = 'var(--err)';
+            status.textContent = 'failed: ' + e;
+        }}
+    }}
+
+    async function deleteDoc(filename) {{
+        if (!confirm('Delete "' + filename + '" from the corpus? This removes the PDF and its index chunks.')) return;
+        try {{
+            const r = await fetch('/rag/doc/' + encodeURIComponent(filename), {{method: 'DELETE'}});
+            const d = await r.json();
+            if (!r.ok || d.error) {{
+                alert('Delete failed: ' + (d.error || ('HTTP ' + r.status)));
+                return;
+            }}
+            loadCorpus();
+        }} catch(e) {{
+            alert('Delete failed: ' + e);
         }}
     }}
 
@@ -6507,13 +6593,165 @@ async def rag_index_status():
 
 
 @app.get("/rag/corpus-list", dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def rag_corpus_list():
+async def rag_corpus_list(request: Request):
+    """CR-051 — enriched with manifest data + per-row can_delete flag.
+
+    For each PDF, returns origin ("Lab"/"Member"), added_at, plus a boolean
+    can_delete tailored to the requesting visitor (Lab: always, Member: own
+    only, Anonymous: never). Member usage counters returned for the upload
+    form to gate against rag_member_doc_count_cap / rag_member_total_mb_cap.
+    """
     docs = rag_module.corpus_list()
+    visitor_tier = audience.tier(request).name
+    visitor_email = auth.member_email_from_request(request) if visitor_tier == "Member" else None
+    manifest = corpus_manifest.load_manifest()
+    enriched = []
+    for d in docs:
+        fn = d.get("rel_path") or d.get("name") or ""
+        meta = manifest.get(fn) or corpus_manifest.ensure_entry(fn)
+        origin = meta.get("origin", "Lab")
+        can_del = corpus_manifest.can_delete(fn, visitor_tier, visitor_email)
+        enriched.append({
+            **d,
+            "origin":      origin,                       # "Lab" | "Member"  (Anonymous never appears as owner)
+            "added_at":    meta.get("added_at"),
+            "can_delete":  can_del,
+        })
+    s = cfg.load()
     return {
-        "docs": docs,
-        "total": len(docs),
-        "indexed": sum(1 for d in docs if d["indexed"]),
+        "docs": enriched,
+        "total":   len(enriched),
+        "indexed": sum(1 for d in enriched if d["indexed"]),
+        "visitor_tier": visitor_tier,
+        "member_usage": corpus_manifest.member_usage(visitor_email) if visitor_email else None,
+        "caps": {
+            "per_file_mb":         s["rag_upload_max_mb"],
+            "member_doc_count":    s["rag_member_doc_count_cap"],
+            "member_total_mb":     s["rag_member_total_mb_cap"],
+        },
     }
+
+
+@app.post("/rag/upload", dependencies=[Depends(requires(RAG_CORPUS_UPLOAD))])
+async def rag_upload(request: Request, file: UploadFile = File(...)):
+    """CR-051 — Member uploads a PDF to the corpus.
+
+    Hardened upload path: filename sanitised, %PDF- magic-byte sniff, per-file
+    size cap, per-Member doc count + total size caps. Lab is uncapped. On
+    success the doc is incrementally added to the ChromaDB index (~3-8 s) so
+    it's queryable immediately — no full rebuild needed.
+    """
+    s = cfg.load()
+    visitor_tier  = audience.tier(request).name
+    visitor_email = auth.member_email_from_request(request) if visitor_tier == "Member" else None
+    if visitor_tier == "Member" and not visitor_email:
+        return JSONResponse({"error": "session has no member email"}, status_code=403)
+
+    # 1. Read + size-cap (read into memory; 50 MB is fine for RAM).
+    max_bytes = int(s["rag_upload_max_mb"]) * 1024 * 1024
+    blob = await file.read()
+    if len(blob) > max_bytes:
+        return JSONResponse({"error": f"file exceeds {s['rag_upload_max_mb']} MB cap "
+                             f"({len(blob) // 1024 // 1024} MB)"}, status_code=413)
+    if not blob:
+        return JSONResponse({"error": "empty file"}, status_code=400)
+
+    # 2. PDF magic-byte sniff. Trusting the Content-Disposition filename is
+    # cheap so we check the file actually IS a PDF — defends against renamed
+    # binaries (and keeps the pypdf chunker from choking later).
+    if not blob.startswith(b"%PDF-"):
+        return JSONResponse({"error": "not a PDF (missing %PDF- magic header)"},
+                            status_code=400)
+
+    # 3. Per-Member quota (Lab uncapped).
+    if visitor_tier == "Member":
+        usage = corpus_manifest.member_usage(visitor_email)
+        if usage["file_count"] >= int(s["rag_member_doc_count_cap"]):
+            return JSONResponse({"error": f"member doc count cap reached "
+                                 f"({usage['file_count']} / {s['rag_member_doc_count_cap']}) "
+                                 f"— delete an old upload first"}, status_code=413)
+        max_total = int(s["rag_member_total_mb_cap"]) * 1024 * 1024
+        if usage["total_bytes"] + len(blob) > max_total:
+            return JSONResponse({"error": f"member total size cap reached "
+                                 f"({(usage['total_bytes'] + len(blob)) // 1024 // 1024} MB / "
+                                 f"{s['rag_member_total_mb_cap']} MB)"}, status_code=413)
+
+    # 4. Sanitise + write. Auto-suffix on collision so we never overwrite.
+    safe_name = corpus_manifest.sanitise_filename(file.filename or "upload.pdf")
+    safe_name = corpus_manifest.unique_filename(safe_name)
+    papers_dir = Path(s["rag_corpus_path"])
+    papers_dir.mkdir(parents=True, exist_ok=True)
+    target = papers_dir / safe_name
+    target.write_bytes(blob)
+
+    # 5. Manifest + audit.
+    origin = "Lab" if visitor_tier == "Lab" else "Member"
+    actor  = visitor_email if visitor_email else "Lab"
+    corpus_manifest.record_upload(safe_name, added_by=actor, origin=origin,
+                                   size_bytes=len(blob))
+
+    # 6. Incremental index in background (don't block the POST response).
+    loop = asyncio.get_event_loop()
+    fut = loop.run_in_executor(None, lambda: rag_module.add_doc_to_index(safe_name))
+    try:
+        idx_result = await asyncio.wait_for(fut, timeout=60)
+    except asyncio.TimeoutError:
+        idx_result = {"chunks_added": None, "indexed": "still indexing in background"}
+    except Exception as e:
+        idx_result = {"error": str(e)}
+    return {"ok": True, "filename": safe_name, "size_bytes": len(blob),
+            "origin": origin, "indexed": idx_result}
+
+
+@app.delete("/rag/doc/{filename:path}", dependencies=[Depends(requires(RAG_CORPUS_DELETE_OWN))])
+async def rag_doc_delete(filename: str, request: Request):
+    """CR-051 — Lab: delete any. Member: delete own (ownership in manifest).
+
+    The capability dispatch is bespoke here because the rule mixes tier
+    (Lab) with per-row ownership (Member). Routes don't normally compare
+    tiers, but this is the cleanest expression of "Lab can do anything,
+    Member can only act on their own rows" — the auth check sits in the
+    handler because the row data is part of the auth decision.
+    """
+    visitor_tier  = audience.tier(request).name
+    visitor_email = auth.member_email_from_request(request) if visitor_tier == "Member" else None
+    if visitor_tier == "Anonymous":
+        return JSONResponse({"error": "sign in required"}, status_code=401)
+    # Strip path components defensively — the {filename:path} param could
+    # otherwise be used to delete `../../etc/passwd` style targets.
+    safe_name = os.path.basename(filename)
+    if not safe_name or "/" in safe_name or ".." in safe_name:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+
+    if not corpus_manifest.can_delete(safe_name, visitor_tier, visitor_email):
+        return JSONResponse({"error": "not your document (or you're not a member)"},
+                            status_code=403)
+
+    s = cfg.load()
+    target = Path(s["rag_corpus_path"]) / safe_name
+    existed_on_disk = target.exists()
+    try:
+        if existed_on_disk:
+            target.unlink()
+    except Exception as e:
+        return JSONResponse({"error": f"could not remove file: {e}"}, status_code=500)
+
+    # Remove chunks from the index. Idempotent — safe if the doc was never
+    # indexed (e.g. removed before build-index ran).
+    try:
+        rag_module.remove_doc_from_index(safe_name)
+    except Exception:
+        pass
+
+    actor = visitor_email if visitor_email else "Lab"
+    corpus_manifest.record_delete(safe_name, actor=actor, tier=visitor_tier)
+    return {"ok": True, "filename": safe_name, "removed_from_disk": existed_on_disk}
+
+
+@app.get("/rag/audit", dependencies=[Depends(requires(SETTINGS_READ_FULL))])
+async def rag_audit():
+    """CR-051 — Lab-only view of the corpus audit log (last 200 events)."""
+    return {"events": corpus_manifest.read_audit(limit=200)}
 
 
 @app.post("/rag/build-index", dependencies=[Depends(requires(RAG_CORPUS_UPLOAD))])
