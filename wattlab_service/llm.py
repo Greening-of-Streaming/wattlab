@@ -31,11 +31,78 @@ TASKS = {
     },
 }
 
-MODELS = {
-    "tinyllama": {"label": "TinyLlama", "size": "637MB", "params": "1.1B"},
-    "mistral": {"label": "Mistral 7B", "size": "4.4GB", "params": "7B"},
-    "gemma3:12b": {"label": "Gemma 3 12B", "size": "8.1GB", "params": "12B"},
+# CR-050 — MODELS is now a live view backed by model_catalog. Adding or
+# removing a model is `ollama pull <name>` + a tick on /settings; no edit
+# here. Drop-in dict-like: `MODELS[k]`, `MODELS.keys()`, `for k in MODELS`,
+# `len(MODELS)`, `k in MODELS`, `MODELS.items()` all still work.
+import model_catalog
+
+
+class _ModelsView:
+    def _src(self): return model_catalog.enabled_llm_models()
+    def __getitem__(self, k): return self._src()[k]
+    def get(self, k, default=None): return self._src().get(k, default)
+    def __contains__(self, k): return k in self._src()
+    def __iter__(self): return iter(self._src())
+    def __len__(self): return len(self._src())
+    def keys(self):   return self._src().keys()
+    def values(self): return self._src().values()
+    def items(self):  return self._src().items()
+
+
+MODELS = _ModelsView()
+
+# Compare-across-models prompts (CR-046). Selected from the 2026-05-26
+# probe of all 5 models × 8 candidate prompts × 3 reps. Picked for two
+# criteria: Type 1 = high panel pass rate (apples-to-apples energy on
+# same canonical answer); Type 2 = clear pass/fail gradient that does
+# *not* track parameter count (the "size != smarts" headline).
+# Probe data at /tmp/llm_probe/results_20260526_174852.jsonl
+COMPARE_PROMPTS = {
+    "t2_count":    {"label": "Strawberry (the meme)",
+                    "prompt": "How many times does the letter R appear in the word 'strawberry'? Output only the number.",
+                    "expected": "3",
+                    "kind": "t2"},
+    "t1_logic":    {"label": "Logic (Carol)",
+                    "prompt": "Alice is older than Bob. Bob is older than Carol. Who is youngest? Answer with one name.",
+                    "expected": "Carol",
+                    "kind": "t1"},
+    "t1_addition": {"label": "Addition (50)",
+                    "prompt": "What is 25 + 17 + 8? Output only the number.",
+                    "expected": "50",
+                    "kind": "t1"},
 }
+
+
+def grade(expected: str, actual: str) -> bool:
+    """Tolerant grading: substring (case-insensitive), punctuation-stripped
+    substring, or leading-integer match.
+
+    The punctuation-stripped path catches list-style answers where the model
+    inserts commas/spaces between characters — e.g. expected "alimnty" vs
+    actual "a, l, i, m, n, t, y" — without changing meaning. Same rule the
+    2026-05-26 probe used, extended after a real false-negative on
+    gpt-oss:20b's TinyLlama-letter-sort answer.
+    """
+    if not actual:
+        return False
+    a = actual.strip().lower()
+    e = expected.strip().lower()
+    if e in a:
+        return True
+    # Punctuation-stripped retry: catches "a, l, i, m, n, t, y" vs "alimnty".
+    import re
+    a_norm = re.sub(r"[^a-z0-9]", "", a)
+    e_norm = re.sub(r"[^a-z0-9]", "", e)
+    if e_norm and e_norm in a_norm:
+        return True
+    if e.isdigit():
+        cleaned = a.replace(",", "").replace(".", " ").split()
+        for tok in cleaned:
+            digits = "".join(c for c in tok if c.isdigit())
+            if digits == e:
+                return True
+    return False
 
 async def measure_baseline(polls: int = 10) -> dict:
     readings = []
@@ -76,6 +143,32 @@ def unload_model(model: str):
         urllib.request.urlopen(req, timeout=10)
     except:
         pass
+
+
+def unload_all_loaded_models():
+    """Unload every model currently resident in Ollama (queries /api/ps).
+
+    Critical for compare-models flows: the default 5-minute keep_alive
+    leaves every model from the panel sitting in VRAM, which inflates
+    the apparent power floor (3 Qwen3 models ≈ 11 GB VRAM, kept "warm"
+    by the GPU = ~60 W of permanent draw on RX 7800 XT). Without this
+    the thermal-floor cooldown can't reach the cold reference and just
+    times out at max_wait_s with a still-contaminated baseline.
+    """
+    import urllib.request, json
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/ps", timeout=5) as r:
+            data = json.loads(r.read())
+    except Exception:
+        return []
+    unloaded = []
+    for m in data.get("models", []):
+        name = m.get("name") or m.get("model")
+        if not name:
+            continue
+        unload_model(name)
+        unloaded.append(name)
+    return unloaded
 
 # --- Ollama inference ---
 

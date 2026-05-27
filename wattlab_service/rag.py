@@ -33,14 +33,42 @@ COLLECTION_NAME = "rag_corpus"
 CHUNK_SIZE_CHARS = 512 * 4   # ~512 tokens at ~4 chars/token
 OVERLAP_CHARS    = 64  * 4
 
-MODELS = {
-    "tinyllama":  {"label": "TinyLlama",   "size": "637MB", "params": "1.1B"},
-    "mistral":    {"label": "Mistral 7B",  "size": "4.4GB", "params": "7B"},
-    "gemma3:12b": {"label": "Gemma 3 12B", "size": "8.1GB", "params": "12B"},
-    "phi4":       {"label": "Phi-4",       "size": "9.1GB", "params": "14B"},
-}
+# CR-050 — live view from model_catalog (see llm.py for the same pattern).
+import model_catalog
+
+
+class _ModelsView:
+    def _src(self): return model_catalog.enabled_rag_models()
+    def __getitem__(self, k): return self._src()[k]
+    def get(self, k, default=None): return self._src().get(k, default)
+    def __contains__(self, k): return k in self._src()
+    def __iter__(self): return iter(self._src())
+    def __len__(self): return len(self._src())
+    def keys(self):   return self._src().keys()
+    def values(self): return self._src().values()
+    def items(self):  return self._src().items()
+
+
+MODELS = _ModelsView()
 
 TOP_K = {"baseline": 0, "rag": 3, "rag_large": 8}
+
+
+# Compare-across-models prompts for /rag/compare (CR-049, sibling of /llm/compare).
+# Selected from the 2026-05-26 RAG probe (/tmp/rag_probe/results_20260526_223406.jsonl):
+# 4 candidate prompts × 4 models, only this one had a 4/4 panel pass rate.
+# The two IEA candidates failed across the panel — retrieval surfaced the
+# correct paper but not the chunk containing the headline number (the IEA
+# 2025 report is ~250 pages; top-3 retrieval missed pp.490-491). Kept here
+# as a deliberately tight set; add more as new probes find clean ones.
+COMPARE_PROMPTS = {
+    "rag_bbc_total": {
+        "label": "BBC Radio 2018 energy total",
+        "question": "According to the BBC Radio energy footprint paper (WHP 393), what was the total mean energy consumption for the 2018 baseline of BBC radio? Output the value and unit, e.g. '325 GWh'.",
+        "expected": "325 GWh",
+        "source_paper": "BBC WHP 393 — Energy Footprint of Radio Services",
+    },
+}
 
 SYSTEM_PROMPT = (
     "You are an expert analyst in energy consumption, sustainability, streaming media, "

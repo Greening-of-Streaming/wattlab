@@ -739,19 +739,28 @@ async def _attach_vmaf(sides: list, input_path: Path, job_id: str,
     measurement lock is released and focus mode has exited, so VMAF's CPU
     draw is never polled (it cannot enter any reported energy figure). The
     encodes are already on disk; nothing here touches the P110.
+
+    Surfaces `stage="vmaf"` + `vmaf_total` / `vmaf_done` on the job dict
+    so the progress widget can show "VMAF · N of M". Also clears any
+    leftover encode-progress fields so the bar doesn't sit at a stale
+    100 % through the VMAF phase (libvmaf doesn't pipe ffmpeg progress).
     """
     if not s.get("vmaf_enabled", True):
         return
+    scorable = [r for r in sides if isinstance(r, dict) and r.get("preset_key")]
     if jobs is not None and job_id in jobs:
+        _clear_progress(jobs, job_id)
         jobs[job_id]["stage"] = "vmaf"
+        jobs[job_id]["vmaf_total"] = len(scorable)
+        jobs[job_id]["vmaf_done"] = 0
     loop = asyncio.get_event_loop()
-    for r in sides:
-        if not isinstance(r, dict) or not r.get("preset_key"):
-            continue
+    for r in scorable:
         out = UPLOAD_DIR / f"{job_id}_{r['preset_key']}_out.mp4"
         r["vmaf"] = await loop.run_in_executor(
             None, lambda o=out: compute_vmaf(o, input_path, s)
         )
+        if jobs is not None and job_id in jobs:
+            jobs[job_id]["vmaf_done"] = jobs[job_id].get("vmaf_done", 0) + 1
 
 
 async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) -> dict:

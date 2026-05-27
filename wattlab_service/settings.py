@@ -75,6 +75,13 @@ DEFAULTS = {
     # meridian_120s asset). Member/Lab = 1024 MB (today's 1GB).
     "upload_size_anonymous_mb": 100,
     "upload_size_member_mb":    1024,
+    # CR-050 — per-surface enabled model lists. Empty list (or absent key)
+    # means "all available enabled" so a fresh server with no settings file
+    # just works. Settings UI writes ordered lists; model_catalog filters
+    # the auto-detected available set against these.
+    "llm_enabled_models":   [],
+    "rag_enabled_models":   [],
+    "image_enabled_models": [],
 }
 
 

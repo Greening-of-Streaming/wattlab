@@ -32,7 +32,9 @@ CANONICAL_IMAGE_PROMPT = "a lone wind turbine in an open landscape"
 # means something.
 CANONICAL_RAG_QUESTION = "How does codec choice affect streaming energy consumption?"
 
-# Model used for any Anonymous-tier RAG run. Mid-size (Mistral 7B) is the
-# canonical: TinyLlama is too noisy, Phi-4 / Gemma 12B are slow enough that
-# a guided-tour visitor would bounce.
-CANONICAL_RAG_MODEL = "mistral"
+# Model used for any Anonymous-tier RAG run. Modern small (Qwen3 4B, Apr
+# 2025) replaced the original Mistral 7B at the S30 ladder refresh: faster
+# (typical ~2-3s), still corpus-faithful, and the 4B size point didn't
+# exist when the original choice was made. TinyLlama is too noisy, Phi-4
+# / mistral-nemo 12B are slow enough that a guided-tour visitor would bounce.
+CANONICAL_RAG_MODEL = "qwen3:4b"

@@ -1,10 +1,10 @@
 {
-  "baseline_polls": 8,
+  "baseline_polls": 5,
   "video_cooldown_s": 10,
   "llm_rest_s": 10,
   "llm_unload_settle_s": 3,
-  "conf_green_polls": 10,
-  "conf_yellow_polls": 5,
+  "conf_green_polls": 9,
+  "conf_yellow_polls": 4,
   "conf_positive_green": 0.95,
   "conf_positive_yellow": 0.8,
   "variance_pct": 1.29,
@@ -29,5 +29,29 @@
   "queue_anonymous_cap": 1,
   "queue_member_cap": 4,
   "upload_size_anonymous_mb": 100,
-  "upload_size_member_mb": 1024
+  "upload_size_member_mb": 1024,
+  "llm_enabled_models": [
+    "tinyllama",
+    "qwen3:1.7b",
+    "qwen3:4b",
+    "qwen3:8b",
+    "mistral-nemo:12b",
+    "phi4",
+    "gpt-oss:20b"
+  ],
+  "rag_enabled_models": [
+    "tinyllama",
+    "qwen3:1.7b",
+    "qwen3:4b",
+    "qwen3:8b",
+    "mistral-nemo:12b",
+    "phi4",
+    "gpt-oss:20b"
+  ],
+  "image_enabled_models": [
+    "sdxl-lightning",
+    "sd-turbo",
+    "sdxl-turbo",
+    "sana-600m"
+  ]
 }

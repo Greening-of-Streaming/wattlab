@@ -44,44 +44,27 @@ GPU_BATCH_SIZE = 5         # GPU generates 5 images (~10s total) → report ener
 #   trained but run here at 512×512 for apples-to-apples model comparison and
 #   VRAM fit (the automatic SDXL fp32 VAE upcast at 1024 exceeds 12GB).
 #   GPU only — CPU fp32 path is impractical (>5min/image).
-IMAGE_MODELS = {
-    "sd-turbo": {
-        "label":        "SD-Turbo",
-        "repo":         "stabilityai/sd-turbo",
-        "params":       "~1B",
-        "native_px":    512,
-        "cpu_ok":       True,
-        "cpu_steps":    IMAGE_STEPS_CPU,
-        "gpu_steps":    IMAGE_STEPS_GPU,   # solo: 20 steps (historical, over-sampled)
-        "gpu_batch":    GPU_BATCH_SIZE,    # solo: batch 5
-        # Compare Models mode overrides: run at native 1–4 step operating point
-        # so the comparison against SDXL-Turbo is at equivalent step counts,
-        # not biased by our solo-mode measurement-reliability choice of 20 steps.
-        "compare_steps": 4,
-        "compare_batch": 30,   # ~0.4s/image × 30 ≈ 12s — reliable P110 polls
-        "size_px":      512,
-        "fp16_variant": False,  # repo ships single-precision safetensors
-    },
-    "sdxl-turbo": {
-        "label":        "SDXL-Turbo",
-        "repo":         "stabilityai/sdxl-turbo",
-        "params":       "~3.5B",
-        "native_px":    1024,    # model's training resolution (not used here)
-        "cpu_ok":       False,
-        "cpu_steps":    None,
-        "gpu_steps":    4,       # native operating point for SDXL-Turbo
-        # Run at 512×512 to match SD-Turbo for apples-to-apples compare, and
-        # because SDXL's fp16 VAE produces black images on Navi31 so the
-        # pipeline upcasts VAE to fp32; at 1024×1024 that fp32 decode exceeds
-        # our 12GB VRAM budget. At 512px the fp32 VAE path fits comfortably.
-        "size_px":      512,
-        "gpu_batch":    15,      # ~0.66s/image × 15 ≈ 10s — reliable P110 polls
-        # Compare Models mode uses the same config as solo (already at native).
-        "compare_steps": 4,
-        "compare_batch": 15,
-        "fp16_variant": True,    # repo publishes dedicated fp16 weights
-    },
-}
+# CR-050 — IMAGE_MODELS is now a live view from model_catalog. Adding a
+# model is a HuggingFace download + a tick on /settings; no edit here.
+# Known families (sd-turbo, sdxl-turbo, sdxl-lightning, sana) have full
+# operational metadata baked into the catalog. Unknown ones get safe
+# defaults — if they don't work well, disable them in /settings.
+import model_catalog
+
+
+class _ImageModelsView:
+    def _src(self): return model_catalog.enabled_image_models()
+    def __getitem__(self, k): return self._src()[k]
+    def get(self, k, default=None): return self._src().get(k, default)
+    def __contains__(self, k): return k in self._src()
+    def __iter__(self): return iter(self._src())
+    def __len__(self): return len(self._src())
+    def keys(self):   return self._src().keys()
+    def values(self): return self._src().values()
+    def items(self):  return self._src().items()
+
+
+IMAGE_MODELS = _ImageModelsView()
 
 async def measure_baseline(polls: int = 10) -> dict:
     readings = []
@@ -417,52 +400,87 @@ async def run_image_both_measurement(prompt: str, job_id: str,
 
 async def run_image_compare_models_measurement(prompt: str, job_id: str,
                                                 jobs: dict = None) -> dict:
-    """Run SD-Turbo then SDXL-Turbo on GPU with same prompt + seed.
-    Reports per-model energy; image quality is intentionally shown side-by-side
-    for subjective comparison (not reducible to a single metric).
+    """CR-050 follow-up — run every enabled image model on GPU with same
+    prompt + seed. Between models, actively polls power and waits until it
+    returns to within ±3 W of model #1's baseline (max 120 s cap) so a hot
+    GPU from one model doesn't contaminate the next baseline.
+    Each model uses its own compare_steps/compare_batch from the catalog.
+
+    Returns:
+      mode='compare_models', models=[per-model results in panel order],
+      analysis={cheapest, priciest, ratio, finding},
+      cooldowns=[per-gap diagnostics],
+      small/large aliases for backwards-compat with legacy 2-model renderers.
     """
-    s = cfg.load()
+    from power import wait_for_thermal_floor
+
+    panel = list(IMAGE_MODELS.keys())
+    if len(panel) < 2:
+        raise ValueError("compare-models requires at least 2 enabled image models")
 
     modifier = random.choice(PROMPT_MODIFIERS)
     full_prompt = f"{prompt}, {modifier}"
-    # Same seed for both models so any quality difference comes from the model,
-    # not from latent noise. Uses current time for a fresh but reproducible run.
+    # Same seed for every model so any quality difference comes from the model,
+    # not from latent noise.
     seed = int(time.time()) % (2**31)
 
     if jobs is not None:
-        jobs[job_id]["stage"] = "baseline_small"
+        jobs[job_id]["stage"] = "m1_baseline"
         jobs[job_id]["full_prompt"] = full_prompt
+        jobs[job_id]["total_models"] = len(panel)
 
     stopped = focus_mode_enter()
     LOCK_FILE.write_text(job_id)
 
-    small_cfg = IMAGE_MODELS["sd-turbo"]
-    large_cfg = IMAGE_MODELS["sdxl-turbo"]
-    small = await _run_single_image(full_prompt, "gpu", job_id, jobs,
-                                     "small", stopped,
-                                     model_key="sd-turbo", seed=seed,
-                                     steps_override=small_cfg["compare_steps"],
-                                     batch_override=small_cfg["compare_batch"])
-
-    if jobs is not None:
-        jobs[job_id]["stage"] = "cooldown"
-    cooldown = s.get("video_cooldown_s", 30)
-    await asyncio.sleep(cooldown)
-
-    large = await _run_single_image(full_prompt, "gpu", job_id, jobs,
-                                     "large", stopped,
-                                     model_key="sdxl-turbo", seed=seed,
-                                     steps_override=large_cfg["compare_steps"],
-                                     batch_override=large_cfg["compare_batch"])
-
-    LOCK_FILE.unlink(missing_ok=True)
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, focus_mode_exit, stopped)
+    results = []
+    floor_reference_w = None
+    cooldowns = []
+    try:
+        for idx, mk in enumerate(panel, start=1):
+            mc = IMAGE_MODELS[mk]
+            if jobs is not None:
+                jobs[job_id]["current_model_idx"] = idx
+                jobs[job_id]["current_model"] = mk
+                jobs[job_id]["current_model_label"] = mc.get("label", mk)
+            if idx > 1 and floor_reference_w is not None:
+                if jobs is not None:
+                    jobs[job_id]["stage"] = "cooldown"
+                cd = await wait_for_thermal_floor(
+                    floor_reference_w, tolerance_w=3.0, poll_interval_s=1.0,
+                    settle_polls=3, max_wait_s=120,
+                    jobs=jobs, job_id=job_id,
+                )
+                cooldowns.append({"before_model": mk, **cd})
+            slot = f"m{idx}"
+            r = await _run_single_image(
+                full_prompt, "gpu", job_id, jobs, slot, stopped,
+                model_key=mk, seed=seed,
+                steps_override=mc.get("compare_steps", 4),
+                batch_override=mc.get("compare_batch", 4),
+            )
+            r["model_key"] = mk
+            results.append(r)
+            if floor_reference_w is None:
+                floor_reference_w = (r.get("energy") or {}).get("w_base")
+    finally:
+        LOCK_FILE.unlink(missing_ok=True)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, focus_mode_exit, stopped)
 
     if jobs is not None:
         jobs[job_id]["stage"] = "done"
 
-    analysis = _analyse_models(small, large)
+    analysis = _analyse_models_n(results)
+
+    # Legacy aliases so any caller still reading r.small/r.large (older
+    # rendering paths, stored-result comparisons) keeps working: smallest
+    # and largest by Wh/image, falling back to first/last if energy missing.
+    by_wh = sorted(
+        [r for r in results if (r.get("energy") or {}).get("wh_per_image") is not None],
+        key=lambda r: r["energy"]["wh_per_image"],
+    )
+    small_alias = by_wh[0] if by_wh else (results[0] if results else {})
+    large_alias = by_wh[-1] if len(by_wh) > 1 else (results[-1] if len(results) > 1 else small_alias)
 
     return {
         "mode": "compare_models",
@@ -471,15 +489,50 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
         "full_prompt": full_prompt,
         "modifier": modifier,
         "seed": seed,
-        "small": small,
-        "large": large,
+        "models": results,
+        "small": small_alias,
+        "large": large_alias,
         "analysis": analysis,
-        "scope": ("Device layer only (GoS1). GPU (RX 7800 XT, ROCm). "
-                  "SD-Turbo (~1B) vs SDXL-Turbo (~3.5B), both at 512×512 and "
-                  "4 inference steps (each model's native operating point) so "
-                  "model size is the only variable. Same prompt + seed. "
-                  "Image quality is subjective — shown side-by-side for "
-                  "visual comparison. No amortised training cost."),
+        "floor_reference_w": floor_reference_w,
+        "cooldowns": cooldowns,
+        "scope": (f"Device layer only (GoS1). GPU (RX 7800 XT, ROCm). "
+                  f"{len(results)} models compared at each model's native "
+                  f"compare_steps/compare_batch from the catalog. Same prompt "
+                  f"+ seed. Between models the runner waits for the system "
+                  f"to return to ±3 W of model #1's baseline. Image quality "
+                  f"is subjective — shown side-by-side."),
+    }
+
+
+def _analyse_models_n(results: list) -> dict:
+    """N-way analysis: find cheapest + priciest by Wh/image, ratio, finding."""
+    valid = [r for r in results
+             if (r.get("energy") or {}).get("wh_per_image") is not None]
+    if not valid:
+        return {"finding": "No models produced a valid measurement.",
+                "ratio_priciest_over_cheapest": None}
+    by_wh = sorted(valid, key=lambda r: r["energy"]["wh_per_image"])
+    cheapest = by_wh[0]
+    priciest = by_wh[-1]
+    c_wh = cheapest["energy"]["wh_per_image"]
+    p_wh = priciest["energy"]["wh_per_image"]
+    c_label = cheapest.get("generation", {}).get("model_label") or cheapest.get("model_key", "?")
+    p_label = priciest.get("generation", {}).get("model_label") or priciest.get("model_key", "?")
+    ratio = round(p_wh / c_wh, 2) if c_wh else None
+    if len(valid) == 1:
+        finding = f"Only one model produced a valid measurement ({c_label})."
+    elif ratio and ratio > 1.05:
+        finding = (f"{p_label} uses {ratio}× more energy per image than {c_label}. "
+                   f"Quality is subjective — shown side-by-side for visual comparison.")
+    else:
+        finding = f"Per-image energy roughly matched across {len(valid)} models."
+    return {
+        "cheapest_model_key":   cheapest.get("model_key"),
+        "cheapest_wh_per_image": c_wh,
+        "priciest_model_key":   priciest.get("model_key"),
+        "priciest_wh_per_image": p_wh,
+        "ratio_priciest_over_cheapest": ratio,
+        "finding": finding,
     }
 
 

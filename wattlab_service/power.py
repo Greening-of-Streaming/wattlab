@@ -69,3 +69,65 @@ def read_sensors_dict() -> dict:
         }
     except Exception:
         return {"cpu_tctl": None, "gpu_junction": None, "gpu_ppt_w": None}
+
+
+# CR-050 follow-up — active-probe thermal floor wait. Used between models in
+# the /llm/compare, /rag/compare, /image/compare flows to ensure each model's
+# baseline measurement starts on a cold system, not on the cooldown ramp of
+# the previous (possibly verbose) model. Replaces the fixed llm_rest_s sleep,
+# which was insufficient for fast-finishing-but-heavy models like Qwen3 1.7B
+# (647 tokens / 5.4 s left the GPU at >125 W well past the 10 s rest).
+async def wait_for_thermal_floor(reference_w: float,
+                                  tolerance_w: float = 3.0,
+                                  poll_interval_s: float = 1.0,
+                                  settle_polls: int = 3,
+                                  max_wait_s: int = 120,
+                                  jobs: dict = None,
+                                  job_id: str = None) -> dict:
+    """Block until N consecutive P110 readings are within ±tolerance_w of
+    reference_w, then return. Max-wait cap prevents the loop hanging on a
+    hot day where the floor itself has drifted up.
+
+    Updates jobs[job_id] with cooldown_w + cooldown_waited_s on every poll
+    so the UI can show live progress.
+
+    Returns {'waited_s', 'final_w', 'settled' (bool), 'readings'}.
+    """
+    import asyncio, time
+    t0 = time.time()
+    consecutive = 0
+    readings = []
+    while True:
+        elapsed = time.time() - t0
+        if elapsed >= max_wait_s:
+            return {"waited_s": round(elapsed, 2),
+                    "final_w": readings[-1] if readings else None,
+                    "settled": False,
+                    "readings": readings,
+                    "reference_w": reference_w,
+                    "tolerance_w": tolerance_w}
+        w = await get_power_watts()
+        readings.append(round(w, 2))
+        if jobs is not None and job_id is not None:
+            jobs[job_id]["cooldown_w"] = round(w, 2)
+            jobs[job_id]["cooldown_waited_s"] = round(elapsed, 1)
+            jobs[job_id]["cooldown_reference_w"] = reference_w
+        # Asymmetric settle: "at or below floor" counts as settled, "above
+        # floor by > tolerance" does not. A reading at or below the captured
+        # reference means residual heat has dissipated — there's no reason
+        # to wait for power to come back UP to a match. Without this, runs
+        # where the system genuinely cooled below the captured reference
+        # (focus mode reducing background load, ambient drop, VRAM freed
+        # since the reference was captured) blocked forever and timed out.
+        if w <= reference_w + tolerance_w:
+            consecutive += 1
+            if consecutive >= settle_polls:
+                return {"waited_s": round(time.time() - t0, 2),
+                        "final_w": round(w, 2),
+                        "settled": True,
+                        "readings": readings,
+                        "reference_w": reference_w,
+                        "tolerance_w": tolerance_w}
+        else:
+            consecutive = 0
+        await asyncio.sleep(poll_interval_s)

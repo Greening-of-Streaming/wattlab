@@ -11,13 +11,14 @@ from dotenv import dotenv_values
 from power import get_power_watts, read_sensors_dict
 import video as vid
 from video import run_video_measurement, run_both_measurement, run_all_measurement, run_video_measurement_path, run_both_measurement_path, UPLOAD_DIR, LOCK_FILE
-from sources import get_all_sources, PRELOADED
-from llm import run_llm_measurement, run_llm_batch_measurement, run_llm_both_measurement, MODELS, TASKS
+from sources import get_all_sources, get_grouped_sources, PRELOADED
+from llm import run_llm_measurement, run_llm_batch_measurement, run_llm_both_measurement, MODELS, TASKS, COMPARE_PROMPTS, grade as llm_grade
 from persist import save_result, list_results, load_result, to_csv
 from image_gen import (run_image_measurement, run_image_both_measurement,
                         run_image_compare_models_measurement, IMAGE_MODELS,
                         IMAGE_STEPS_CPU, IMAGE_STEPS_GPU, GPU_BATCH_SIZE)
 import rag as rag_module
+import model_catalog
 import settings as cfg
 import carbon
 import queue_control
@@ -463,6 +464,89 @@ _LOGO = (
     f'<span style="color:var(--text-4);font-size:0.72rem;font-family:monospace">'
     f'greeningofstreaming.org</span></a>'
 )
+def _models_section_html(s: dict, local: bool) -> str:
+    """CR-050 — render the Models section on /settings.
+    Three panels (LLM, RAG, Image), each showing every model the catalog
+    found, with checkboxes preselected from the per-surface enabled list
+    in settings. Anonymous viewers see disabled checkboxes (read-only).
+    """
+    enabled_keys = {
+        "llm_enabled_models":   set(s.get("llm_enabled_models")   or []),
+        "rag_enabled_models":   set(s.get("rag_enabled_models")   or []),
+        "image_enabled_models": set(s.get("image_enabled_models") or []),
+    }
+    available = {
+        "llm_enabled_models":   model_catalog.available_llm_models(),
+        "rag_enabled_models":   model_catalog.available_llm_models(),  # shared catalog
+        "image_enabled_models": model_catalog.available_image_models(),
+    }
+    labels = {
+        "llm_enabled_models":   ("LLM models",   "Drives /llm and /llm/compare. Source: <code>ollama list</code>."),
+        "rag_enabled_models":   ("RAG models",   "Drives /rag and /rag/compare. Same Ollama catalog as LLM; can be a different subset."),
+        "image_enabled_models": ("Image models", "Drives /image. Source: HuggingFace cache scan."),
+    }
+
+    def panel(surface_key: str) -> str:
+        title, desc = labels[surface_key]
+        avail = available[surface_key]
+        enabled = enabled_keys[surface_key]
+        # Empty enabled list = all available enabled (per the catalog convention).
+        all_on = not enabled
+        rows = []
+        for k, v in avail.items():
+            checked = "checked" if (all_on or k in enabled) else ""
+            disabled = "" if local else "disabled"
+            extras = []
+            if v.get("params"):
+                extras.append(v["params"])
+            if v.get("size"):
+                extras.append(v["size"])
+            extra_str = " · ".join(extras)
+            rows.append(
+                f'<label style="display:flex;align-items:center;gap:0.6rem;'
+                f'padding:0.35rem 0.5rem;border-bottom:1px solid var(--panel-2);'
+                f'cursor:{"pointer" if local else "default"};font-size:0.85rem">'
+                f'<input type="checkbox" class="model-toggle" data-surface="{surface_key}" '
+                f'data-key="{k}" {checked} {disabled} '
+                f'style="accent-color:var(--accent);margin:0">'
+                f'<span style="color:var(--text-2);flex:1">{v.get("label", k)} '
+                f'<span style="color:var(--text-5);font-size:0.75rem">'
+                f'({extra_str})</span></span>'
+                f'<code style="color:var(--text-4);font-size:0.72rem">{k}</code>'
+                f'</label>'
+            )
+        if not rows:
+            rows = ['<div style="color:var(--text-5);font-size:0.8rem;padding:0.5rem">'
+                    'No models detected in catalog.</div>']
+        return (
+            f'<div style="border:1px solid var(--border-3);padding:0.85rem 1rem;'
+            f'margin-bottom:0.75rem;background:var(--panel-2)">'
+            f'<div style="color:var(--text-2);font-size:0.85rem;font-weight:bold;'
+            f'margin-bottom:0.2rem">{title}</div>'
+            f'<div style="color:var(--text-5);font-size:0.72rem;margin-bottom:0.5rem">{desc}</div>'
+            f'{"".join(rows)}'
+            f'</div>'
+        )
+
+    edit_hint = (
+        ' Tick to enable a model on the surface; untick to hide it. Empty selection = all available enabled.'
+        if local else ' Display-only — sign in as Lab to edit.'
+    )
+
+    return (
+        f'<div class="section">Models (CR-050)</div>'
+        f'<div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">'
+        f'Auto-discovered from <code>ollama list</code> and the HuggingFace cache (60 s TTL).'
+        f' To add a new LLM: <code>ollama pull &lt;name&gt;</code> on the server.'
+        f' To add an image model: download into <code>~/.cache/huggingface</code>.'
+        f' Reload this page to see new entries.{edit_hint}'
+        f'</div>'
+        f'{panel("llm_enabled_models")}'
+        f'{panel("rag_enabled_models")}'
+        f'{panel("image_enabled_models")}'
+    )
+
+
 _BACK = (
     '<a href="/" style="display:inline-flex;align-items:center;gap:0.55rem;'
     'color:var(--text-3);text-decoration:none;font-size:0.82rem;margin-bottom:1.5rem;'
@@ -2305,57 +2389,68 @@ _RESULT_JS = """<script>
     var r = (opts && opts.result) || {};
     var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
     if (r.mode === 'compare_models') {
-      // Two GPU runs: small (SD-Turbo) vs large (SDXL-Turbo). Same shape
-      // as 'both' but with r.small / r.large instead of r.cpu / r.gpu.
-      var se = r.small && r.small.energy, le = r.large && r.large.energy;
-      var sg = r.small && r.small.generation, lg = r.large && r.large.generation;
+      // N-way render path (CR-050 follow-up). r.models is the canonical
+      // list of per-model results; legacy r.small/r.large stay populated
+      // (set by the runner to first/last of r.models) so older stored
+      // results without r.models still render via the fallback below.
       var ac = r.analysis || {};
-      var smallLabel = (sg && sg.model_label) || 'Small model';
-      var largeLabel = (lg && lg.model_label) || 'Large model';
-      var bestE = (se && le && se.delta_e_wh != null && le.delta_e_wh != null)
-        ? (se.delta_e_wh <= le.delta_e_wh ? se : le)
-        : (se || le);
-      var bestSavedG = bestE && bestE.co2e && bestE.co2e.intensity
-        ? bestE.co2e.intensity.g_per_kwh : null;
-      var subRunsCM = [
-        {label: smallLabel, e: se},
-        {label: largeLabel, e: le}
-      ].filter(function(s){ return s.e && s.e.co2e; }).map(function(s){
-        return {label: s.label, grams: s.e.co2e.grams,
-                deltaWh: s.e.delta_e_wh, durationS: s.e.delta_t_s};
+      var models = (r.models && r.models.length) ? r.models : (function(){
+        // Legacy 2-model fallback for old stored results.
+        var legacy = [];
+        if (r.small) legacy.push(r.small);
+        if (r.large) legacy.push(r.large);
+        return legacy;
+      })();
+      if (!models.length) return html + '<p class="progress-note" style="color:var(--text-3)">Compare result has no per-model data — run a new measurement.</p>';
+      var perModel = models.map(function(m){
+        var e = m.energy || {}, g = m.generation || {};
+        return {
+          label:    g.model_label || m.model_key || '?',
+          modelKey: m.model_key || '?',
+          whPerImage: e.wh_per_image || e.delta_e_wh,
+          deltaT:   e.delta_t_s,
+          b64:      g.b64_png,
+          conf:     e.confidence || {},
+          energy:   e,
+        };
       });
-      var imgsCM = '';
-      if (sg && sg.b64_png) imgsCM += '<div style="flex:1;min-width:150px">'
-        + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">' + smallLabel + '</div>'
-        + '<img src="data:image/png;base64,' + sg.b64_png + '" '
-        + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
-      if (lg && lg.b64_png) imgsCM += '<div style="flex:1;min-width:150px">'
-        + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">' + largeLabel + '</div>'
-        + '<img src="data:image/png;base64,' + lg.b64_png + '" '
-        + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
-      // CR-038 — efficiency verdict above the per-model KPI row. Wh/image
-      // is the unit visitors see, and the variable between the two runs.
-      var imgCMVerdictHtml = wlEfficiencyVerdict([
-        se ? {label: smallLabel, energy: (se.wh_per_image || se.delta_e_wh)} : null,
-        le ? {label: largeLabel, energy: (le.wh_per_image || le.delta_e_wh)} : null
-      ], {unit: 'Wh/image'});
+      var validE = perModel.filter(function(m){ return m.whPerImage != null; });
+      var bestM  = validE.slice().sort(function(a,b){ return a.whPerImage - b.whPerImage; })[0];
+      var bestSavedG = bestM && bestM.energy.co2e && bestM.energy.co2e.intensity
+        ? bestM.energy.co2e.intensity.g_per_kwh : null;
+      var subRunsCM = perModel.filter(function(m){ return m.energy && m.energy.co2e; })
+        .map(function(m){ return {label: m.label, grams: m.energy.co2e.grams,
+                                   deltaWh: m.energy.delta_e_wh, durationS: m.energy.delta_t_s}; });
+      var imgsCM = perModel.map(function(m){
+        if (!m.b64) return '';
+        return '<div style="flex:1 1 140px;min-width:130px">'
+             + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.4rem">' + m.label + '</div>'
+             + '<img src="data:image/png;base64,' + m.b64 + '" '
+             + 'style="max-width:100%;border:1px solid var(--border);display:block"></div>';
+      }).join('');
+      var imgCMVerdictHtml = wlEfficiencyVerdict(
+        perModel.map(function(m){ return m.whPerImage != null ? {label: m.label, energy: m.whPerImage} : null; }),
+        {unit: 'Wh/image'}
+      );
+      var kpiHtml = '<div class="kpi-row" style="flex-wrap:wrap">'
+        + perModel.map(function(m){
+            return '<div class="kpi"><div class="val">' + _f(m.whPerImage, 4) + ' Wh</div>'
+                 + '<div class="lbl">' + m.label + ' / image</div></div>';
+          }).join('')
+        + '</div>';
+      var confHtml = perModel.filter(function(m){ return m.conf && m.conf.flag; })
+        .map(function(m){ return m.conf.flag + ' ' + m.label; }).join(' · ');
       html += '<div class="result-card">'
             + '<p class="headline">' + (ac.finding || '') + '</p>'
             + _promptBlock(r.full_prompt, null, 'Prompt')
             + imgCMVerdictHtml
-            + '<div class="kpi-row">'
-            +   '<div class="kpi"><div class="val">' + _f(se && (se.wh_per_image || se.delta_e_wh),4) + ' Wh</div>'
-            +     '<div class="lbl">' + smallLabel + ' / image</div></div>'
-            +   '<div class="kpi"><div class="val">' + _f(le && (le.wh_per_image || le.delta_e_wh),4) + ' Wh</div>'
-            +     '<div class="lbl">' + largeLabel + ' / image</div></div>'
-            + '</div>'
-            + (se && le ? '<div class="conf-badge">'
-                  + se.confidence.flag + ' ' + smallLabel + ' · '
-                  + le.confidence.flag + ' ' + largeLabel + '</div>' : '')
+            + kpiHtml
+            + (confHtml ? '<div class="conf-badge">' + confHtml + '</div>' : '')
             + '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem">' + imgsCM + '</div>'
-            + (bestE
-                ? wlCarbonStrip(bestE.delta_e_wh, 'Image · smaller of the two models',
-                                bestE.delta_t_s, bestSavedG, subRunsCM)
+            + (bestM && bestM.energy
+                ? wlCarbonStrip(bestM.energy.delta_e_wh,
+                                'Image · cheapest of ' + perModel.length + ' models (' + bestM.label + ')',
+                                bestM.energy.delta_t_s, bestSavedG, subRunsCM)
                 : '')
             + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
             + '</div>';
@@ -2591,6 +2686,72 @@ async def carbon_json():
 
 # --- Video page ---
 
+def _video_source_picker_html() -> str:
+    """CR-047 — render the /video Source picker from
+    `sources.get_grouped_sources()`. Pre-CR-047 the radios were a
+    hardcoded HTML block alongside `sources.PRELOADED`; this drives them
+    off the schema so adding a variant only requires editing sources.py.
+    Each parent gets a small dim header (name + license), variants under
+    it as radios with the same density / border style as the upload row.
+    """
+    label_style = (
+        "display:flex;align-items:flex-start;gap:0.75rem;"
+        "border:1px solid var(--border-3);padding:0.75rem;cursor:pointer"
+    )
+    radio_style = "margin-top:0.2rem;accent-color:var(--accent)"
+    title_style = "color:var(--text);font-size:0.85rem"
+    desc_style = "color:var(--text-3);font-size:0.75rem"
+    header_style = (
+        "color:var(--text-4);font-size:0.7rem;text-transform:uppercase;"
+        "letter-spacing:0.05em;padding:0.5rem 0 0.15rem;"
+        "display:flex;align-items:center;gap:0.5rem"
+    )
+    thumb_style = (
+        "height:32px;width:auto;border-radius:2px;"
+        "border:1px solid var(--border-3);flex-shrink:0"
+    )
+    # Subtle hyperlink style — inherit the dim header colour, dotted underline
+    # so the link is discoverable without shouting (full underline would read
+    # as link-soup against the deliberately quiet header row).
+    link_style = "color:inherit;text-decoration:none;border-bottom:1px dotted var(--border-3)"
+    parts = []
+    for src in get_grouped_sources():
+        lic = src.get("license")
+        suffix = f" · {lic}" if lic else ""
+        thumb = src.get("vignette")
+        thumb_html = (f'<img src="{thumb}" alt="" style="{thumb_style}">'
+                      if thumb else "")
+        url = src.get("source_url")
+        label = f'{src["name"]}{suffix}'
+        # External link → new tab + noopener so the picker keeps its state.
+        # No url → plain <span> (e.g. the in-house GoS promo has no canonical
+        # external page to link to).
+        label_html = (
+            f'<a href="{url}" target="_blank" rel="noopener" '
+            f'title="Canonical source · {url}" style="{link_style}">{label}</a>'
+            if url else f'<span>{label}</span>'
+        )
+        parts.append(
+            f'<div style="{header_style}">'
+            f'{thumb_html}{label_html}'
+            f'</div>'
+        )
+        for v in src["variants"]:
+            key = v["key"]
+            parts.append(
+                f'<label style="{label_style}">'
+                f'<input type="radio" name="source" value="{key}" '
+                f'onchange="selectSource(\'{key}\')" '
+                f'style="{radio_style}">'
+                f'<div>'
+                f'<div style="{title_style}">{v["variant_label"]}</div>'
+                f'<div style="{desc_style}">{v["description"]}</div>'
+                f'</div>'
+                f'</label>'
+            )
+    return "".join(parts)
+
+
 @app.get("/video", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_page(request: Request):
     # CR-001 part C2c — custom ffmpeg edits were Lab-only by UI before
@@ -2614,6 +2775,7 @@ async def video_page(request: Request):
                    f'⏱ {queue_depth} job{"s" if queue_depth != 1 else ""} in queue — '
                    f'yours will be added and run automatically.</div>') \
         if queue_depth > 0 else ""
+    source_picker_html = _video_source_picker_html()
 
     return _bake_durations(f"""<!DOCTYPE html>
 <html>
@@ -2802,43 +2964,7 @@ async def video_page(request: Request):
                     <div style="color:var(--text-3);font-size:0.75rem">MP4, MOV, MKV, AVI, WebM, TS · Max 1GB</div>
                 </div>
             </label>
-            <label style="display:flex;align-items:flex-start;gap:0.75rem;
-                          border:1px solid var(--border-3);padding:0.75rem;cursor:pointer">
-                <input type="radio" name="source" value="gos_in_50s"
-                       onchange="selectSource('gos_in_50s')"
-                       style="margin-top:0.2rem;accent-color:var(--accent)">
-                <div>
-                    <div style="color:var(--text);font-size:0.85rem">50s · GoS promo in HD</div>
-                    <div style="color:var(--text-3);font-size:0.75rem">
-                        1920×1080 · H.264 · 50s · &lt;100MB
-                    </div>
-                </div>
-            </label>
-            <label style="display:flex;align-items:flex-start;gap:0.75rem;
-                          border:1px solid var(--border-3);padding:0.75rem;cursor:pointer">
-                <input type="radio" name="source" value="meridian_120s"
-                       onchange="selectSource('meridian_120s')"
-                       style="margin-top:0.2rem;accent-color:var(--accent)">
-                <div>
-                    <div style="color:var(--text);font-size:0.85rem">Meridian 4K — 2 min extract</div>
-                    <div style="color:var(--text-3);font-size:0.75rem">
-                        3840×2160 · H.264 · 2min · ~122MB · fast demo · CC BY 4.0
-                    </div>
-                </div>
-            </label>
-            <label style="display:flex;align-items:flex-start;gap:0.75rem;
-                          border:1px solid var(--border-3);padding:0.75rem;cursor:pointer"
-                   id="src-meridian-label">
-                <input type="radio" name="source" value="meridian_4k"
-                       onchange="selectSource('meridian_4k')"
-                       style="margin-top:0.2rem;accent-color:var(--accent)">
-                <div>
-                    <div style="color:var(--text);font-size:0.85rem">Meridian 4K — full 12 min</div>
-                    <div style="color:var(--text-3);font-size:0.75rem">
-                        3840×2160 · 59.94fps · H.264 · 12min · ~812MB · CC BY 4.0 · ⚠ Both mode ~6-8 min
-                    </div>
-                </div>
-            </label>
+            {source_picker_html}
         </div>
     </div>
 
@@ -2951,10 +3077,10 @@ async def video_page(request: Request):
     const _SINGLE = ['Baseline ({{BASELINE_S}}s)', 'Encode', 'Done'];
     const _SINGLE_MAP = {{'starting':0, 'baseline':0, 'cpu_encode':1, 'gpu_encode':1,
                           'h265_cpu_encode':1, 'h265_gpu_encode':1, 'av1_cpu_encode':1, 'done':2}};
-    const _BOTH_STAGES = ['Baseline ({{BASELINE_S}}s)', 'CPU encode', 'Rest ({{COOLDOWN_S}}s)', 'Baseline 2 ({{BASELINE_S}}s)', 'GPU encode', 'Done'];
+    const _BOTH_STAGES = ['Baseline ({{BASELINE_S}}s)', 'CPU encode', 'Rest ({{COOLDOWN_S}}s)', 'Baseline 2 ({{BASELINE_S}}s)', 'GPU encode', 'VMAF (quality)', 'Done'];
     const _BOTH_MAP = {{'starting':0, 'baseline':0, 'cpu_encode':1, 'rest':2,
-                        'baseline_2':3, 'gpu_encode':4, 'done':5}};
-    const _ALL_STAGES = ['H.264 CPU','Rest ({{COOLDOWN_S}}s)','H.264 GPU','Rest ({{COOLDOWN_S}}s)','H.265 CPU','Rest ({{COOLDOWN_S}}s)','H.265 GPU','Rest ({{COOLDOWN_S}}s)','AV1 CPU','Rest ({{COOLDOWN_S}}s)','AV1 GPU','Done'];
+                        'baseline_2':3, 'gpu_encode':4, 'vmaf':5, 'done':6}};
+    const _ALL_STAGES = ['H.264 CPU','Rest ({{COOLDOWN_S}}s)','H.264 GPU','Rest ({{COOLDOWN_S}}s)','H.265 CPU','Rest ({{COOLDOWN_S}}s)','H.265 GPU','Rest ({{COOLDOWN_S}}s)','AV1 CPU','Rest ({{COOLDOWN_S}}s)','AV1 GPU','VMAF (quality)','Done'];
     const _ALL_MAP = {{'starting':0,
         'h264_cpu_baseline':0,'h264_cpu_encode':0,
         'h264_rest':1,
@@ -2967,7 +3093,8 @@ async def video_page(request: Request):
         'av1_cpu_baseline':8,'av1_cpu_encode':8,
         'av1_rest':9,
         'av1_gpu_baseline':10,'av1_gpu_encode':10,
-        'done':11}};
+        'vmaf':11,
+        'done':12}};
     const STAGES = {{
         cpu:        _SINGLE,
         gpu:        _SINGLE,
@@ -3015,8 +3142,14 @@ async def video_page(request: Request):
         const stages = STAGES[mode];
         const stageMap = STAGE_MAP[mode];
         const currentStage = stageMap[serverStage] !== undefined ? stageMap[serverStage] : 0;
-        // Per-stage elapsed \u2014 tracked on the target element's dataset so
-        // it resets on transitions without per-call-site state.
+        // VMAF (CR-044) doesn't pipe ffmpeg progress, but the server surfaces
+        // vmaf_done / vmaf_total so we can still show "N of M".
+        let vmafLine = '';
+        if (serverStage === 'vmaf' && data && data.vmaf_total) {{
+            vmafLine = '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.4rem">'
+                     + 'VMAF \xb7 ' + (data.vmaf_done || 0) + ' of ' + data.vmaf_total
+                     + ' encode' + (data.vmaf_total > 1 ? 's' : '') + ' scored</div>';
+        }}
         wlRenderProgress({{
             header: 'Running measurement \u2014 do not close this tab',
             stagesHtml: wlStageList(stages, currentStage),
@@ -3025,7 +3158,7 @@ async def video_page(request: Request):
             progressPct: data && data.progress_pct,
             etaS:        data && data.eta_s,
             encodeSpeed: data && data.encode_speed,
-            extraHtml: '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.4rem">Job: ' + jobId + ' \xb7 polling every 5s</div>',
+            extraHtml: vmafLine + '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.4rem">Job: ' + jobId + ' \xb7 polling every 5s</div>',
         }});
     }}
 
@@ -3812,7 +3945,8 @@ async def video_enhance_page(request: Request):
 # --- Job runner ---
 
 async def run_job(job_id: str, input_path: Path, preset: str, delete_after: bool = True,
-                  custom_cmd: str = None, custom_cmd_cpu: str = None, custom_cmd_gpu: str = None):
+                  custom_cmd: str = None, custom_cmd_cpu: str = None, custom_cmd_gpu: str = None,
+                  source_key: str = None):
     try:
         jobs[job_id].update({"status": "running", "stage": "starting"})
         _BOTH_PRESETS = {
@@ -3831,6 +3965,13 @@ async def run_job(job_id: str, input_path: Path, preset: str, delete_after: bool
         else:
             result = await run_video_measurement(input_path, job_id, preset, jobs,
                                                  custom_cmd=custom_cmd)
+        # CR-047 follow-up — stamp the variant + parent ids on the result so
+        # historical jobs stay filterable as the source schema evolves. Only
+        # set when the job came from a preloaded source (not /video/upload).
+        if source_key:
+            entry = PRELOADED.get(source_key) or {}
+            result["source"] = {"key": source_key,
+                                "parent": entry.get("_parent")}
         save_result("video", job_id, result)
         jobs[job_id].update({"status": "done", "stage": "done", "result": result})
     except Exception as e:
@@ -3869,7 +4010,8 @@ async def use_preloaded_source(
         await run_job(job_id, source["path"], preset, False,
                       custom_cmd=custom_cmd,
                       custom_cmd_cpu=custom_cmd_cpu,
-                      custom_cmd_gpu=custom_cmd_gpu)
+                      custom_cmd_gpu=custom_cmd_gpu,
+                      source_key=source_key)
 
     position = queue_control.enqueue(job_id, "video", label, coro, request=request)
     if position is None:
@@ -4142,6 +4284,14 @@ async def llm_page(request: Request):
     {_BACK}
     <h1>LLM Inference Energy Test {_BETA_CHIP}</h1>
     <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
+
+    <div style="margin-bottom:1.5rem;padding:0.85rem 1rem;border:1px solid var(--accent);
+                background:var(--accent-soft);font-size:0.85rem;line-height:1.5">
+        <span style="color:var(--accent);font-weight:bold">NEW</span> &middot;
+        <a href="/llm/compare" style="color:var(--accent);text-decoration:none;
+                                       border-bottom:1px solid var(--accent)">Compare {len(MODELS)} models on one prompt &rarr; energy per correct answer &nearr;</a>
+        <span style="color:var(--text-3)"> &nbsp;CR-048 hybrid: 3-prompt showcase + member &ldquo;Try your own&rdquo;.</span>
+    </div>
 
     {_ai_intro('llm')}
 
@@ -4919,6 +5069,720 @@ async def llm_run_all(
     return {"job_id": job_id, "queue_position": position}
 
 
+# --- CR-048 · LLM compare-across-models ---
+# One prompt × every model in llm.MODELS, graded against a user-supplied
+# expected answer, ranked by energy of the correct answers. Headline metric
+# is "Wh per correct answer" — mWh/token stays in the table as a supporting
+# column because it rewards verbose models and so cannot be the headline.
+# Panel = list(MODELS.keys()) so adding/swapping a model in llm.py is
+# automatically reflected on /llm/compare without touching this file.
+
+async def run_llm_compare_models_job(job_id: str, prompt: str, expected: str, device: str = "gpu"):
+    """Sequentially run prompt across every model in MODELS, grade each, save aggregated result.
+
+    Each model gets its own clean baseline (no cross-model contamination). Grading
+    uses llm_grade — substring or leading-integer match, the same rule the
+    2026-05-26 probe used to pick these showcase prompts.
+    """
+    panel = list(MODELS.keys())
+    from power import wait_for_thermal_floor
+    from llm import unload_all_loaded_models
+    try:
+        jobs[job_id].update({
+            "status": "running", "stage": "compare_models",
+            "total_models": len(panel), "current_model_idx": 0,
+            "partial_response": "",
+        })
+        # Clear any models left over from /llm interactive use before we even
+        # measure model #1's baseline — otherwise the "cold reference" we
+        # capture is itself contaminated by ~60 W of resident VRAM.
+        unloaded = unload_all_loaded_models()
+        if unloaded:
+            await asyncio.sleep(2)
+        rows = []
+        floor_reference_w = None  # set after model #1 baseline; used to wait_for_thermal_floor
+        cooldowns = []  # diagnostics: how long each inter-model wait took
+        for idx, model_key in enumerate(panel, start=1):
+            if idx > 1 and floor_reference_w is not None:
+                # CRITICAL: unload every previously-run model before waiting.
+                # Ollama's default keep_alive holds them in VRAM for ~5 min,
+                # which inflates the apparent power floor by ~30-60 W per
+                # resident model. Without this the thermal-floor wait can
+                # never reach the cold reference and just times out.
+                evicted = unload_all_loaded_models()
+                jobs[job_id]["stage"] = "cooldown"
+                jobs[job_id]["current_model_idx"] = idx
+                jobs[job_id]["current_model"] = model_key
+                jobs[job_id]["current_model_label"] = MODELS[model_key]["label"]
+                # Brief wait for VRAM to actually free (Ollama unload is async).
+                if evicted:
+                    await asyncio.sleep(3)
+                cd = await wait_for_thermal_floor(
+                    floor_reference_w, tolerance_w=3.0, poll_interval_s=1.0,
+                    settle_polls=3, max_wait_s=120,
+                    jobs=jobs, job_id=job_id,
+                )
+                cd["evicted_before_wait"] = evicted
+                cooldowns.append({"before_model": model_key, **cd})
+            jobs[job_id]["current_model_idx"] = idx
+            jobs[job_id]["current_model"] = model_key
+            jobs[job_id]["current_model_label"] = MODELS[model_key]["label"]
+            try:
+                m_result = await run_llm_measurement(
+                    model_key, "T1",
+                    jobs, job_id, warm=False, prompt=prompt, device=device,
+                )
+                # Capture first model's baseline as the cold-system reference
+                # for subsequent thermal-floor waits.
+                if floor_reference_w is None:
+                    floor_reference_w = (m_result.get("energy") or {}).get("w_base")
+                inf = m_result.get("inference") or {}
+                en = m_result.get("energy") or {}
+                resp = inf.get("response", "") or ""
+                ok = llm_grade(expected, resp)
+                rows.append({
+                    "model_key": model_key,
+                    "model_label": MODELS[model_key]["label"],
+                    "params": MODELS[model_key]["params"],
+                    "response": resp,
+                    "output_tokens": inf.get("output_tokens"),
+                    "duration_s": inf.get("duration_s"),
+                    "tokens_per_sec": inf.get("tokens_per_sec"),
+                    "w_base": en.get("w_base"),
+                    "w_task": en.get("w_task"),
+                    "delta_w": en.get("delta_w"),
+                    "delta_e_wh": en.get("delta_e_wh"),
+                    "mwh_per_token": en.get("mwh_per_token"),
+                    "confidence": en.get("confidence"),
+                    "correct": ok,
+                })
+            except Exception as e:
+                rows.append({"model_key": model_key,
+                             "model_label": MODELS.get(model_key, {}).get("label", model_key),
+                             "params": MODELS.get(model_key, {}).get("params", "?"),
+                             "error": str(e), "correct": False})
+
+        correct = [r for r in rows if r.get("correct") and (r.get("delta_e_wh") or 0) > 0]
+        cheapest = min(correct, key=lambda r: r["delta_e_wh"]) if correct else None
+        final = {
+            "mode": "compare_models",
+            "prompt": prompt,
+            "expected": expected,
+            "device": device,
+            "models": rows,
+            "cheapest_correct_key": cheapest["model_key"] if cheapest else None,
+            "panel_pass_rate": round(len(correct) / len(rows), 3) if rows else 0,
+            "floor_reference_w": floor_reference_w,
+            "cooldowns": cooldowns,
+            "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+        }
+        save_result("llm", job_id, final)
+        jobs[job_id] = {"status": "done", "stage": "done", "result": final}
+    except Exception as e:
+        jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+
+
+@app.post("/llm/compare-models", dependencies=[Depends(requires(BATCH_COMPARE))])
+async def llm_compare_models(
+    request: Request,
+    prompt: str = Form(...),
+    expected: str = Form(...),
+    device: str = Form("gpu"),
+):
+    """Member 'Try your own' for the compare-across-models card."""
+    prompt = (prompt or "").strip()
+    expected = (expected or "").strip()
+    if not prompt:
+        return JSONResponse({"error": "prompt is required"}, status_code=400)
+    if not expected:
+        return JSONResponse({"error": "expected answer is required (grading needs ground truth)"},
+                            status_code=400)
+    if device not in ("cpu", "gpu"):
+        return JSONResponse({"error": "device must be cpu or gpu"}, status_code=400)
+    if len(prompt) > 2000:
+        return JSONResponse({"error": "prompt too long (max 2000 chars)"}, status_code=400)
+
+    job_id = str(uuid.uuid4())[:8]
+    label = f"LLM Compare · {prompt[:50]}{'…' if len(prompt) > 50 else ''}"
+
+    async def coro():
+        await run_llm_compare_models_job(job_id, prompt, expected, device)
+
+    position = queue_control.enqueue(job_id, "llm", label, coro, request=request)
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}
+
+
+# Hardcoded showcase data from the 2026-05-26 probe (mean of 3 reps per cell).
+# Wh on these cards is *estimated* (wall_s × 25 W / 3600) because the probe
+# used direct Ollama API calls rather than the production P110 pipeline.
+# Backfilling these three with real P110 runs via /llm/compare-models is a
+# follow-up; the page renderer marks the source per row.
+# Probe data: /tmp/llm_probe/results_20260526_174852.jsonl
+#
+# NOTE (2026-05-27 — S30 ladder refresh): the rows below reference the
+# PREVIOUS panel — `mistral` (7B) and `gemma3:12b` were retired in favour
+# of `qwen3:4b` and `mistral-nemo:12b`. Data preserved as a historical
+# snapshot; a re-probe of the new 5-model panel via /llm/compare-models
+# is the planned follow-up that will replace this dict.
+_LLM_COMPARE_SHOWCASE = {
+    "t2_count": {
+        "label": "Strawberry (the meme)",
+        "prompt": "How many times does the letter R appear in the word 'strawberry'? Output only the number.",
+        "expected": "3",
+        "tagline": "The famous LLM-fails-at-letter-counting prompt. Classic tokenization trap.",
+        "rows": [
+            {"model": "gemma3:12b",  "params": "12B",  "ok": True,  "ans": "3",      "tok": 3,   "wall": 3.81},
+            {"model": "phi4",        "params": "14B",  "ok": False, "ans": "2",      "tok": 2,   "wall": 3.28},
+            {"model": "gpt-oss:20b", "params": "20B",  "ok": True,  "ans": "3",      "tok": 113, "wall": 13.68},
+            {"model": "mistral",     "params": "7B",   "ok": False, "ans": '"once"', "tok": 14,  "wall": 2.74},
+            {"model": "tinyllama",   "params": "1.1B", "ok": False, "ans": '"once"', "tok": 22,  "wall": 1.58},
+        ],
+    },
+    "t1_logic": {
+        "label": "Logic (Carol)",
+        "prompt": "Alice is older than Bob. Bob is older than Carol. Who is youngest? Answer with one name.",
+        "expected": "Carol",
+        "tagline": "All models that pass give the same one-word answer — energy varies, output doesn't.",
+        "rows": [
+            {"model": "mistral",     "params": "7B",   "ok": True,  "ans": "Carol", "tok": 2,  "wall": 0.60},
+            {"model": "gemma3:12b",  "params": "12B",  "ok": True,  "ans": "Carol", "tok": 3,  "wall": 2.28},
+            {"model": "phi4",        "params": "14B",  "ok": True,  "ans": "Carol is the youngest.", "tok": 6, "wall": 2.74},
+            {"model": "gpt-oss:20b", "params": "20B",  "ok": True,  "ans": "Carol", "tok": 33, "wall": 4.65},
+            {"model": "tinyllama",   "params": "1.1B", "ok": False, "ans": '"Jane"', "tok": 20, "wall": 1.49},
+        ],
+    },
+    "t1_addition": {
+        "label": "Addition (50)",
+        "prompt": "What is 25 + 17 + 8? Output only the number.",
+        "expected": "50",
+        "tagline": "Three-term addition. Two of five models can't reliably do it.",
+        "rows": [
+            {"model": "gemma3:12b",  "params": "12B",  "ok": True,  "ans": "50", "tok": 3,  "wall": 2.26},
+            {"model": "phi4",        "params": "14B",  "ok": True,  "ans": "50", "tok": 2,  "wall": 2.37},
+            {"model": "gpt-oss:20b", "params": "20B",  "ok": True,  "ans": "50", "tok": 62, "wall": 10.15},
+            {"model": "mistral",     "params": "7B",   "ok": False, "ans": '"...is 40."', "tok": 20, "wall": 1.80},
+            {"model": "tinyllama",   "params": "1.1B", "ok": False, "ans": '"=34" + Python', "tok": 90, "wall": 1.75},
+        ],
+    },
+}
+
+
+@app.get("/llm/compare", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def llm_compare_page(request: Request):
+    """Hybrid showcase + member 'Try your own' for energy-per-correct-answer.
+
+    Anonymous: three hardcoded demo cards (probe data, estimated Wh).
+    Member (BATCH_COMPARE): textarea + expected-answer input → runs on all 5
+    models sequentially with P110 measurement, renders into the same card.
+    """
+    can_batch = can(audience.tier(request), BATCH_COMPARE)
+    lk_batch_class = _lock_class(request, BATCH_COMPARE)
+    lk_batch_badge = _lock_badge_html(request, BATCH_COMPARE,
+                                      "Try your own prompt — Members only")
+    dis_batch = _disabled_attr(request, BATCH_COMPARE)
+
+    import json as _json
+    showcase_js = _json.dumps(_LLM_COMPARE_SHOWCASE)
+    panel_n     = len(MODELS)
+    panel_list  = " &middot; ".join(f"{m['label']} ({m['params']})" for m in MODELS.values())
+    # JS array of params strings, ordered by size — drives the bust-card
+    # "bigger-was-wrong" detection. Derived from MODELS so adding a model
+    # in llm.py extends this without an edit here.
+    size_order_js = _json.dumps([m["params"] for m in MODELS.values()])
+
+    return _bake_durations(f"""<!DOCTYPE html>
+<html>
+<head>
+    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+    <title>OWL — LLM · Compare across models</title>
+    <script src="{CHARTJS_URL}"></script>
+    <script src="/static/wl-charts.js"></script>
+    <style>
+        *{{box-sizing:border-box;margin:0;padding:0}}
+        body{{font-family:monospace;background:var(--bg);color:var(--text);
+              max-width:920px;margin:0 auto;padding:2rem}}
+        h1{{color:var(--accent);font-size:1.6rem;margin-bottom:0.25rem}}
+        .subtitle{{color:var(--text-3);font-size:0.8rem;margin-bottom:1.5rem}}
+        .demo-tabs{{display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap}}
+        .demo-tabs button{{background:none;color:var(--text-3);border:1px solid var(--border-3);
+                           padding:0.5rem 0.9rem;cursor:pointer;font-family:monospace;font-size:0.78rem;margin:0}}
+        .demo-tabs button:hover{{border-color:var(--accent);color:var(--text)}}
+        .demo-tabs button.active{{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}}
+        .prompt-card{{border:1px solid var(--border);padding:1rem 1.25rem;margin-bottom:1.25rem;
+                      background:var(--panel-2)}}
+        .label-sm{{color:var(--text-5);font-size:0.65rem;text-transform:uppercase;
+                   letter-spacing:0.06em;margin-bottom:0.5rem}}
+        .prompt-text{{color:var(--text-2);font-size:0.95rem;line-height:1.5}}
+        .prompt-meta{{margin-top:0.6rem;color:var(--text-3);font-size:0.78rem}}
+        .prompt-meta b{{color:var(--accent)}}
+        .hero{{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.25rem}}
+        @media(max-width:640px){{.hero{{grid-template-columns:1fr}}}}
+        .hero-card{{border:1px solid var(--border);padding:1.1rem;background:var(--panel-2)}}
+        .hero-card .big{{color:var(--accent);font-size:2rem;font-weight:bold;line-height:1.1}}
+        .hero-card .sub{{color:var(--text-3);font-size:0.78rem;margin-top:0.4rem;line-height:1.5}}
+        .hero-card.warn .big{{color:var(--warn);font-size:1rem;line-height:1.4}}
+        .hero-card.warn{{border-color:var(--warn)}}
+        table{{width:100%;border-collapse:collapse;font-size:0.8rem;margin-bottom:1.25rem}}
+        th{{text-align:left;padding:0.5rem 0.6rem;color:var(--text-4);
+            border-bottom:1px solid var(--border-3);font-weight:normal;
+            text-transform:uppercase;letter-spacing:0.05em;font-size:0.68rem}}
+        th.num,td.num{{text-align:right;font-variant-numeric:tabular-nums}}
+        td{{padding:0.6rem;border-bottom:1px solid var(--border-2);vertical-align:middle}}
+        tr.correct td.model,tr.correct td.answer{{color:var(--text)}}
+        tr.wrong td.model,tr.wrong td.answer{{color:var(--text-4)}}
+        tr.noisy td{{color:var(--text-4)!important}}
+        tr.noisy td.model{{color:var(--text-3)!important;font-style:italic}}
+        tr.noisy{{background:transparent!important}}
+        td.answer{{max-width:340px}}
+        .answer-wrap{{max-height:5.5em;overflow-y:auto;white-space:pre-wrap;word-break:break-word;
+                      line-height:1.45;padding-right:0.25rem;scrollbar-width:thin;
+                      scrollbar-color:var(--border-3) transparent}}
+        .answer-wrap::-webkit-scrollbar{{width:6px}}
+        .answer-wrap::-webkit-scrollbar-thumb{{background:var(--border-3);border-radius:3px}}
+        tr.cheapest{{background:var(--accent-soft)}}
+        tr.cheapest td.model{{color:var(--accent);font-weight:bold}}
+        .pill{{display:inline-block;font-size:0.7rem;padding:0.1rem 0.45rem;border-radius:2px}}
+        .pill.ok{{color:var(--accent);border:1px solid var(--accent)}}
+        .pill.bad{{color:var(--err);border:1px solid var(--err)}}
+        .answer-q{{color:var(--text-3);font-style:italic}}
+        .crown{{color:var(--accent)}}
+        .ratio{{color:var(--accent);font-weight:bold}}
+        .headline{{border-left:3px solid var(--accent);padding:0.9rem 1.1rem;margin-bottom:1.5rem;
+                   background:var(--panel-2);color:var(--text-2);line-height:1.7;font-size:0.88rem}}
+        .headline b{{color:var(--accent)}}
+        .try{{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border)}}
+        .try h2{{color:var(--accent);font-size:1.05rem;margin-bottom:0.4rem}}
+        .try .desc{{color:var(--text-3);font-size:0.82rem;margin-bottom:1rem;line-height:1.6}}
+        textarea,input[type=text]{{width:100%;background:#0f0f0f;border:1px solid var(--border-3);
+                                    border-left:2px solid #00ff9966;color:var(--text-2);
+                                    font-family:monospace;font-size:0.85rem;padding:0.75rem;
+                                    resize:vertical}}
+        textarea:focus,input[type=text]:focus{{border-color:var(--accent);outline:none}}
+        button.run{{background:var(--accent);color:#000;border:none;padding:0.75rem 2rem;
+                    cursor:pointer;font-family:monospace;font-size:0.95rem;margin-top:0.85rem}}
+        button.run:disabled{{background:var(--border);color:var(--text-3);cursor:not-allowed}}
+        button.run:hover:not(:disabled){{background:var(--accent-hover)}}
+        a.back{{color:var(--text-3);text-decoration:none;font-size:0.82rem;
+                display:inline-block;margin-top:2rem}}
+        a.back:hover{{color:var(--accent)}}
+        details{{margin-top:1.5rem;color:var(--text-3);font-size:0.78rem;
+                 border-top:1px solid var(--border);padding-top:1rem}}
+        summary{{cursor:pointer;color:var(--text-3)}}
+        summary:hover{{color:var(--accent)}}
+        details p{{margin-top:0.5rem;line-height:1.6}}
+        {_LOCK_STYLES}
+    </style>
+</head>
+<body>
+    {_BACK}<a href="/llm" style="color:var(--text-3);text-decoration:none;font-size:0.82rem;
+        margin-left:0.75rem;margin-bottom:1.5rem;display:inline-block;
+        vertical-align:middle;position:relative;top:-2px;transition:color 0.2s"
+        onmouseover="this.style.color='#00ff99'" onmouseout="this.style.color='#777'">&larr; /llm</a>
+    <h1>LLM &middot; Compare across models</h1>
+    <div class="subtitle">Energy cost of correct answers. Device layer only (GoS1). Network and CPE excluded.</div>
+
+    <div class="demo-tabs" id="tabs"></div>
+
+    <div class="prompt-card">
+        <div class="label-sm">Prompt</div>
+        <div class="prompt-text" id="prompt-text"></div>
+        <div class="prompt-meta">Expected: <b id="expected"></b> &middot; Panel: 5 models, mean of 3 reps each (2026-05-26 probe)</div>
+    </div>
+
+    <div class="hero">
+        <div class="hero-card" id="hero-cheap">
+            <div class="label-sm">Cheapest correct answer</div>
+            <div class="big" id="hero-cheap-big"></div>
+            <div class="sub" id="hero-cheap-sub"></div>
+        </div>
+        <div class="hero-card warn" id="hero-bust">
+            <div class="label-sm">The size &ne; smarts finding</div>
+            <div class="big" id="hero-bust-big"></div>
+            <div class="sub" id="hero-bust-sub"></div>
+        </div>
+    </div>
+
+    <div class="label-sm">Same prompt, all models &mdash; ranked by energy of a correct answer</div>
+    <table>
+        <thead>
+            <tr><th>model</th><th>answer</th><th>&#10003;/&#10007;</th><th>conf</th>
+                <th class="num">tokens</th><th class="num">wall</th>
+                <th class="num">mWh/tok</th><th class="num">Wh</th>
+                <th class="num">vs best</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+    </table>
+
+    <div class="headline" id="headline"></div>
+
+    <div id="charts-wrap" style="margin-bottom:1.5rem;display:none">
+        <div class="label-sm">Energy vs model size (correct answers only) <span id="charts-source" style="color:var(--text-5)"></span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+            <div style="border:1px solid var(--border);padding:0.75rem;background:var(--panel-2)">
+                <div style="color:var(--text-3);font-size:0.7rem;text-align:center;margin-bottom:0.25rem">Total Wh per correct answer</div>
+                <div style="position:relative;height:240px"><canvas id="chart-wh"></canvas></div>
+            </div>
+            <div style="border:1px solid var(--border);padding:0.75rem;background:var(--panel-2)">
+                <div style="color:var(--text-3);font-size:0.7rem;text-align:center;margin-bottom:0.25rem">mWh per output token</div>
+                <div style="position:relative;height:240px"><canvas id="chart-mwh"></canvas></div>
+            </div>
+        </div>
+        <div id="charts-note" style="color:var(--text-5);font-size:0.72rem;margin-top:0.5rem;line-height:1.5"></div>
+    </div>
+    <div id="charts-hint" style="margin-bottom:1.5rem;color:var(--text-5);font-size:0.78rem;
+         border-left:2px solid var(--border);padding-left:0.85rem;display:none">
+        Energy-vs-size plot appears when at least 3 models answer correctly.
+    </div>
+
+    {lk_batch_badge}
+    <div class="try {lk_batch_class}">
+        <h2>Try your own prompt</h2>
+        <div class="desc">
+            Runs your prompt across all {panel_n} models sequentially with P110 power measurement.
+            Each model gets its own clean baseline. Between models the runner actively polls power and waits for the system to return to within &plusmn;3 W of model #1's baseline (max 120 s cap) so heat from a verbose model can't contaminate the next reading. Total wall time depends on how hot each model leaves the GPU.
+        </div>
+        <div class="label-sm">Prompt</div>
+        <textarea id="userPrompt" rows="3"{dis_batch}
+            placeholder="e.g. What is 47 multiplied by 83? Output only the number."></textarea>
+        <div class="label-sm" style="margin-top:0.85rem">Expected answer (used to grade &#10003;/&#10007;)</div>
+        <input type="text" id="userExpected"{dis_batch}
+            placeholder="e.g. 3901">
+        <div class="label-sm" style="margin-top:0.5rem;color:var(--text-5)">
+            Substring match, case-insensitive. For numeric answers, leading-integer match.
+        </div>
+        <button class="run" id="runBtn" onclick="runCompare()"{dis_batch}>Run on all {panel_n} models &rarr;</button>
+        <div id="run-status" style="margin-top:1.25rem"></div>
+    </div>
+
+    <details>
+        <summary>Methodology &amp; scope</summary>
+        <p><b>What's measured (live runs):</b> Tapo P110 wall-power at 1 Hz, baseline before each model (10 polls), &Delta;W &times; &Delta;t &rarr; Wh, mWh/output_token, Traffic Light Confidence per the CR-028 CI model. Same protocol as the existing /llm endpoint.</p>
+        <p><b>What's estimated (showcase cards):</b> Wh = wall_s &times; 25 W / 3600. The 25 W figure is a rough average power delta observed on GoS1 across Ollama 1B&ndash;20B models. Production P110 backfill of the three showcase cards is a follow-up (CR-048 phase 2).</p>
+        <p><b>Why "Wh per correct answer" is the headline:</b> mWh/token rewards verbose models &mdash; a model that "thinks out loud" for 100 tokens to reach a 1-token answer looks more efficient per token than a model that answers in 1 token, even though it burned 100&times; the energy. The headline metric is the energy cost of <em>correctness</em>. mWh/token stays as a supporting column because it's the canonical inference-cost figure operators recognise.</p>
+        <p><b>{panel_n}-model panel:</b> {panel_list}. All on GoS1 (Ryzen 9 7900 + RX 7800 XT, Ollama 0.20.2). Panel reflects the current <code>llm.MODELS</code> dict; the showcase tabs are frozen on the older 5-model probe and will be re-baselined when a fresh probe of the new panel runs.</p>
+        <p><b>Grading:</b> Tolerant &mdash; substring match (case-insensitive) or leading-integer match. Same rule used by the 2026-05-26 probe to select these prompts.</p>
+    </details>
+
+    <a class="back" href="/llm">&larr; /llm (single-model lab)</a>
+
+    <script>
+    const SHOWCASE = {showcase_js};
+    const CAN_BATCH = {('true' if can_batch else 'false')};
+    const wh = w => Math.round((w * 25 / 3600) * 10000) / 10000;
+    let pollTimer = null;
+    let chartWh = null, chartMwh = null;
+    // CR-050 follow-up — local ticker so the cooldown counter feels smooth
+    // even though the server-side poll only writes a fresh cooldown_waited_s
+    // every 1 s and the UI only polls /job/{id} every 2 s.
+    let cooldownTicker = null;
+    let cooldownState = null;
+
+    function stopCooldownTicker() {{
+        if (cooldownTicker) {{ clearInterval(cooldownTicker); cooldownTicker = null; }}
+        cooldownState = null;
+    }}
+
+    function renderRunStatus() {{
+        const s = cooldownState;
+        if (!s) return;
+        const msg = s.stage === 'queued'
+            ? 'In queue (position ' + (s.qpos || '?') + ')…'
+            : (s.mi && s.mt
+                ? 'Model ' + s.mi + '/' + s.mt + (s.ml ? ' — ' + s.ml : '') + ' · ' + s.stage
+                : 'Running… ' + s.stage);
+        const watts = s.watts != null ? ' · ' + Number(s.watts).toFixed(1) + ' W' : '';
+        let cdInfo = '';
+        if (s.stage === 'cooldown' && s.cdWaited != null) {{
+            const liveS = s.cdWaited + (Date.now() - s.cdLocalStart) / 1000;
+            const ref = s.cdRef != null ? Number(s.cdRef).toFixed(1) + 'W' : '?';
+            cdInfo = ' · waiting ' + liveS.toFixed(1) + 's for floor (target ≤ ' + ref + ' +3W)';
+        }}
+        const el = document.getElementById('run-status');
+        if (el) el.innerHTML =
+            '<div style="color:var(--warn);font-size:0.85rem">' + msg + watts + cdInfo + '</div>';
+    }}
+
+    function paramsToNumeric(p) {{
+        // "1.1B" -> 1.1, "12B" -> 12, "20B" -> 20
+        return parseFloat(String(p).replace(/[^\\d.]/g, '')) || 0;
+    }}
+
+    function renderCharts(payload) {{
+        const wrap = document.getElementById('charts-wrap');
+        const hint = document.getElementById('charts-hint');
+        const TRUSTED = new Set(['🟢','🟡']);
+        // Plot only ✓ AND not 🔴 AND positive Wh — same filter the
+        // 'cheapest correct' card uses; we don't want noisy points
+        // distorting the energy-vs-size curve.
+        const correct = payload.rows.filter(r => r.ok && TRUSTED.has(r.flag || '🟢') && r.whEst > 0);
+        if (correct.length < 3) {{
+            wrap.style.display = 'none';
+            hint.style.display = '';
+            if (chartWh) {{ chartWh.destroy(); chartWh = null; }}
+            if (chartMwh) {{ chartMwh.destroy(); chartMwh = null; }}
+            return;
+        }}
+        hint.style.display = 'none';
+        wrap.style.display = '';
+
+        document.getElementById('charts-source').textContent = '· ' + payload.sourceLabel;
+        const wrong = payload.rows.filter(r => !r.ok);
+        const noteParts = ['Plotting ' + correct.length + ' of ' + payload.rows.length + ' models that produced the correct answer.'];
+        if (wrong.length) {{
+            noteParts.push((wrong.length === 1 ? '1 model' : wrong.length + ' models') +
+                           ' excluded for incorrect answers (' +
+                           wrong.map(r => r.model.replace(':latest','')).join(', ') + ').');
+        }}
+        if ((payload.sourceLabel || '').toLowerCase().indexOf('estimated') >= 0) {{
+            noteParts.push('Wh here is estimated from wall_s × ~25 W; live runs use direct P110 measurement.');
+        }}
+        document.getElementById('charts-note').textContent = noteParts.join(' ');
+
+        const sorted = [...correct].sort((a,b) => paramsToNumeric(a.params) - paramsToNumeric(b.params));
+        const whPoints = sorted.map(r => ({{x: paramsToNumeric(r.params), y: r.whEst}}));
+        const mwhPoints = sorted.map(r => {{
+            const tok = r.tok || 0;
+            return {{x: paramsToNumeric(r.params), y: tok > 0 ? (r.whEst * 1000 / tok) : 0}};
+        }});
+
+        if (chartWh) {{ chartWh.destroy(); chartWh = null; }}
+        chartWh = WlCharts.line({{
+            canvas: document.getElementById('chart-wh'),
+            datasets: [{{label: 'Wh per correct answer', points: whPoints, color: 'accent', tension: 0.15, pointRadius: 5}}],
+            xLabel: 'parameters (B)', yLabel: 'Wh', yUnit: 'Wh',
+        }});
+
+        if (chartMwh) {{ chartMwh.destroy(); chartMwh = null; }}
+        chartMwh = WlCharts.line({{
+            canvas: document.getElementById('chart-mwh'),
+            datasets: [{{label: 'mWh per output token', points: mwhPoints, color: 'warn', tension: 0.15, pointRadius: 5}}],
+            xLabel: 'parameters (B)', yLabel: 'mWh/tok', yUnit: 'mWh/tok',
+        }});
+    }}
+
+    const tabs = document.getElementById('tabs');
+    const order = ['t2_count','t1_logic','t1_addition'];
+    order.forEach(k => {{
+        const b = document.createElement('button');
+        b.textContent = SHOWCASE[k].label;
+        b.id = 'tab-' + k;
+        b.onclick = () => renderShowcase(k);
+        tabs.appendChild(b);
+    }});
+
+    function renderShowcase(key) {{
+        const d = SHOWCASE[key];
+        order.forEach(k => document.getElementById('tab-'+k).classList.toggle('active', k === key));
+        const rows = d.rows.map(r => ({{...r, whEst: wh(r.wall)}}));
+        renderCompareCard({{
+            promptText: d.prompt, expected: d.expected,
+            rows: rows, tagline: d.tagline, sourceLabel: 'Showcase (estimated)'
+        }});
+    }}
+
+    function renderCompareCard(payload) {{
+        document.getElementById('prompt-text').textContent = payload.promptText;
+        document.getElementById('expected').textContent = payload.expected;
+
+        const TRUSTED = new Set(['🟢','🟡']);
+        const isTrust = r => TRUSTED.has(r.flag || '🟢');
+        const correct = payload.rows.filter(r => r.ok).sort((a,b) => a.whEst - b.whEst);
+        const wrong   = payload.rows.filter(r => !r.ok).sort((a,b) => a.whEst - b.whEst);
+        const sorted  = [...correct, ...wrong];
+        // 🔴 rows are visible in the table but excluded from the cheapest-correct
+        // pick, the bust-card pick, and the chart — their delta_w sits inside the
+        // baseline noise so a tiny Wh is just measurement noise, not efficiency.
+        const trustedCorrect = correct.filter(r => isTrust(r) && r.whEst > 0);
+        const cheapest = trustedCorrect[0] || null;
+
+        if (cheapest) {{
+            document.getElementById('hero-cheap-big').textContent = cheapest.whEst.toFixed(4) + ' Wh';
+            document.getElementById('hero-cheap-sub').innerHTML =
+                '<b style="color:var(--accent)">' + cheapest.model.replace(':latest','') + '</b> &middot; ' +
+                cheapest.params + ' &middot; ' + cheapest.tok + ' tokens &middot; ' + cheapest.wall.toFixed(2) + 's';
+        }} else {{
+            document.getElementById('hero-cheap-big').textContent = '—';
+            document.getElementById('hero-cheap-sub').textContent = 'No model in the panel got it right.';
+        }}
+
+        const sizeOrder = {size_order_js};
+        const sIdx = p => sizeOrder.indexOf(p);
+        let bustHead = '', bustDetail = '';
+        const biggerWrong = payload.rows.filter(r => !r.ok && cheapest && sIdx(r.params) > sIdx(cheapest.params));
+        if (biggerWrong.length) {{
+            const bw = biggerWrong[biggerWrong.length-1];
+            bustHead = bw.model.replace(':latest','') + ' (' + bw.params + ') was wrong; ' +
+                       cheapest.model.replace(':latest','') + ' (' + cheapest.params + ') was right';
+            bustDetail = 'A larger model (' + bw.params + ') failed at this prompt while a smaller one (' + cheapest.params + ') succeeded. More parameters did not buy more intelligence here.';
+        }} else if (cheapest && trustedCorrect.length > 1) {{
+            const priciest = trustedCorrect[trustedCorrect.length-1];
+            const ratio = (priciest.whEst / cheapest.whEst).toFixed(1);
+            bustHead = 'Same answer, ' + ratio + '&times; more energy';
+            bustDetail = priciest.model.replace(':latest','') + ' (' + priciest.params + ') and ' + cheapest.model.replace(':latest','') + ' (' + cheapest.params + ') both answered correctly &mdash; but the larger model used ' + ratio + '&times; the energy for the identical output.';
+        }} else {{
+            bustHead = 'No size-vs-smarts split on this prompt';
+            bustDetail = payload.tagline || '';
+        }}
+        document.getElementById('hero-bust-big').innerHTML = bustHead;
+        document.getElementById('hero-bust-sub').innerHTML = bustDetail;
+
+        const tbody = document.getElementById('rows');
+        tbody.innerHTML = '';
+        sorted.forEach(r => {{
+            const tr = document.createElement('tr');
+            const flag = r.flag || '🟢';
+            const trusted = isTrust(r);
+            tr.className = r.ok ? (trusted ? 'correct' : 'correct noisy') : 'wrong';
+            if (r === cheapest) tr.classList.add('cheapest');
+            // 🔴 rows: hide the ratio (it would compare noise to signal)
+            const ratio = r.ok && trusted && cheapest ? (r.whEst / cheapest.whEst).toFixed(1) + '&times;' :
+                          (r.ok && !trusted ? '<span title="noisy reading, see conf column">&mdash;</span>' : '&mdash;');
+            const crown = (r === cheapest) ? ' <span class="crown">&#9733;</span>' : '';
+            const mwhTok = r.tok > 0 ? (r.whEst * 1000 / r.tok).toFixed(2) : '&mdash;';
+            tr.innerHTML =
+                '<td class="model">' + escapeHTML(r.model.replace(':latest','')) +
+                  ' <span style="color:var(--text-5);font-size:0.7rem">(' + r.params + ')</span>' + crown + '</td>' +
+                '<td class="answer ' + (r.ok ? '' : 'answer-q') + '"><div class="answer-wrap">' + escapeHTML(String(r.ans)) + '</div></td>' +
+                '<td>' + (r.ok ? '<span class="pill ok">&#10003;</span>' : '<span class="pill bad">&#10007;</span>') + '</td>' +
+                '<td title="Traffic Light Confidence (CR-028) — 🟢 repeatable, 🟡 weak, 🔴 unreliable / contamination">' + flag + '</td>' +
+                '<td class="num">' + (r.tok != null ? r.tok : '&mdash;') + '</td>' +
+                '<td class="num">' + (r.wall != null ? r.wall.toFixed(2) + 's' : '&mdash;') + '</td>' +
+                '<td class="num" style="color:var(--text-4)">' + mwhTok + '</td>' +
+                '<td class="num">' + r.whEst.toFixed(4) + '</td>' +
+                '<td class="num">' + ratio + '</td>';
+            tbody.appendChild(tr);
+        }});
+
+        let h = '';
+        if (cheapest) {{
+            h = '<b>' + cheapest.model.replace(':latest','') + ' (' + cheapest.params + ')</b>' +
+                ' produced the correct answer for <b>' + cheapest.whEst.toFixed(4) + ' Wh</b>.';
+            if (trustedCorrect.length > 1) {{
+                const priciest = trustedCorrect[trustedCorrect.length-1];
+                const ratio = (priciest.whEst / cheapest.whEst).toFixed(1);
+                h += ' The most expensive correct run (' + priciest.model.replace(':latest','') + ') used <span class="ratio">' + ratio + '&times; more energy</span> for the same answer.';
+            }}
+        }} else {{
+            h = 'No model in the panel got this prompt right at all &mdash; try a different prompt or look at the showcase examples.';
+        }}
+        document.getElementById('headline').innerHTML =
+            '<div class="label-sm">What this tells you</div>' + h +
+            ' <span style="color:var(--text-5)">[' + payload.sourceLabel + ']</span>';
+
+        renderCharts(payload);
+    }}
+
+    function escapeHTML(s) {{
+        return String(s).replace(/[&<>"']/g, c => ({{
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }}[c]));
+    }}
+
+    async function runCompare() {{
+        if (!CAN_BATCH) return;
+        stopCooldownTicker();
+        const prompt = document.getElementById('userPrompt').value.trim();
+        const expected = document.getElementById('userExpected').value.trim();
+        if (!prompt || !expected) {{
+            document.getElementById('run-status').innerHTML =
+                '<div style="color:var(--err);font-size:0.85rem">Both prompt and expected answer are required.</div>';
+            return;
+        }}
+        const btn = document.getElementById('runBtn');
+        btn.disabled = true;
+        document.getElementById('run-status').innerHTML =
+            '<div style="color:var(--warn);font-size:0.85rem">Queued &mdash; running across {panel_n} models with active-probe thermal floor wait between each&hellip;</div>';
+        const form = new FormData();
+        form.append('prompt', prompt);
+        form.append('expected', expected);
+        form.append('device', 'gpu');
+        try {{
+            const resp = await fetch('/llm/compare-models', {{method:'POST', body:form}});
+            const data = await resp.json();
+            if (data.job_id) {{
+                pollCompare(data.job_id);
+            }} else {{
+                document.getElementById('run-status').innerHTML =
+                    '<div style="color:var(--err)">' + (data.error || 'Error') + '</div>';
+                btn.disabled = false;
+            }}
+        }} catch(e) {{
+            document.getElementById('run-status').innerHTML =
+                '<div style="color:var(--err)">Failed: ' + e + '</div>';
+            btn.disabled = false;
+        }}
+    }}
+
+    async function pollCompare(jobId) {{
+        try {{
+            const resp = await fetch('/llm/job/' + jobId);
+            const data = await resp.json();
+            if (data.status === 'done' && data.result) {{
+                stopCooldownTicker();
+                const r = data.result;
+                const rows = (r.models || []).map(m => ({{
+                    model: m.model_key, params: m.params, ok: !!m.correct,
+                    ans: m.error ? '(error: ' + m.error + ')' : (m.response || '(empty)'),
+                    tok: m.output_tokens || 0,
+                    wall: m.duration_s || 0,
+                    whEst: m.delta_e_wh || 0,
+                    flag: (m.confidence || {{}}).flag || '🟢',
+                }}));
+                renderCompareCard({{
+                    promptText: r.prompt, expected: r.expected,
+                    rows: rows, tagline: '', sourceLabel: 'Live (P110 measured)'
+                }});
+                document.getElementById('run-status').innerHTML =
+                    '<div style="color:var(--accent);font-size:0.85rem">&#10003; Done. Result rendered above. ' +
+                    '<a href="/results/llm/' + jobId + '/download.json" style="color:var(--accent)">&darr; JSON</a></div>';
+                document.getElementById('runBtn').disabled = false;
+                document.querySelector('.prompt-card').scrollIntoView({{behavior:'smooth', block:'start'}});
+            }} else if (data.status === 'error') {{
+                stopCooldownTicker();
+                document.getElementById('run-status').innerHTML =
+                    '<div style="color:var(--err);font-size:0.85rem">Error: ' + (data.error || 'unknown') + '</div>';
+                document.getElementById('runBtn').disabled = false;
+            }} else {{
+                const stage = data.stage || 'queued';
+                const cdVal = data.cooldown_waited_s;
+                const prev = cooldownState;
+                const cdChanged = !prev || prev.cdWaited !== cdVal;
+                cooldownState = {{
+                    stage: stage,
+                    qpos:  data.queue_position,
+                    mi:    data.current_model_idx,
+                    mt:    data.total_models,
+                    ml:    data.current_model_label,
+                    watts: data.watts,
+                    cdWaited: cdVal,
+                    cdRef:    data.cooldown_reference_w,
+                    cdLocalStart: cdChanged ? Date.now() : (prev ? prev.cdLocalStart : Date.now()),
+                }};
+                // Start/stop the local 4 Hz ticker based on current stage,
+                // so the displayed "waiting Xs" advances smoothly between
+                // the server's 1 s P110 polls and the UI's 2 s job polls.
+                if (stage === 'cooldown') {{
+                    if (!cooldownTicker) cooldownTicker = setInterval(renderRunStatus, 250);
+                }} else if (cooldownTicker) {{
+                    clearInterval(cooldownTicker); cooldownTicker = null;
+                }}
+                renderRunStatus();
+                pollTimer = setTimeout(() => pollCompare(jobId), 2000);
+            }}
+        }} catch(e) {{
+            pollTimer = setTimeout(() => pollCompare(jobId), 4000);
+        }}
+    }}
+
+    renderShowcase('t2_count');
+    </script>
+    {_FOOTER}
+</body>
+</html>""")
+
+
 # CR-019 — every job-status response carries the live wall-power reading
 # alongside the worker-state fields. The shared `wlRenderProgress` widget
 # consumes `data.watts` to drive the big 2.5rem live readout, which is
@@ -5044,6 +5908,14 @@ async def rag_page(request: Request):
     {busy_banner}
     <h1>RAG Energy Test {_BETA_CHIP}</h1>
     <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
+
+    <div style="margin-bottom:1.5rem;padding:0.85rem 1rem;border:1px solid var(--accent);
+                background:var(--accent-soft);font-size:0.85rem;line-height:1.5">
+        <span style="color:var(--accent);font-weight:bold">NEW</span> &middot;
+        <a href="/rag/compare" style="color:var(--accent);text-decoration:none;
+                                       border-bottom:1px solid var(--accent)">Compare {len(rag_module.MODELS)} models on one question &rarr; energy per correct answer &nearr;</a>
+        <span style="color:var(--text-3)"> &nbsp;CR-049 hybrid: BBC showcase + member &ldquo;Try your own question&rdquo;.</span>
+    </div>
 
     {_ai_intro('rag')}
 
@@ -5756,6 +6628,696 @@ async def rag_run_compare(
     return {"job_id": job_id, "queue_position": position}
 
 
+# --- CR-049 · /rag compare-across-models (sibling of /llm/compare) ---
+# One corpus-grounded question × all 4 panel models, graded against a
+# user-supplied expected answer. Same energy-per-correct-answer headline
+# as /llm/compare; here the wrong-answer story has an extra dimension —
+# the model can be wrong because *retrieval* surfaced the wrong chunk,
+# not because the model is bad. Probe at /tmp/rag_probe/.
+
+async def run_rag_compare_models_job(job_id: str, question: str, expected: str):
+    """Sequentially run question through RAG (top-3) across every model in rag.MODELS, grade, save.
+
+    Panel = list(rag_module.MODELS.keys()) so adding/swapping a model in
+    rag.py is automatically reflected on /rag/compare.
+    """
+    panel = list(rag_module.MODELS.keys())
+    from power import wait_for_thermal_floor
+    from llm import unload_all_loaded_models
+    try:
+        jobs[job_id].update({
+            "status": "running", "stage": "compare_models",
+            "total_models": len(panel), "current_model_idx": 0,
+            "partial_response": "",
+        })
+        # Clear VRAM before measuring model #1's cold reference (see /llm/compare).
+        unloaded = unload_all_loaded_models()
+        if unloaded:
+            await asyncio.sleep(2)
+        rows = []
+        floor_reference_w = None
+        cooldowns = []
+        for idx, model_key in enumerate(panel, start=1):
+            if idx > 1 and floor_reference_w is not None:
+                # Same Ollama keep_alive issue as /llm/compare — unload every
+                # previously-run model before waiting for the thermal floor,
+                # else the wait times out chasing a floor that 11+ GB of
+                # resident VRAM is permanently inflating.
+                evicted = unload_all_loaded_models()
+                jobs[job_id]["stage"] = "cooldown"
+                jobs[job_id]["current_model_idx"] = idx
+                jobs[job_id]["current_model"] = model_key
+                jobs[job_id]["current_model_label"] = rag_module.MODELS[model_key]["label"]
+                if evicted:
+                    await asyncio.sleep(3)
+                cd = await wait_for_thermal_floor(
+                    floor_reference_w, tolerance_w=3.0, poll_interval_s=1.0,
+                    settle_polls=3, max_wait_s=120,
+                    jobs=jobs, job_id=job_id,
+                )
+                cd["evicted_before_wait"] = evicted
+                cooldowns.append({"before_model": model_key, **cd})
+            jobs[job_id]["current_model_idx"] = idx
+            jobs[job_id]["current_model"] = model_key
+            jobs[job_id]["current_model_label"] = rag_module.MODELS[model_key]["label"]
+            try:
+                m_result = await rag_module.run_rag_measurement(
+                    model_key, "rag", question, jobs, job_id,
+                )
+                if floor_reference_w is None:
+                    floor_reference_w = (m_result.get("energy") or {}).get("w_base")
+                inf = m_result.get("inference") or {}
+                en = m_result.get("energy") or {}
+                resp = inf.get("response", "") or ""
+                ok = llm_grade(expected, resp)
+                rows.append({
+                    "model_key": model_key,
+                    "model_label": rag_module.MODELS[model_key]["label"],
+                    "params": rag_module.MODELS[model_key]["params"],
+                    "response": resp,
+                    "output_tokens": inf.get("output_tokens"),
+                    "duration_s": inf.get("duration_s"),
+                    "tokens_per_sec": inf.get("tokens_per_sec"),
+                    "delta_w": en.get("delta_w"),
+                    "delta_e_wh": en.get("delta_e_wh"),
+                    "mwh_per_token": en.get("mwh_per_token"),
+                    "confidence": en.get("confidence"),
+                    "chunks_retrieved": m_result.get("chunks_retrieved"),
+                    "chunk_sources": m_result.get("chunk_sources"),
+                    "correct": ok,
+                })
+            except Exception as e:
+                rows.append({
+                    "model_key": model_key,
+                    "model_label": rag_module.MODELS.get(model_key, {}).get("label", model_key),
+                    "params": rag_module.MODELS.get(model_key, {}).get("params", "?"),
+                    "error": str(e), "correct": False,
+                })
+
+        correct = [r for r in rows if r.get("correct") and (r.get("delta_e_wh") or 0) > 0]
+        cheapest = min(correct, key=lambda r: r["delta_e_wh"]) if correct else None
+        final = {
+            "mode": "rag_compare_models",
+            "question": question,
+            "expected": expected,
+            "models": rows,
+            "cheapest_correct_key": cheapest["model_key"] if cheapest else None,
+            "panel_pass_rate": round(len(correct) / len(rows), 3) if rows else 0,
+            "floor_reference_w": floor_reference_w,
+            "cooldowns": cooldowns,
+            "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost. Retrieval = top-3 chunks (rag mode).",
+        }
+        save_result("llm", job_id, final)
+        jobs[job_id] = {"status": "done", "stage": "done", "result": final}
+    except Exception as e:
+        jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+
+
+@app.post("/rag/compare-models", dependencies=[Depends(requires(BATCH_COMPARE))])
+async def rag_compare_models(
+    request: Request,
+    question: str = Form(...),
+    expected: str = Form(...),
+):
+    """Member 'Try your own question' for the RAG energy-per-correct-answer card."""
+    question = (question or "").strip()
+    expected = (expected or "").strip()
+    if not question:
+        return JSONResponse({"error": "question is required"}, status_code=400)
+    if not expected:
+        return JSONResponse({"error": "expected answer is required (grading needs ground truth)"},
+                            status_code=400)
+    if len(question) > 2000:
+        return JSONResponse({"error": "question too long (max 2000 chars)"}, status_code=400)
+    if rag_module.index_status != "ready":
+        return JSONResponse({"error": "Index not ready — build it first"}, status_code=400)
+
+    job_id = str(uuid.uuid4())[:8]
+    label = f"RAG Compare · {question[:50]}{'…' if len(question) > 50 else ''}"
+
+    async def coro():
+        await run_rag_compare_models_job(job_id, question, expected)
+
+    position = queue_control.enqueue(job_id, "rag", label, coro, request=request)
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}
+
+
+# Hardcoded showcase data from the 2026-05-26 RAG probe — 1 rep per cell,
+# real P110 measurement (not estimated). The probe tried 3 corpus-grounded
+# prompts × 4 models; only this BBC prompt had a 4/4 panel pass rate. The
+# two IEA candidates failed across the panel because top-3 retrieval missed
+# the right pages of the 250-page IEA report — a finding worth keeping for
+# a future "retrieval-precision matters" demo, but not a clean showcase.
+# Probe data: /tmp/rag_probe/results_20260526_223406.jsonl
+#
+# NOTE (2026-05-27 — S30 ladder refresh): the rows below reference the
+# PREVIOUS panel — `mistral` (7B) and `gemma3:12b` were retired in favour
+# of `qwen3:4b` and `mistral-nemo:12b`. Real-P110 measurements preserved
+# as a historical snapshot; a re-probe of the new 5-model panel via
+# /rag/compare-models is the planned follow-up that will replace this dict.
+_RAG_COMPARE_SHOWCASE = {
+    "rag_bbc_total": {
+        "label": "BBC Radio 2018 energy total",
+        "prompt": "According to the BBC Radio energy footprint paper (WHP 393), what was the total mean energy consumption for the 2018 baseline of BBC radio? Output the value and unit, e.g. '325 GWh'.",
+        "expected": "325 GWh",
+        "tagline": "Single corpus fact, single right answer. Retrieval surfaces BBC WHP 393 for all 4 models; the energy spread is purely the cost of inference at different model sizes.",
+        "source_paper": "BBC WHP 393 — Energy Footprint of Radio Services",
+        "rows": [
+            {"model": "tinyllama",  "params": "1.1B", "ok": True, "ans": "According to the BBC Radio energy footprint paper (WHP 393), the total mean energy consumption for the 2018 baseline was 325 GWh.",                                                        "tok": 41, "wall":  0.78},
+            {"model": "mistral",    "params": "7B",   "ok": True, "ans": "The total mean energy consumption for the 2018 baseline of BBC radio services was 325 GWh (Gigawatt-hours), as stated in the report on page 19.",                                       "tok": 98, "wall": 10.08},
+            {"model": "gemma3:12b", "params": "12B",  "ok": True, "ans": "According to the BBC Radio energy footprint paper (WHP 393), the total mean energy consumption for the 2018 baseline of BBC radio was **325 GWh**. Source: BBC WHP 393, page 19",       "tok": 72, "wall": 16.59},
+            {"model": "phi4",       "params": "14B",  "ok": True, "ans": "The total mean energy consumption for the 2018 baseline of BBC radio services was 325 GWh. This figure is mentioned in the excerpt from page 19.",                                      "tok": 53, "wall": 15.02},
+        ],
+        # Measured Wh per row (parallel array) — used because showcase rows
+        # come from real P110 measurement, not the wall_s × 25 W estimate
+        # the /llm/compare showcase uses. The JS prefers `whMeasured` if set.
+        "wh_measured": [0.0031, 0.2434, 0.4428, 0.3467],
+    },
+}
+
+
+@app.get("/rag/compare", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def rag_compare_page(request: Request):
+    """Hybrid showcase + member 'Try your own question' for RAG energy-per-correct-answer.
+
+    Anonymous: BBC showcase card (4 models, real P110 data from the probe).
+    Member (BATCH_COMPARE): question + expected-answer inputs → runs across all
+    4 RAG-panel models sequentially with P110 measurement, renders into the
+    same card.
+    """
+    can_batch = can(audience.tier(request), BATCH_COMPARE)
+    lk_batch_class = _lock_class(request, BATCH_COMPARE)
+    lk_batch_badge = _lock_badge_html(request, BATCH_COMPARE,
+                                      "Try your own question — Members only")
+    dis_batch = _disabled_attr(request, BATCH_COMPARE)
+
+    import json as _json
+    showcase_js = _json.dumps(_RAG_COMPARE_SHOWCASE)
+    panel_n     = len(rag_module.MODELS)
+    panel_list  = " &middot; ".join(f"{m['label']} ({m['params']})" for m in rag_module.MODELS.values())
+    size_order_js = _json.dumps([m["params"] for m in rag_module.MODELS.values()])
+
+    return _bake_durations(f"""<!DOCTYPE html>
+<html>
+<head>
+    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+    <title>OWL — RAG · Compare across models</title>
+    <script src="{CHARTJS_URL}"></script>
+    <script src="/static/wl-charts.js"></script>
+    <style>
+        *{{box-sizing:border-box;margin:0;padding:0}}
+        body{{font-family:monospace;background:var(--bg);color:var(--text);
+              max-width:920px;margin:0 auto;padding:2rem}}
+        h1{{color:var(--accent);font-size:1.6rem;margin-bottom:0.25rem}}
+        .subtitle{{color:var(--text-3);font-size:0.8rem;margin-bottom:1.5rem}}
+        .demo-tabs{{display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap}}
+        .demo-tabs button{{background:none;color:var(--text-3);border:1px solid var(--border-3);
+                           padding:0.5rem 0.9rem;cursor:pointer;font-family:monospace;font-size:0.78rem;margin:0}}
+        .demo-tabs button:hover{{border-color:var(--accent);color:var(--text)}}
+        .demo-tabs button.active{{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}}
+        .prompt-card{{border:1px solid var(--border);padding:1rem 1.25rem;margin-bottom:1.25rem;
+                      background:var(--panel-2)}}
+        .label-sm{{color:var(--text-5);font-size:0.65rem;text-transform:uppercase;
+                   letter-spacing:0.06em;margin-bottom:0.5rem}}
+        .prompt-text{{color:var(--text-2);font-size:0.95rem;line-height:1.5}}
+        .prompt-meta{{margin-top:0.6rem;color:var(--text-3);font-size:0.78rem}}
+        .prompt-meta b{{color:var(--accent)}}
+        .hero{{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.25rem}}
+        @media(max-width:640px){{.hero{{grid-template-columns:1fr}}}}
+        .hero-card{{border:1px solid var(--border);padding:1.1rem;background:var(--panel-2)}}
+        .hero-card .big{{color:var(--accent);font-size:2rem;font-weight:bold;line-height:1.1}}
+        .hero-card .sub{{color:var(--text-3);font-size:0.78rem;margin-top:0.4rem;line-height:1.5}}
+        .hero-card.warn .big{{color:var(--warn);font-size:1rem;line-height:1.4}}
+        .hero-card.warn{{border-color:var(--warn)}}
+        table{{width:100%;border-collapse:collapse;font-size:0.8rem;margin-bottom:1.25rem}}
+        th{{text-align:left;padding:0.5rem 0.6rem;color:var(--text-4);
+            border-bottom:1px solid var(--border-3);font-weight:normal;
+            text-transform:uppercase;letter-spacing:0.05em;font-size:0.68rem}}
+        th.num,td.num{{text-align:right;font-variant-numeric:tabular-nums}}
+        td{{padding:0.6rem;border-bottom:1px solid var(--border-2);vertical-align:middle}}
+        tr.correct td.model,tr.correct td.answer{{color:var(--text)}}
+        tr.wrong td.model,tr.wrong td.answer{{color:var(--text-4)}}
+        tr.noisy td{{color:var(--text-4)!important}}
+        tr.noisy td.model{{color:var(--text-3)!important;font-style:italic}}
+        tr.noisy{{background:transparent!important}}
+        td.answer{{max-width:340px}}
+        .answer-wrap{{max-height:5.5em;overflow-y:auto;white-space:pre-wrap;word-break:break-word;
+                      line-height:1.45;padding-right:0.25rem;scrollbar-width:thin;
+                      scrollbar-color:var(--border-3) transparent}}
+        .answer-wrap::-webkit-scrollbar{{width:6px}}
+        .answer-wrap::-webkit-scrollbar-thumb{{background:var(--border-3);border-radius:3px}}
+        tr.cheapest{{background:var(--accent-soft)}}
+        tr.cheapest td.model{{color:var(--accent);font-weight:bold}}
+        .pill{{display:inline-block;font-size:0.7rem;padding:0.1rem 0.45rem;border-radius:2px}}
+        .pill.ok{{color:var(--accent);border:1px solid var(--accent)}}
+        .pill.bad{{color:var(--err);border:1px solid var(--err)}}
+        .answer-q{{color:var(--text-3);font-style:italic}}
+        .crown{{color:var(--accent)}}
+        .ratio{{color:var(--accent);font-weight:bold}}
+        .headline{{border-left:3px solid var(--accent);padding:0.9rem 1.1rem;margin-bottom:1.5rem;
+                   background:var(--panel-2);color:var(--text-2);line-height:1.7;font-size:0.88rem}}
+        .headline b{{color:var(--accent)}}
+        .try{{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border)}}
+        .try h2{{color:var(--accent);font-size:1.05rem;margin-bottom:0.4rem}}
+        .try .desc{{color:var(--text-3);font-size:0.82rem;margin-bottom:1rem;line-height:1.6}}
+        textarea,input[type=text]{{width:100%;background:#0f0f0f;border:1px solid var(--border-3);
+                                    border-left:2px solid #00ff9966;color:var(--text-2);
+                                    font-family:monospace;font-size:0.85rem;padding:0.75rem;
+                                    resize:vertical}}
+        textarea:focus,input[type=text]:focus{{border-color:var(--accent);outline:none}}
+        button.run{{background:var(--accent);color:#000;border:none;padding:0.75rem 2rem;
+                    cursor:pointer;font-family:monospace;font-size:0.95rem;margin-top:0.85rem}}
+        button.run:disabled{{background:var(--border);color:var(--text-3);cursor:not-allowed}}
+        button.run:hover:not(:disabled){{background:var(--accent-hover)}}
+        a.back{{color:var(--text-3);text-decoration:none;font-size:0.82rem;
+                display:inline-block;margin-top:2rem}}
+        a.back:hover{{color:var(--accent)}}
+        details{{margin-top:1.5rem;color:var(--text-3);font-size:0.78rem;
+                 border-top:1px solid var(--border);padding-top:1rem}}
+        summary{{cursor:pointer;color:var(--text-3)}}
+        summary:hover{{color:var(--accent)}}
+        details p{{margin-top:0.5rem;line-height:1.6}}
+        .upload-note{{margin-top:1rem;padding:0.75rem 1rem;border:1px dashed var(--border-3);
+                      background:var(--panel-2);font-size:0.78rem;color:var(--text-3);line-height:1.5}}
+        .upload-note b{{color:var(--text-2)}}
+        {_LOCK_STYLES}
+    </style>
+</head>
+<body>
+    {_BACK}<a href="/rag" style="color:var(--text-3);text-decoration:none;font-size:0.82rem;
+        margin-left:0.75rem;margin-bottom:1.5rem;display:inline-block;
+        vertical-align:middle;position:relative;top:-2px;transition:color 0.2s"
+        onmouseover="this.style.color='#00ff99'" onmouseout="this.style.color='#777'">&larr; /rag</a>
+    <h1>RAG &middot; Compare across models</h1>
+    <div class="subtitle">Energy cost of correct answers from the corpus. Device layer only (GoS1). Network and CPE excluded.</div>
+
+    <div class="demo-tabs" id="tabs"></div>
+
+    <div class="prompt-card">
+        <div class="label-sm">Question</div>
+        <div class="prompt-text" id="prompt-text"></div>
+        <div class="prompt-meta">Expected: <b id="expected"></b> &middot; Retrieval: top-3 chunks &middot; Source: <span id="source-paper" style="color:var(--text-2)"></span></div>
+    </div>
+
+    <div class="hero">
+        <div class="hero-card" id="hero-cheap">
+            <div class="label-sm">Cheapest correct answer</div>
+            <div class="big" id="hero-cheap-big"></div>
+            <div class="sub" id="hero-cheap-sub"></div>
+        </div>
+        <div class="hero-card warn" id="hero-bust">
+            <div class="label-sm">The size &ne; smarts finding</div>
+            <div class="big" id="hero-bust-big"></div>
+            <div class="sub" id="hero-bust-sub"></div>
+        </div>
+    </div>
+
+    <div class="label-sm">Same question, all models &mdash; ranked by energy of a correct answer</div>
+    <table>
+        <thead>
+            <tr><th>model</th><th>answer</th><th>&#10003;/&#10007;</th><th>conf</th>
+                <th class="num">tokens</th><th class="num">wall</th>
+                <th class="num">mWh/tok</th><th class="num">Wh</th>
+                <th class="num">vs best</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+    </table>
+
+    <div class="headline" id="headline"></div>
+
+    <div id="charts-wrap" style="margin-bottom:1.5rem;display:none">
+        <div class="label-sm">Energy vs model size (correct answers only) <span id="charts-source" style="color:var(--text-5)"></span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+            <div style="border:1px solid var(--border);padding:0.75rem;background:var(--panel-2)">
+                <div style="color:var(--text-3);font-size:0.7rem;text-align:center;margin-bottom:0.25rem">Total Wh per correct answer</div>
+                <div style="position:relative;height:240px"><canvas id="chart-wh"></canvas></div>
+            </div>
+            <div style="border:1px solid var(--border);padding:0.75rem;background:var(--panel-2)">
+                <div style="color:var(--text-3);font-size:0.7rem;text-align:center;margin-bottom:0.25rem">mWh per output token</div>
+                <div style="position:relative;height:240px"><canvas id="chart-mwh"></canvas></div>
+            </div>
+        </div>
+        <div id="charts-note" style="color:var(--text-5);font-size:0.72rem;margin-top:0.5rem;line-height:1.5"></div>
+    </div>
+    <div id="charts-hint" style="margin-bottom:1.5rem;color:var(--text-5);font-size:0.78rem;
+         border-left:2px solid var(--border);padding-left:0.85rem;display:none">
+        Energy-vs-size plot appears when at least 3 models answer correctly.
+    </div>
+
+    {lk_batch_badge}
+    <div class="try {lk_batch_class}">
+        <h2>Try your own question</h2>
+        <div class="desc">
+            Runs your question across all {panel_n} RAG-panel models sequentially with P110 power measurement.
+            Each model retrieves the top 3 chunks from the corpus (94 papers) before answering. Between models the runner actively polls power and waits for the system to return to within &plusmn;3 W of model #1's baseline (max 120 s cap), so a verbose model's heat can't skew the next baseline.
+        </div>
+        <div class="label-sm">Question</div>
+        <textarea id="userQuestion" rows="3"{dis_batch}
+            placeholder="e.g. According to the IEA Energy and AI report, what is the projected global data centre electricity consumption in 2030, in TWh?"></textarea>
+        <div class="label-sm" style="margin-top:0.85rem">Expected answer (used to grade &#10003;/&#10007;)</div>
+        <input type="text" id="userExpected"{dis_batch}
+            placeholder="e.g. 945">
+        <div class="label-sm" style="margin-top:0.5rem;color:var(--text-5)">
+            Substring match, case-insensitive (with a punctuation-stripped retry). For numeric answers, leading-integer match.
+        </div>
+        <button class="run" id="runBtn" onclick="runCompare()"{dis_batch}>Run on all {panel_n} models &rarr;</button>
+        <div id="run-status" style="margin-top:1.25rem"></div>
+        <div class="upload-note">
+            <b>Want to ask about a document we don't have?</b> Document upload is coming in a future release.
+            The current corpus is 94 curated papers covering streaming energy, network infrastructure, AI/data-centre energy,
+            and policy. Until upload ships, the only path is to drop a PDF into the server's <code>corpus/papers/</code>
+            directory and rebuild the index &mdash; ask the GoS team.
+        </div>
+    </div>
+
+    <details>
+        <summary>Methodology &amp; scope</summary>
+        <p><b>What's measured:</b> Tapo P110 wall-power at 1 Hz, baseline before each model (10 polls), &Delta;W &times; &Delta;t &rarr; Wh, mWh/output_token, Traffic Light Confidence per the CR-028 CI model. Same protocol as the existing /rag endpoint.</p>
+        <p><b>Why "Wh per correct answer" is the headline:</b> mWh/token rewards verbose models &mdash; a model that "thinks out loud" looks more efficient per token than a model that answers in 1 token, even when it burned 100&times; the energy. The headline metric is the energy cost of <em>correctness</em>. mWh/token stays as a supporting column because it's the canonical operator-facing figure.</p>
+        <p><b>RAG-specific wrong-answer story:</b> A model can be wrong because retrieval gave it the wrong chunk (so the answer was generated from training memory, with no anchor), or because it was right but couldn't extract. The 2026-05-26 probe found two IEA prompts where all 4 models failed because top-3 retrieval missed the right pages of the 250-page IEA report &mdash; a finding the energy data makes vivid: you can burn watts producing wrong answers from bad retrieval.</p>
+        <p><b>{panel_n}-model panel:</b> {panel_list}. All on GoS1 (Ryzen 9 7900 + RX 7800 XT, Ollama 0.20.2). Panel reflects the current <code>rag.MODELS</code> dict; the BBC showcase card is frozen on the older 4-model probe and will be re-baselined when a fresh probe of the new panel runs.</p>
+        <p><b>Grading:</b> Same tolerant rule as /llm/compare &mdash; substring match (case-insensitive) or punctuation-stripped substring or leading-integer match.</p>
+    </details>
+
+    <a class="back" href="/rag">&larr; /rag (single-model + 3-mode compare)</a>
+
+    <script>
+    const SHOWCASE = {showcase_js};
+    const CAN_BATCH = {('true' if can_batch else 'false')};
+    const wh = w => Math.round((w * 25 / 3600) * 10000) / 10000;
+    let pollTimer = null;
+    let chartWh = null, chartMwh = null;
+    // CR-050 follow-up — local ticker so the cooldown counter feels smooth
+    // even though the server-side poll only writes a fresh cooldown_waited_s
+    // every 1 s and the UI only polls /job/{id} every 2 s.
+    let cooldownTicker = null;
+    let cooldownState = null;
+
+    function stopCooldownTicker() {{
+        if (cooldownTicker) {{ clearInterval(cooldownTicker); cooldownTicker = null; }}
+        cooldownState = null;
+    }}
+
+    function renderRunStatus() {{
+        const s = cooldownState;
+        if (!s) return;
+        const msg = s.stage === 'queued'
+            ? 'In queue (position ' + (s.qpos || '?') + ')…'
+            : (s.mi && s.mt
+                ? 'Model ' + s.mi + '/' + s.mt + (s.ml ? ' — ' + s.ml : '') + ' · ' + s.stage
+                : 'Running… ' + s.stage);
+        const watts = s.watts != null ? ' · ' + Number(s.watts).toFixed(1) + ' W' : '';
+        let cdInfo = '';
+        if (s.stage === 'cooldown' && s.cdWaited != null) {{
+            const liveS = s.cdWaited + (Date.now() - s.cdLocalStart) / 1000;
+            const ref = s.cdRef != null ? Number(s.cdRef).toFixed(1) + 'W' : '?';
+            cdInfo = ' · waiting ' + liveS.toFixed(1) + 's for floor (target ≤ ' + ref + ' +3W)';
+        }}
+        const el = document.getElementById('run-status');
+        if (el) el.innerHTML =
+            '<div style="color:var(--warn);font-size:0.85rem">' + msg + watts + cdInfo + '</div>';
+    }}
+
+    const tabs = document.getElementById('tabs');
+    const order = Object.keys(SHOWCASE);
+    order.forEach(k => {{
+        const b = document.createElement('button');
+        b.textContent = SHOWCASE[k].label;
+        b.id = 'tab-' + k;
+        b.onclick = () => renderShowcase(k);
+        tabs.appendChild(b);
+    }});
+
+    function paramsToNumeric(p) {{
+        return parseFloat(String(p).replace(/[^\\d.]/g, '')) || 0;
+    }}
+
+    function renderShowcase(key) {{
+        const d = SHOWCASE[key];
+        order.forEach(k => document.getElementById('tab-'+k).classList.toggle('active', k === key));
+        // Showcase uses real measured Wh per row (probe data), not the wall × 25W estimate.
+        const measured = d.wh_measured || [];
+        const rows = d.rows.map((r, i) => ({{...r, whEst: (i < measured.length ? measured[i] : wh(r.wall))}}));
+        document.getElementById('source-paper').textContent = d.source_paper || '—';
+        renderCompareCard({{
+            promptText: d.prompt, expected: d.expected,
+            rows: rows, tagline: d.tagline, sourceLabel: 'Showcase (P110 measured)',
+        }});
+    }}
+
+    function renderCompareCard(payload) {{
+        document.getElementById('prompt-text').textContent = payload.promptText;
+        document.getElementById('expected').textContent = payload.expected;
+
+        const TRUSTED = new Set(['🟢','🟡']);
+        const isTrust = r => TRUSTED.has(r.flag || '🟢');
+        const correct = payload.rows.filter(r => r.ok).sort((a,b) => a.whEst - b.whEst);
+        const wrong   = payload.rows.filter(r => !r.ok).sort((a,b) => a.whEst - b.whEst);
+        const sorted  = [...correct, ...wrong];
+        // 🔴 rows are visible in the table but excluded from the cheapest-correct
+        // pick, the bust-card pick, and the chart — their delta_w sits inside the
+        // baseline noise so a tiny Wh is just measurement noise, not efficiency.
+        const trustedCorrect = correct.filter(r => isTrust(r) && r.whEst > 0);
+        const cheapest = trustedCorrect[0] || null;
+
+        if (cheapest) {{
+            document.getElementById('hero-cheap-big').textContent = cheapest.whEst.toFixed(4) + ' Wh';
+            document.getElementById('hero-cheap-sub').innerHTML =
+                '<b style="color:var(--accent)">' + cheapest.model.replace(':latest','') + '</b> &middot; ' +
+                cheapest.params + ' &middot; ' + cheapest.tok + ' tokens &middot; ' + cheapest.wall.toFixed(2) + 's';
+        }} else {{
+            document.getElementById('hero-cheap-big').textContent = '—';
+            document.getElementById('hero-cheap-sub').textContent = 'No model in the panel got it right — likely a retrieval miss.';
+        }}
+
+        const sizeOrder = {size_order_js};
+        const sIdx = p => sizeOrder.indexOf(p);
+        let bustHead = '', bustDetail = '';
+        const biggerWrong = payload.rows.filter(r => !r.ok && cheapest && sIdx(r.params) > sIdx(cheapest.params));
+        if (biggerWrong.length) {{
+            const bw = biggerWrong[biggerWrong.length-1];
+            bustHead = bw.model.replace(':latest','') + ' (' + bw.params + ') was wrong; ' +
+                       cheapest.model.replace(':latest','') + ' (' + cheapest.params + ') was right';
+            bustDetail = 'A larger model (' + bw.params + ') failed while a smaller one (' + cheapest.params + ') succeeded. On RAG, this often means the smaller model trusted the retrieved chunk while the larger one hallucinated past it.';
+        }} else if (cheapest && trustedCorrect.length > 1) {{
+            const priciest = trustedCorrect[trustedCorrect.length-1];
+            const ratio = (priciest.whEst / cheapest.whEst).toFixed(1);
+            bustHead = 'Same answer, ' + ratio + '&times; more energy';
+            bustDetail = priciest.model.replace(':latest','') + ' (' + priciest.params + ') and ' + cheapest.model.replace(':latest','') + ' (' + cheapest.params + ') both retrieved the same chunks and answered correctly &mdash; the larger model used ' + ratio + '&times; the energy for the same output.';
+        }} else {{
+            bustHead = 'No size-vs-smarts split on this question';
+            bustDetail = payload.tagline || '';
+        }}
+        document.getElementById('hero-bust-big').innerHTML = bustHead;
+        document.getElementById('hero-bust-sub').innerHTML = bustDetail;
+
+        const tbody = document.getElementById('rows');
+        tbody.innerHTML = '';
+        sorted.forEach(r => {{
+            const tr = document.createElement('tr');
+            const flag = r.flag || '🟢';
+            const trusted = isTrust(r);
+            tr.className = r.ok ? (trusted ? 'correct' : 'correct noisy') : 'wrong';
+            if (r === cheapest) tr.classList.add('cheapest');
+            // 🔴 rows: hide the ratio (it would compare noise to signal)
+            const ratio = r.ok && trusted && cheapest ? (r.whEst / cheapest.whEst).toFixed(1) + '&times;' :
+                          (r.ok && !trusted ? '<span title="noisy reading, see conf column">&mdash;</span>' : '&mdash;');
+            const crown = (r === cheapest) ? ' <span class="crown">&#9733;</span>' : '';
+            const mwhTok = r.tok > 0 ? (r.whEst * 1000 / r.tok).toFixed(2) : '&mdash;';
+            tr.innerHTML =
+                '<td class="model">' + escapeHTML(r.model.replace(':latest','')) +
+                  ' <span style="color:var(--text-5);font-size:0.7rem">(' + r.params + ')</span>' + crown + '</td>' +
+                '<td class="answer ' + (r.ok ? '' : 'answer-q') + '"><div class="answer-wrap">' + escapeHTML(String(r.ans)) + '</div></td>' +
+                '<td>' + (r.ok ? '<span class="pill ok">&#10003;</span>' : '<span class="pill bad">&#10007;</span>') + '</td>' +
+                '<td title="Traffic Light Confidence (CR-028) — 🟢 repeatable, 🟡 weak, 🔴 unreliable / contamination">' + flag + '</td>' +
+                '<td class="num">' + (r.tok != null ? r.tok : '&mdash;') + '</td>' +
+                '<td class="num">' + (r.wall != null ? r.wall.toFixed(2) + 's' : '&mdash;') + '</td>' +
+                '<td class="num" style="color:var(--text-4)">' + mwhTok + '</td>' +
+                '<td class="num">' + r.whEst.toFixed(4) + '</td>' +
+                '<td class="num">' + ratio + '</td>';
+            tbody.appendChild(tr);
+        }});
+
+        let h = '';
+        if (cheapest) {{
+            h = '<b>' + cheapest.model.replace(':latest','') + ' (' + cheapest.params + ')</b>' +
+                ' produced the correct answer for <b>' + cheapest.whEst.toFixed(4) + ' Wh</b>.';
+            if (trustedCorrect.length > 1) {{
+                const priciest = trustedCorrect[trustedCorrect.length-1];
+                const ratio = (priciest.whEst / cheapest.whEst).toFixed(1);
+                h += ' The most expensive correct run (' + priciest.model.replace(':latest','') + ') used <span class="ratio">' + ratio + '&times; more energy</span> for the same answer.';
+            }}
+        }} else {{
+            h = 'No model in the panel got this question right at all &mdash; check whether the retrieved chunks actually contained the answer (top-3 retrieval can miss in a long source).';
+        }}
+        document.getElementById('headline').innerHTML =
+            '<div class="label-sm">What this tells you</div>' + h +
+            ' <span style="color:var(--text-5)">[' + payload.sourceLabel + ']</span>';
+
+        renderCharts(payload);
+    }}
+
+    function renderCharts(payload) {{
+        const wrap = document.getElementById('charts-wrap');
+        const hint = document.getElementById('charts-hint');
+        const TRUSTED = new Set(['🟢','🟡']);
+        // Plot only ✓ AND not 🔴 AND positive Wh — same filter the
+        // 'cheapest correct' card uses; we don't want noisy points
+        // distorting the energy-vs-size curve.
+        const correct = payload.rows.filter(r => r.ok && TRUSTED.has(r.flag || '🟢') && r.whEst > 0);
+        if (correct.length < 3) {{
+            wrap.style.display = 'none';
+            hint.style.display = '';
+            if (chartWh) {{ chartWh.destroy(); chartWh = null; }}
+            if (chartMwh) {{ chartMwh.destroy(); chartMwh = null; }}
+            return;
+        }}
+        hint.style.display = 'none';
+        wrap.style.display = '';
+
+        document.getElementById('charts-source').textContent = '· ' + payload.sourceLabel;
+        const wrong = payload.rows.filter(r => !r.ok);
+        const noteParts = ['Plotting ' + correct.length + ' of ' + payload.rows.length + ' models that produced the correct answer.'];
+        if (wrong.length) {{
+            noteParts.push((wrong.length === 1 ? '1 model' : wrong.length + ' models') +
+                           ' excluded for incorrect answers (' +
+                           wrong.map(r => r.model.replace(':latest','')).join(', ') + ').');
+        }}
+        document.getElementById('charts-note').textContent = noteParts.join(' ');
+
+        const sorted = [...correct].sort((a,b) => paramsToNumeric(a.params) - paramsToNumeric(b.params));
+        const whPoints = sorted.map(r => ({{x: paramsToNumeric(r.params), y: r.whEst}}));
+        const mwhPoints = sorted.map(r => {{
+            const tok = r.tok || 0;
+            return {{x: paramsToNumeric(r.params), y: tok > 0 ? (r.whEst * 1000 / tok) : 0}};
+        }});
+
+        if (chartWh) {{ chartWh.destroy(); chartWh = null; }}
+        chartWh = WlCharts.line({{
+            canvas: document.getElementById('chart-wh'),
+            datasets: [{{label: 'Wh per correct answer', points: whPoints, color: 'accent', tension: 0.15, pointRadius: 5}}],
+            xLabel: 'parameters (B)', yLabel: 'Wh', yUnit: 'Wh',
+        }});
+
+        if (chartMwh) {{ chartMwh.destroy(); chartMwh = null; }}
+        chartMwh = WlCharts.line({{
+            canvas: document.getElementById('chart-mwh'),
+            datasets: [{{label: 'mWh per output token', points: mwhPoints, color: 'warn', tension: 0.15, pointRadius: 5}}],
+            xLabel: 'parameters (B)', yLabel: 'mWh/tok', yUnit: 'mWh/tok',
+        }});
+    }}
+
+    function escapeHTML(s) {{
+        return String(s).replace(/[&<>"']/g, c => ({{
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }}[c]));
+    }}
+
+    async function runCompare() {{
+        if (!CAN_BATCH) return;
+        stopCooldownTicker();
+        const question = document.getElementById('userQuestion').value.trim();
+        const expected = document.getElementById('userExpected').value.trim();
+        if (!question || !expected) {{
+            document.getElementById('run-status').innerHTML =
+                '<div style="color:var(--err);font-size:0.85rem">Both question and expected answer are required.</div>';
+            return;
+        }}
+        const btn = document.getElementById('runBtn');
+        btn.disabled = true;
+        document.getElementById('run-status').innerHTML =
+            '<div style="color:var(--warn);font-size:0.85rem">Queued &mdash; running across {panel_n} models with active-probe thermal floor wait between each&hellip;</div>';
+        const form = new FormData();
+        form.append('question', question);
+        form.append('expected', expected);
+        try {{
+            const resp = await fetch('/rag/compare-models', {{method:'POST', body:form}});
+            const data = await resp.json();
+            if (data.job_id) {{
+                pollCompare(data.job_id);
+            }} else {{
+                document.getElementById('run-status').innerHTML =
+                    '<div style="color:var(--err)">' + (data.error || 'Error') + '</div>';
+                btn.disabled = false;
+            }}
+        }} catch(e) {{
+            document.getElementById('run-status').innerHTML =
+                '<div style="color:var(--err)">Failed: ' + e + '</div>';
+            btn.disabled = false;
+        }}
+    }}
+
+    async function pollCompare(jobId) {{
+        try {{
+            const resp = await fetch('/rag/job/' + jobId);
+            const data = await resp.json();
+            if (data.status === 'done' && data.result) {{
+                stopCooldownTicker();
+                const r = data.result;
+                const rows = (r.models || []).map(m => ({{
+                    model: m.model_key, params: m.params, ok: !!m.correct,
+                    ans: m.error ? '(error: ' + m.error + ')' : (m.response || '(empty)'),
+                    tok: m.output_tokens || 0,
+                    wall: m.duration_s || 0,
+                    whEst: m.delta_e_wh || 0,
+                    flag: (m.confidence || {{}}).flag || '🟢',
+                }}));
+                document.getElementById('source-paper').textContent = '(live run — corpus retrieval)';
+                renderCompareCard({{
+                    promptText: r.question, expected: r.expected,
+                    rows: rows, tagline: '', sourceLabel: 'Live (P110 measured)',
+                }});
+                document.getElementById('run-status').innerHTML =
+                    '<div style="color:var(--accent);font-size:0.85rem">&#10003; Done. Result rendered above. ' +
+                    '<a href="/results/llm/' + jobId + '/download.json" style="color:var(--accent)">&darr; JSON</a></div>';
+                document.getElementById('runBtn').disabled = false;
+                document.querySelector('.prompt-card').scrollIntoView({{behavior:'smooth', block:'start'}});
+            }} else if (data.status === 'error') {{
+                stopCooldownTicker();
+                document.getElementById('run-status').innerHTML =
+                    '<div style="color:var(--err);font-size:0.85rem">Error: ' + (data.error || 'unknown') + '</div>';
+                document.getElementById('runBtn').disabled = false;
+            }} else {{
+                const stage = data.stage || 'queued';
+                const cdVal = data.cooldown_waited_s;
+                const prev = cooldownState;
+                const cdChanged = !prev || prev.cdWaited !== cdVal;
+                cooldownState = {{
+                    stage: stage,
+                    qpos:  data.queue_position,
+                    mi:    data.current_model_idx,
+                    mt:    data.total_models,
+                    ml:    data.current_model_label,
+                    watts: data.watts,
+                    cdWaited: cdVal,
+                    cdRef:    data.cooldown_reference_w,
+                    cdLocalStart: cdChanged ? Date.now() : (prev ? prev.cdLocalStart : Date.now()),
+                }};
+                // Start/stop the local 4 Hz ticker based on current stage,
+                // so the displayed "waiting Xs" advances smoothly between
+                // the server's 1 s P110 polls and the UI's 2 s job polls.
+                if (stage === 'cooldown') {{
+                    if (!cooldownTicker) cooldownTicker = setInterval(renderRunStatus, 250);
+                }} else if (cooldownTicker) {{
+                    clearInterval(cooldownTicker); cooldownTicker = null;
+                }}
+                renderRunStatus();
+                pollTimer = setTimeout(() => pollCompare(jobId), 2000);
+            }}
+        }} catch(e) {{
+            pollTimer = setTimeout(() => pollCompare(jobId), 4000);
+        }}
+    }}
+
+    renderShowcase(order[0]);
+    </script>
+    {_FOOTER}
+</body>
+</html>""")
+
+
 # --- Results: list, JSON download, CSV download ---
 
 @app.get("/results/{job_type}/list", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
@@ -6059,8 +7621,15 @@ async def settings_page(request: Request):
     {field("upload_size_anonymous_mb", s['upload_size_anonymous_mb'], 10, 1024, "MB",    "Anonymous /video/upload byte cap")}
     {field("upload_size_member_mb",    s['upload_size_member_mb'],    100, 4096, "MB",   "Member /video/upload byte cap")}
 
+    {_models_section_html(s, local)}
+
     {save_block}
     <script>
+    function collectModelToggles(surfaceKey) {{
+        return Array.from(
+            document.querySelectorAll('.model-toggle[data-surface="' + surfaceKey + '"]:checked')
+        ).map(el => el.dataset.key);
+    }}
     async function saveSettings() {{
         const num_fields = ['baseline_polls','video_cooldown_s','llm_rest_s','llm_unload_settle_s',
                             'h264_bitrate_kbps','h265_bitrate_kbps','av1_bitrate_kbps',
@@ -6071,6 +7640,7 @@ async def settings_page(request: Request):
                             'queue_anonymous_cap','queue_member_cap',
                             'upload_size_anonymous_mb','upload_size_member_mb'];
         const str_fields = ['members'];
+        const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};
         for (const f of num_fields) {{
             const el = document.getElementById(f);
@@ -6079,6 +7649,11 @@ async def settings_page(request: Request):
         for (const f of str_fields) {{
             const el = document.getElementById(f);
             if (el) body[f] = el.value;
+        }}
+        for (const f of list_fields) {{
+            if (document.querySelector('.model-toggle[data-surface="' + f + '"]')) {{
+                body[f] = collectModelToggles(f);
+            }}
         }}
         try {{
             const resp = await fetch('/settings', {{
@@ -6193,6 +7768,10 @@ async def settings_save(request: Request, data: dict):
     members_raw = data.pop("members", None)
     member_count = auth.write_members(members_raw) if members_raw is not None else None
     saved = cfg.save(data)
+    # CR-050 — invalidate catalog caches so per-surface enable changes
+    # take effect on the next /llm /rag /image /compare render without
+    # waiting for the 60 s TTL.
+    model_catalog.refresh_all()
     return {"ok": True, "settings": saved, "member_count": member_count}
 
 
@@ -6425,9 +8004,34 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   <div>
     <div class="band-label">Result</div>
     <div id="video-action">
-      <div class="btn-row" id="video-btns" style="display:none">
-        <button class="btn btn-primary" id="btn-run-video" onclick="runDemoVideo()">
-          Run a standard transcode (H.265 CPU vs GPU on Meridian 2&thinsp;min · ~3&thinsp;min)</button>
+      <div id="video-btns" style="display:none">
+        <!-- CR-033 — codec chips select which both-mode runs. Both chips use
+             meridian_120s; preset switches between h265_both and av1_both.
+             The run-button label updates to reflect the choice. -->
+        <div class="btn-row" id="demo-codec-chips" style="margin-bottom:0.6rem;gap:0.4rem">
+          <button type="button" class="demo-chip" id="demo-chip-h265"
+                  data-codec="h265" data-codec-label="H.265"
+                  onclick="selectDemoCodec('h265')"
+                  style="padding:0.35rem 0.7rem;font-size:0.78rem;
+                         background:var(--accent);color:var(--bg);
+                         border:1px solid var(--accent);border-radius:3px;
+                         font-family:inherit;cursor:pointer">
+            H.265 (CPU vs GPU)
+          </button>
+          <button type="button" class="demo-chip" id="demo-chip-av1"
+                  data-codec="av1" data-codec-label="AV1"
+                  onclick="selectDemoCodec('av1')"
+                  style="padding:0.35rem 0.7rem;font-size:0.78rem;
+                         background:transparent;color:var(--text-3);
+                         border:1px solid var(--border-3);border-radius:3px;
+                         font-family:inherit;cursor:pointer">
+            AV1 (CPU vs GPU)
+          </button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="btn-run-video" onclick="runDemoVideo()">
+            Run a standard transcode (H.265 CPU vs GPU on Meridian 2&thinsp;min · ~3&thinsp;min)</button>
+        </div>
       </div>
       <div id="video-status"></div>
     </div>
@@ -6936,6 +8540,27 @@ async function showPrevLLM() {{
 // which broke the guided-tour flow on the public surface. CR-033 captures
 // follow-up: offer a small set of curated demo jobs (e.g. H.265 CPU vs GPU,
 // AV1 CPU vs GPU) for visitors who want to compare codec families.
+// CR-033 — codec chip state for the demo step 1 video block. Default is
+// H.265 (matches the canonical streaming workload + current expectations).
+// AV1 is the alternate; both run on meridian_120s with the same shape.
+let selectedDemoCodec = 'h265';
+
+function selectDemoCodec(codec) {{
+  selectedDemoCodec = codec;
+  document.querySelectorAll('.demo-chip').forEach(el => {{
+    const on = el.dataset.codec === codec;
+    el.style.background = on ? 'var(--accent)' : 'transparent';
+    el.style.color      = on ? 'var(--bg)'     : 'var(--text-3)';
+    el.style.borderColor = on ? 'var(--accent)' : 'var(--border-3)';
+  }});
+  const btn = document.getElementById('btn-run-video');
+  if (btn) {{
+    const label = codec === 'av1' ? 'AV1' : 'H.265';
+    btn.innerHTML = 'Run a standard transcode (' + label
+      + ' CPU vs GPU on Meridian 2&thinsp;min · ~3&thinsp;min)';
+  }}
+}}
+
 async function runDemoVideo() {{
   document.getElementById('video-btns').style.display = 'none';
   try {{
@@ -6953,7 +8578,7 @@ async function runDemoVideo() {{
     }});
     const form = new FormData();
     form.append('source_key', 'meridian_120s');
-    form.append('preset', 'h265_both');
+    form.append('preset', selectedDemoCodec === 'av1' ? 'av1_both' : 'h265_both');
     const resp = await fetch('/video/use-source', {{method:'POST', body:form}});
     const data = await resp.json();
     if (data.job_id) {{
@@ -7038,7 +8663,7 @@ async function runDemoLLM() {{
       extraHtml: '<div class="stream-box" id="stream-box" style="margin-top:0.75rem"></div>',
     }});
     const form = new FormData();
-    form.append('model_key', 'mistral');
+    form.append('model_key', 'qwen3:4b');
     form.append('task_key', 'T3');
     form.append('repeats', '1');
     form.append('warm', 'false');
@@ -7176,7 +8801,7 @@ async function runDemoRAG() {{
       elapsed: 0,
     }});
     const form = new FormData();
-    form.append('model_key', 'mistral');
+    form.append('model_key', 'qwen3:4b');
     // No `question` field — server uses curated.CANONICAL_RAG_QUESTION,
     // which keeps the call Anonymous-OK (CR-001 capability dispatch).
     const resp = await fetch('/rag/run-compare', {{method:'POST', body:form}});
@@ -7498,6 +9123,48 @@ async def image_page(request: Request):
                    f'yours will be added and run automatically.</div>') \
         if queue_depth > 0 else ""
 
+    # CR-050 — build the model selector dynamically from IMAGE_MODELS so
+    # adding a model on /settings is enough; no hardcoded HTML to drift.
+    default_model_key = "sd-turbo" if "sd-turbo" in IMAGE_MODELS else (
+        next(iter(IMAGE_MODELS.keys()), "sd-turbo"))
+    image_model_cards = "".join([
+        f'<div class="preset{" selected" if k == default_model_key else ""}" '
+        f'id="mdl-{k}" data-model="{k}" data-cpu-ok="{"true" if v.get("cpu_ok") else "false"}" '
+        f'onclick="selectModelKey(\'{k}\')" '
+        f'style="border:1px solid {"var(--accent)" if k == default_model_key else "var(--border-3)"};'
+        f'{"background:#00ff9911;" if k == default_model_key else ""}'
+        f'padding:0.75rem 1rem;cursor:pointer;flex:1 1 170px;min-width:160px">'
+        f'<div style="color:{"var(--accent)" if k == default_model_key else "var(--text-2)"};'
+        f'font-size:0.85rem;font-weight:bold">{v.get("label", k)}</div>'
+        f'<div style="color:var(--text-3);font-size:0.72rem">{v.get("params","?")} params · '
+        f'{v.get("size_px",512)}×{v.get("size_px",512)} · {"CPU + GPU" if v.get("cpu_ok") else "GPU only"}</div>'
+        f'</div>'
+        for k, v in IMAGE_MODELS.items()
+    ]) or '<div style="color:var(--text-5);font-size:0.85rem">No image models enabled — see /settings.</div>'
+    # Compare Models button: enabled when at least 2 image models exist.
+    # The runner iterates every enabled model — disable the ones you don't
+    # want by unchecking them in /settings.
+    compare_available = len(IMAGE_MODELS) >= 2
+    compare_label = f"Compare all {len(IMAGE_MODELS)} models (GPU) ⚡"
+    # Pre-compute the stage progression for the compare-models run so JS
+    # can render an accurate progress dot strip for N models without
+    # guessing the stage names.
+    import json as _json2
+    compare_stages_js  = ["m1_baseline", "m1_generating"]
+    compare_labels_extra = {}
+    for i, (k, v) in enumerate(IMAGE_MODELS.items(), start=1):
+        b = f"m{i}_baseline"
+        g = f"m{i}_generating"
+        if i > 1:
+            compare_stages_js += ["cooldown"]
+        if i > 1:
+            compare_stages_js += [b, g]
+        compare_labels_extra[b] = f"{v.get('label', k)} — baseline ({{BASELINE_S}}s)"
+        compare_labels_extra[g] = f"{v.get('label', k)} — generating (GPU batch)"
+    compare_stages_js += ["done"]
+    compare_stages_inject = _json2.dumps(compare_stages_js)
+    compare_labels_inject = _json2.dumps(compare_labels_extra)
+
     # CR-026: scope to own-jobs for non-Lab. Lab passes None → unfiltered.
     prev_runs = list_results("image", limit=5,
                              visitor_key=queue_control.visitor_key(request))
@@ -7551,11 +9218,13 @@ async def image_page(request: Request):
                 </div>"""
             elif mode == "compare_models":
                 def _mdl_html(s):
+                    # Per-model run dict is flattened on save: the energy/generation
+                    # fields live as siblings of the model_label, not nested.
                     img = (f'<img src="data:image/png;base64,{s["b64_png"]}" '
                            f'style="width:64px;height:64px;object-fit:cover;margin-right:0.5rem">'
                            if s.get("b64_png") else "")
-                    conf = s.get("confidence", {})
-                    lbl = s.get("model_label", "?")
+                    conf = s.get("confidence", {}) or {}
+                    lbl = s.get("model_label") or s.get("model_key", "?")
                     px = s.get("size_px", "?")
                     return (f'<div style="display:flex;align-items:center;margin-top:0.4rem">'
                             f'{img}<span style="color:var(--text-3);font-size:0.78rem">'
@@ -7563,10 +9232,21 @@ async def image_page(request: Request):
                             f'{conf.get("flag","")} {conf.get("label","")} &nbsp;·&nbsp; '
                             f'{s.get("wh_per_image","?")} Wh/img &nbsp;·&nbsp; {s.get("delta_t_s","?")}s'
                             f'</span></div>')
+                # New schema: r["models"] is a list of per-model run dicts.
+                # Legacy schema (pre-2026-05-27): r["small"] + r["large"] only.
+                model_list = r.get("models") or []
+                if model_list:
+                    rows_html = "".join(_mdl_html({**m.get("generation", {}),
+                                                    **m.get("energy", {}),
+                                                    "confidence": (m.get("energy") or {}).get("confidence"),
+                                                    "model_key": m.get("model_key")}) for m in model_list)
+                    n_label = f"Compare {len(model_list)} models (GPU)"
+                else:
+                    rows_html = _mdl_html(r.get("small", {})) + _mdl_html(r.get("large", {}))
+                    n_label = "Compare models (GPU)"
                 prev_html += f"""<div class="prev-item" style="flex-direction:column;align-items:flex-start">
-                  <span class="prev-meta">{date_str} &nbsp;·&nbsp; Compare models (GPU)</span>
-                  {_mdl_html(r.get("small", {}))}
-                  {_mdl_html(r.get("large", {}))}
+                  <span class="prev-meta">{date_str} &nbsp;·&nbsp; {n_label}</span>
+                  {rows_html}
                   <div class="prev-prompt" style="color:var(--text-3);font-size:0.75rem;margin-top:0.3rem">{fp[:80]}</div>
                   <div style="margin-top:0.3rem">{downloads}</div>
                   {expand_div}
@@ -7671,18 +9351,8 @@ async def image_page(request: Request):
     </details>
 
     <label style="color:var(--text-3);font-size:0.8rem;display:block;margin-bottom:0.4rem">Model</label>
-    <div id="model-row" style="display:flex;gap:0.75rem;margin-bottom:1.2rem">
-      <div class="preset selected" id="mdl-sd-turbo" onclick="selectModelKey('sd-turbo')"
-           style="border:1px solid var(--accent);background:#00ff9911;padding:0.75rem 1rem;
-                  cursor:pointer;flex:1">
-        <div style="color:var(--accent);font-size:0.85rem;font-weight:bold">SD-Turbo</div>
-        <div style="color:var(--text-3);font-size:0.72rem">~1B params · 512×512 · CPU + GPU</div>
-      </div>
-      <div class="preset" id="mdl-sdxl-turbo" onclick="selectModelKey('sdxl-turbo')"
-           style="border:1px solid var(--border-3);padding:0.75rem 1rem;cursor:pointer;flex:1">
-        <div style="color:var(--text-2);font-size:0.85rem;font-weight:bold">SDXL-Turbo</div>
-        <div style="color:var(--text-3);font-size:0.72rem">~3.5B params · 512×512 · GPU only</div>
-      </div>
+    <div id="model-row" style="display:flex;gap:0.75rem;margin-bottom:1.2rem;flex-wrap:wrap">
+      {image_model_cards}
     </div>
 
     <label style="color:var(--text-3);font-size:0.8rem;display:block;margin-bottom:0.4rem">Prompt</label>
@@ -7710,11 +9380,14 @@ async def image_page(request: Request):
 
     <div style="display:flex;gap:0.75rem;flex-wrap:wrap">
       <button id="run-btn" onclick="startMeasurement()">Generate &amp; Measure</button>
-      <button id="compare-btn" class="{lk_batch_class}" onclick="startCompareModels()"{dis_batch}
-              style="background:var(--bg);border:1px solid var(--accent);color:var(--accent);
-                     padding:0.75rem 1.5rem;font-family:monospace;font-size:0.95rem;cursor:pointer">
-        Compare Models (GPU) ⚡
-      </button>
+      {("<button id='compare-btn' class='" + lk_batch_class + "' onclick='startCompareModels()'" + dis_batch +
+        " style='background:var(--bg);border:1px solid var(--accent);color:var(--accent);"
+        "padding:0.75rem 1.5rem;font-family:monospace;font-size:0.95rem;cursor:pointer'>" +
+        compare_label + "</button>") if compare_available else
+       ("<button disabled title='Compare requires at least 2 image models enabled in /settings' "
+        "style='background:var(--border);color:var(--text-3);border:1px solid var(--border-3);"
+        "padding:0.75rem 1.5rem;font-family:monospace;font-size:0.95rem;cursor:not-allowed'>"
+        "Compare Models — needs ≥ 2 image models enabled</button>")}
     </div>
     <div id="status"></div>
     {prev_html}
@@ -7724,7 +9397,7 @@ async def image_page(request: Request):
 const CPU_STAGES = ['baseline','generating','done'];
 const GPU_STAGES = ['baseline','generating','done'];
 const BOTH_STAGES = ['cpu_baseline','cpu_generating','cooldown','gpu_baseline','gpu_generating','done'];
-const COMPARE_STAGES = ['small_baseline','small_generating','cooldown','large_baseline','large_generating','done'];
+const COMPARE_STAGES = {compare_stages_inject};
 const STAGE_LABELS = {{
   'baseline': 'Measuring baseline power ({{BASELINE_S}}s)',
   'generating': 'Generating image',
@@ -7733,12 +9406,11 @@ const STAGE_LABELS = {{
   'cooldown': 'Cooldown between passes ({{COOLDOWN_S}}s)',
   'gpu_baseline': 'GPU — measuring baseline ({{BASELINE_S}}s)',
   'gpu_generating': 'GPU — generating images (batch)',
-  'small_baseline': 'SD-Turbo — measuring baseline ({{BASELINE_S}}s)',
-  'small_generating': 'SD-Turbo — generating (GPU batch)',
-  'large_baseline': 'SDXL-Turbo — measuring baseline ({{BASELINE_S}}s)',
-  'large_generating': 'SDXL-Turbo — generating (GPU batch)',
   'done': 'Complete',
 }};
+// CR-050 follow-up — N-way compare-models stage labels injected from the server
+// (one m<i>_baseline / m<i>_generating pair per enabled image model).
+Object.assign(STAGE_LABELS, {compare_labels_inject});
 // CR-001 part C2c — capability flags from server.
 // Anonymous: textarea is locked at the canonical prompt; JS omits
 // `prompt=` from the body so /image/start uses the curated default
@@ -7748,35 +9420,30 @@ const CAN_BATCH_COMPARE = {('true' if can_batch_compare else 'false')};
 
 let pollTimer = null;
 let selectedDevice = 'cpu';
-let selectedModelKey = 'sd-turbo';
+let selectedModelKey = '{default_model_key}';
 let imgStartTime = null;
 
+// CR-050 — generic over N image models. Cards carry data-model and
+// data-cpu-ok; CPU + Both radios enable based on the active model's
+// cpu_ok metadata. GPU-only models force backend=gpu.
 function selectModelKey(k) {{
   selectedModelKey = k;
-  const sd  = document.getElementById('mdl-sd-turbo');
-  const sdxl = document.getElementById('mdl-sdxl-turbo');
-  if (k === 'sd-turbo') {{
-    sd.style.borderColor = '#00ff99';
-    sd.style.background = '#00ff9911';
-    sd.children[0].style.color = '#00ff99';
-    sdxl.style.borderColor = '#333';
-    sdxl.style.background = 'transparent';
-    sdxl.children[0].style.color = '#aaa';
-    // enable CPU / Both radios
-    document.querySelector('input[name="img-device"][value="cpu"]').disabled = false;
-    document.querySelector('input[name="img-device"][value="both"]').disabled = false;
+  let cpuOk = false;
+  document.querySelectorAll('#model-row .preset').forEach(card => {{
+    const active = card.dataset.model === k;
+    card.style.borderColor = active ? '#00ff99' : '#333';
+    card.style.background = active ? '#00ff9911' : 'transparent';
+    if (card.children[0]) card.children[0].style.color = active ? '#00ff99' : '#aaa';
+    if (active) cpuOk = card.dataset.cpuOk === 'true';
+  }});
+  const cpuIn  = document.querySelector('input[name="img-device"][value="cpu"]');
+  const bothIn = document.querySelector('input[name="img-device"][value="both"]');
+  if (cpuOk) {{
+    cpuIn.disabled = false;
+    bothIn.disabled = false;
     document.getElementById('lbl-cpu').style.opacity = '1';
     document.getElementById('lbl-both').style.opacity = '1';
   }} else {{
-    sdxl.style.borderColor = '#00ff99';
-    sdxl.style.background = '#00ff9911';
-    sdxl.children[0].style.color = '#00ff99';
-    sd.style.borderColor = '#333';
-    sd.style.background = 'transparent';
-    sd.children[0].style.color = '#aaa';
-    // SDXL-Turbo is GPU only — disable CPU + Both, force GPU
-    const cpuIn = document.querySelector('input[name="img-device"][value="cpu"]');
-    const bothIn = document.querySelector('input[name="img-device"][value="both"]');
     cpuIn.disabled = true;
     bothIn.disabled = true;
     document.getElementById('lbl-cpu').style.opacity = '0.35';
@@ -7859,7 +9526,7 @@ async function startCompareModels() {{
   const jobId = data.job_id;
 
   imgStartTime = Date.now();
-  renderProgress('small_baseline', null, null);
+  renderProgress('m1_baseline', null, null);
   pollTimer = setInterval(() => pollJob(jobId), 1500);
 }}
 
