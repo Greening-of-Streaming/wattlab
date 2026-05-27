@@ -1489,3 +1489,248 @@ To add a new LLM: `ollama pull <name>` on the server, reload `/settings`, tick t
 Models section sits at the bottom of `/settings` next to Tier limits, same vertical layout as the rest of the page. Checkbox rows are compact (single line per model: tick + label + meta + monospace key). No decorative animation; muted secondary colour for auto-discovered metadata.
 
 ---
+
+## CR-054 · Findings catalog — data model + one worked example
+
+**Status:** **shipped behind `findings_enabled` flag 2026-05-27 (S32 evening).** Code on `main`; route `/findings/av1-hw-sw-vmaf-tradeoff` reachable by direct URL. **One discreet beta link added on `/video`** (owner approval same session, 2026-05-27) — `[beta] Some initial findings: AV1 hardware vs software — the energy↔quality tradeoff →`, gated on the same `findings_enabled` flag. Other surfaces (`/llm`, `/image`, `/rag`, `/`) still nav-silent. Awaiting lab-colleague review before broader nav promotion / CR-055 catalog. **Tests:** 315 → 324 (+9). **Rollback:** set `findings_enabled: false` in `settings.json` — one bool flip removes both the route AND the `/video` beta link.
+**Triggered by:** Owner observation that the vast majority of visitors browse OWL without ever running a measurement, combined with the S32 architecture audit which established that the existing live-run renderers (`wlRenderVideoCard` / `wlRenderLLMCard` / `wlRenderImageCard` / `wlRenderRAGCard`) are already JSON-pure and shared between live and past results.
+
+**Lab look & feel constraint:** the finding page is a *publication*, not a marketing landing — same dark palette, same monospace numerics, same density as a fresh result card. Citation block is one small monospace box. No hero imagery, no decorative animation. The embedded measurement uses the unmodified existing renderer.
+
+### Problem
+
+OWL produces credible measurements but exposes them as workbench surfaces (run-a-thing pages) rather than citable artefacts. Key Findings live in CLAUDE.md prose and as scattered showcase rows on bench pages; the audience (CTOs / operators / policymakers) can't deep-link to a finding, can't quote it stably in a board deck or RFP, and can't verify the underlying measurement at the same fidelity as a live run.
+
+The S32 audit established that the rendering substrate is already capable: the four live-run renderer functions are JSON-pure, already used for both live and past results via the `expand-row` UI on `/results/{type}/list`, and identical-shape input (`{result, isPrev, savedAt}`) produces identical-fidelity output. The gap is curation + presentation, not rendering.
+
+Strategic framing (S32 thread): an Anonymous visitor reading a finding card and quoting its number in a Slack thread is *exactly* what GoS wants from OWL — the credibility flywheel + the member-recruitment loss-leader. Running a job is bonus, not core. Today the UX inverts this: workbench front and centre, findings buried.
+
+### Agreed direction
+
+Ship the smallest end-to-end slice that proves the pattern: **one finding, fully rendered at live-run fidelity, with a stable URL and a copy-paste citation block.**
+
+#### Scope (in)
+
+1. **Finding data model** — markdown-with-frontmatter at `docs/findings/<slug>.md`. Frontmatter holds structured fields; body holds analysis prose. Chosen over pure YAML because `docs/` already uses markdown and the analysis prose has a place to live next to the structured data.
+2. **Loader module** — `wattlab_service/findings.py` (flat, alongside `sources.py` / `curated.py`): `load(slug) -> Finding`, `list_all() -> list[Finding]`, `validate(finding)`. In-memory cache after first load.
+3. **One generic page renderer** — `GET /findings/<slug>`: loads a finding, renders one common page layout. **Same template for every finding, forever** — adding a finding never adds Python.
+4. **One worked example** — `docs/findings/av1-hw-sw-vmaf-tradeoff.md`, backed by result `video/2026-05-22_e18a9d57.json` (the S28 CR-044 finding ⭐ already in CLAUDE.md).
+5. **Citation block** — copy-paste citation rendered on every finding page; contains stable URL + `first_measured` + `last_refined` dates. One small monospace box, lab-look-preserving.
+6. **Source-measurement embed** — the finding page calls the existing renderer (`wlRenderVideoCard({result, isPrev: true, savedAt})`) against the linked result JSON. Visitor sees the underlying measurement at live-run fidelity, no fork.
+
+#### Data model (frontmatter contract)
+
+```yaml
+---
+slug: av1-hw-sw-vmaf-tradeoff
+version: 1
+first_measured: 2026-05-22
+last_refined: 2026-05-22
+headline: "AV1 hardware uses ~55% less energy than software at 1500 kbps, but loses ~2 VMAF and produces ~40% larger files"
+claim_short: "1500 kbps ABR — SVT-AV1: 0.71 Wh / VMAF 92.74 / 14.5 MB · av1_vaapi: 0.32 Wh / VMAF 90.79 / 20.3 MB"
+confidence: green                       # green | yellow | red
+scope: "Device layer only (GoS1). Network, CDN, and CPE excluded."
+methodology_ref: docs/wattlab_traffic_light_confidence.md
+source_result_ids:
+  - video/2026-05-22_e18a9d57
+related_findings: []
+supersedes: null
+tags: [video, av1, vmaf, hw-vs-sw, cr-044]
+caveats:
+  - "Cross-codec VMAF is NOT apples-to-apples (different per-codec bitrate targets); only the within-AV1 CPU-vs-GPU comparison at 1500 kbps is a fair quality read."
+  - "Tiny clips (≤~4 s) are unreliable for this — flag 🔴."
+---
+
+# Free-form analysis prose below the frontmatter…
+```
+
+#### Maintainability invariants (this CR's contract for future work)
+
+These hold for every future findings-related CR. The owner's explicit concern (2026-05-27): *don't let UI churn weaken the codebase.* These are the locks.
+
+1. **One renderer for all finding pages.** A single `_render_finding_page(finding)`. Never per-finding HTML. New finding = new `.md` file, never new Python.
+2. **One loader.** `findings.load(slug)` is the only path. Cached in-memory. No ad-hoc parsing elsewhere.
+3. **Validate-on-load with clear errors.** Schema mismatch → loud failure naming file + offending field. Broken `source_result_ids` → same.
+4. **`source_result_ids` always exist on disk.** Enforced by test; a finding with a dangling reference cannot ship.
+5. **Findings are editorial markdown, not code.** Adding / refining a finding requires zero Python changes. Editors don't touch code; code reviewers don't gate editorial content.
+6. **Reuse existing measurement renderers verbatim.** The finding page embeds `wlRenderVideoCard` / `wlRenderLLMCard` / etc. unmodified. No fork, no parallel rendering path.
+7. **No new persistence layer.** Findings live in version-controlled markdown alongside `docs/`. Git is the audit log.
+8. **No new JS framework, build step, or template engine.** Server-side render + existing JS renderer invocation, same pattern as the rest of OWL.
+9. **`supersedes` is the versioning primitive.** Refinement = new finding file with new slug + `supersedes: <old-slug>`. Old finding stays citable, marked superseded on render. No URL trickery in v1; defer the `@date` pin URL form.
+10. **Page layout is locked in this CR.** Future CRs can extend the data model with optional fields, but the page layout (sections, order, citation block placement) does not churn per-finding. Layout redesign = one CR touching one renderer, affecting all findings consistently.
+
+#### Test plan (~+5 tests, 307 → 312)
+
+- `test_findings_schema.py` — parses the AV1 example, asserts required fields, `confidence ∈ {green, yellow, red}`, dates parse.
+- `test_findings_references.py` — for every `docs/findings/*.md`, every `source_result_id` resolves to a file in `results/`.
+- `test_findings_route.py` — `GET /findings/av1-hw-sw-vmaf-tradeoff` → 200, body contains headline + claim_short + citation block + scope + embedded measurement card.
+- `test_findings_404.py` — `GET /findings/<nonexistent>` → 404.
+- `test_findings_citation.py` — citation block contains stable URL, `first_measured`, `last_refined` — well-formed for copy-paste into a board deck.
+
+#### Why this won't weaken the codebase
+
+- **Net code:** small — ~150 lines for loader + renderer + route, ~80 lines for tests. The bulk of future "catalog growth" is editorial markdown, not Python.
+- **No new patterns introduced.** Uses existing FastAPI routing, existing string templating, existing shared JS renderers, existing flat-file storage convention.
+- **Single point of change.** Layout in one template; schema in one validator. UI churn is bounded to those two files, not spread across handlers.
+- **Hardens editorial-vs-code separation** — strengthens, doesn't weaken, separation of concerns.
+- **Defers everything that would weaken it.** Home repositioning, catalog UI, versioning URL form, guided tour rewire — each is a separate CR with its own scope review.
+
+#### Out of scope (explicitly deferred — each is a follow-up CR)
+
+- `/findings` index/catalog page → **CR-055**
+- Bulk import of existing Key Findings from CLAUDE.md → **CR-056** (editorial, after pattern proven by CR-054)
+- Versioning URL pin (`/findings/<slug>@<date>`) → defer; v1 uses `supersedes` which is enough for honest revisioning
+- Home page repositioning to findings-first → **CR-057** (UX design needed; depends on CR-055)
+- Guided tour terminus rewire (long-deferred — see CLAUDE.md "Guided Tour Findings step") → **CR-058** (depends on CR-055)
+- Social share buttons / OG meta tags → **CR-059**
+- "Verify the bench" sanity-check run (Anonymous-tier trust gesture from the S32 thread) → separate CR (not findings-coupled)
+- Member-tier "methodology deep-dive" expanders → separate
+
+### Ship criteria
+
+- Tests pass (307 → 312)
+- AV1 finding page renders with the embedded video result card identical to what a fresh `/video/all-codecs` run on Meridian-120s produces
+- Citation block copy-pastes cleanly into Slack / a Google Doc / a board slide
+- One internal review confirms the page reads as a credible publication, not as a UI tab
+
+### Rollback path (lab-colleague-disapproval insurance)
+
+The whole feature lands behind a single setting; rolling back is one boolean flip, not a code revert.
+
+1. **Feature flag.** `settings.json` gains `findings_enabled: true` (default). The `GET /findings/<slug>` route checks the flag at request time; when `false`, returns 404 (route is undiscoverable). One-line flip via `/settings` UI or direct JSON edit.
+2. **No nav promotion in this CR.** `/findings/<slug>` is only reachable by direct URL. No links from `/`, `/video`, `/llm`, `/image`, `/rag`, `/methodology`, or any nav. Lab colleagues can preview by typing the URL; visitors who don't know it exists won't stumble onto it.
+3. **Single revertable commit.** All code lands in one logical commit (`findings.py` + route + template + tests). `git revert <sha>` removes the code cleanly. Editorial markdown under `docs/findings/` is safe to keep even after a code revert — they're just docs.
+4. **No data-model lock-in.** No DB changes, no result-JSON schema changes, no changes to existing renderer signatures. Findings live in their own corner of the tree.
+5. **Decision point:** lab review at the end of this CR. If approved, CR-055 (catalog) follows with nav promotion. If rejected, flip flag to `false`, file `git revert`, and the bench is exactly where it was at the start of the session.
+
+### Priority: ship soon — small effort, unblocks CR-055 → CR-058 (the strategic findings-first repositioning chain).
+
+---
+
+## CR-055 · `/findings` catalog index page
+
+**Status:** **shipped behind same `findings_enabled` flag 2026-05-27 (S32 evening).** Code on `main`; route `/findings` lists every finding under `docs/findings/`. **The `/video` beta link from CR-054 was re-pointed at the catalog** (was the specific AV1 finding URL) — catalog is the right discovery surface. **Tests:** 326 → 331 (+5). Same rollback: `findings_enabled: false` removes catalog + beta link + falls /demo step back.
+**Triggered by:** Owner direction 2026-05-27: *"I think we need a catalogue of findings (even if there's only one there for now)"* — once the data model + worked example exist (CR-054), the catalog index is the natural next step and turns the publishing surface from "deep links only" into a browsable layer.
+
+**Lab look & feel constraint:** dense list of rows, one per finding. Each row: confidence dot · headline · `v<n> · <date>` on the right · `claim_short` snippet underneath. Dark theme, monospace where it earns. No filtering UI (premature with 1 finding; revisit at CR-056 bulk import). Empty-catalog state is honest copy ("No findings published yet"), no scaffolding for a state that may never arrive.
+
+### Problem
+
+CR-054 shipped one finding page (`/findings/<slug>`) but visitors could only land on it via a direct URL. A catalog is the natural index that lets the credibility surface scale beyond one entry — and is the prerequisite for the `/video` beta link, the `/demo` Findings step (CR-058), and any future home-page repositioning (CR-057).
+
+### Agreed direction
+
+`GET /findings` route, same `findings_enabled` flag as `/findings/<slug>`. Renders `findings.list_all()` sorted by `last_refined` desc. Shared row component (`_findings_catalog_rows_html`) so the catalog page and the /demo Findings step preview never diverge on layout. CSS lives in `_FINDINGS_CATALOG_CSS` — a single source of truth for finding-row styling.
+
+The `/video` beta link from CR-054 was re-pointed at `/findings` instead of `/findings/av1-hw-sw-vmaf-tradeoff` so the catalog is the entry point.
+
+### Maintainability invariants (extends CR-054's contract)
+
+11. **One catalog renderer.** `_findings_catalog_rows_html` renders rows; both the `/findings` page and the /demo step use it. New layout decisions = one place to change.
+12. **No new persistence or schema for the catalog.** It's a pure view over `findings.list_all()`.
+13. **Empty-catalog state is first-class.** The "no findings yet" copy is part of the renderer, not scaffolding-shaped placeholder.
+
+### Ship criteria — met
+
+- Tests pass (326 → 331)
+- `/findings` lists the AV1 finding row, links to `/findings/av1-hw-sw-vmaf-tradeoff`
+- `/video` beta link points at `/findings`
+- `findings_enabled: false` → 404 + link disappears (test pinned)
+
+### Priority: shipped same session as CR-054 (small lift, tightly coupled).
+
+---
+
+## CR-056 · Bulk import of CLAUDE.md Key Findings into the catalog
+
+**Status:** **shipped 2026-05-27 (S32 evening).** Five new findings under `docs/findings/`; catalog grows from 1 → 6 entries. Editorial markdown only — zero Python changes per the CR-054 invariant. **Tests:** 331 → 334 (+3). Same rollback as CR-054 (`findings_enabled: false` removes the whole feature; the markdown files stay safe).
+**Triggered by:** Owner direction 2026-05-27: *"Go for CR-056. Keep it factual, avoid superlatives, flag uncertainty, ask for confirmations on anything unclear."*
+
+**Lab look & feel constraint:** the new findings sit in the same shared row renderer + page template from CR-054 / CR-055. No new layout, no new components.
+
+### Problem
+
+After CR-054 + CR-055 the catalog renders one finding (AV1 hw-vs-sw VMAF) and the index page lists it. The catalog as a discovery surface starts to earn its keep only once it has more than one entry — and CLAUDE.md already documents a handful of measured findings that have stored result files behind them.
+
+### Agreed direction
+
+Import five additional findings as editorial markdown files. Each cites a real on-disk `source_result_id`; numbers in each finding are taken verbatim from the stored result file rather than from CLAUDE.md prose (which in some cases diverges by a few percent). Owner-approved confirmations (2026-05-27) for the design choices below.
+
+### Imported findings
+
+| Slug | Source result(s) | Confidence | Notes |
+|---|---|---|---|
+| `abr-all-codecs-meridian-120s` | `video/e18a9d57` | green | n=1 on full-length Meridian-120s. CLAUDE.md's "n=3" claim isn't supported by the current on-disk dataset — flagged in the finding's caveats. A future n=3 re-measurement would create v2 via `supersedes`. |
+| `sd-turbo-cpu-image-first-run` | `image/c40acdc1` | green | Disk says 0.2099 Wh (CLAUDE.md prose cited 0.2063) — finding uses disk number, caveat notes the discrepancy. |
+| `llm-cold-inference-mwh-per-token` | `llm/2d79c99c`, `llm/163c6442` | **yellow** | Pre-S30 panel. Mistral 7B retired in the S30 ladder refresh. Confidence downgraded because TinyLlama returned 🟡 (n=2 polls, near noise floor). |
+| `rag-faithfulness-rem-question` | `llm/5efb2079` | **yellow** | Pre-S30 panel. Gemma 3 12B retired in the S30 ladder refresh. n=1 — single observed hallucination, not a statistical claim. |
+| `input-master-sensitivity` | 6 result_ids (`video/2328a8ab`, `2c112a4d`, `97ec1c07`, `883b15b0`, `dc0679b2`, `683d3a30`) | green | Summary of the existing `docs/input_sensitivity_findings.md` analysis, restructured as a finding. Original doc kept as the source for the long-form bench log. |
+
+### Explicitly NOT imported
+
+Two CLAUDE.md findings do not fit the CR-054 schema (which requires `source_result_ids` to be a non-empty list pointing at stored measurement files):
+
+- **French grid evolution (S18, Jan 2020 → Jun 2024).** Derived from `carbon.HISTORICAL_INTENSITY` static data, not a measurement run. Belongs on `/methodology`, not `/findings`. Owner confirmed (2026-05-27) the schema stays strict.
+- **Methodology insight: lifecycle vs combustion CO₂ (CR-016).** Methodology change, not a measurement. Same disposition.
+
+### Maintainability invariants (extends CR-054 + CR-055)
+
+17. **Findings cite disk numbers verbatim.** If a finding's frontmatter or analysis prose disagrees with the stored result file it cites, the result file wins. Discrepancies with prose elsewhere (e.g. CLAUDE.md) are documented in the finding's caveats, not by editing the finding's numbers.
+18. **Retired-model findings carry a `pre-s30-panel` tag and an explicit caveat.** Future ladder refreshes follow the same pattern: tag with the panel name + add a caveat. A re-measurement creates a v2 via `supersedes`.
+19. **Findings without a single measurement source are excluded.** Methodology essays, derived/static-data analyses, and aggregate stories live on `/methodology`. The catalog stays strictly measurement-anchored.
+
+### Ship criteria — met
+
+- All 5 new finding files parse, validate, and resolve their source_result_ids (`test_cr056_imported_findings_all_loadable`)
+- All 5 appear in the catalog listing (`test_cr056_imported_findings_all_in_catalog`)
+- SD-Turbo image finding renders with `wlRenderImageCard` (Q5 sanity check, `test_cr056_image_finding_renders_with_image_dispatcher`)
+- 331 → 334 tests, full suite green
+
+### Open follow-ups (not in this CR)
+
+- ABR all-codecs canonical at n=3 — currently n=1 on Meridian-120s. A future probe run produces v2.
+- LLM cold inference on the post-S30 panel (`qwen3:1.7b`, `qwen3:4b`, `mistral-nemo:12b`, `phi4`, `gpt-oss:20b`) — would produce v2 of the cold-inference finding.
+- RAG faithfulness on the post-S30 panel — same.
+- Image GPU vs CPU comparison finding — there's a `both`-mode result on disk but no finding yet; could be CR-056b or later.
+
+### Priority: shipped same session as CR-054 / CR-055 / CR-058. Editorial work, no UI flow change beyond the catalog growing from 1 → 6 rows.
+
+---
+
+## CR-058 · `/demo` Findings step rewire — catalog preview replaces session echo
+
+**Status:** **shipped behind same `findings_enabled` flag 2026-05-27 (S32 evening).** Code on `main`; the /demo Findings step (step 7) shows a curated catalog preview + "See all findings" link instead of the session-echo. **Rollback identical:** flip flag → original `buildSummary()` session echo restored, capability matrix below stays put. **Tests:** part of the 326 → 331 (+5) bundle.
+**Triggered by:** Owner direction 2026-05-27: *"maybe replace the guided tour's findings with the new findings page"* — finally addresses the long-standing CLAUDE.md note *"Guided Tour Findings step — currently echoes session run; redesign to aggregate across all stored results to surface body-of-evidence learnings"*.
+
+**Lab look & feel constraint:** changes only the top half of step 7 (was: `<div id="summary-content">` populated by JS `buildSummary()`). The "Want to dig deeper?" capability matrix (Public / Member / Lab) from CR-027 stays exactly as-is — it's the Member-recruitment lever and not a findings concern.
+
+### Problem
+
+The `/demo` guided tour's last step is titled "Findings" but currently shows two things stacked:
+1. A JS-populated session echo (`buildSummary()`) that lists what the visitor ran during the tour — *not* findings in OWL's measurement-evidence sense.
+2. A capability matrix (Public / Member / Lab, from CR-027) — valuable but unrelated to findings.
+
+The step's name + behaviour have drifted. With the catalog now existing (CR-055), the step can deliver on its name: surface the body of evidence rather than echo the session.
+
+### Agreed direction
+
+Replace the inner content of `<div id="summary-content">` with a server-rendered catalog preview (top 3 findings via the shared `_findings_catalog_rows_html`, plus a "See all findings →" link to `/findings`). Set `window.OWL_FINDINGS_CATALOG_ENABLED = true` in the same injection. `buildSummary()` JS now early-returns when that global is set — so flipping `findings_enabled: false` removes the server-side injection AND restores the original session-echo behaviour.
+
+The capability matrix below the divider stays untouched. (It's a separate, working artefact — CR-027 closed, Member recruitment is its job, not findings.)
+
+### Maintainability invariants
+
+14. **Reuse the catalog row component.** The /demo preview uses the same `_findings_catalog_rows_html` as the catalog page. Layout drift between the two surfaces is impossible by construction.
+15. **Original behaviour is recoverable via the flag.** `buildSummary()` JS stays in place; its early-return is gated on `window.OWL_FINDINGS_CATALOG_ENABLED`. Flag false → JS runs → session echo restored. (Test pinned.)
+16. **The capability matrix is not touched.** Future findings-related changes must not modify the "Want to dig deeper?" matrix; that's CR-027 territory.
+
+### Ship criteria — met
+
+- Tests pass (326 → 331 with CR-055)
+- /demo step 7 with flag=true shows: "From OWL's body of evidence — citable findings…" framing, the AV1 finding row, "See all findings →" link to `/findings`
+- /demo step 7 with flag=false reverts to "Loading results…" placeholder + buildSummary() session echo (test pinned)
+- Capability matrix below unchanged in both states
+
+### Priority: shipped same commit as CR-055. Tightly coupled to the catalog (step 7 needs the catalog to link to).
+
+---
