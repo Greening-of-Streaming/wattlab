@@ -1,6 +1,6 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current.
-# Last updated: 2026-05-27 (Session 32 — CR-051 RAG corpus self-service: Member upload + delete, corpus_manifest.py with audit log + ownership matrix, per-Member quotas, hardened upload path (size cap, %PDF magic, sanitisation, traversal guards). 101 existing PDFs migrated as origin=Lab. New RAG_CORPUS_DELETE_OWN capability. Active 15 CRs, 307 tests.)
+# Last updated: 2026-05-27 (Session 32 close-out — findings-chain CR-054/055/056/058 + CR-012 history-journal migrated to closed; CR-057 home-page repositioning drafted (awaiting lab UX review); CR-012 shipped (variance + thermal-probe drift journals: results/{variance,diagnostics}/history.jsonl via new persist.append_history_line, append-only, ts + owl_version stamped). Active 15 CRs, 339 tests.)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - JOURNAL.md — session-by-session change log (full detail; not auto-loaded)
