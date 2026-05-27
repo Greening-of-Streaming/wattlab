@@ -2813,9 +2813,9 @@ async def video_page(request: Request):
             'border:1px solid var(--border-3);padding:0.1rem 0.35rem;'
             'text-transform:uppercase;margin-right:0.4rem">beta</span>'
             'Some initial findings: '
-            '<a href="/findings/av1-hw-sw-vmaf-tradeoff" '
+            '<a href="/findings" '
             'style="color:var(--accent);text-decoration:none">'
-            'AV1 hardware vs software — the energy↔quality tradeoff →</a>'
+            'browse the OWL findings catalog →</a>'
             '</div>'
         )
 
@@ -6072,6 +6072,133 @@ document.querySelectorAll('.finding-embed').forEach(async function(el){
     )
 
 
+def _findings_catalog_rows_html(items, link_class: str = "") -> str:
+    """Render a list of findings as catalog rows. Shared between the
+    `/findings` index page and the /demo Findings step preview, so the
+    row layout never diverges. Each row: confidence dot + headline link
+    + version/date on the right + claim_short snippet underneath.
+
+    `items` is a list of Finding objects (use findings_mod.list_all() or
+    a sliced preview). Empty list → returns an empty string so callers
+    can compose their own empty-state copy.
+    """
+    if not items:
+        return ""
+    e = html_lib.escape
+    rows = []
+    for f in items:
+        dot = _CONFIDENCE_DOT.get(f.confidence, "·")
+        date_label = e(f.last_refined)
+        if f.last_refined != f.first_measured:
+            date_label = f"{e(f.last_refined)} <span style=\"color:var(--text-5)\">(first {e(f.first_measured)})</span>"
+        rows.append(
+            f'<a class="finding-row {link_class}" href="/findings/{e(f.slug)}">'
+              f'<div class="finding-row-top">'
+                f'<span class="finding-row-dot">{dot}</span>'
+                f'<span class="finding-row-headline">{e(f.headline)}</span>'
+                f'<span class="finding-row-date">v{f.version} · {date_label}</span>'
+              f'</div>'
+              f'<div class="finding-row-claim">{e(f.claim_short)}</div>'
+            f'</a>'
+        )
+    return "\n".join(rows)
+
+
+# Shared CSS for finding-row presentation; used by `/findings` and the
+# /demo Findings step. Loading it twice is harmless (same selectors).
+_FINDINGS_CATALOG_CSS = (
+    '<style>'
+      '.finding-row{display:block;text-decoration:none;color:inherit;'
+        'border:1px solid var(--border);border-left:3px solid var(--border-3);'
+        'padding:0.7rem 0.85rem;margin:0.5rem 0;background:var(--panel-2);'
+        'transition:border-color 0.15s,background 0.15s}'
+      '.finding-row:hover{border-color:var(--accent-soft);'
+        'border-left-color:var(--accent);background:var(--panel)}'
+      '.finding-row-top{display:flex;align-items:baseline;gap:0.5rem;'
+        'flex-wrap:wrap}'
+      '.finding-row-dot{flex:0 0 auto;font-size:0.85rem}'
+      '.finding-row-headline{flex:1;color:var(--text);font-size:0.92rem;'
+        'line-height:1.45;font-weight:500;min-width:200px}'
+      '.finding-row-date{flex:0 0 auto;color:var(--text-4);font-family:monospace;'
+        'font-size:0.72rem;white-space:nowrap}'
+      '.finding-row-claim{margin-top:0.35rem;color:var(--text-3);'
+        'font-family:monospace;font-size:0.76rem;line-height:1.5;'
+        'padding-left:1.5rem}'
+    '</style>'
+)
+
+
+def _findings_catalog_page_html() -> str:
+    """CR-056 — Server-side render of /findings catalog index.
+
+    Lists every finding under docs/findings/ as a row (confidence dot +
+    headline + version/date + claim_short). Sorted by last_refined desc
+    so newest-or-refined findings rise. Empty-catalog state is honest —
+    'no findings yet' rather than scaffolding for one that never lands.
+    """
+    e = html_lib.escape
+    items = findings_mod.list_all()
+    items.sort(key=lambda f: f.last_refined, reverse=True)
+
+    rows_html = _findings_catalog_rows_html(items)
+    if not items:
+        body_inner = (
+            '<p style="color:var(--text-3);font-size:0.85rem;'
+            'border-left:2px solid var(--border-3);padding-left:1rem">'
+            'No findings published yet. As OWL measurements accumulate, '
+            'curated findings will land here.</p>'
+        )
+    else:
+        body_inner = rows_html
+
+    return (
+        '<!DOCTYPE html><html><head>'
+        '<meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>OWL — Findings</title>'
+        '<meta name="description" content="OWL findings — citable energy measurements from the Greening of Streaming bench.">'
+        f'{_BASE_STYLES}'
+        f'{_FINDINGS_CATALOG_CSS}'
+        '<style>'
+          '.findings-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
+          '.findings-hero{border-bottom:1px solid var(--border);padding-bottom:0.85rem;margin-bottom:1rem}'
+          '.findings-title{font-size:1.25rem;line-height:1.4;margin:0 0 0.4rem 0;color:var(--accent);font-weight:600}'
+          '.findings-tagline{color:var(--text-3);font-family:monospace;font-size:0.78rem;line-height:1.55}'
+          '.findings-footer{margin-top:1.5rem;padding-top:0.85rem;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-4);font-family:monospace}'
+        '</style>'
+        '</head><body style="background:var(--bg)">'
+        '<div class="findings-wrap">'
+          '<section class="findings-hero">'
+            '<h1 class="findings-title">OWL Findings</h1>'
+            '<div class="findings-tagline">'
+              'Curated, citable measurements from the Greening of Streaming bench. '
+              'Each finding links to its source measurement at live-run fidelity, with '
+              'scope, methodology, and a copy-paste citation.'
+            '</div>'
+          '</section>'
+          f'{body_inner}'
+          '<div class="findings-footer">'
+            f'OWL · Greening of Streaming · {e(str(len(items)))} '
+            f'finding{"s" if len(items) != 1 else ""} · {version.version_string()}'
+          '</div>'
+        '</div>'
+        '</body></html>'
+    )
+
+
+@app.get("/findings", response_class=HTMLResponse,
+         dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def findings_catalog_page(request: Request):
+    """CR-056 — catalog index. Same `findings_enabled` flag as the
+    individual /findings/<slug> route — flipping it false makes the
+    whole feature disappear (route 404 + /video beta link gone +
+    /demo step falls back to session-echo)."""
+    s = cfg.load()
+    if not s.get("findings_enabled", False):
+        return HTMLResponse("Not found", status_code=404)
+    return HTMLResponse(_findings_catalog_page_html())
+
+
 @app.get("/findings/{slug}", response_class=HTMLResponse,
          dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def finding_page(slug: str, request: Request):
@@ -8959,7 +9086,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     Greening of Streaming · OWL · GoS1</p>
 
   <div id="summary-content">
-    <p style="color:var(--text-3);font-size:0.85rem">Loading results…</p>
+    {{FINDINGS_PANEL}}
   </div>
 
   <hr class="divider">
@@ -9650,6 +9777,11 @@ function renderDemoImageResult(r) {{
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
 function buildSummary() {{
+  // CR-058 — when the findings catalog is on, the Findings step renders
+  // the catalog preview server-side and buildSummary() must NOT overwrite
+  // it. Flipping settings.findings_enabled to false makes the server stop
+  // setting this global, restoring the original session-echo behaviour.
+  if (window.OWL_FINDINGS_CATALOG_ENABLED) return;
   const el = document.getElementById('summary-content');
   let videoRows = '', llmRows = '', imageRows = '', ragRows = '';
   try {{
@@ -10601,6 +10733,38 @@ async def demo_page(request: Request):
     # with settings.json (no silent drift if caps change).
     s = cfg.load()
     member_cap_mb = s.get("upload_size_member_mb", "—")
+    # CR-058 — Findings step terminus. When findings_enabled is true,
+    # the Findings step (step 7) shows the curated catalog (top entries
+    # + "See all findings" link) instead of echoing the visitor's just-
+    # finished session runs. The original session-echo buildSummary() JS
+    # early-returns when window.OWL_FINDINGS_CATALOG_ENABLED is set, so
+    # flipping the flag back to false fully restores the prior behaviour.
+    findings_panel_html = (
+        '<p style="color:var(--text-3);font-size:0.85rem">Loading results…</p>'
+    )
+    if s.get("findings_enabled", False):
+        catalog_items = findings_mod.list_all()
+        catalog_items.sort(key=lambda f: f.last_refined, reverse=True)
+        preview = catalog_items[:3]
+        rows_html = _findings_catalog_rows_html(preview)
+        if not preview:
+            rows_html = (
+                '<p style="color:var(--text-3);font-size:0.85rem;'
+                'border-left:2px solid var(--border-3);padding-left:1rem">'
+                'No findings published yet.</p>'
+            )
+        findings_panel_html = (
+            f'{_FINDINGS_CATALOG_CSS}'
+            '<p style="color:var(--text-3);font-size:0.85rem;line-height:1.55;margin-bottom:0.85rem">'
+              "From OWL's body of evidence — citable findings backed by stored measurements:"
+            '</p>'
+            f'{rows_html}'
+            '<div style="margin-top:0.85rem;font-size:0.82rem">'
+              '<a href="/findings" style="color:var(--accent);text-decoration:none">'
+              f'See all findings ({len(catalog_items)}) →</a>'
+            '</div>'
+            '<script>window.OWL_FINDINGS_CATALOG_ENABLED = true;</script>'
+        )
     return (_DEMO_HTML
             .replace("{BASELINE_POLLS}",     str(s.get("baseline_polls",     "—")))
             .replace("{VIDEO_COOLDOWN_S}",   str(s.get("video_cooldown_s",   "—")))
@@ -10612,7 +10776,8 @@ async def demo_page(request: Request):
             .replace("{AUTH_CHIP_STYLES}",   _AUTH_CHIP_STYLES)
             .replace("{AUTH_CHIP}",          _auth_chip_html(request))
             .replace("{TIER_INDICATOR}",     _tier_indicator_html(request))
-            .replace("{UPLOAD_MEMBER_MB}",   str(member_cap_mb)))
+            .replace("{UPLOAD_MEMBER_MB}",   str(member_cap_mb))
+            .replace("{FINDINGS_PANEL}",     findings_panel_html))
 
 
 _METHODOLOGY_HTML = """<!DOCTYPE html>

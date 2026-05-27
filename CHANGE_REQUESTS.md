@@ -863,6 +863,78 @@ The whole feature lands behind a single setting; rolling back is one boolean fli
 
 ---
 
+## CR-055 · `/findings` catalog index page
+
+**Status:** **shipped behind same `findings_enabled` flag 2026-05-27 (S32 evening).** Code on `main`; route `/findings` lists every finding under `docs/findings/`. **The `/video` beta link from CR-054 was re-pointed at the catalog** (was the specific AV1 finding URL) — catalog is the right discovery surface. **Tests:** 326 → 331 (+5). Same rollback: `findings_enabled: false` removes catalog + beta link + falls /demo step back.
+**Triggered by:** Owner direction 2026-05-27: *"I think we need a catalogue of findings (even if there's only one there for now)"* — once the data model + worked example exist (CR-054), the catalog index is the natural next step and turns the publishing surface from "deep links only" into a browsable layer.
+
+**Lab look & feel constraint:** dense list of rows, one per finding. Each row: confidence dot · headline · `v<n> · <date>` on the right · `claim_short` snippet underneath. Dark theme, monospace where it earns. No filtering UI (premature with 1 finding; revisit at CR-056 bulk import). Empty-catalog state is honest copy ("No findings published yet"), no scaffolding for a state that may never arrive.
+
+### Problem
+
+CR-054 shipped one finding page (`/findings/<slug>`) but visitors could only land on it via a direct URL. A catalog is the natural index that lets the credibility surface scale beyond one entry — and is the prerequisite for the `/video` beta link, the `/demo` Findings step (CR-058), and any future home-page repositioning (CR-057).
+
+### Agreed direction
+
+`GET /findings` route, same `findings_enabled` flag as `/findings/<slug>`. Renders `findings.list_all()` sorted by `last_refined` desc. Shared row component (`_findings_catalog_rows_html`) so the catalog page and the /demo Findings step preview never diverge on layout. CSS lives in `_FINDINGS_CATALOG_CSS` — a single source of truth for finding-row styling.
+
+The `/video` beta link from CR-054 was re-pointed at `/findings` instead of `/findings/av1-hw-sw-vmaf-tradeoff` so the catalog is the entry point.
+
+### Maintainability invariants (extends CR-054's contract)
+
+11. **One catalog renderer.** `_findings_catalog_rows_html` renders rows; both the `/findings` page and the /demo step use it. New layout decisions = one place to change.
+12. **No new persistence or schema for the catalog.** It's a pure view over `findings.list_all()`.
+13. **Empty-catalog state is first-class.** The "no findings yet" copy is part of the renderer, not scaffolding-shaped placeholder.
+
+### Ship criteria — met
+
+- Tests pass (326 → 331)
+- `/findings` lists the AV1 finding row, links to `/findings/av1-hw-sw-vmaf-tradeoff`
+- `/video` beta link points at `/findings`
+- `findings_enabled: false` → 404 + link disappears (test pinned)
+
+### Priority: shipped same session as CR-054 (small lift, tightly coupled).
+
+---
+
+## CR-058 · `/demo` Findings step rewire — catalog preview replaces session echo
+
+**Status:** **shipped behind same `findings_enabled` flag 2026-05-27 (S32 evening).** Code on `main`; the /demo Findings step (step 7) shows a curated catalog preview + "See all findings" link instead of the session-echo. **Rollback identical:** flip flag → original `buildSummary()` session echo restored, capability matrix below stays put. **Tests:** part of the 326 → 331 (+5) bundle.
+**Triggered by:** Owner direction 2026-05-27: *"maybe replace the guided tour's findings with the new findings page"* — finally addresses the long-standing CLAUDE.md note *"Guided Tour Findings step — currently echoes session run; redesign to aggregate across all stored results to surface body-of-evidence learnings"*.
+
+**Lab look & feel constraint:** changes only the top half of step 7 (was: `<div id="summary-content">` populated by JS `buildSummary()`). The "Want to dig deeper?" capability matrix (Public / Member / Lab) from CR-027 stays exactly as-is — it's the Member-recruitment lever and not a findings concern.
+
+### Problem
+
+The `/demo` guided tour's last step is titled "Findings" but currently shows two things stacked:
+1. A JS-populated session echo (`buildSummary()`) that lists what the visitor ran during the tour — *not* findings in OWL's measurement-evidence sense.
+2. A capability matrix (Public / Member / Lab, from CR-027) — valuable but unrelated to findings.
+
+The step's name + behaviour have drifted. With the catalog now existing (CR-055), the step can deliver on its name: surface the body of evidence rather than echo the session.
+
+### Agreed direction
+
+Replace the inner content of `<div id="summary-content">` with a server-rendered catalog preview (top 3 findings via the shared `_findings_catalog_rows_html`, plus a "See all findings →" link to `/findings`). Set `window.OWL_FINDINGS_CATALOG_ENABLED = true` in the same injection. `buildSummary()` JS now early-returns when that global is set — so flipping `findings_enabled: false` removes the server-side injection AND restores the original session-echo behaviour.
+
+The capability matrix below the divider stays untouched. (It's a separate, working artefact — CR-027 closed, Member recruitment is its job, not findings.)
+
+### Maintainability invariants
+
+14. **Reuse the catalog row component.** The /demo preview uses the same `_findings_catalog_rows_html` as the catalog page. Layout drift between the two surfaces is impossible by construction.
+15. **Original behaviour is recoverable via the flag.** `buildSummary()` JS stays in place; its early-return is gated on `window.OWL_FINDINGS_CATALOG_ENABLED`. Flag false → JS runs → session echo restored. (Test pinned.)
+16. **The capability matrix is not touched.** Future findings-related changes must not modify the "Want to dig deeper?" matrix; that's CR-027 territory.
+
+### Ship criteria — met
+
+- Tests pass (326 → 331 with CR-055)
+- /demo step 7 with flag=true shows: "From OWL's body of evidence — citable findings…" framing, the AV1 finding row, "See all findings →" link to `/findings`
+- /demo step 7 with flag=false reverts to "Loading results…" placeholder + buildSummary() session echo (test pinned)
+- Capability matrix below unchanged in both states
+
+### Priority: shipped same commit as CR-055. Tightly coupled to the catalog (step 7 needs the catalog to link to).
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:

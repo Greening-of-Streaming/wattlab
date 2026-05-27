@@ -163,19 +163,22 @@ def test_md_to_html_escapes_hostile_input():
 
 
 # --- /video page beta-link gating (CR-054 owner addition 2026-05-27) -------
+# Updated CR-056 (same session): beta link re-points at /findings catalog
+# instead of the AV1-specific finding URL.
 
-_VIDEO_BETA_TEXT = "AV1 hardware vs software"
+_VIDEO_BETA_TEXT = "browse the OWL findings catalog"
 
 
 def test_video_page_shows_beta_findings_link_when_enabled():
     """When findings_enabled=True (default), /video carries a discreet
-    [beta] link to the AV1 finding. This is the one nav-promotion CR-054
-    ships with — explicitly approved by the owner 2026-05-27."""
+    [beta] link to the findings catalog. The catalog is the discovery
+    surface; visitors enter via the curated index rather than a deep
+    link to one specific finding."""
     r = client.get("/video")
     assert r.status_code == 200
     body = r.text
-    assert _VIDEO_BETA_TEXT in body, "expected the AV1 beta link on /video"
-    assert "/findings/av1-hw-sw-vmaf-tradeoff" in body
+    assert _VIDEO_BETA_TEXT in body, "expected the catalog beta link on /video"
+    assert 'href="/findings"' in body
     # The beta marker chip must be present so the link reads as preview, not production
     assert "beta" in body.lower()
 
@@ -197,3 +200,91 @@ def test_video_page_hides_beta_findings_link_when_disabled(monkeypatch):
     assert _VIDEO_BETA_TEXT not in body, (
         "/video still showed the AV1 beta link with findings_enabled=False"
     )
+
+
+def test_video_beta_link_points_at_catalog_not_specific_finding():
+    """CR-056 owner direction (2026-05-27): once the catalog page exists,
+    the /video beta link points at /findings (the catalog), not directly
+    at the specific AV1 finding. The catalog is the right discovery
+    surface; deep-linking past it short-circuits the curation."""
+    r = client.get("/video")
+    body = r.text
+    # The link href is /findings (no slug). Be strict: catch the bare href.
+    assert 'href="/findings"' in body, "expected /video to link at the catalog"
+    # And the AV1-slug-specific URL should NOT be in the beta line.
+    # (It can still appear elsewhere in the page legitimately if added later;
+    # the brittle check is: don't link the AV1 slug from this specific spot.)
+    # Approximate by checking the link text describes the catalog, not a finding.
+    assert "browse the OWL findings catalog" in body
+
+
+# --- CR-056: /findings catalog index ---------------------------------------
+
+def test_findings_catalog_returns_200_and_lists_av1():
+    r = client.get("/findings")
+    assert r.status_code == 200, r.text[:500]
+    body = r.text
+    # Page header + AV1 finding row both present
+    assert "OWL Findings" in body
+    assert f'href="/findings/{AV1_SLUG}"' in body
+    # The headline appears (snippet check — full headline is in the row)
+    assert "AV1 hardware uses" in body
+    # Footer reports finding count (currently 1)
+    assert "1 finding" in body
+
+
+def test_findings_catalog_returns_404_when_disabled(monkeypatch):
+    """Same flag rollback: catalog must 404 when findings_enabled=false."""
+    real_load = cfg.load
+    def disabled_load():
+        d = real_load()
+        d["findings_enabled"] = False
+        return d
+    monkeypatch.setattr(cfg, "load", disabled_load)
+
+    r = client.get("/findings")
+    assert r.status_code == 404
+
+
+# --- CR-058: /demo Findings step rewire ------------------------------------
+
+def test_demo_findings_step_shows_catalog_preview_when_enabled():
+    """When findings_enabled=True, the /demo Findings step (step 7) shows
+    the curated catalog preview + 'See all findings' link instead of
+    echoing the visitor's session runs."""
+    r = client.get("/demo")
+    assert r.status_code == 200
+    body = r.text
+    # Body-of-evidence framing copy
+    assert "body of evidence" in body
+    # The AV1 finding row link is present in the preview
+    assert f'href="/findings/{AV1_SLUG}"' in body
+    # The "See all findings" catalog link is present
+    assert "See all findings" in body
+    # Window flag is set (so the JS session-echo skips overwriting)
+    assert "OWL_FINDINGS_CATALOG_ENABLED = true" in body
+
+
+def test_demo_findings_step_falls_back_when_disabled(monkeypatch):
+    """Rollback: when findings_enabled=False, /demo step 7 reverts to the
+    original 'Loading results…' placeholder + buildSummary() session-echo
+    (the prior behaviour). Lab colleagues can revert with one bool flip."""
+    real_load = cfg.load
+    def disabled_load():
+        d = real_load()
+        d["findings_enabled"] = False
+        return d
+    monkeypatch.setattr(cfg, "load", disabled_load)
+
+    r = client.get("/demo")
+    assert r.status_code == 200
+    body = r.text
+    # Original placeholder restored
+    assert "Loading results…" in body
+    # Catalog preview specifically NOT present
+    assert "body of evidence" not in body
+    assert "See all findings" not in body
+    # The window flag ASSIGNMENT is gone. (The bare identifier still appears
+    # in buildSummary()'s early-return guard — that's fine; what gates the
+    # behaviour is whether the server sets it to true.)
+    assert "OWL_FINDINGS_CATALOG_ENABLED = true" not in body
