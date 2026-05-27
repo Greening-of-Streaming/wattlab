@@ -1177,3 +1177,248 @@ Leverage: removes the dead-end feel of long encodes on the Member surface. Espec
 Not strictly blocking but a real polish item for Members operating long encodes during the launch window. Pair with CR-034 (unified results card) — the result card lands at progress=100% and benefits from the same widget context. CR-019's deferred resume-job piece is its sibling on the lifecycle side; CR-035 lives on the information side.
 
 ---
+
+## CR-047 · Parent source + variants schema for `/video` Source picker
+
+**Status:** Phase 1 shipped 2026-05-26 on `main` — schema + picker rewrite done, 272 → 290 tests. Phase 2 (vignette UI, source identifier on result JSON, parent+variant card framing) deferred to follow-ups.
+**Triggered by:** owner, 2026-05-26 — *"moving forward we're going to have more variation for a given source (not just length as with Meridian full vs extract, but also different level of compression or even codec of the origin file), the UI needs to support that evolution. The vignettes idea is just for better demo experiences."*
+
+### Problem (original capture)
+
+`sources.PRELOADED` was a flat dict — each entry a peer, even when several entries were logically the same source. `meridian_4k` (full) and `meridian_120s` (extract) were siblings of the same Netflix master but rendered as unrelated picks; `bbb_4k` (CR-046) was about to gain a vignette and likely more variants over time. With the flat list, every new variant added a top-level row and `/video` Source would have hit the *"loses its LAB look & feel that must always allow for quick use"* failure mode the standing design principle calls out.
+
+The owner had named three candidate axes of variation: length / scope, codec of the origin master, and compression level of the origin master. The pre-implementation tests (`docs/input_sensitivity_findings.md`, 2026-05-26) showed that **only the length axis carried enough energy signal to earn a picker slot**:
+
+- Input bitrate spread (CRF span, same codec): 1.7 % CPU, 4.9 % GPU — at the noise floor.
+- Codec-of-origin spread (industry-typical H.264 / H.265 / AV1 bitrates): 3.4 % CPU, 10.3 % GPU — borderline, AV1 carries the jump, but not enough to justify the matrix explosion.
+
+So the picker landed at **2 variants per parent** (full + 2-min extract), not the 5-variant sketch. The vignette (a parent-level still image for UI friendliness, no measurement purpose — owner clarified mid-design) is plumbed as an optional field on the parent dict, orthogonal to the variant list. Codec-of-origin is documented as a Key Finding rather than a picker variant.
+
+### Surface audit (2026-05-26, while adding CR-046 BBB)
+
+Grep across `wattlab_service/` for hardcoded source keys turned up exactly two places:
+
+- `sources.py` — the PRELOADED dict (correct home).
+- `main.py:~2807–2845` — the `/video` Source picker, **hardcoded as four sibling `<input type="radio" name="source" value="…">` blocks** rather than driven by `sources.get_all_sources()` / `/video/sources`. This was why adding `bbb_4k` to `sources.py` alone didn't make it appear on `/video` — the radio list had to be touched too. **This duplication was the immediate target of CR-047** and is what shipped first.
+
+`/demo` step 1's video job is a separate hardcode (`source_key=meridian_120s` at `main.py:~6955`), but it's a *selection* (curated demo deliberately runs one job) — not a *picker*. That's CR-033's territory.
+
+### What shipped (Phase 1 — 2026-05-26)
+
+**`sources.py` rewrite.** New top-level `SOURCES` list — parent-grouped, with `{id, name, credit, license, vignette, variants: [...]}` per parent. Each variant carries `{key, label, description, length, path}`. The `vignette` field on the parent is plumbed but unused by the UI today (hook for CR-046 Phase 2). New accessors:
+- `get_variant(key)` / `get_parent_for(key)` — direct lookups.
+- `get_grouped_sources()` — parent-grouped list with full per-variant ffprobe info, the schema the picker speaks.
+- `get_source_info()` / `get_all_sources()` / `PRELOADED` — preserved exactly as pre-CR-047 callers expect. `PRELOADED` is now a derived view over `SOURCES` (built at module load).
+
+The per-variant info dict gained `variant_label` (short form, "2 min extract"), `parent` (id), `parent_name`, and `length` (`"full"` or `"extract"`). The legacy `label` keeps the parent-prefixed form ("Big Buck Bunny 4K — 2 min extract") so the queue label string and any historical JSON consumer stay valid.
+
+**`main.py` picker.** Added `_video_source_picker_html()` helper that renders the entire grouped radio block from `get_grouped_sources()` — small dim parent header ("Big Buck Bunny 4K · CC BY 3.0") then variants underneath as radios in the same density / border style as the upload row. The hardcoded radio block in `video_page()`'s f-string template was replaced with a single `{source_picker_html}` interpolation. Same selectors / `selectSource(key)` JS contract → no client-side changes needed.
+
+**Tests.** New `tests/test_sources.py`, 18 tests pinning both the new schema shape and the back-compat surface: PRELOADED has every variant key, legacy field names preserved, `get_all_sources()` order unchanged (`gos_in_50s, meridian_120s, meridian_4k, bbb_120s, bbb_4k`), `get_grouped_sources()` returns the expected three-parent structure with variant dicts shape-equivalent to `get_source_info()`. 272 → **290 passing**.
+
+Render verified end-to-end via `TestClient` — parent headers ("GoS promo", "Meridian 4K · CC BY 4.0", "Big Buck Bunny 4K · CC BY 3.0") appear in order; all five variant radios resolve with their value attributes intact; the variant labels use the short form ("2 min extract") in the row, with the parent name in the header.
+
+### Deferred to follow-ups
+
+- **Vignette UI.** The parent `vignette` field exists; rendering still images / thumbnails in the picker is its own polish pass. Becomes load-bearing when CR-046 Phase 2 (FOKUS-scene vignette) ships. Owner deferred the collapsible-picker UI to "after this is all working" — same pass.
+- **Source identifier on result JSON.** `result["source"] = {key, parent}` would let historical results stay filterable as the variant schema evolves further. Cheap, additive — capture as a Track A storage follow-up once that track moves.
+- **Result-card parent+variant framing.** The renderers still surface the legacy `label` (parent-prefixed). When result cards get the next polish pass, splitting parent vs variant into a two-row title block is straightforward — but not required for CR-047 itself.
+
+### Cross-references
+
+- **CR-046** Phase 2 (FOKUS vignette) — direct downstream; the vignette field on the `bbb` parent is now ready to receive a still image taken from the FOKUS-matched frame.
+- **CR-033** (curated demo video job selection) — secondary beneficiary: `/demo` step 1's chip-row can now resolve to a variant key when implemented.
+- **docs/input_sensitivity_findings.md** — empirical justification for the 3-slot matrix (length-axis only).
+
+---
+
+## CR-046 · Big Buck Bunny preloaded for FOKUS Berlin demo
+
+**Status:** Shipped 2026-05-27 (S30). Phase 1 (4K master + 2-min extract, 2026-05-26) + a generic `bbb.jpg` vignette (BBB at t=180 s, 2026-05-26 alongside Meridian + GoS thumbnails). The originally-sketched "FOKUS-matched vignette" Phase 2 was explored and dropped: the FOKUS event header is a *modified* BBB still (added laser-eye effects), so a literal frame-match isn't possible, and the generic BBB vignette already satisfies the underlying picker-friendliness goal.
+**Triggered by:** owner, 2026-05-26 — Fraunhofer FOKUS Media Web Symposium 2026 (Berlin) uses a Big Buck Bunny scene in their promo material. Having BBB preselectable on `/video` lets the OWL demo at the event use the same source the audience already associates with FOKUS.
+
+### Problem / opportunity
+
+OWL's preloaded test content was Meridian (Netflix Open Content) + the in-house GoS-in-50s promo. Both useful but neither lands the "this is the clip you've been looking at all morning" reaction at the FOKUS booth. BBB is the canonical Blender Foundation demo asset, CC BY 3.0, and what FOKUS picked for their event branding — running the live energy comparison on it closes the loop visually for the visitor.
+
+### What shipped
+
+- **Full 4K master** — 60 fps H.264 from archive.org (`big-buck-bunny-4k-60fps/BigBuckBunny4k60fps.mp4`, 642 MB) at `/srv/data/owl/test_content/bbb_4k.mp4`. Sibling to Meridian 4K's 59.94 fps so cross-source comparison stays apples-to-apples.
+- **2-min extract** — stream-copy of the first 120 s (`bbb_120s.mp4`, 102 MB) for the fast-demo slot, mirroring `meridian_120s`. Created via `ffmpeg-master -i bbb_4k.mp4 -t 120 -c copy …`.
+- Both variants live under the `bbb` parent in `sources.py` (CR-047 schema). Picker renders them grouped under "Big Buck Bunny 4K · CC BY 3.0".
+- **Generic vignette** — `wattlab_service/static/source_vignettes/bbb.jpg` (t=180 s, ~3 KB) wired into the `bbb` parent. Rendered by `_video_source_picker_html()` as a 32 px-high thumbnail left of the parent header. (Same pass added `gos.jpg` t=25 s + `meridian.jpg` t=60 s for the other two parents.)
+
+### FOKUS-matched-frame investigation (closed-as-not-needed)
+
+A dHash perceptual-hash matcher (PIL-only, no external dep) was built to find the BBB frame closest to the FOKUS event header still:
+<https://www.fokus.fraunhofer.de/en/fame/events/mws26/jcr:content/stage/stageParsys/stage_slide/image.img.png/1764765211663/FAME-FOKUSMWS-2026-Header-2100x700.png>
+
+Sampling every 2 s across the 634 s master gave a best Hamming distance of 18/64 (top 3: t=136 s, t=146 s, t=216 s). The match was visibly weak. Visual side-by-side confirmed why: the FOKUS image has been **post-processed with added laser-eye effects on BBB** — it isn't a literal frame at all, just a stylised header with a BBB scene as the base. So no automatic match is meaningful and a literal frame-extract would only approximately resemble the FOKUS header.
+
+Decision: drop the FOKUS-match angle, keep the generic `bbb.jpg`. The picker's identifying-thumbnail goal is satisfied without coupling to FOKUS's stylised header.
+
+If a FOKUS-keyed visual ever becomes load-bearing (e.g. a literal "this is what you saw at the entrance" callout next to the BBB radio), the natural path is a hand-curated lookalike frame, not an algorithmic match. Capture as a new CR at that point.
+
+### Cross-references
+
+- **CR-047** (variants schema, shipped same day) — the `vignette` field on the parent dict that bbb.jpg uses.
+- **docs/input_sensitivity_findings.md** — the parallel measurement work justifying the 2-variant picker shape.
+
+---
+
+## CR-033 · Curated demo video job selection (1–2 options)
+
+**Status:** Shipped 2026-05-27 (S30) — codec chip-row on `/demo` step 1, H.265 default, AV1 alternate, both on `meridian_120s`. Captured 2026-05-08 (S23).
+**Triggered by:** owner observation during anonymous-tier testing — `/demo` step 1's video job was hardcoded to `source=meridian_4k` + `preset=both` (full 12-minute Meridian + H.264 CPU+GPU compare = ~10–15 min wall time). For the guided tour that's a flow-breaker: visitors can't realistically wait that long, and the result card lands long after the demo session is fresh in their head. Quick-fix in S23 changed it to `source=meridian_120s` + `preset=h265_both` (~2–3 min, shows GPU advantage cleanly). CR-033 was the curated-options follow-up.
+
+### Problem
+
+A single hardcoded demo job was a UX compromise: the guided tour either picked one codec family (H.265) and silently skipped the others, or grew toward the long-job problem the S23 quick-fix had retired. Visitors who care about codec-family comparisons (H.264 vs H.265 vs AV1 — exactly the population to hook for membership) got less information than the canonical Key Findings table on the methodology page.
+
+### What shipped
+
+A two-chip row above the run button on `/demo` step 1:
+
+1. **H.265 (CPU vs GPU)** — default. Maps to `source=meridian_120s` + `preset=h265_both`.
+2. **AV1 (CPU vs GPU)** — alternate. Maps to `source=meridian_120s` + `preset=av1_both`.
+
+Implementation:
+- HTML: two `<button class="demo-chip" data-codec="…">` elements with inline styles so /demo's existing CSS scope doesn't need a new class (lab look & feel — inline ok at this surface size).
+- JS: `selectedDemoCodec` state variable (default `'h265'`) + `selectDemoCodec(codec)` updates the chip styling + the run-button label. `runDemoVideo()` reads it and posts the right `preset` to `/video/use-source`. Source key stays `meridian_120s` regardless of codec choice (consistent fast-demo timing).
+- Result-card rendering needed zero changes — both `h265_both` and `av1_both` share the codec-agnostic `renderBoth` path.
+
+Out of scope (deferred): AV1 GPU vs H.265 GPU side-by-side, all_codecs sweep on `/demo`, custom source selection. Those are CR-029 / CR-031 territory.
+
+### Open question resolved
+
+- **Default selection** → H.265 (safer, more familiar codec to most operators). AV1 sits behind the chip-click; visitors who notice the chip find the better story underneath.
+- **Chip persistence** → reset on each load (demo is a fresh first-impression each time, no localStorage).
+
+### Lab look & feel
+
+Two chips inline above the run button; no decorative animation, no extra row of explanatory copy. Selected state = filled accent background; deselected = transparent + dim text. Matches the visual vocabulary of the `/video` preset chips without sharing their selected-state logic (which is /video-specific).
+
+---
+
+## CR-048 · /llm compare-across-models · energy per correct answer
+
+**Status:** Shipped 2026-05-26 (Session 30, parallel session) — new page `/llm/compare`, new endpoint `POST /llm/compare-models` (BATCH_COMPARE gated), grader helper in `llm.py`. Cooldown + noise UX hardened in Session 31 alongside CR-050 (active-probe thermal floor + 🔴 filtering + N-way size-vs-energy charts).
+**Triggered by:** owner, 2026-05-26 — *"make these LLM/RAG stuff more relevant to GoS by focussing on measurable energy aspects. The UI must be designed for that to stand out."*
+
+### Problem
+
+Existing `/llm` reports energy per inference and surfaces **mWh per output token** as the headline. That's a process metric and it actively misleads: a model that "thinks out loud" for 100 tokens to reach a 1-token answer looks more efficient per token than a model that answers in 1 token, even though it burned 100× the energy. For a GoS-framed efficiency story the right axis is the **energy cost of getting the right answer**, not the energy cost of producing more text. The existing page also runs only one model per session, so visitors never see the cross-model comparison that makes the energy story land.
+
+### What shipped
+
+New `/llm/compare` page implementing the hybrid showcase + member-only "Try your own" pattern:
+
+1. **Anonymous showcase (3 demo cards).** Tab between three prompts picked by a 2026-05-26 probe (5 models × 8 candidate prompts × 3 reps, `/tmp/llm_probe/results_20260526_174852.jsonl`): Strawberry (the meme; "R's in strawberry?" — size ≠ smarts), Logic (Carol; clean Type 1), Addition (50; arithmetic ceiling test).
+2. **Member "Try your own"** (BATCH_COMPARE gated). Prompt textarea + expected-answer text field + one button. Runs the prompt sequentially across every model in `llm.MODELS` (now 7 per CR-050) on GPU with a clean P110 baseline before each model. Graded with a tolerant substring + leading-integer rule (also punctuation-stripped retry). Result rendered into the same comparison card as the showcase.
+
+- `llm.py`: added `grade()` helper (tolerant: substring or leading-integer, case-insensitive; punctuation-stripped retry for list-style answers).
+- `main.py`: added `run_llm_compare_models_job`, `POST /llm/compare-models` endpoint, `GET /llm/compare` page, "NEW" banner on `/llm`. Result `mode: "compare_models"` joins the standard results stream → CSV/JSON export + carbon enrichment for free.
+- Headline = **Wh per correct answer**. mWh/token stays in the table as a supporting column because the perverse incentive of optimising for it is visible right next to total Wh (the verbose-but-low-mWh/tok inversion).
+- "Cheapest correct" winner highlighted with `--accent-soft` + ⭐. Bust card fires the "smaller model right, bigger model wrong" narrative when present; falls back to "same answer, N× more energy" otherwise.
+- Side-by-side charts (Wh vs params, mWh/tok vs params) gated at ≥3 trusted-correct rows.
+- 🔴 rows greyed in the table but excluded from cheapest pick, bust card, and chart (CR-050 follow-up).
+
+### Phase 2 — open work (after Session 31 backfill, only #3 remains)
+
+1. ✅ **P110 backfill of the showcase cards** — done Session 31. Hardcoded `_LLM_COMPARE_SHOWCASE` now carries real P110 measurements on the post-CR-050 7-model panel.
+2. ✅ **Mirror for `/rag`** — done CR-049 (Session 30).
+3. **Aggregate "Findings" surface.** Showcase tabs should pull from a small library of stored canonical results rather than a hardcoded constant, so adding a new showcase prompt is a one-run-of-the-feature operation, not a code edit. Deferred.
+
+### Lab look & feel constraint
+
+Same monospace + `--accent` palette as the rest of OWL; no decorative animation. Showcase tabs are buttons; methodology is in a `<details>` fold-down; opinionated visual elements are the green winner-row + ⭐ and the warn-coloured bust card.
+
+---
+
+## CR-049 · /rag compare-across-models · energy per correct answer (sibling of CR-048)
+
+**Status:** Shipped 2026-05-26 (Session 30, parallel session) — new page `/rag/compare`, new endpoint `POST /rag/compare-models` (BATCH_COMPARE gated), uses the existing `run_rag_measurement` per-model primitive. Showcase P110 backfilled Session 31.
+**Triggered by:** owner, 2026-05-26 — *"implement the /rag energy-first demo page with the bbc data as dry run."*
+
+### Problem
+
+Existing `/rag` runs one model in one mode at a time. To make the RAG energy story land for a GoS audience, the page needs the same cross-model comparison shape that CR-048 added for `/llm`: one corpus-grounded question, ranked by energy of the *correct* answer across the panel. The RAG twist is that "wrong" can mean two different things — the model was wrong, or retrieval gave it the wrong chunks — and the energy data makes the cost of bad retrieval visible (you can burn Wh generating wrong answers from off-target chunks).
+
+### Showcase data — sourced from a real probe
+
+A 2026-05-26 prompt-selection probe (`/tmp/rag_probe/results_20260526_223406.jsonl`) ran 3 corpus-grounded prompts × 4 models × 1 mode (rag, top-3 retrieval) through the production `/rag/run` endpoint. Real P110 measurement, ~5 min wall. Only one prompt passed all four models:
+
+- **BBC Radio 2018 energy total** ("325 GWh") — 4/4 ✓. Energy spread TinyLlama 0.003 Wh → Gemma3 0.443 Wh, ~143× for the same correct answer.
+
+The two IEA prompts (415 TWh / 945 TWh) failed across the panel for a retrieval reason: top-3 retrieval correctly surfaced the 250-page IEA report but missed the page containing the headline numbers. Kept in the probe data as a deliberately negative example for a future "retrieval-precision matters" demo, but not a clean showcase.
+
+### What shipped
+
+- `rag.py`: added `COMPARE_PROMPTS` registry (BBC only initially; expanded Session 31 backfill).
+- `main.py`: added `run_rag_compare_models_job` (sequential N-model loop with active-probe thermal-floor cooldown between models, same as /llm/compare), `POST /rag/compare-models` endpoint, `GET /rag/compare` page, 1-line "NEW" banner on `/rag`. Grading reuses `llm_grade`. Result `mode: "rag_compare_models"` joins the standard results stream.
+- Showcase row Wh comes from the probe's real P110 measurements via a `wh_measured` parallel array, so showcase doesn't have to fall back to the `wall_s × 25 W` estimate /llm/compare's showcase originally used.
+- Same charts and bust-card semantics as /llm/compare. The bust card has a RAG-specific tagline: when a bigger model is wrong and a smaller one is right, that often means the smaller model trusted the retrieved chunk while the larger one hallucinated past it.
+
+### Phase 2 — open work (after Session 31 backfill, #1 remains)
+
+1. **Document upload to corpus.** Page surfaces a one-paragraph "ask the GoS team" note in the "Try your own" section. Real upload needs: `POST /rag/upload` endpoint, file validation (PDF only, size cap, no executables), append to `corpus/papers/`, trigger `build-index`. Adds a publicly-reachable file upload — a real security surface. Estimated 250 lines + a careful hardening pass.
+2. ✅ **More showcase prompts** — addressed Session 31 backfill (more candidate prompts re-probed on the 7-model panel).
+3. **Retrieval inspection.** The compare card shows the model's answer but not which chunks retrieval picked. Surfacing the top-3 chunk sources per row would make the "wrong because of bad retrieval" story explicit. Cheap addition (data is already in the result JSON via `chunk_sources`).
+
+### Lab look & feel constraint
+
+Page mirrors `/llm/compare` styling exactly. Upload note is a dashed-border block (not solid) to signal "not interactive yet" without screaming.
+
+---
+
+## CR-050 · Dynamic model catalog · adding / removing a model is no longer a code change
+
+**Status:** Shipped 2026-05-27 (Session 31). New `model_catalog.py` module; LLM/RAG/Image `MODELS` dicts replaced with live views; Models section added to `/settings`. Subsequent follow-ups (active-probe thermal floor, Ollama keep_alive eviction, asymmetric settle, ±3 W tolerance, 4 Hz UI ticker, N-way `/image/compare`) all landed under this CR.
+**Triggered by:** owner, 2026-05-27 — *"Moving forward, removing or adding a model must be a simple process, not requiring code changes."*
+
+### Problem
+
+Every surface kept its own hand-maintained `MODELS` dict (`llm.MODELS`, `rag.MODELS`, `image_gen.IMAGE_MODELS`). Each update meant a code edit + service restart, and the dicts drifted apart — `/llm` and `/rag` had 5 models but `/llm/compare-models` hardcoded a 5-model panel referencing keys (`mistral`, `gemma3:12b`) that had been removed; `/image` was missing two models present in the HF cache. Stale state was a recurring source of bugs.
+
+### What shipped
+
+**Single source of truth.** New `model_catalog.py` auto-discovers what's installed:
+
+- `available_llm_models()` shells `ollama list`, parses, filters image-only entries (`x/flux*`, `x/z-image*`), normalises keys (`phi4:latest` → `phi4`), sorts by parsed parameter count ascending (so `/llm` selector cards + `/llm/compare` panel + charts all read 1.1B → 1.7B → 4B → 8B → 12B → 14B → 20B by default). 60 s cache.
+- `available_image_models()` scans `~/.cache/huggingface/hub/`, mapping known families (sd-turbo, sdxl-turbo, sdxl-lightning, sana-600m) to full operational metadata; unknown families get safe defaults. Slugs are kept short (`sd-turbo`, not `stabilityai/sd-turbo`) for backwards-compat. 60 s cache.
+- Per-surface enable lists live in `settings.json` as `llm_enabled_models` / `rag_enabled_models` / `image_enabled_models`. Empty list / absent key = "all available enabled" so a fresh server with no settings file works out of the box.
+- `llm.MODELS`, `rag.MODELS`, `image_gen.IMAGE_MODELS` are now thin `_ModelsView` classes that proxy `__getitem__` / `keys()` / `items()` / etc to `model_catalog.enabled_*_models()`. Drop-in interface; every existing caller works unchanged.
+
+**Settings UI.** New "Models (CR-050)" section on `/settings`. Three checkbox panels (LLM, RAG, Image), each model row showing label, params, size, and the monospace key. Save (Lab tier) writes the enabled lists and calls `model_catalog.refresh_all()` so changes are visible on the next render. Anonymous viewers see the panels read-only.
+
+To add a new LLM: `ollama pull <name>` on the server, reload `/settings`, tick the new entry. No code edits, no restart.
+
+**Active-probe thermal floor wait (replaces the fixed `llm_rest_s` sleep between models).** New `power.wait_for_thermal_floor(reference_w, tolerance_w=3.0, poll_interval_s=1.0, settle_polls=3, max_wait_s=120)`. Called between every pair of models in `/llm/compare`, `/rag/compare`, and `/image/compare`. Reference = first model's baseline (captured cold, after explicit VRAM eviction). The asymmetric settle condition (`w ≤ reference + tolerance`) treats "at or below floor" as goal-achieved — there's no reason to wait for power to climb *back up* to a match if the system has continued cooling.
+
+**Ollama keep_alive eviction.** Original symptom: 7-model compare runs showed baselines climbing from ~60 W to 130 W mid-run because Ollama's default 5-minute `keep_alive` kept every previously-run model resident in VRAM (~60 W of permanent draw per resident model). New `llm.unload_all_loaded_models()` queries `/api/ps` and sends `keep_alive=0` to every resident model. Called at the start of every compare run (to clear pre-existing VRAM from prior `/llm` interactive use) and between every pair of models (so the thermal-floor wait can actually reach the cold reference).
+
+**🔴 noise handling.** `cheapest_correct` pick, the bust card, the "vs best" ratio column, and the size-vs-energy charts all now filter out 🔴 rows (CR-028 confidence flag). 🔴 rows still appear in the comparison table greyed + italic — visible but explicitly disregarded for rankings. Confidence column added to the table.
+
+**Size-vs-energy charts.** Side-by-side line charts (Wh vs params, mWh/tok vs params) under the headline on both `/llm/compare` and `/rag/compare`, gated at ≥3 trusted-correct rows. Uses the existing `WlCharts.line` helper.
+
+**N-way `/image/compare`.** `run_image_compare_models_measurement` no longer hardcodes SD-Turbo + SDXL-Turbo — iterates every enabled image model with the same thermal-floor cooldown. Result returns a `models` list (with `small`/`large` legacy aliases set to cheapest/priciest by Wh/image, so old prev-runs rendering still works). The compare button is enabled whenever ≥2 image models are ticked; label says *"Compare all N models (GPU) ⚡"*. Page-side: `STAGE_LABELS` + `COMPARE_STAGES` are now built server-side from `IMAGE_MODELS.items()` and injected; `wlRenderImageCard` compare branch iterates `r.models` — N image columns, N KPI cards, N confidence flags.
+
+**UI cooldown ticker.** 4 Hz local ticker in the compare-page JS interpolates `cooldown_waited_s` between server polls (server polls P110 every 1 s; UI polls `/job/{id}` every 2 s), so the displayed wait counter advances smoothly. Resets on each server update; stops on done / error / new run.
+
+### Backwards-compat notes
+
+- Ollama returns `phi4:latest` and `tinyllama:latest`; the catalog strips `:latest` so existing code paths using bare `phi4` / `tinyllama` keep working. Tags that *encode* a variant (`qwen3:1.7b`, `gpt-oss:20b`) are preserved.
+- Image keys are short slugs so existing image code paths and stored result JSONs stay valid. The full HF repo string lives in the `repo` field.
+- Result schemas: `compare_models` and `rag_compare_models` results gain `floor_reference_w` + `cooldowns` (list of per-gap diagnostics: `waited_s`, `settled`, `final_w`, `evicted_before_wait`); image `compare_models` results gain `models` list alongside legacy `small`/`large`.
+
+### Phase 2 — open work
+
+1. **`ollama pull` from the Models panel.** Right now the panel only enables/disables what's already installed. A "+ Add model" affordance that runs `ollama pull <name>` (async, with progress) would close the loop entirely — the catalog would then auto-discover the new entry. Adds a backend endpoint + capability + progress UX.
+2. **Image-model defaults editor.** Unknown image families get safe defaults that may not match the model. A small "edit defaults" expander per image model (steps, native_px, cpu_ok, batch sizes) writes to an `image_overrides.json` the catalog merges in.
+3. **N-way image compare progress UX polish.** Current cooldown stage uses a single `cooldown` key in `COMPARE_STAGES`; the progress dot strip shows it indexed at the first occurrence, so subsequent cooldowns map to the same dot. The status text (`Model N/T · cooldown · waiting Xs for floor`) shows the right thing — only the dot strip cosmetic. Distinct `cooldown_after_m1` / `cooldown_after_m2` stage keys would fix.
+
+### Lab look & feel constraint
+
+Models section sits at the bottom of `/settings` next to Tier limits, same vertical layout as the rest of the page. Checkbox rows are compact (single line per model: tick + label + meta + monospace key). No decorative animation; muted secondary colour for auto-discovered metadata.
+
+---

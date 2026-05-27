@@ -541,37 +541,6 @@ Net: sub-section 2 grows from ~half day to ~1 day. Sub-section 3 lands on Mike's
 
 ---
 
-## CR-033 · Curated demo video job selection (1–2 options)
-
-**Status:** captured 2026-05-08 (Session 23 part 6). Follow-up to today's `/demo` video step quick-fix.
-**Triggered by:** owner observation during anonymous-tier testing — `/demo` step 1's video job was hardcoded to `source=meridian_4k` + `preset=both` (full 12-minute Meridian + H.264 CPU+GPU compare = ~10–15 min wall time). For the guided tour that's a flow-breaker: visitors can't realistically wait that long, and the result card lands long after the demo session is fresh in their head. Quick-fix in Session 23 part 6 changed it to `source=meridian_120s` + `preset=h265_both` (~2–3 min, shows GPU advantage cleanly). CR-033 is the next step.
-
-### Problem
-
-A single hardcoded demo job is a UX compromise: the guided tour either picks one codec family (today: H.265) and silently skips the others, or grows toward the long-job problem we just retired. Visitors who care about codec-family comparisons (H.264 vs H.265 vs AV1 — exactly the population we want to hook for membership) get less information than the canonical Key Findings table on the methodology page.
-
-### Agreed direction (rough)
-
-Two curated demo jobs, selectable via a small chip row on `/demo` step 1:
-
-1. **H.265 CPU vs GPU on `meridian_120s`** — current default. Demonstrates the GPU advantage on a modern codec.
-2. **AV1 CPU vs GPU on `meridian_120s`** — sibling option. AV1 is the most efficient codec in the canonical findings; the demo should show it.
-
-Each runs the same `*_both` shape so renderVideoResult can stay codec-agnostic. Two chips above the run button, the second one disabled-with-lock-badge for now if we want to phase it in (or both available from day one).
-
-Out of scope for V1: AV1 GPU vs H.265 GPU side-by-side, all_codecs sweep on `/demo`, custom source selection. Those are CR-029 / CR-031 territory.
-
-### Cost / leverage
-
-Tiny — a chip-row UI on `/demo` step 1, two `runDemoVideo()` variants (or one parametrised), plus a one-line label change. Half-day including visual verification. Leverage: the demo shows a *family* of comparisons rather than a single codec, which is more useful framing for the conference visitor.
-
-### Open questions
-
-- **Default selection.** If we ship two chips, which one is on by default? H.265 (current) is safer (more familiar codec to most operators) but AV1 makes the GoS environmental story better (most efficient).
-- **Chip persistence.** Should the choice persist across the visitor's session (localStorage) or reset each load? Lean: reset — the demo is meant to be a fresh first-impression each time.
-
----
-
 ## CR-039 · Energy-vs-quality axis for AI jobs (frontier-model-as-judge — exploratory)
 
 **Status:** captured 2026-05-11 (board meeting). **Exploratory** — owner's idea, mixed reception; ship behind a Member/Lab gate, frame explicitly as a snapshot not a leaderboard. **Easy to drop** if the answer to the CR-029 §6 tension below is "don't."
@@ -886,9 +855,9 @@ CR-026 ✅  ─→  CR-027 ✅  (tier explanation — both shipped)
 
 (Track D's internal chain — CR-034 → CR-036 → CR-038 → CR-032 — has fully resolved; all four are closed. CR-037 now lands on that finished surface.)
 
-### Suggested order (updated S26 close-out, 2026-05-20)
+### Suggested order (updated S31 close-out, 2026-05-27)
 
-S26 shipped the credibility three (CR-037, CR-040, CR-027); S28 (2026-05-22) shipped CR-044 (VMAF) + CR-028 Phase 2 (CI confidence). Remaining order:
+S26 shipped the credibility three (CR-037, CR-040, CR-027); S28 (2026-05-22) shipped CR-044 (VMAF) + CR-028 Phase 2 (CI confidence); S29 (2026-05-26) shipped CR-046 Phase 1 (BBB preloaded) + CR-047 (variants schema for `/video` Source picker); S30 (2026-05-27) closed CR-033 + CR-046 Phase 2; S30/S31 (2026-05-26 → 2026-05-27, parallel sessions) shipped the AI-comparison trilogy CR-048 (`/llm/compare`) + CR-049 (`/rag/compare`) + CR-050 (dynamic model catalog + active-probe thermal floor + N-way `/image/compare`). Remaining order:
 
 1. **Track A storage decision** — CR-028 Phase 2 already lands raw `baseline_samples_w` / `task_samples_w` per result, so the storage/DB-family decision (CR-031 §1, REM coherence) is the natural next step: it unblocks CR-012 + the Track A analytics layer (CR-003, CR-007) and gives the persisted samples a durable home.
 2. **CR-045 (with/after CR-029)** — the "Same Bitrate / Same Quality" toggle now that VMAF ships; sequence with CR-029's apples-to-apples work (Tania-led).
