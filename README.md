@@ -6,7 +6,7 @@ Built by [Greening of Streaming](https://greeningofstreaming.org), a French NGO 
 
 **Live instance:** [wattlab.greeningofstreaming.org](https://wattlab.greeningofstreaming.org)
 
-**Current release:** `v1.2.0` · [Report an issue or feature request](https://github.com/greeningofstreaming/wattlab/issues)
+**Current release:** `v0.8.6` · [Report an issue or feature request](https://github.com/greeningofstreaming/wattlab/issues)
 
 ---
 
@@ -15,7 +15,7 @@ Built by [Greening of Streaming](https://greeningofstreaming.org), a French NGO 
 | Test | What you get |
 |---|---|
 | Video transcode | Energy (Wh) and time for CPU vs GPU — H.264, H.265, AV1 at matched ABR bitrates. "Compare all codecs" runs all six presets in one go. |
-| LLM inference | mWh per output token, tokens/sec — TinyLlama 1.1B, Mistral 7B, Gemma 3 12B across three size tiers |
+| LLM inference | mWh per output token, tokens/sec — TinyLlama 1.1B, Qwen3 (1.7B / 4B / 8B), Mistral-Nemo 12B, Phi-4 14B, GPT-OSS 20B. Model panel is dynamic (CR-050) — `ollama pull <name>` + tick in `/settings`. |
 | Image generation | Wh per image — SD-Turbo (~1B), SDXL-Turbo (~3.5B). "Compare Models" runs both with same prompt + seed so model size is the only variable. |
 | RAG energy test | Energy cost of retrieval-augmented generation vs plain LLM — baseline / rag / rag_large compared side-by-side |
 
@@ -53,21 +53,14 @@ These exclusions are deliberate. Scope statements appear on every result.
 
 ## Key findings so far
 
-**Video — ABR all-codecs benchmark (Meridian 120s, 3 runs, all 🟢)**
-- H.264 at 4000 kbps: CPU 37.3s / 0.83 Wh · GPU 17.5s / 0.37 Wh → GPU ~55% less energy
-- H.265 at 2000 kbps: CPU 70.3s / 1.58 Wh · GPU 14.5s / 0.29 Wh → GPU ~81% less energy
-- AV1 at 1500 kbps: CPU 30.8s / 0.65 Wh · GPU 14.5s / 0.30 Wh → GPU ~55% less energy
-- All GPU presets use the full VAAPI pipeline (decode + scale + encode). Earlier "GPU uses more energy" result was from a partial pipeline (CPU decode + GPU encode) — superseded.
+Published findings live at [`/findings`](https://wattlab.greeningofstreaming.org/findings) — a catalog of citable energy measurements, each one backed by a stored result file. Examples currently published:
 
-**LLM cold inference 🟢**
-- Mistral 7B T3: 0.94 mWh/token
-- TinyLlama 1.1B T3: 0.06 mWh/token (~15× more efficient per token)
-- Gemma 3 12B now available for larger-model comparison
+- **AV1 hardware vs software** ⭐ — same 1500 kbps target: hw uses ~55% less energy but loses ~2 VMAF and produces ~40% larger files. ([finding](https://wattlab.greeningofstreaming.org/findings/av1-hw-sw-vmaf-tradeoff))
+- **ABR all-codecs** — H.264 / H.265 / AV1 at typical streaming bitrates, CPU vs GPU; GPU wins on time and energy across all three. ([finding](https://wattlab.greeningofstreaming.org/findings/abr-all-codecs-meridian-120s))
+- **LLM cold inference** 🟡 — per-token energy across the size ladder (pre-S30 panel; refresh pending).
+- **RAG faithfulness** 🟡 — retrieval works at small scale, but smaller models still hallucinate against correctly-retrieved chunks.
 
-**Image generation — SD-Turbo CPU 🟢**
-- 0.21 Wh/image, 12s generation time, ~30W delta above idle
-
-**Ship-of-Theseus honesty:** when earlier methodology improvements (full GPU pipeline, ABR rate control) change what a result means, the old finding is marked superseded rather than silently overwritten.
+**Ship-of-Theseus honesty:** when methodology changes (full GPU pipeline, ABR rate control, VMAF measurement), older findings are versioned via `supersedes:` in the finding file — citable URLs stay stable; the new reading lives alongside, marked as the current one.
 
 ---
 
@@ -81,7 +74,7 @@ Three tiers, one URL — `https://wattlab.greeningofstreaming.org`. The same pag
 | **Member** | GoS members on the allowlist | Sign in via the magic-link form on `/auth/sign-in` (email-based) | Custom prompts / ffmpeg commands, all-codecs sweeps, RAG corpus uploads, video uploads ≤ 1 GB, CSV/JSON bulk export |
 | **Lab** | Operators on GoS1 | LAN address (`192.168.x.x`) or SSH tunnel | Full settings, variance calibration, thermal-recovery probe, all jobs unscoped |
 
-**Anonymous quick-look:** `https://wattlab.greeningofstreaming.org/demo` — the seven-step Guided Tour with predetermined demo jobs (H.265 CPU vs GPU, Mistral 7B T3, SD-Turbo, RAG 3-mode).
+**Anonymous quick-look:** `https://wattlab.greeningofstreaming.org/demo` — the seven-step Guided Tour with predetermined demo jobs (H.265 CPU vs GPU, a representative LLM run, SD-Turbo, RAG comparison).
 
 **Lab via SSH tunnel:**
 ```

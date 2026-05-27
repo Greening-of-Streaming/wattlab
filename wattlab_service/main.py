@@ -5971,36 +5971,44 @@ def _finding_page_html(f, public_base_url: str) -> str:
 
     # JS that hydrates each embedded measurement via the shared renderer.
     # Uses the same wlRender{Type}Card dispatch as the /results expand-row.
+    # Fetches are awaited sequentially — nginx caps concurrent connections
+    # per IP at 3 (limit_conn wattlab_conn 3 on `location /`), so a finding
+    # citing 6 result_ids would 429 half its embeds if these fired in
+    # parallel. Sequential is slow but visible: the per-embed "Loading…"
+    # text gives clear progression and matches the lab-look fidelity goal.
     hydrate_js = """
 <script>
-document.querySelectorAll('.finding-embed').forEach(async function(el){
-  const rid = el.dataset.resultId;
-  const type = el.dataset.type;
-  const jobId = rid.split('/')[1].split('_').slice(-1)[0];
+(async function hydrateFindingEmbeds(){
+  const els = document.querySelectorAll('.finding-embed');
   const renderers = {
     video: window.wlRenderVideoCard,
     llm: window.wlRenderLLMCard,
     image: window.wlRenderImageCard,
     rag: window.wlRenderRAGCard
   };
-  const renderer = renderers[type];
-  if (!renderer) {
-    el.querySelector('.loading').textContent = 'no renderer for type=' + type;
-    return;
-  }
-  try {
-    const r = await fetch('/results/' + type + '/' + jobId + '/download.json');
-    if (!r.ok) {
-      el.querySelector('.loading').textContent =
-        'could not load ' + rid + ' (HTTP ' + r.status + ')';
-      return;
+  for (const el of els) {
+    const rid = el.dataset.resultId;
+    const type = el.dataset.type;
+    const jobId = rid.split('/')[1].split('_').slice(-1)[0];
+    const renderer = renderers[type];
+    if (!renderer) {
+      el.querySelector('.loading').textContent = 'no renderer for type=' + type;
+      continue;
     }
-    const data = await r.json();
-    el.innerHTML = renderer({result: data, isPrev: true, savedAt: data.saved_at});
-  } catch(e) {
-    el.querySelector('.loading').textContent = 'error: ' + e.message;
+    try {
+      const r = await fetch('/results/' + type + '/' + jobId + '/download.json');
+      if (!r.ok) {
+        el.querySelector('.loading').textContent =
+          'could not load ' + rid + ' (HTTP ' + r.status + ')';
+        continue;
+      }
+      const data = await r.json();
+      el.innerHTML = renderer({result: data, isPrev: true, savedAt: data.saved_at});
+    } catch(e) {
+      el.querySelector('.loading').textContent = 'error: ' + e.message;
+    }
   }
-});
+})();
 </script>
 """
 
@@ -6066,6 +6074,11 @@ document.querySelectorAll('.finding-embed').forEach(async function(el){
             f'</div>'
           f'</div>'
         f'</div>'
+        # _CARBON_JS defines window.wlCarbonStrip, which the card renderers
+        # call inline; without it the embedded measurement renders but the
+        # carbon strip throws "wlCarbonStrip is not defined" in the console
+        # and breaks the card's bottom block.
+        f'{_CARBON_JS}'
         f'{_RESULT_JS}'
         f'{hydrate_js}'
         f'</body></html>'

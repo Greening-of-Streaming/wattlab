@@ -142,15 +142,18 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 
 **Phases 1–8 shipped:** research integrity (persistence + export), measurement quality (LLM batched/warm-cold/streaming, H.265+AV1), settings & lab config, demo mode + GoS visual identity, image generation (SD-Turbo CPU/GPU + SDXL-Turbo), public access (nginx + cert + IP-gate), guided tour + credibility (confidence popover, resume), RAG energy test (Chroma + compare-3-modes).
 
-**Active CRs:** 15 entries in `CHANGE_REQUESTS.md`. **Recently closed (S30 + S31, 2026-05-26 → 2026-05-27):** CR-048 — `/llm/compare` page (hybrid showcase + member "Try your own", Wh-per-correct-answer headline, mWh/tok kept as supporting column to expose the perverse incentive). CR-049 — `/rag/compare` sibling page, same shape, BBC corpus prompt as canonical showcase. CR-050 — dynamic model catalog (`model_catalog.py` auto-discovers from `ollama list` and HF cache, per-surface enable lists on `/settings`); active-probe thermal-floor cooldown (`power.wait_for_thermal_floor`, ±3 W of cold reference, asymmetric "at or below floor" settle); Ollama `keep_alive` eviction between models (`llm.unload_all_loaded_models`) so VRAM-resident models don't inflate the floor by ~60 W each; 🔴 confidence rows greyed in tables but excluded from cheapest pick + bust card + charts; side-by-side Wh-vs-params + mWh/tok-vs-params charts gated at ≥3 trusted-correct; N-way `/image/compare` (iterates every enabled image model with the same thermal-floor cooldown); 4 Hz local UI ticker for smooth cooldown counter between server polls. Also S30: CR-033 (curated demo chip-row H.265/AV1 on `/demo`), CR-046 (BBB preloaded + generic vignette — the FOKUS-match angle was investigated and dropped, since the FOKUS header is post-processed BBB with laser-eye effects so no literal frame-match is meaningful), CR-047 (parent-source + variants schema for `/video` Source picker, collapsed to length-axis after empirical pre-test in `docs/input_sensitivity_findings.md`). See "Groupings & dependencies" appendix at end for the dependency map. Closed CRs (with original problem statements) in `CHANGE_REQUESTS_CLOSED.md`.
+**Active CRs:** 15 entries in `CHANGE_REQUESTS.md`. Closed CRs (with original problem statements + closing commit) live in `CHANGE_REQUESTS_CLOSED.md` — that file is now the single source of truth for "what shipped and when." This header keeps only the recent-arc one-liners below.
 
 ### Recent sessions (one-line summary; full detail in JOURNAL.md + git log)
 Earlier sessions (S1–S25) live in `JOURNAL.md`; recent arc below.
-- **S26 (2026-05-20):** Credibility & recruitment bundle — external-links registry in `main.py`, `canonical.py` + Meridian-120s baseline pin, **CR-037** closed (AI→streaming tethering: "≈ N× a 120 s 1080p H.265 GPU encode" enrichment + 5-principle expander), **CR-040** closed video-only (per-result reproduce.zip + button), **CR-027** verified-closed (found already shipped). 218 → 234 tests.
-- **S27 (2026-05-21):** Versioning + build stamp (`VERSION 0.4.0` + `version.py`, footer on every page, `owl_version` stamped on every result); CR-037 readout bug fixed in bespoke live renderers (`renderLLMSingle`/`renderLLMAll`/`/image renderResult`); CR-027/037/040 bodies migrated to `CHANGE_REQUESTS_CLOSED.md`. 234 → 237 tests.
-- **S28 (2026-05-22):** **CR-044 VMAF** — perceptual quality on multi-video compare cards (terminal pass, excluded from draw; VAAPI 1080→1088 crop fix). **CR-028 Phase 2** (Tania §9 v2) — shared `confidence.py` CI model (`SE_final = max(SE_calibrated, SE_per_run) + SE_drift`, `confidence_positive = Φ(z)`); raw baseline+task samples persisted; legacy variance fallback; absorbed CR-020. Key Finding ⭐: AV1 hw vs sw at same 1500 kbps. CSV spreadsheet-safety. **CR-045 captured**; CR-028 + CR-044 closed. 237 → **272 tests**.
-- **S30 (2026-05-27):** Picker UX polish package, riding on the S29 variants schema. **Source vignettes** — small JPEG thumbnails (~3-6 KB each, 160 px wide) extracted from each source via ffmpeg (`gos.jpg` t=25 s, `meridian.jpg` t=60 s, `bbb.jpg` t=180 s), stored under `wattlab_service/static/source_vignettes/`, wired into the `vignette` field on each parent in `sources.py`. `_video_source_picker_html()` renders them as 32 px-high `<img>` left of the parent header. Closes **CR-046** (BBB-preloaded + generic vignette): the originally-sketched FOKUS-matched vignette angle was explored via dHash perceptual hashing then dropped after visual confirmation that the FOKUS event header is post-processed BBB content (added laser-eye effects), so no literal frame-match is meaningful — the generic `bbb.jpg` already satisfies the identifying-thumbnail goal. **CR-033 demo chip-row** — `/demo` step 1's video block gains a two-chip codec selector (H.265 default, AV1 alternate), both on `meridian_120s`; `selectDemoCodec()` updates chip styling + the run-button label, `runDemoVideo()` reads the choice to dispatch `h265_both` vs `av1_both`. Result-card path needed zero changes (codec-agnostic). **CR-047 follow-up** — `run_job` now takes `source_key=`, stamps `result["source"] = {key, parent}` on persisted result JSON when the job came from a preloaded source; legacy `/video/upload` (custom file) leaves it unset. Unlocks future filtering / analytics on the variant schema. Parallel session shipped **CR-048** (`/llm/compare` page, energy per correct answer, Phase 1) which is the latest active capture (Phase 2 = P110 backfill + RAG mirror). **290 tests** holding steady (no new test files; refactor + UI only).
-- **S29 (2026-05-26):** CLAUDE.md pruning pass + FOKUS Berlin prep + variants schema. **CR-046 Phase 1** — Big Buck Bunny preloaded: 4K full master from archive.org (642 MB) + first-120 s stream-copy extract; both under a new `bbb` parent in `sources.py`. **CR-047** — parent-source + variants schema for `/video` Source picker, killing the hardcoded radio block (`main.py:~2807-2845`); `_video_source_picker_html()` renders from `sources.get_grouped_sources()` so adding a variant only requires editing `sources.py`. Picker now grouped by parent header ("Big Buck Bunny 4K · CC BY 3.0") with short variant labels ("2 min extract") underneath. **VMAF stage** added to the encode progress widget (`_BOTH_STAGES` / `_ALL_STAGES` + `stage="vmaf"` server-side + `vmaf_done`/`vmaf_total` poll fields so "VMAF · 1 of 2 encodes scored" surfaces during the post-encode quality pass — fixed the "looks like it restarted" UX). Warning text on full-length radios bumped to reflect VMAF cost (Meridian-full ~14-18 min incl. VMAF; BBB-full ~12-16 min). **Pre-CR-047 design tests** — input-bitrate sensitivity (CRF span, same codec) and codec-of-origin sensitivity (industry-typical H.264 5 / H.265 3 / AV1 2 Mbps) both run; first axis flat (1.7 % CPU, 4.9 % GPU — at noise), second moderate (3.4 % CPU, 10.3 % GPU — AV1 carries the jump). Justifies the picker shape: **2 variants per parent** (full + 2-min extract), plus an optional vignette (still image) on the parent for UI friendliness — vignette is orthogonal to variants, not a third slot. All in `docs/input_sensitivity_findings.md`. 272 → **290 tests**.
+- **S26 (2026-05-20):** Credibility & recruitment bundle — CR-037 (AI→streaming tethering), CR-040 (per-result reproduce.zip), CR-027 (capability matrix). 218 → 234 tests.
+- **S27 (2026-05-21):** Versioning + build stamp (`VERSION` + `version.py`, footer + result-stamping). 234 → 237 tests.
+- **S28 (2026-05-22):** CR-044 (VMAF) + CR-028 Phase 2 (Tania §9 v2 — `confidence.py`, shared CI model, raw samples persisted). 237 → 272 tests. Key Finding ⭐: AV1 hw vs sw at same 1500 kbps.
+- **S29 (2026-05-26):** CR-046 Phase 1 (BBB preloaded) + CR-047 (variants schema for `/video` Source picker) + VMAF stage in progress widget. 272 → 290 tests.
+- **S30 (2026-05-27):** Picker UX polish — source vignettes + CR-033 demo chip-row + CR-046 close-out + CR-047 source-key on result JSON. **290 tests** (refactor + UI only).
+- **S31 (2026-05-27 overnight):** AI-comparison trilogy — CR-048 (`/llm/compare`) + CR-049 (`/rag/compare`) + CR-050 (dynamic model catalog + active-probe thermal floor + Ollama eviction + N-way `/image/compare`). 290 tests.
+- **S32 (2026-05-27):** CR-051 RAG corpus self-service (Member upload + delete, audit log, ownership matrix). 292 → 307 tests.
+- **S32 close-out (2026-05-27 evening):** Findings-chain shipped behind `findings_enabled` flag — CR-054 (data model + AV1 worked example), CR-055 (`/findings` index), CR-056 (bulk import of 5 more findings), CR-058 (`/demo` step 7 rewire). CR-057 (home-page repositioning) drafted, awaiting lab UX review. CR-012 also closed — variance + thermal-probe drift journals (`results/{variance,diagnostics}/history.jsonl` via new `persist.append_history_line`). 307 → 339 tests.
 
 ### Deferred / open (active items only — completed ones removed; see CHANGE_REQUESTS_CLOSED.md / JOURNAL.md for history)
 - **Transcoding apples-to-apples (GOP / profile)** — see **CR-029** sub-item 2 (Tania-led); VMAF (CR-044) now makes the gap measurable (see AV1 hw-vs-sw Key Finding).
@@ -162,46 +165,21 @@ Earlier sessions (S1–S25) live in `JOURNAL.md`; recent arc below.
 
 ## Key Findings to Date
 
-### Video — ABR All-Codecs benchmark (Meridian 120s, n=3, all 🟢) — canonical
-Identical-bitrate ABR (H.264 4000 kbps · H.265 2000 kbps · AV1 1500 kbps). GPU = full VAAPI pipeline.
-- **H.264:** CPU 37.3s / 0.83 Wh · GPU 17.5s / 0.37 Wh → GPU **~55% less energy, ~53% faster**
-- **H.265:** CPU 70.3s / 1.58 Wh · GPU 14.5s / 0.29 Wh → GPU **~81% less energy, ~79% faster**
-- **AV1:** CPU 30.8s / 0.65 Wh · GPU 14.5s / 0.30 Wh → GPU **~55% less energy, ~53% faster**
-- H.265 GPU and AV1 GPU both finish at **exactly 14.5s** — VAAPI hardware clock is the GPU-path ceiling.
-- Most efficient: AV1 GPU and H.265 GPU (gap within noise).
-- AV1 CPU beats H.265 CPU on speed AND energy — SVT-AV1 multi-core advantage.
-- Results within 1% across 3 runs; supersedes all CRF/QP comparisons.
+Canonical store is the catalog at **`/findings`** (CR-054/055/056, shipped S32). Each finding is one markdown file under `docs/findings/<slug>.md` with a strict schema (frontmatter + analysis prose) and cites a real `source_result_id` on disk. The catalog is authoritative; **don't restate findings as prose here** — drift between this file and the finding markdown is a known hazard (see memory: claude-md-prose-can-drift-from-disk).
 
-### Video — AV1 hardware vs software: the energy↔quality tradeoff ⭐ (S28, CR-044 VMAF, clean ≥10s 🟢 run `e18a9d57` 2026-05-22)
-At the **same 1500 kbps ABR target**, on Meridian-120s, all six encodes 🟢:
-- **SVT-AV1 (CPU, libsvtav1):** 14.51 MB · **VMAF 92.74** · 0.71 Wh
-- **av1_vaapi (GPU, RX 7800 XT):** 20.34 MB · **VMAF 90.79** · 0.32 Wh
-- **Headline:** hardware AV1 uses **~55% less energy** (and is ~2.3× faster) **but** delivers **~2 VMAF lower** *and* a **~40% larger file** — it hits the bitrate target while SVT-AV1 undershoots it (~967 kbps actual) yet still scores higher. So SVT-AV1 is markedly more **bit-efficient**; the hardware encoder buys speed/energy by giving up compression quality. The direction is consistent on a noisier tiny-clip run (7.63 vs 9.16 MB; 91.51 vs 89.70 VMAF), slightly more pronounced at length.
-- AV1 is the codec where the hw/sw gap shows; for H.264/H.265 the CPU↔GPU VMAF gap is ≤2 and within noise (H.264 94.0/92.1, H.265 94.1/92.0). **First OWL result that pairs energy with a measured quality axis** — the canonical use-case for CR-044 (VMAF) and the motivation for CR-045 (same-quality compare).
-- *Caveat:* cross-codec VMAF here is NOT apples-to-apples (different per-codec bitrate targets); only the within-AV1 CPU-vs-GPU comparison (same 1500 kbps) is a fair quality read. Tiny clips (≤~4 s) are unreliable for this and now correctly flag 🔴.
+Slugs currently published (`docs/findings/`):
 
-### Video — Input-master sensitivity (S29, 2026-05-26, CR-047 pre-test)
-On a `h265_both` re-encode of a 2-min 1080p source, neither input bitrate nor input codec moves the CPU encode energy needle (≤3.4 % spread, ~2-3× noise floor). GPU side shows a modest codec-of-origin effect (10.3 %), but only **AV1 carries the jump** — H.264↔H.265 is flat. **Why:** libx265 encode dominates CPU runtime (~95 % of total); on the GPU path the encode is so fast (~12 s) that the still-software decoder becomes the proportional bottleneck. Bonus VMAF finding: higher-quality source codec → higher output VMAF *even at lower bitrate* — AV1 at 2.3 Mbps gives VMAF 88.2 (GPU) vs H.264 at 5.1 Mbps giving 87.0. Justified collapsing CR-047's picker matrix from 5 candidate variant slots per source to 2 (full + 2-min extract); the vignette (parent-level still for UI friendliness) is orthogonal, not a variant. Full data in `docs/input_sensitivity_findings.md`.
+- `abr-all-codecs-meridian-120s` — ABR all-codecs benchmark (n=1 on disk; the popular "n=3" claim is unsupported, caveat noted)
+- `av1-hw-sw-vmaf-tradeoff` ⭐ — energy↔quality tradeoff at same 1500 kbps (the canonical use-case for VMAF + CR-045)
+- `input-master-sensitivity` — input bitrate / codec-of-origin sensitivity (CR-047 pre-test)
+- `llm-cold-inference-mwh-per-token` 🟡 — pre-S30 panel, re-measurement on the new ladder = future v2
+- `rag-faithfulness-rem-question` 🟡 — pre-S30 panel, single observed hallucination (n=1, not a statistical claim)
+- `sd-turbo-cpu-image-first-run` — first-image energy on CPU
 
-### LLM Cold Inference 🟢/🟡
-- Mistral 7B T3: **0.943 mWh/token** 🟢
-- TinyLlama T3: **0.061 mWh/token** 🟡 (~15× more efficient — but generic-boilerplate answers).
-- TinyLlama short tasks are below the P110 floor; batched mode required for reliable readings.
+Not catalogued (don't fit the strict "cite one stored measurement" schema; live on `/methodology`):
 
-### Image generation
-- SD-Turbo CPU first run: **0.2063 Wh/image**, 12.15s, ~30 W delta. Backend: Ryzen 9 7900, 8 steps, 512×512.
-- SD-Turbo + SDXL-Turbo on GPU (ROCm, fp16 small / fp32 VAE upcast at 512×512) shipped in S14; Compare Models ⚡ runs both at 4 native steps for apples-to-apples size comparison.
-- VRAM ceiling: SDXL-Turbo at 1024×1024 busts the 12 GB Navi31 budget via the fp32 VAE upcast — 512×512 is the sweet spot.
-
-### RAG faithfulness ⭐ (S15, "What is REM?")
-All three models (TinyLlama 1.1B, Gemma 3 12B, Phi-4 14B) **retrieved identical correct chunks** — the GoS REM whitepapers. But TinyLlama hallucinated *"REM is a framework provided by the European Commission"*, blending the GoS source with an adjacent JRC chunk. Gemma and Phi-4 stayed faithful. **Headline:** RAG retrieval works at small scale; RAG *quality* depends on the consuming model's faithfulness. Hallucination is a third axis on the energy/quality tradeoff.
-
-### French grid evolution (S18, CR-018 Tier 1 historical data)
-Same lifecycle methodology (Eco2mix mix × IPCC AR6 factors), monthly mean gCO2e/kWh:
-- Jan 2020: **65.8** · Jun 2020: **54.6** · Jun 2022: **59.5** · Jan 2024: **53.4** · Jun 2024: **26.9**
-- Jun 2022 → Jun 2024 = **55% reduction in two years** (nuclear back + solar buildout). Bigger story than the popular "nuclear corrosion crisis" framing — Jan 2023 was 63.2, only marginally worse than Jan 2020. The crisis didn't dominate monthly lifecycle averages because France stayed mostly nuclear even at the worst.
-- Live diurnal range can hit ~22 g/kWh on a sunny + nuclear-heavy weekend afternoon and ~85 g/kWh during a winter cold-snap evening.
-- **Methodology insight (CR-016):** Eco2mix's `taux_co2` is direct combustion only and isn't comparable to lifecycle annual means. Mixing the two produced a spurious ~4× live-vs-static gap. After CR-016, both are lifecycle and the real gap is ~1.5–2×.
+- **French grid evolution (S18):** monthly lifecycle gCO2e/kWh from Eco2mix × IPCC AR6 factors. Jan 2020 65.8 → Jun 2024 26.9 (55% reduction in 2 yrs); derived from `carbon.HISTORICAL_INTENSITY`, not a measurement run.
+- **CR-016 methodology insight:** Eco2mix's `taux_co2` is direct combustion only — never compare it to lifecycle annual means. Both paths now use lifecycle factors.
 
 ## Visual Identity
 - Project mark: owl SVG at `wattlab_service/static/owl.svg` (2.4KB teal/green geometric).

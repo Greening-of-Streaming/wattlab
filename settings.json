@@ -15,7 +15,7 @@
   "variance_cpu_pct": 0.95,
   "variance_gpu_pct": 0.63,
   "variance_runs": 32,
-  "variance_cooldown_s": 10,
+  "variance_cooldown_s": 60,
   "h264_bitrate_kbps": 4000,
   "h265_bitrate_kbps": 2000,
   "av1_bitrate_kbps": 1500,
@@ -53,5 +53,9 @@
     "sd-turbo",
     "sdxl-turbo",
     "sana-600m"
-  ]
+  ],
+  "rag_upload_max_mb": 50,
+  "rag_member_doc_count_cap": 10,
+  "rag_member_total_mb_cap": 200,
+  "findings_enabled": true
 }
