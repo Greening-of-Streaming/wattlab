@@ -51,7 +51,25 @@ class _ModelsView:
 
 MODELS = _ModelsView()
 
-TOP_K = {"baseline": 0, "rag": 3, "rag_large": 8}
+TOP_K = {"baseline": 0, "rag": 3, "rag_blended": 3, "rag_large": 8}
+
+# CR-053 — single source of truth for the RAG retrieval modes. Used by the
+# /rag selector, the 4-mode compare runner, the compare progress widget,
+# and the result renderer. Adding a mode is: one entry here + one prompt
+# template below + (if needed) one row in the page selector.
+COMPARE_MODES = ("baseline", "rag", "rag_blended", "rag_large")
+MODE_LABELS = {
+    "baseline":    "Without RAG (no retrieval)",
+    "rag":         "RAG — top 3 chunks",
+    "rag_blended": "RAG Blended — top 3 + training",
+    "rag_large":   "RAG Large — top 8 chunks",
+}
+SHORT_MODE_LABELS = {
+    "baseline":    "Without RAG",
+    "rag":         "RAG",
+    "rag_blended": "RAG Blended",
+    "rag_large":   "RAG Large",
+}
 
 
 # Compare-across-models prompts for /rag/compare (CR-049, sibling of /llm/compare).
@@ -76,6 +94,18 @@ SYSTEM_PROMPT = (
 )
 RETRIEVAL_PROMPT = "Here are relevant excerpts from the corpus:\n\n{chunks}\n\n---\nQuestion: {question}"
 BASELINE_PROMPT  = "Question: {question}"
+# CR-053 — blended mode explicitly invites the model to combine retrieved
+# context with its training knowledge. Default RAG framing pushes models
+# toward "faithful RAG" (only what's in the chunks), which makes them
+# silently ignore relevant training knowledge — this prompt opts out.
+BLENDED_PROMPT = (
+    "Here are relevant excerpts from the corpus:\n\n{chunks}\n\n---\n"
+    "Question: {question}\n\n"
+    "Answer using the corpus excerpts above where they cover the question, "
+    "and supplement with your own training knowledge where they don't. "
+    "When you cite specific facts from the corpus, indicate the source; "
+    "for general knowledge from your training, no citation needed."
+)
 
 # ---------------------------------------------------------------------------
 # Singletons
@@ -445,7 +475,10 @@ def _run_rag_query(model_key: str, rag_mode: str, question: str,
 
         chunks_retrieved = len(chunk_texts)
         joined = "\n\n".join(chunk_texts)
-        user_message = RETRIEVAL_PROMPT.format(chunks=joined, question=question)
+        if rag_mode == "rag_blended":
+            user_message = BLENDED_PROMPT.format(chunks=joined, question=question)
+        else:
+            user_message = RETRIEVAL_PROMPT.format(chunks=joined, question=question)
     else:
         user_message = BASELINE_PROMPT.format(question=question)
 

@@ -2269,8 +2269,8 @@ _RESULT_JS = """<script>
   window.wlRenderRAGCard = function(opts){
     var r = (opts && opts.result) || {};
     var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
-    var modes  = ['baseline', 'rag', 'rag_large'];
-    var labels = {baseline: 'No retrieval', rag: 'RAG', rag_large: 'RAG Large'};
+    var modes  = ['baseline', 'rag', 'rag_blended', 'rag_large'];
+    var labels = {baseline: 'No retrieval', rag: 'RAG', rag_blended: 'RAG Blended', rag_large: 'RAG Large'};
     var results = r.results || {};
     var modelLine = r.model_label
       ? '<div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:0.6rem">'
@@ -5854,12 +5854,19 @@ async def rag_page(request: Request):
     lk_q_class        = _lock_class(request, CUSTOM_PROMPT)
     lk_q_badge        = _lock_badge_html(request, CUSTOM_PROMPT, "Edit question — Members only")
     lk_batch_class    = _lock_class(request, BATCH_COMPARE)
-    lk_batch_badge    = _lock_badge_html(request, BATCH_COMPARE, "Compare 3 modes — Members only")
+    lk_batch_badge    = _lock_badge_html(request, BATCH_COMPARE, "Compare 4 modes — Members only")
     lk_corpus_class   = _lock_class(request, RAG_CORPUS_UPLOAD)
     lk_corpus_badge   = _lock_badge_html(request, RAG_CORPUS_UPLOAD, "Build / rebuild index — Members only")
     dis_q             = _disabled_attr(request, CUSTOM_PROMPT)
     dis_batch         = _disabled_attr(request, BATCH_COMPARE)
     dis_corpus        = _disabled_attr(request, RAG_CORPUS_UPLOAD)
+
+    # CR-053 — RAG mode constants injected as JS so the frontend stays
+    # in lock-step with the rag.py source of truth.
+    import json as _json
+    rag_modes_js        = _json.dumps(list(rag_module.COMPARE_MODES))
+    rag_mode_labels_js  = _json.dumps(rag_module.MODE_LABELS)
+    rag_short_labels_js = _json.dumps(rag_module.SHORT_MODE_LABELS)
 
     models_html = "".join([
         f'''<div class="preset" id="rmodel-{k}" onclick="selectRModel('{k}')">
@@ -5961,7 +5968,7 @@ async def rag_page(request: Request):
         <div style="color:var(--text-3);font-size:0.82rem;line-height:1.6;margin-top:0.75rem">
             Retrieval-Augmented Generation (RAG) augments an LLM with chunks retrieved from a PDF corpus (ChromaDB + sentence-transformer embeddings).<br>
             Compare three modes: <strong style="color:var(--text-2)">baseline</strong> (no retrieval), <strong style="color:var(--text-2)">RAG</strong> (top 3 chunks, 4096 ctx), <strong style="color:var(--text-2)">RAG Large</strong> (top 8 chunks, 8192 ctx).<br>
-            Use "Compare 3 modes" to run all three sequentially with fresh baselines — a side-by-side energy comparison for the same question.<br>
+            Use "Compare 4 modes" to run all three sequentially with fresh baselines — a side-by-side energy comparison for the same question.<br>
             Scope: device layer only — no network, no amortised training cost.
         </div>
     </details>
@@ -6033,7 +6040,11 @@ async def rag_page(request: Request):
         </div>
         <div class="mode-card" id="rmode-rag" onclick="selectRMode('rag')">
             <h4>RAG</h4>
-            <p>Top 3 chunks · 4096 ctx</p>
+            <p>Top 3 chunks · faithful (chunks only)</p>
+        </div>
+        <div class="mode-card" id="rmode-rag_blended" onclick="selectRMode('rag_blended')">
+            <h4>RAG Blended</h4>
+            <p>Top 3 chunks + training knowledge</p>
         </div>
         <div class="mode-card" id="rmode-rag_large" onclick="selectRMode('rag_large')">
             <h4>RAG Large</h4>
@@ -6062,7 +6073,7 @@ async def rag_page(request: Request):
         <button id="runBtn" onclick="startRag()">▶ Run single</button>
         <button id="compareBtn" class="{lk_batch_class}" onclick="startCompare()"{dis_batch}
                 style="background:var(--panel);border:1px solid var(--accent);color:var(--accent)">
-            ▶▶ Compare 3 modes
+            ▶▶ Compare 4 modes
         </button>
     </div>
 
@@ -6408,7 +6419,7 @@ async def rag_page(request: Request):
         const e = r.energy || {{}};
         const inf = r.inference || {{}};
         const conf = e.confidence || {{}};
-        const ragModeLabels = {{baseline:'Without RAG (no retrieval)', rag:'RAG (top 3)', rag_large:'RAG Large (top 8)'}};
+        const ragModeLabels = RAG_MODE_LABELS;
         const sourcesHtml = r.chunk_sources && r.chunk_sources.length
             ? r.chunk_sources.map(s => `<span style="font-size:0.72rem;color:var(--text-3);
                 background:var(--panel);padding:0.2rem 0.4rem;margin-right:0.3rem">${{s}}</span>`).join('')
@@ -6454,7 +6465,7 @@ async def rag_page(request: Request):
             </div>`;
     }}
 
-    // --- Compare 3 modes ---
+    // --- Compare 4 modes ---
 
     async function startCompare() {{
         if (!CAN_BATCH_COMPARE) return;   // button is disabled, this is a backstop
@@ -6490,12 +6501,21 @@ async def rag_page(request: Request):
         }}
     }}
 
-    function renderCompareProgress(partial, currentMode, watts) {{
-        const MODES = ['baseline','rag','rag_large'];
-        const MODE_LABELS = {{baseline:'Without RAG', rag:'RAG', rag_large:'RAG Large', cooldown:'⏱ Cooling down (heat dissipating)'}};
-        const stagesHtml = MODES.map(m => {{
+    // CR-053 — single source of truth (mirrors rag.COMPARE_MODES + LABELS).
+    const RAG_COMPARE_MODES  = {rag_modes_js};
+    const RAG_MODE_LABELS    = {rag_mode_labels_js};
+    const RAG_SHORT_LABELS   = {rag_short_labels_js};
+
+    function renderCompareProgress(partial, data, watts) {{
+        const MODES = RAG_COMPARE_MODES;
+        // CR-053 alignment — labels come from RAG_SHORT_LABELS (rag.py source of truth).
+        data = data || {{}};
+        const stage = data.stage;
+        const currentMode = data.current_mode;
+        const inCooldown = (stage === 'cooldown');
+        const stagesHtml = MODES.map((m, i) => {{
             const done = partial && partial[m];
-            const active = m === currentMode && !done;
+            const active = (m === currentMode) && !done && !inCooldown;
             const col = done ? '#00ff99' : active ? '#ffaa00' : '#333';
             const icon = done ? '✓' : active ? '▶' : '·';
             let extra = '';
@@ -6509,11 +6529,22 @@ async def rag_page(request: Request):
             }}
             return '<div style="display:flex;align-items:center;gap:0.6rem;font-size:0.82rem;margin-bottom:0.3rem">'
                 + '<span style="color:' + col + ';width:1rem">' + icon + '</span>'
-                + '<span style="color:' + col + '">' + MODE_LABELS[m] + extra + '</span></div>';
+                + '<span style="color:' + col + '">' + (RAG_SHORT_LABELS[m] || m) + extra + '</span></div>';
         }}).join('');
+        // CR-019/CR-050 \u2014 explicit cooldown row with live thermal-floor wait info.
+        let cooldownHtml = '';
+        if (inCooldown) {{
+            const ref    = (data.cooldown_reference_w != null) ? Number(data.cooldown_reference_w).toFixed(1) + 'W' : '?';
+            const cur    = (data.cooldown_w           != null) ? Number(data.cooldown_w).toFixed(1) + 'W' : '?';
+            const waited = (data.cooldown_waited_s    != null) ? data.cooldown_waited_s + 's' : '?';
+            cooldownHtml = '<div style="display:flex;align-items:center;gap:0.6rem;font-size:0.82rem;margin-bottom:0.3rem">'
+                + '<span style="color:#ffaa00;width:1rem">\u23f1</span>'
+                + '<span style="color:#ffaa00">Cooldown \u2014 waited ' + waited
+                + ' \xb7 current ' + cur + ' (target \u2264 ' + ref + ' +3W)</span></div>';
+        }}
         wlRenderProgress({{
-            header: 'Comparing 3 modes \u2014 do not close this tab',
-            stagesHtml: stagesHtml,
+            header: 'Comparing ' + MODES.length + ' modes \u2014 do not close this tab',
+            stagesHtml: stagesHtml + cooldownHtml,
             watts: watts,
             elapsed: ragStartTime ? Date.now() - ragStartTime : null,
         }});
@@ -6543,8 +6574,11 @@ async def rag_page(request: Request):
                 wlRenderQueued(data.queue_position);
                 compareTimer = setTimeout(() => pollCompare(jobId), 3000);
             }} else {{
-                renderCompareProgress(data.partial_results || {{}}, data.current_mode || data.stage, watts);
-                compareTimer = setTimeout(() => pollCompare(jobId), 2000);
+                renderCompareProgress(data.partial_results || {{}}, data, watts);
+                // CR-050 alignment — tighter cadence during cooldown so the
+                // waited-Ns counter visibly advances between 1 s server polls.
+                const next = data.stage === 'cooldown' ? 750 : 2000;
+                compareTimer = setTimeout(() => pollCompare(jobId), next);
             }}
         }} catch(e) {{
             compareTimer = setTimeout(() => pollCompare(jobId), 5000);
@@ -6552,9 +6586,11 @@ async def rag_page(request: Request):
     }}
 
     function renderCompareResult(r, jobId) {{
-        const MODES = ['baseline','rag','rag_large'];
-        const MODE_LABELS = {{baseline:'Without RAG (no retrieval)', rag:'RAG \u2014 top 3 chunks', rag_large:'RAG Large \u2014 top 8 chunks'}};
-        const STRIPE = {{baseline:'#444', rag:'#0088cc', rag_large:'#00ff99'}};
+        const MODES = RAG_COMPARE_MODES;
+        const MODE_LABELS = RAG_MODE_LABELS;
+        // CR-053 \u2014 STRIPE colour per mode; baseline dark (no retrieval),
+        // rag blue, rag_blended teal (blend = somewhere between), rag_large accent green.
+        const STRIPE = {{baseline:'#444', rag:'#0088cc', rag_blended:'#00b3a4', rag_large:'#00ff99'}};
         const cards = MODES.map(m => {{
             const res = (r.results || {{}})[m];
             if (!res) return '';
@@ -6933,8 +6969,8 @@ async def rag_run(
 ):
     if model_key not in rag_module.MODELS:
         return JSONResponse({"error": "Invalid model"}, status_code=400)
-    if rag_mode not in ("baseline", "rag", "rag_large"):
-        return JSONResponse({"error": "Invalid rag_mode"}, status_code=400)
+    if rag_mode not in rag_module.TOP_K:
+        return JSONResponse({"error": f"Invalid rag_mode (allowed: {list(rag_module.TOP_K.keys())})"}, status_code=400)
     # CR-001 capability dispatch — free-form question → CUSTOM_PROMPT;
     # absent → curated canonical (Anonymous-OK).
     effective_question = question.strip() if question and question.strip() else None
@@ -6946,8 +6982,7 @@ async def rag_run(
         return JSONResponse({"error": "Index not ready — build it first"}, status_code=400)
 
     job_id = str(uuid.uuid4())[:8]
-    mode_labels = {"baseline": "Baseline", "rag": "RAG", "rag_large": "RAG Large"}
-    label = f"RAG — {rag_module.MODELS[model_key]['label']} · {mode_labels[rag_mode]}"
+    label = f"RAG — {rag_module.MODELS[model_key]['label']} · {rag_module.SHORT_MODE_LABELS.get(rag_mode, rag_mode)}"
 
     async def coro():
         jobs[job_id]["stage"] = "baseline"
@@ -6967,7 +7002,7 @@ async def rag_job_status(job_id: str):
 
 
 async def run_rag_compare_job(job_id: str, model_key: str, question: str):
-    """3-mode RAG compare (baseline / rag / rag_large) on a single model.
+    """4-mode RAG compare (baseline / rag / rag_blended / rag_large) on a single model.
 
     CR-050 alignment (2026-05-27): now uses the same active-probe thermal-floor
     cooldown as /rag/compare-models and /llm/compare-models, and emits explicit
@@ -6979,7 +7014,7 @@ async def run_rag_compare_job(job_id: str, model_key: str, question: str):
     """
     from power import wait_for_thermal_floor
     partial_results = {}
-    modes = ("baseline", "rag", "rag_large")
+    modes = rag_module.COMPARE_MODES   # single source of truth — see rag.py
     floor_reference_w = None
     cooldowns = []
     try:
