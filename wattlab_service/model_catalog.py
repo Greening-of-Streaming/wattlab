@@ -40,6 +40,65 @@ _PARAMS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([bB])(?![a-zA-Z])")
 _OLLAMA_IMAGE_PREFIXES = ("x/flux", "x/z-image", "x/stable-diffusion", "x/sdxl")
 
 
+# CR-052 — model release + training-cutoff dates for the LLM panel.
+# Public release dates are well-documented; training cutoffs are only set
+# for families where the vendor publishes one. Unknown cutoff → None, UI
+# renders "—" with a tooltip explaining why. Update with the published date
+# when adding a new model; leave training_cutoff=None if not stated.
+#
+# Why this matters: lets test designers pick questions about events the
+# model could / couldn't have seen in training, which separates "RAG
+# retrieved correctly" from "model already knew this anyway."
+_MODEL_DATES = {
+    "tinyllama": {
+        "released":         "2024-01-04",
+        "training_cutoff":  "2023-07",
+        "source":           "TinyLlama paper (arXiv 2401.02385) + SlimPajama dataset card",
+    },
+    "qwen3:1.7b": {
+        "released":         "2025-04-29",
+        "training_cutoff":  None,
+        "source":           "Qwen3 release (Alibaba). Training cutoff not publicly stated.",
+    },
+    "qwen3:4b": {
+        "released":         "2025-04-29",
+        "training_cutoff":  None,
+        "source":           "Qwen3 release (Alibaba). Training cutoff not publicly stated.",
+    },
+    "qwen3:8b": {
+        "released":         "2025-04-29",
+        "training_cutoff":  None,
+        "source":           "Qwen3 release (Alibaba). Training cutoff not publicly stated.",
+    },
+    "mistral-nemo:12b": {
+        "released":         "2024-07-18",
+        "training_cutoff":  None,
+        "source":           "Mistral × NVIDIA release. Training cutoff not publicly stated.",
+    },
+    "phi4": {
+        "released":         "2024-12-12",
+        "training_cutoff":  "2024-06",
+        "source":           "Microsoft Phi-4 technical report (data through early-to-mid 2024).",
+    },
+    "gpt-oss:20b": {
+        "released":         "2025-08-05",
+        "training_cutoff":  "2024-06",
+        "source":           "OpenAI gpt-oss model card (June 2024 training-data cutoff).",
+    },
+}
+
+
+def _dates_for(key: str) -> dict:
+    """Look up release + training-cutoff dates by normalised model key.
+    Returns {released, training_cutoff, source}; missing entries get
+    a uniform "unknown" shape so callers can blindly index in."""
+    return _MODEL_DATES.get(key, {
+        "released":        None,
+        "training_cutoff": None,
+        "source":          None,
+    })
+
+
 def _params_from_name(name: str) -> str:
     """Best-effort parameter count extraction. 'qwen3:1.7b' -> '1.7B'."""
     m = _PARAMS_RE.search(name)
@@ -158,10 +217,14 @@ def available_llm_models() -> dict:
         if any(name.startswith(p) for p in _OLLAMA_IMAGE_PREFIXES):
             continue
         key = _normalize_key(name)
+        dates = _dates_for(key)
         out[key] = {
-            "label":  _label_from_key(name),
-            "size":   row.get("size", "?"),
-            "params": _params_from_name(name),
+            "label":           _label_from_key(name),
+            "size":            row.get("size", "?"),
+            "params":          _params_from_name(name),
+            "released":        dates["released"],         # YYYY-MM-DD or None
+            "training_cutoff": dates["training_cutoff"],  # YYYY-MM or None
+            "dates_source":    dates["source"],           # tooltip text
         }
     return dict(sorted(out.items(), key=lambda kv: params_numeric(kv[1]["params"])))
 

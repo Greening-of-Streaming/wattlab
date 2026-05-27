@@ -466,6 +466,25 @@ _LOGO = (
     f'<span style="color:var(--text-4);font-size:0.72rem;font-family:monospace">'
     f'greeningofstreaming.org</span></a>'
 )
+def _model_date_line(v: dict) -> str:
+    """CR-052 — render the release + training-cutoff line under a model card.
+
+    Used by /llm and /rag model selectors so test designers know what era of
+    data the model could have seen. Truncates to YYYY-MM for the visible
+    label; full source note is in the title attribute (tooltip).
+    """
+    rel = (v.get("released") or "")[:7]               # YYYY-MM
+    cut = (v.get("training_cutoff") or "")[:7]        # YYYY-MM
+    src = (v.get("dates_source") or "").replace('"', '&quot;')
+    if not rel and not cut:
+        return ('<p style="color:var(--text-5);font-size:0.65rem;margin-top:0.15rem;font-style:italic">'
+                'dates not catalogued</p>')
+    rel_str = rel if rel else "—"
+    cut_str = cut if cut else "—"
+    return (f'<p title="{src}" style="color:var(--text-5);font-size:0.65rem;margin-top:0.15rem">'
+            f'released {rel_str} · cutoff {cut_str}</p>')
+
+
 def _models_section_html(s: dict, local: bool) -> str:
     """CR-050 — render the Models section on /settings.
     Three panels (LLM, RAG, Image), each showing every model the catalog
@@ -4209,6 +4228,7 @@ async def llm_page(request: Request):
         f'''<div class="preset" id="model-{k}" onclick="selectModel('{k}')">
             <h3>{v["label"]}</h3>
             <p style="color:var(--text-3);font-size:0.75rem">{v["params"]} · {v["size"]}</p>
+            {_model_date_line(v)}
         </div>'''
         for k, v in MODELS.items()
     ])
@@ -5845,6 +5865,7 @@ async def rag_page(request: Request):
         f'''<div class="preset" id="rmodel-{k}" onclick="selectRModel('{k}')">
             <h3>{v["label"]}</h3>
             <p style="color:var(--text-3);font-size:0.75rem">{v["params"]} · {v["size"]}</p>
+            {_model_date_line(v)}
         </div>'''
         for k, v in rag_module.MODELS.items()
     ])
