@@ -5985,7 +5985,7 @@ async def rag_page(request: Request):
       {("<div id='upload-form' style='margin-top:0.75rem;padding:0.6rem 0.75rem;border:1px dashed var(--border-3);background:var(--panel-2)'>"
         "<div style='color:var(--text-2);font-size:0.8rem;margin-bottom:0.4rem;font-weight:bold'>Upload a PDF to the corpus</div>"
         "<div style='color:var(--text-5);font-size:0.72rem;margin-bottom:0.4rem' id='upload-quota'>Loading quota…</div>"
-        "<input type='file' id='upload-file' accept='application/pdf,.pdf' "
+        "<input type='file' id='upload-file' accept='application/pdf,.pdf,text/markdown,.md' "
         "style='font-family:monospace;font-size:0.78rem;color:var(--text-3);background:#0f0f0f;"
         "border:1px solid var(--border-3);padding:0.35rem;width:100%;margin-bottom:0.4rem'>"
         "<input type='text' id='upload-title' maxlength='200' "
