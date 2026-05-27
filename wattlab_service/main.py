@@ -5963,6 +5963,20 @@ async def rag_page(request: Request):
         </div>
     </div>
 
+    <dialog id="preview-dlg" style="border:1px solid var(--accent);background:var(--bg);
+            color:var(--text);width:80vw;height:85vh;max-width:1100px;padding:0;margin:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;
+                  padding:0.5rem 0.85rem;background:var(--panel);border-bottom:1px solid var(--border)">
+        <span id="preview-title" style="font-family:monospace;font-size:0.82rem;color:var(--text-2);
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:0.75rem">filename</span>
+        <button onclick="document.getElementById('preview-dlg').close()"
+                style="background:none;border:1px solid var(--border-3);color:var(--text-3);
+                       font-size:0.85rem;padding:0.15rem 0.5rem;cursor:pointer;font-family:monospace"
+                title="Close (Esc)">×</button>
+      </div>
+      <iframe id="preview-iframe" style="width:100%;height:calc(100% - 2.5rem);border:none;background:var(--panel-2)"></iframe>
+    </dialog>
+
     <details id="corpus-browser" style="margin-bottom:1.5rem;border:1px solid var(--border);padding:0.5rem 0.9rem;font-size:0.82rem"
              ontoggle="if(this.open) loadCorpus();">
       <summary style="cursor:pointer;color:var(--text-2);list-style:none">
@@ -6136,8 +6150,12 @@ async def rag_page(request: Request):
                     ? '<span style="color:var(--accent);border:1px solid var(--accent);font-size:0.65rem;padding:0 0.3rem;border-radius:2px">Member</span>'
                     : '<span style="color:var(--text-4);border:1px solid var(--border-3);font-size:0.65rem;padding:0 0.3rem;border-radius:2px">Lab</span>';
                 const addedShort = (doc.added_at || '').slice(0, 10);  // YYYY-MM-DD
+                const safeJsName = doc.rel_path.replace(/\\\\/g, "\\\\\\\\").replace(/'/g, "\\\\'");
+                const viewBtn = '<button onclick="viewDoc(\\'' + safeJsName + '\\')" '
+                    + 'style="background:none;border:1px solid var(--border-3);color:var(--text-3);'
+                    + 'font-size:0.7rem;padding:0 0.4rem;cursor:pointer;font-family:monospace" title="Preview">👁</button>';
                 const delBtn = doc.can_delete
-                    ? '<button onclick="deleteDoc(\\'' + doc.rel_path.replace(/\\\\/g, "\\\\\\\\").replace(/'/g, "\\\\'") + '\\')" '
+                    ? '<button onclick="deleteDoc(\\'' + safeJsName + '\\')" '
                       + 'style="background:none;border:1px solid var(--border-3);color:var(--err);'
                       + 'font-size:0.7rem;padding:0 0.4rem;cursor:pointer;font-family:monospace" title="Delete this document">×</button>'
                     : '';
@@ -6155,7 +6173,7 @@ async def rag_page(request: Request):
                     + '<span style="flex-shrink:0;color:var(--text-5);font-size:0.7rem;width:5.5rem;text-align:right">' + addedShort + '</span>'
                     + '<span style="flex-shrink:0;color:var(--text-4);font-size:0.72rem;width:5rem;text-align:right">' + sizeStr + '</span>'
                     + '<span style="flex-shrink:0;color:var(--text-4);font-size:0.7rem;width:8rem;text-align:right">' + tag + '</span>'
-                    + '<span style="flex-shrink:0;width:1.5rem;text-align:right">' + delBtn + '</span>'
+                    + '<span style="flex-shrink:0;display:flex;gap:0.25rem">' + viewBtn + delBtn + '</span>'
                     + '</div>';
             }}).join('');
             el.innerHTML = '<div style="max-height:28rem;overflow-y:auto;padding-right:0.4rem">' + rows + '</div>'
@@ -6198,6 +6216,13 @@ async def rag_page(request: Request):
             status.style.color = 'var(--err)';
             status.textContent = 'failed: ' + e;
         }}
+    }}
+
+    function viewDoc(filename) {{
+        const dlg = document.getElementById('preview-dlg');
+        document.getElementById('preview-title').textContent = filename;
+        document.getElementById('preview-iframe').src = '/rag/doc/' + encodeURIComponent(filename);
+        dlg.showModal();
     }}
 
     async function deleteDoc(filename) {{
@@ -6673,11 +6698,28 @@ async def rag_upload(request: Request, file: UploadFile = File(...),
     if not blob:
         return JSONResponse({"error": "empty file"}, status_code=400)
 
-    # 2. PDF magic-byte sniff. Trusting the Content-Disposition filename is
-    # cheap so we check the file actually IS a PDF — defends against renamed
-    # binaries (and keeps the pypdf chunker from choking later).
-    if not blob.startswith(b"%PDF-"):
-        return JSONResponse({"error": "not a PDF (missing %PDF- magic header)"},
+    # 2. Format validation — dispatch on the sanitised extension.
+    #    .pdf → require %PDF- magic header (defends against renamed binaries)
+    #    .md  → require UTF-8 + no NUL bytes (defends against binary mislabel)
+    # We sanitise the filename here (early) so the extension check is on the
+    # same string the rest of the handler will use for everything else.
+    pre_safe_name = corpus_manifest.sanitise_filename(file.filename or "upload.pdf")
+    ext = pre_safe_name.lower().rsplit(".", 1)[-1]
+    if ext == "pdf":
+        if not blob.startswith(b"%PDF-"):
+            return JSONResponse({"error": "not a PDF (missing %PDF- magic header)"},
+                                status_code=400)
+    elif ext == "md":
+        if b"\x00" in blob[:1024]:
+            return JSONResponse({"error": "markdown file appears to be binary (NUL bytes in first 1 KB)"},
+                                status_code=400)
+        try:
+            blob.decode("utf-8")
+        except UnicodeDecodeError:
+            return JSONResponse({"error": "markdown must be UTF-8 encoded"},
+                                status_code=400)
+    else:
+        return JSONResponse({"error": f"unsupported extension .{ext}; allowed: .pdf, .md"},
                             status_code=400)
 
     # 3. Per-Member quota (Lab uncapped).
@@ -6694,8 +6736,8 @@ async def rag_upload(request: Request, file: UploadFile = File(...),
                                  f"{s['rag_member_total_mb_cap']} MB)"}, status_code=413)
 
     # 4. Sanitise + write. Auto-suffix on collision so we never overwrite.
-    safe_name = corpus_manifest.sanitise_filename(file.filename or "upload.pdf")
-    safe_name = corpus_manifest.unique_filename(safe_name)
+    # Re-uses pre_safe_name from step 2 (already extension-dispatched + sanitised).
+    safe_name = corpus_manifest.unique_filename(pre_safe_name)
     papers_dir = Path(s["rag_corpus_path"])
     papers_dir.mkdir(parents=True, exist_ok=True)
     target = papers_dir / safe_name
@@ -6719,6 +6761,32 @@ async def rag_upload(request: Request, file: UploadFile = File(...),
         idx_result = {"error": str(e)}
     return {"ok": True, "filename": safe_name, "size_bytes": len(blob),
             "origin": origin, "indexed": idx_result}
+
+
+@app.get("/rag/doc/{filename:path}", dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def rag_doc_view(filename: str):
+    """CR-051 follow-up — direct view of a corpus document for the in-page
+    preview iframe. Anonymous-readable since the corpus is already publicly
+    queryable through /rag/run (so the content isn't private even without
+    direct view). Path-traversal guards mirror the DELETE handler.
+    """
+    safe = os.path.basename(filename)
+    if not safe or "/" in safe or ".." in safe:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+    s = cfg.load()
+    target = Path(s["rag_corpus_path"]) / safe
+    if not target.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    ext = target.suffix.lower()
+    media_type = {
+        ".pdf": "application/pdf",
+        ".md":  "text/markdown; charset=utf-8",
+    }.get(ext, "application/octet-stream")
+    return FileResponse(
+        path=str(target),
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{safe}"'},
+    )
 
 
 @app.delete("/rag/doc/{filename:path}", dependencies=[Depends(requires(RAG_CORPUS_DELETE_OWN))])

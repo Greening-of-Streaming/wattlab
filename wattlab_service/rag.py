@@ -121,6 +121,12 @@ def _get_collection(chroma_path: str):
 # ---------------------------------------------------------------------------
 
 def _load_pdfs(corpus_path: Path) -> list[dict]:
+    """Loads every PDF and .md file in corpus_path into chunkable "pages".
+
+    Markdown is treated as a single virtual page (page=0) — chunking still
+    splits on the CHUNK_SIZE_CHARS boundary so retrieval granularity is the
+    same as PDFs. PDFs go through pypdf one page at a time.
+    """
     from pypdf import PdfReader
     pages = []
     for pdf_path in sorted(corpus_path.rglob("*.pdf")):
@@ -132,6 +138,13 @@ def _load_pdfs(corpus_path: Path) -> list[dict]:
                     pages.append({"text": text, "source": pdf_path.name, "page": page_num})
         except Exception as e:
             pass  # warn-only: one AES-encrypted PDF won't block the rest
+    for md_path in sorted(corpus_path.rglob("*.md")):
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace").strip()
+            if text:
+                pages.append({"text": text, "source": md_path.name, "page": 0})
+        except Exception:
+            pass
     return pages
 
 
@@ -150,26 +163,34 @@ def _chunk_pages(pages: list[dict]) -> list[dict]:
 
 
 def add_doc_to_index(filename: str) -> dict:
-    """CR-051 — incremental add: index ONE pdf in corpus/papers/<filename>
-    without touching the rest of the collection. ~3-8 s per typical doc.
+    """CR-051 — incremental add: index ONE doc in corpus/papers/<filename>
+    without touching the rest of the collection. ~3-8 s for a PDF, faster
+    for plain markdown (no PDF parsing).
 
+    Supported: .pdf via pypdf, .md as plain text (single virtual page).
     Returns {"chunks_added": int, "pages": int} or raises on failure.
     Uses globally-unique ids (`<filename>#<i>`) so an add can't collide
     with the seed corpus's integer ids OR with a later add of another doc.
     """
-    from pypdf import PdfReader
     s = cfg.load()
     corpus_path = Path(s["rag_corpus_path"])
-    pdf_path = corpus_path / filename
-    if not pdf_path.exists():
+    doc_path = corpus_path / filename
+    if not doc_path.exists():
         raise FileNotFoundError(f"corpus/papers/{filename}")
 
-    reader = PdfReader(str(pdf_path))
     pages = []
-    for page_num, page in enumerate(reader.pages):
-        text = (page.extract_text() or "").strip()
+    ext = doc_path.suffix.lower()
+    if ext == ".md":
+        text = doc_path.read_text(encoding="utf-8", errors="replace").strip()
         if text:
-            pages.append({"text": text, "source": filename, "page": page_num})
+            pages.append({"text": text, "source": filename, "page": 0})
+    else:
+        from pypdf import PdfReader
+        reader = PdfReader(str(doc_path))
+        for page_num, page in enumerate(reader.pages):
+            text = (page.extract_text() or "").strip()
+            if text:
+                pages.append({"text": text, "source": filename, "page": page_num})
     if not pages:
         return {"chunks_added": 0, "pages": 0}
 
@@ -324,7 +345,9 @@ def corpus_list() -> list[dict]:
     docs = []
     if not corpus_path.exists():
         return docs
-    for pdf_path in sorted(corpus_path.rglob("*.pdf")):
+    # CR-051 follow-up — index both .pdf and .md files in the corpus list.
+    doc_paths = sorted(list(corpus_path.rglob("*.pdf")) + list(corpus_path.rglob("*.md")))
+    for pdf_path in doc_paths:
         try:
             size_kb = pdf_path.stat().st_size // 1024
         except Exception:

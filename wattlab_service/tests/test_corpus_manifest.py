@@ -46,6 +46,13 @@ def test_sanitise_adds_pdf_extension():
     assert cm.sanitise_filename("notes").endswith(".pdf")
     assert cm.sanitise_filename("notes.pdf") == "notes.pdf"
 
+def test_sanitise_preserves_md_extension():
+    # CR-051 follow-up — .md added alongside .pdf.
+    assert cm.sanitise_filename("README.md") == "README.md"
+    assert cm.sanitise_filename("notes.MD") == "notes.MD"   # case preserved
+    # Unsupported extensions get the .pdf default tacked on.
+    assert cm.sanitise_filename("notes.txt").endswith(".pdf")
+
 def test_sanitise_handles_empty_or_dotty():
     # Hidden-file names and extension-only should not produce dot-files
     assert not cm.sanitise_filename(".").startswith(".")

@@ -194,19 +194,24 @@ def member_usage(visitor_email: str) -> dict:
 # --- Filename sanitisation --------------------------------------------------
 
 _SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+SUPPORTED_EXTS = (".pdf", ".md")
 
 
 def sanitise_filename(name: str) -> str:
-    """Strip path components, restrict to [A-Za-z0-9._-]. Ensures .pdf ext.
-    Used on every uploaded filename so the upload endpoint can never write
-    outside corpus/papers/ even if the client lies about Content-Disposition.
+    """Strip path components, restrict to [A-Za-z0-9._-]. Ensures a supported
+    extension (.pdf or .md). Used on every uploaded filename so the upload
+    endpoint can never write outside corpus/papers/ even if the client lies
+    about Content-Disposition.
     """
     base = os.path.basename(name or "")
     safe = "".join(c if c in _SAFE_CHARS else "_" for c in base)
     safe = safe.strip("._")  # don't allow hidden / extension-only files
     if not safe:
         safe = f"upload_{int(time.time())}.pdf"
-    if not safe.lower().endswith(".pdf"):
+    low = safe.lower()
+    if not any(low.endswith(ext) for ext in SUPPORTED_EXTS):
+        # Default to .pdf when the uploader gave no recognised extension —
+        # safer than rejecting outright (older test pinned this behaviour).
         safe = safe + ".pdf"
     return safe
 
@@ -233,7 +238,7 @@ def unique_filename(name: str) -> str:
 # --- Migration --------------------------------------------------------------
 
 def migrate_existing_corpus() -> int:
-    """One-shot: ensure every PDF in corpus/papers/ has a Lab-origin entry.
+    """One-shot: ensure every PDF/MD in corpus/papers/ has a Lab-origin entry.
     Returns the count of new entries stamped. Safe to re-run (idempotent).
     """
     papers = _papers_dir()
@@ -241,28 +246,29 @@ def migrate_existing_corpus() -> int:
         return 0
     m = load_manifest()
     added = 0
-    for pdf_path in papers.rglob("*.pdf"):
-        try:
-            rel = str(pdf_path.relative_to(papers))
-        except ValueError:
-            rel = pdf_path.name
-        if rel in m:
-            continue
-        try:
-            st = pdf_path.stat()
-            added_at = datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            size = st.st_size
-        except Exception:
-            added_at = _utcnow_iso()
-            size = 0
-        m[rel] = {
-            "origin":     "Lab",
-            "added_by":   "Lab",
-            "added_at":   added_at,
-            "size_bytes": size,
-            "title":      None,
-        }
-        added += 1
+    for ext in SUPPORTED_EXTS:
+        for doc_path in papers.rglob(f"*{ext}"):
+            try:
+                rel = str(doc_path.relative_to(papers))
+            except ValueError:
+                rel = doc_path.name
+            if rel in m:
+                continue
+            try:
+                st = doc_path.stat()
+                added_at = datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                size = st.st_size
+            except Exception:
+                added_at = _utcnow_iso()
+                size = 0
+            m[rel] = {
+                "origin":     "Lab",
+                "added_by":   "Lab",
+                "added_at":   added_at,
+                "size_bytes": size,
+                "title":      None,
+            }
+            added += 1
     if added > 0:
         save_manifest(m)
     return added
