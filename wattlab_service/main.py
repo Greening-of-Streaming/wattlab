@@ -2,6 +2,7 @@ import asyncio
 import os
 import io
 import json
+import html as html_lib
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ import audience
 import auth
 import curated
 import email_send
+import findings as findings_mod
 import version
 from capabilities import (
     requires, can, gate,
@@ -467,7 +469,7 @@ _LOGO = (
     f'greeningofstreaming.org</span></a>'
 )
 def _model_date_line(v: dict) -> str:
-    """CR-052 — render the release + training-cutoff line under a model card.
+    """CR-054 — render the release + training-cutoff line under a model card.
 
     Used by /llm and /rag model selectors so test designers know what era of
     data the model could have seen. Truncates to YYYY-MM for the visible
@@ -2797,6 +2799,25 @@ async def video_page(request: Request):
                    f'yours will be added and run automatically.</div>') \
         if queue_depth > 0 else ""
     source_picker_html = _video_source_picker_html()
+    # CR-054 — discreet beta link to the AV1 hw-vs-sw VMAF finding (the
+    # worked example). Gated on `findings_enabled` so the same flag that
+    # rolls back the /findings route also removes this link. When CR-055
+    # (catalog index) ships, this can repoint at /findings with a video
+    # filter; for now it deep-links to the one finding that exists.
+    findings_beta_html = ""
+    if cfg.load().get("findings_enabled", False):
+        findings_beta_html = (
+            '<div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3);'
+            'border-left:2px solid var(--accent-soft);padding-left:0.75rem">'
+            '<span style="font-size:0.55rem;letter-spacing:0.08em;color:var(--text-5);'
+            'border:1px solid var(--border-3);padding:0.1rem 0.35rem;'
+            'text-transform:uppercase;margin-right:0.4rem">beta</span>'
+            'Some initial findings: '
+            '<a href="/findings/av1-hw-sw-vmaf-tradeoff" '
+            'style="color:var(--accent);text-decoration:none">'
+            'AV1 hardware vs software — the energy↔quality tradeoff →</a>'
+            '</div>'
+        )
 
     return _bake_durations(f"""<!DOCTYPE html>
 <html>
@@ -2886,6 +2907,8 @@ async def video_page(request: Request):
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>
     </div>
+
+    {findings_beta_html}
 
     <details style="margin-bottom:1.5rem;border-left:2px solid #222;padding-left:1rem">
         <summary style="cursor:pointer;color:var(--text-3);font-size:0.82rem;list-style:none;outline:none">
@@ -5840,6 +5863,244 @@ async def queue_status_endpoint():
     return queue_control.snapshot()
 
 
+# --- CR-054: Findings catalog (one worked example, no nav promotion) ---
+# Feature-flagged via settings.findings_enabled. When False, the route
+# returns 404 (undiscoverable). No links to /findings/* exist anywhere
+# in OWL until CR-055 ships the catalog index with explicit lab review.
+# Rollback path: flip settings.findings_enabled to False — single bool.
+
+_CONFIDENCE_DOT   = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
+_CONFIDENCE_LABEL = {"green": "Repeatable", "yellow": "Indicative", "red": "Below noise floor"}
+
+
+def _finding_page_html(f, public_base_url: str) -> str:
+    """Render a finding page at live-run fidelity.
+
+    Server-side renders the publication shell (headline, citation block,
+    scope, caveats, analysis prose). The source measurement card is
+    hydrated client-side by fetching the persisted result JSON and
+    calling the existing shared renderer (window.wlRenderVideoCard /
+    wlRenderLLMCard / wlRenderImageCard / wlRenderRagCard) — the same
+    component used by live runs and the /results expand-row, so visitors
+    see the measurement at live-run fidelity, not a thin summary.
+
+    See CR-054 maintainability invariants — this is the ONE renderer
+    that backs every finding page. New findings = new .md files, never
+    new Python.
+    """
+    e = html_lib.escape
+    conf_dot   = _CONFIDENCE_DOT.get(f.confidence, "·")
+    conf_label = _CONFIDENCE_LABEL.get(f.confidence, "")
+
+    canonical_url = f"{public_base_url.rstrip('/')}/findings/{f.slug}"
+
+    cite_text = (
+        f"OWL Finding: {f.headline}\n"
+        f"  measured {f.first_measured}"
+        + (f", refined {f.last_refined}" if f.last_refined != f.first_measured else "")
+        + f"\n  {canonical_url}\n"
+        f"  Greening of Streaming — wattlab.greeningofstreaming.org"
+    )
+
+    supersedes_html = ""
+    if f.supersedes:
+        supersedes_html = (
+            f'<div style="background:var(--accent-soft);padding:0.5rem 0.75rem;'
+            f'border-left:3px solid var(--accent);margin-bottom:1rem;font-size:0.85rem">'
+            f'Supersedes earlier reading: '
+            f'<a href="/findings/{e(f.supersedes)}" style="color:var(--accent)">{e(f.supersedes)}</a>'
+            f'</div>'
+        )
+
+    embed_blocks = []
+    for i, rid in enumerate(f.source_result_ids):
+        type_ = rid.split("/", 1)[0]
+        embed_blocks.append(
+            f'<div class="finding-embed" id="finding-embed-{i}" '
+            f'data-result-id="{e(rid)}" data-type="{e(type_)}" '
+            f'style="margin:1rem 0">'
+            f'<div class="loading" style="color:var(--text-3);'
+            f'font-family:monospace;font-size:0.8rem">'
+            f'Loading measurement {e(rid)}…</div></div>'
+        )
+    embeds_html = "\n".join(embed_blocks)
+
+    caveats_html = ""
+    if f.caveats:
+        caveats_html = (
+            '<section style="margin-top:1.25rem">'
+            '<h3 style="margin-bottom:0.4rem;color:var(--warn);font-size:0.8rem;'
+            'text-transform:uppercase;letter-spacing:0.06em;font-weight:600">Caveats</h3>'
+            '<ul style="margin:0;padding-left:1.25rem">'
+            + "".join(
+                f'<li style="margin:0.3rem 0;color:var(--text-2);font-size:0.9rem">{e(c)}</li>'
+                for c in f.caveats
+            )
+            + '</ul></section>'
+        )
+
+    tags_html = ""
+    if f.tags:
+        chips = "".join(
+            f'<span style="display:inline-block;padding:0.1rem 0.45rem;'
+            f'border:1px solid var(--border);border-radius:3px;'
+            f'font-size:0.68rem;color:var(--text-3);margin:0 0.25rem 0.25rem 0;'
+            f'font-family:monospace">{e(t)}</span>'
+            for t in f.tags
+        )
+        tags_html = f'<div style="margin-top:0.75rem">{chips}</div>'
+
+    methodology_link = ""
+    if f.methodology_ref:
+        # methodology_ref like 'docs/wattlab_traffic_light_confidence.md' — show as label,
+        # link to /methodology page for now (docs/ files aren't served raw).
+        methodology_link = (
+            f'<div style="margin-top:1rem;font-family:monospace;font-size:0.78rem;color:var(--text-3)">'
+            f'<a href="/methodology" style="color:var(--accent)">Methodology →</a>'
+            f' <span style="color:var(--text-5)">({e(f.methodology_ref)})</span>'
+            f'</div>'
+        )
+
+    raw_links = "".join(
+        f'<div>raw measurement: <a href="{e(findings_mod.result_download_url(rid))}" '
+        f'style="color:var(--text-3)">{e(rid)}</a></div>'
+        for rid in f.source_result_ids
+    )
+
+    body_html = findings_mod.md_to_html(f.body_md)
+
+    # JS that hydrates each embedded measurement via the shared renderer.
+    # Uses the same wlRender{Type}Card dispatch as the /results expand-row.
+    hydrate_js = """
+<script>
+document.querySelectorAll('.finding-embed').forEach(async function(el){
+  const rid = el.dataset.resultId;
+  const type = el.dataset.type;
+  const jobId = rid.split('/')[1].split('_').slice(-1)[0];
+  const renderers = {
+    video: window.wlRenderVideoCard,
+    llm: window.wlRenderLLMCard,
+    image: window.wlRenderImageCard,
+    rag: window.wlRenderRAGCard
+  };
+  const renderer = renderers[type];
+  if (!renderer) {
+    el.querySelector('.loading').textContent = 'no renderer for type=' + type;
+    return;
+  }
+  try {
+    const r = await fetch('/results/' + type + '/' + jobId + '/download.json');
+    if (!r.ok) {
+      el.querySelector('.loading').textContent =
+        'could not load ' + rid + ' (HTTP ' + r.status + ')';
+      return;
+    }
+    const data = await r.json();
+    el.innerHTML = renderer({result: data, isPrev: true, savedAt: data.saved_at});
+  } catch(e) {
+    el.querySelector('.loading').textContent = 'error: ' + e.message;
+  }
+});
+</script>
+"""
+
+    return (
+        '<!DOCTYPE html><html><head>'
+        '<meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<title>{e(f.headline[:80])} — OWL Finding</title>'
+        f'<meta name="description" content="{e(f.claim_short)}">'
+        f'{_BASE_STYLES}'
+        '<style>'
+          '.finding-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
+          '.finding-hero{border-bottom:1px solid var(--border);padding-bottom:0.85rem;margin-bottom:1rem}'
+          '.finding-headline{font-size:1.25rem;line-height:1.4;margin:0 0 0.4rem 0;color:var(--text);font-weight:600}'
+          '.finding-meta{color:var(--text-3);font-family:monospace;font-size:0.78rem}'
+          '.finding-claim{background:var(--panel);padding:0.65rem 0.85rem;border-left:3px solid var(--accent);font-family:monospace;font-size:0.85rem;margin:0.85rem 0;color:var(--text-2);overflow-x:auto}'
+          '.finding-scope{font-family:monospace;font-size:0.75rem;color:var(--text-4);margin:0.6rem 0;line-height:1.5}'
+          '.cite-box{background:var(--panel-2);border:1px solid var(--border);padding:0.5rem 0.7rem;font-family:monospace;font-size:0.75rem;color:var(--text-3);white-space:pre-wrap;margin:0.85rem 0;position:relative}'
+          '.cite-copy-btn{position:absolute;top:0.3rem;right:0.3rem;background:var(--panel);border:1px solid var(--border-3);color:var(--accent);padding:0.1rem 0.45rem;font-family:monospace;font-size:0.7rem;cursor:pointer}'
+          '.cite-copy-btn:hover{background:var(--accent-soft)}'
+          '.section-label{font-size:0.75rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin:1.25rem 0 0.4rem 0;font-weight:600}'
+          '.finding-prose h2{font-size:0.9rem;color:var(--accent);margin:1.25rem 0 0.4rem 0;text-transform:uppercase;letter-spacing:0.06em;font-weight:600}'
+          '.finding-prose h3{font-size:0.9rem;color:var(--text-2);margin:1rem 0 0.3rem 0;font-weight:600}'
+          '.finding-prose p{margin:0.55rem 0;color:var(--text);line-height:1.6}'
+          '.finding-prose ul{margin:0.4rem 0;padding-left:1.25rem}'
+          '.finding-prose li{margin:0.3rem 0;color:var(--text);line-height:1.55}'
+          '.finding-prose code{background:var(--panel);padding:0.08rem 0.3rem;font-size:0.85em;color:var(--accent)}'
+          '.finding-prose strong{color:var(--text)}'
+          '.finding-footer{margin-top:1.5rem;padding-top:0.85rem;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-4);font-family:monospace;line-height:1.7}'
+          '.finding-footer a{color:var(--text-3);text-decoration:underline}'
+        '</style>'
+        '</head><body style="background:var(--bg)">'
+        f'<div class="finding-wrap">'
+          f'{supersedes_html}'
+          f'<section class="finding-hero">'
+            f'<h1 class="finding-headline">{e(f.headline)}</h1>'
+            f'<div class="finding-meta">'
+              f'<span style="color:var(--accent)">{conf_dot}</span> {e(conf_label)} · '
+              f'measured {e(f.first_measured)}'
+              + ('' if f.last_refined == f.first_measured
+                 else f' · refined {e(f.last_refined)}')
+              + f' · v{f.version}'
+            f'</div>'
+          f'</section>'
+          f'<div class="finding-claim">{e(f.claim_short)}</div>'
+          f'<div class="finding-scope">SCOPE: {e(f.scope)}</div>'
+          f'<div class="cite-box">'
+            f'<button class="cite-copy-btn" '
+            f'onclick="navigator.clipboard.writeText(this.parentElement.querySelector(\'.cite-text\').textContent).then(()=>{{this.textContent=\'copied\'}})">copy</button>'
+            f'<span class="cite-text">{e(cite_text)}</span>'
+          f'</div>'
+          f'<div class="section-label">Source measurement</div>'
+          f'{embeds_html}'
+          f'{caveats_html}'
+          f'<section class="finding-prose" style="margin-top:1.25rem">{body_html}</section>'
+          f'{methodology_link}'
+          f'{tags_html}'
+          f'<div class="finding-footer">'
+            f'<div>permalink: <a href="/findings/{e(f.slug)}">{e(canonical_url)}</a></div>'
+            f'{raw_links}'
+            f'<div style="margin-top:0.5rem;color:var(--text-5)">'
+            f'OWL · Greening of Streaming · {version.version_string()}'
+            f'</div>'
+          f'</div>'
+        f'</div>'
+        f'{_RESULT_JS}'
+        f'{hydrate_js}'
+        f'</body></html>'
+    )
+
+
+@app.get("/findings/{slug}", response_class=HTMLResponse,
+         dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def finding_page(slug: str, request: Request):
+    """CR-054 — render one finding by slug. Feature-flagged; returns 404
+    when settings.findings_enabled is False. No nav links point here yet
+    (no catalog page until CR-055); reachable only by direct URL during
+    the lab-review window."""
+    s = cfg.load()
+    if not s.get("findings_enabled", False):
+        return HTMLResponse("Not found", status_code=404)
+    try:
+        f = findings_mod.load(slug)
+    except findings_mod.FindingError as ex:
+        # Malformed finding file — surface clearly so editors can fix.
+        return HTMLResponse(
+            f"<pre style='color:#ff4400;padding:1rem'>Finding {html_lib.escape(slug)} "
+            f"failed to load: {html_lib.escape(str(ex))}</pre>",
+            status_code=500,
+        )
+    if f is None:
+        return HTMLResponse("Not found", status_code=404)
+
+    # Canonical URL — prefer the live host; fall back to a relative-friendly default.
+    host = request.headers.get("host", "")
+    scheme = "https" if "greeningofstreaming.org" in host else "http"
+    public_base = f"{scheme}://{host}" if host else ""
+    return HTMLResponse(_finding_page_html(f, public_base))
+
+
 # --- RAG page and endpoints ---
 
 @app.get("/rag", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -5861,7 +6122,7 @@ async def rag_page(request: Request):
     dis_batch         = _disabled_attr(request, BATCH_COMPARE)
     dis_corpus        = _disabled_attr(request, RAG_CORPUS_UPLOAD)
 
-    # CR-053 — RAG mode constants injected as JS so the frontend stays
+    # CR-055 — RAG mode constants injected as JS so the frontend stays
     # in lock-step with the rag.py source of truth.
     import json as _json
     rag_modes_js        = _json.dumps(list(rag_module.COMPARE_MODES))
@@ -6455,14 +6716,14 @@ async def rag_page(request: Request):
         }}
     }}
 
-    // CR-053 — single source of truth (mirrors rag.COMPARE_MODES + LABELS).
+    // CR-055 — single source of truth (mirrors rag.COMPARE_MODES + LABELS).
     const RAG_COMPARE_MODES  = {rag_modes_js};
     const RAG_MODE_LABELS    = {rag_mode_labels_js};
     const RAG_SHORT_LABELS   = {rag_short_labels_js};
 
     function renderCompareProgress(partial, data, watts) {{
         const MODES = RAG_COMPARE_MODES;
-        // CR-053 alignment — labels come from RAG_SHORT_LABELS (rag.py source of truth).
+        // CR-055 alignment — labels come from RAG_SHORT_LABELS (rag.py source of truth).
         data = data || {{}};
         const stage = data.stage;
         const currentMode = data.current_mode;
@@ -6542,7 +6803,7 @@ async def rag_page(request: Request):
     function renderCompareResult(r, jobId) {{
         const MODES = RAG_COMPARE_MODES;
         const MODE_LABELS = RAG_MODE_LABELS;
-        // CR-053 \u2014 STRIPE colour per mode; baseline dark (no retrieval),
+        // CR-055 \u2014 STRIPE colour per mode; baseline dark (no retrieval),
         // rag blue, rag_blended teal (blend = somewhere between), rag_large accent green.
         const STRIPE = {{baseline:'#444', rag:'#0088cc', rag_blended:'#00b3a4', rag_large:'#00ff99'}};
         const cards = MODES.map(m => {{

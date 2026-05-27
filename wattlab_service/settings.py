@@ -88,6 +88,11 @@ DEFAULTS = {
     "rag_upload_max_mb":         50,    # per-file size cap (Members)
     "rag_member_doc_count_cap":  10,    # max files per Member email
     "rag_member_total_mb_cap":   200,   # max total bytes per Member email
+    # CR-054 — Findings catalog feature flag. False removes the
+    # `GET /findings/<slug>` route from production (returns 404). No nav
+    # links exist anywhere in OWL until CR-055 (catalog index) ships, so
+    # `false` here completely undiscoverable + `true` is preview-by-URL.
+    "findings_enabled":          True,
 }
 
 
