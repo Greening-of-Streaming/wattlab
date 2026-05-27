@@ -897,6 +897,62 @@ The `/video` beta link from CR-054 was re-pointed at `/findings` instead of `/fi
 
 ---
 
+## CR-056 · Bulk import of CLAUDE.md Key Findings into the catalog
+
+**Status:** **shipped 2026-05-27 (S32 evening).** Five new findings under `docs/findings/`; catalog grows from 1 → 6 entries. Editorial markdown only — zero Python changes per the CR-054 invariant. **Tests:** 331 → 334 (+3). Same rollback as CR-054 (`findings_enabled: false` removes the whole feature; the markdown files stay safe).
+**Triggered by:** Owner direction 2026-05-27: *"Go for CR-056. Keep it factual, avoid superlatives, flag uncertainty, ask for confirmations on anything unclear."*
+
+**Lab look & feel constraint:** the new findings sit in the same shared row renderer + page template from CR-054 / CR-055. No new layout, no new components.
+
+### Problem
+
+After CR-054 + CR-055 the catalog renders one finding (AV1 hw-vs-sw VMAF) and the index page lists it. The catalog as a discovery surface starts to earn its keep only once it has more than one entry — and CLAUDE.md already documents a handful of measured findings that have stored result files behind them.
+
+### Agreed direction
+
+Import five additional findings as editorial markdown files. Each cites a real on-disk `source_result_id`; numbers in each finding are taken verbatim from the stored result file rather than from CLAUDE.md prose (which in some cases diverges by a few percent). Owner-approved confirmations (2026-05-27) for the design choices below.
+
+### Imported findings
+
+| Slug | Source result(s) | Confidence | Notes |
+|---|---|---|---|
+| `abr-all-codecs-meridian-120s` | `video/e18a9d57` | green | n=1 on full-length Meridian-120s. CLAUDE.md's "n=3" claim isn't supported by the current on-disk dataset — flagged in the finding's caveats. A future n=3 re-measurement would create v2 via `supersedes`. |
+| `sd-turbo-cpu-image-first-run` | `image/c40acdc1` | green | Disk says 0.2099 Wh (CLAUDE.md prose cited 0.2063) — finding uses disk number, caveat notes the discrepancy. |
+| `llm-cold-inference-mwh-per-token` | `llm/2d79c99c`, `llm/163c6442` | **yellow** | Pre-S30 panel. Mistral 7B retired in the S30 ladder refresh. Confidence downgraded because TinyLlama returned 🟡 (n=2 polls, near noise floor). |
+| `rag-faithfulness-rem-question` | `llm/5efb2079` | **yellow** | Pre-S30 panel. Gemma 3 12B retired in the S30 ladder refresh. n=1 — single observed hallucination, not a statistical claim. |
+| `input-master-sensitivity` | 6 result_ids (`video/2328a8ab`, `2c112a4d`, `97ec1c07`, `883b15b0`, `dc0679b2`, `683d3a30`) | green | Summary of the existing `docs/input_sensitivity_findings.md` analysis, restructured as a finding. Original doc kept as the source for the long-form bench log. |
+
+### Explicitly NOT imported
+
+Two CLAUDE.md findings do not fit the CR-054 schema (which requires `source_result_ids` to be a non-empty list pointing at stored measurement files):
+
+- **French grid evolution (S18, Jan 2020 → Jun 2024).** Derived from `carbon.HISTORICAL_INTENSITY` static data, not a measurement run. Belongs on `/methodology`, not `/findings`. Owner confirmed (2026-05-27) the schema stays strict.
+- **Methodology insight: lifecycle vs combustion CO₂ (CR-016).** Methodology change, not a measurement. Same disposition.
+
+### Maintainability invariants (extends CR-054 + CR-055)
+
+17. **Findings cite disk numbers verbatim.** If a finding's frontmatter or analysis prose disagrees with the stored result file it cites, the result file wins. Discrepancies with prose elsewhere (e.g. CLAUDE.md) are documented in the finding's caveats, not by editing the finding's numbers.
+18. **Retired-model findings carry a `pre-s30-panel` tag and an explicit caveat.** Future ladder refreshes follow the same pattern: tag with the panel name + add a caveat. A re-measurement creates a v2 via `supersedes`.
+19. **Findings without a single measurement source are excluded.** Methodology essays, derived/static-data analyses, and aggregate stories live on `/methodology`. The catalog stays strictly measurement-anchored.
+
+### Ship criteria — met
+
+- All 5 new finding files parse, validate, and resolve their source_result_ids (`test_cr056_imported_findings_all_loadable`)
+- All 5 appear in the catalog listing (`test_cr056_imported_findings_all_in_catalog`)
+- SD-Turbo image finding renders with `wlRenderImageCard` (Q5 sanity check, `test_cr056_image_finding_renders_with_image_dispatcher`)
+- 331 → 334 tests, full suite green
+
+### Open follow-ups (not in this CR)
+
+- ABR all-codecs canonical at n=3 — currently n=1 on Meridian-120s. A future probe run produces v2.
+- LLM cold inference on the post-S30 panel (`qwen3:1.7b`, `qwen3:4b`, `mistral-nemo:12b`, `phi4`, `gpt-oss:20b`) — would produce v2 of the cold-inference finding.
+- RAG faithfulness on the post-S30 panel — same.
+- Image GPU vs CPU comparison finding — there's a `both`-mode result on disk but no finding yet; could be CR-056b or later.
+
+### Priority: shipped same session as CR-054 / CR-055 / CR-058. Editorial work, no UI flow change beyond the catalog growing from 1 → 6 rows.
+
+---
+
 ## CR-058 · `/demo` Findings step rewire — catalog preview replaces session echo
 
 **Status:** **shipped behind same `findings_enabled` flag 2026-05-27 (S32 evening).** Code on `main`; the /demo Findings step (step 7) shows a curated catalog preview + "See all findings" link instead of the session-echo. **Rollback identical:** flip flag → original `buildSummary()` session echo restored, capability matrix below stays put. **Tests:** part of the 326 → 331 (+5) bundle.

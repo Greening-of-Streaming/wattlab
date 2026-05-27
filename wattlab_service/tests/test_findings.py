@@ -229,8 +229,11 @@ def test_findings_catalog_returns_200_and_lists_av1():
     assert f'href="/findings/{AV1_SLUG}"' in body
     # The headline appears (snippet check — full headline is in the row)
     assert "AV1 hardware uses" in body
-    # Footer reports finding count (currently 1)
-    assert "1 finding" in body
+    # Footer reports a finding count — number depends on how many .md files
+    # are under docs/findings/. Pin the format ("N finding(s) ·"), not the
+    # specific N, so editorial adds (CR-056) don't break this test.
+    import re
+    assert re.search(r"\b\d+ findings? ·", body), "footer should report finding count"
 
 
 def test_findings_catalog_returns_404_when_disabled(monkeypatch):
@@ -244,6 +247,57 @@ def test_findings_catalog_returns_404_when_disabled(monkeypatch):
 
     r = client.get("/findings")
     assert r.status_code == 404
+
+
+# --- CR-056: bulk-imported findings load + render --------------------------
+
+# Slugs imported in CR-056 (2026-05-27). If any of these is removed in a
+# later editorial decision, update this list — the assertion below is a
+# regression guard against accidental deletion.
+_CR056_SLUGS = [
+    "abr-all-codecs-meridian-120s",
+    "input-master-sensitivity",
+    "llm-cold-inference-mwh-per-token",
+    "rag-faithfulness-rem-question",
+    "sd-turbo-cpu-image-first-run",
+]
+
+
+def test_cr056_imported_findings_all_loadable():
+    """Each of the five CR-056 bulk imports parses, validates, and resolves
+    its source_result_ids — same contract every finding holds to."""
+    for slug in _CR056_SLUGS:
+        f = findings.load(slug)
+        assert f is not None, f"finding {slug!r} did not load"
+        for rid in f.source_result_ids:
+            p = findings.resolve_result_path(rid)
+            assert p is not None and p.exists(), (
+                f"{slug!r}: source_result_id {rid!r} not on disk"
+            )
+
+
+def test_cr056_imported_findings_all_in_catalog():
+    """All five new findings show up in the catalog listing."""
+    r = client.get("/findings")
+    assert r.status_code == 200
+    body = r.text
+    for slug in _CR056_SLUGS:
+        assert f'href="/findings/{slug}"' in body, (
+            f"catalog page does not list {slug!r}"
+        )
+
+
+def test_cr056_image_finding_renders_with_image_dispatcher():
+    """Q5 sanity check from the CR-056 design conversation: the SD-Turbo
+    finding (image type) must embed a `data-type="image"` placeholder and
+    the JS dispatcher must map that to wlRenderImageCard. Without this,
+    the embed shows 'no renderer for type=image'."""
+    r = client.get("/findings/sd-turbo-cpu-image-first-run")
+    assert r.status_code == 200
+    body = r.text
+    assert 'data-type="image"' in body
+    assert 'data-result-id="image/c40acdc1"' in body
+    assert "image: window.wlRenderImageCard" in body
 
 
 # --- CR-058: /demo Findings step rewire ------------------------------------
