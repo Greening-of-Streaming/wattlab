@@ -6324,61 +6324,19 @@ async def rag_page(request: Request):
     const RAG_STAGES = ['Baseline poll ({{BASELINE_S}}s)', 'Inference running', 'Complete'];
     const RAG_STAGE_IDX = {{baseline:0, inference:1, done:2}};
 
-    // CR-050 alignment \u2014 3-mode compare progress: per-mode baseline + inference,
-    // with explicit cooldown stages between them, and a sub-line for the
-    // active-probe thermal-floor wait progress (mirrors /llm/compare).
-    const RAG_MODE_LABELS = ['Without RAG (no retrieval)', 'RAG (top-3)', 'RAG Large (top-8)'];
-    function ragCompareStages() {{
-        const out = [];
-        for (let i = 0; i < RAG_MODE_LABELS.length; i++) {{
-            out.push(RAG_MODE_LABELS[i] + ' \u2014 baseline');
-            out.push(RAG_MODE_LABELS[i] + ' \u2014 inference');
-            if (i < RAG_MODE_LABELS.length - 1) out.push('Cooldown (wait for thermal floor)');
-        }}
-        out.push('Complete');
-        return out;
-    }}
-    function ragCompareStageIdx(modeIdx, stage) {{
-        // stride 3 per mode (baseline, inference, cooldown), final 'Complete' at the end.
-        if (stage === 'done')      return RAG_MODE_LABELS.length * 3 - 1 + 1; // last slot
-        if (stage === 'cooldown')  return modeIdx * 3 + 2;
-        if (stage === 'baseline')  return modeIdx * 3;
-        if (stage === 'inference') return modeIdx * 3 + 1;
-        return 0;
-    }}
-
-    function renderRagProgress(stage, watts, data) {{
-        data = data || {{}};
-        const isCompare = (data.mode_index != null) || data.total_modes;
-        if (isCompare) {{
-            const stages = ragCompareStages();
-            const idx = ragCompareStageIdx(data.mode_index ?? 0, stage);
-            // Cooldown sub-line: live counter while waiting for the thermal floor.
-            let extra = '';
-            if (stage === 'cooldown' && data.cooldown_waited_s != null) {{
-                const ref = data.cooldown_reference_w != null
-                    ? Number(data.cooldown_reference_w).toFixed(1) + 'W' : '?';
-                const cur = data.cooldown_w != null
-                    ? Number(data.cooldown_w).toFixed(1) + 'W' : '?';
-                extra = '<div style="color:var(--text-3);font-size:0.78rem;margin-top:0.4rem">'
-                      + 'Cooldown &middot; waited ' + data.cooldown_waited_s + 's '
-                      + '&middot; current ' + cur + ' (target &le; ' + ref + ' +3W)</div>';
-            }}
-            wlRenderProgress({{
-                header: 'Comparing 3 RAG modes \u2014 do not close this tab',
-                stagesHtml: wlStageList(stages, idx),
-                watts: watts,
-                elapsed: ragStartTime ? Date.now() - ragStartTime : null,
-                extraHtml: extra,
-            }});
-        }} else {{
-            wlRenderProgress({{
-                header: 'Measuring RAG energy \u2014 do not close this tab',
-                stagesHtml: wlStageList(RAG_STAGES, RAG_STAGE_IDX[stage] ?? 0),
-                watts: watts,
-                elapsed: ragStartTime ? Date.now() - ragStartTime : null,
-            }});
-        }}
+    // Single-mode renderRagProgress (used by pollRag below). The 3-mode
+    // compare flow has its own renderCompareProgress further down \u2014 earlier
+    // I dispatched compare/single inside this function, but single-mode
+    // jobs never carry mode_index so the compare branch was dead code AND
+    // its const RAG_MODE_LABELS collided with the per-mode label dict
+    // injected from rag.py for renderCompareProgress. Reverted to original.
+    function renderRagProgress(stage, watts) {{
+        wlRenderProgress({{
+            header: 'Measuring RAG energy \u2014 do not close this tab',
+            stagesHtml: wlStageList(RAG_STAGES, RAG_STAGE_IDX[stage] ?? 0),
+            watts: watts,
+            elapsed: ragStartTime ? Date.now() - ragStartTime : null,
+        }});
     }}
 
     async function pollRag(jobId) {{
@@ -6403,12 +6361,8 @@ async def rag_page(request: Request):
                 wlRenderQueued(data.queue_position);
                 ragTimer = setTimeout(() => pollRag(jobId), 3000);
             }} else {{
-                renderRagProgress(data.stage || 'baseline', watts, data);
-                // Faster poll cadence during cooldown so the ticker advances
-                // visibly between server P110 reads (1 s) — matches the
-                // /llm/compare 4 Hz UX. Otherwise default 2 s polling.
-                const next = data.stage === 'cooldown' ? 750 : 2000;
-                ragTimer = setTimeout(() => pollRag(jobId), next);
+                renderRagProgress(data.stage || 'baseline', watts);
+                ragTimer = setTimeout(() => pollRag(jobId), 2000);
             }}
         }} catch(e) {{
             ragTimer = setTimeout(() => pollRag(jobId), 5000);
