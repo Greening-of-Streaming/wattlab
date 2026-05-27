@@ -5227,43 +5227,49 @@ async def llm_compare_models(
 # snapshot; a re-probe of the new 5-model panel via /llm/compare-models
 # is the planned follow-up that will replace this dict.
 _LLM_COMPARE_SHOWCASE = {
-    "t2_count": {
-        "label": "Strawberry (the meme)",
-        "prompt": "How many times does the letter R appear in the word 'strawberry'? Output only the number.",
-        "expected": "3",
-        "tagline": "The famous LLM-fails-at-letter-counting prompt. Classic tokenization trap.",
-        "rows": [
-            {"model": "gemma3:12b",  "params": "12B",  "ok": True,  "ans": "3",      "tok": 3,   "wall": 3.81},
-            {"model": "phi4",        "params": "14B",  "ok": False, "ans": "2",      "tok": 2,   "wall": 3.28},
-            {"model": "gpt-oss:20b", "params": "20B",  "ok": True,  "ans": "3",      "tok": 113, "wall": 13.68},
-            {"model": "mistral",     "params": "7B",   "ok": False, "ans": '"once"', "tok": 14,  "wall": 2.74},
-            {"model": "tinyllama",   "params": "1.1B", "ok": False, "ans": '"once"', "tok": 22,  "wall": 1.58},
+    't2_count': {
+        'label': 'Strawberry (the meme)',
+        'prompt': "How many times does the letter R appear in the word 'strawberry'? Output only the number.",
+        'expected': '3',
+        'tagline': 'The famous LLM-fails-at-letter-counting prompt. Classic tokenization trap.',
+        'rows': [
+            {'model': 'tinyllama',        'params': '1.1B', 'ok': False, 'ans': 'The program should output the number of occurrences of the letter "R" in the word "strawberry". It can be easily done by using a loop that…', 'tok': 159,  'wall': 1.49,  'wh_measured': -0.0003, 'flag': '🔴'},
+            {'model': 'qwen3:1.7b',       'params': '1.7B', 'ok': True,  'ans': 'The word "strawberry" is spelled as: **S-T-R-A-W-B-E-R-R-Y**. \n\nBreaking it down letter by letter:\n- S, T, R, A, W, B, E, R, R, Y.\n\nCountin…',           'tok': 677,  'wall': 6.09,  'wh_measured':  0.1750, 'flag': '🟡'},
+            {'model': 'qwen3:4b',         'params': '4B',   'ok': True,  'ans': '3',                                                                                                                                                  'tok': 1509, 'wall': 19.20, 'wh_measured':  1.1452, 'flag': '🟢'},
+            {'model': 'qwen3:8b',         'params': '8B',   'ok': True,  'ans': '3',                                                                                                                                                  'tok': 467,  'wall': 11.05, 'wh_measured':  0.5834, 'flag': '🟢'},
+            {'model': 'mistral-nemo:12b', 'params': '12B',  'ok': False, 'ans': 'The letter R appears 2 times in the word "strawberry".',                                                                                              'tok': 16,   'wall': 2.73,  'wh_measured':  0.0045, 'flag': '🔴'},
+            {'model': 'phi4',             'params': '14B',  'ok': False, 'ans': '2',                                                                                                                                                  'tok': 2,    'wall': 2.15,  'wh_measured':  0.0027, 'flag': '🔴'},
+            {'model': 'gpt-oss:20b',      'params': '20B',  'ok': True,  'ans': '3',                                                                                                                                                  'tok': 153,  'wall': 10.28, 'wh_measured':  0.2888, 'flag': '🟢'},
         ],
     },
-    "t1_logic": {
-        "label": "Logic (Carol)",
-        "prompt": "Alice is older than Bob. Bob is older than Carol. Who is youngest? Answer with one name.",
-        "expected": "Carol",
-        "tagline": "All models that pass give the same one-word answer — energy varies, output doesn't.",
-        "rows": [
-            {"model": "mistral",     "params": "7B",   "ok": True,  "ans": "Carol", "tok": 2,  "wall": 0.60},
-            {"model": "gemma3:12b",  "params": "12B",  "ok": True,  "ans": "Carol", "tok": 3,  "wall": 2.28},
-            {"model": "phi4",        "params": "14B",  "ok": True,  "ans": "Carol is the youngest.", "tok": 6, "wall": 2.74},
-            {"model": "gpt-oss:20b", "params": "20B",  "ok": True,  "ans": "Carol", "tok": 33, "wall": 4.65},
-            {"model": "tinyllama",   "params": "1.1B", "ok": False, "ans": '"Jane"', "tok": 20, "wall": 1.49},
+    't1_logic': {
+        'label': 'Logic (Carol)',
+        'prompt': 'Alice is older than Bob. Bob is older than Carol. Who is youngest? Answer with one name.',
+        'expected': 'Carol',
+        'tagline': "All models that pass give the same one-word answer — energy varies, output doesn't.",
+        'rows': [
+            {'model': 'tinyllama',        'params': '1.1B', 'ok': False, 'ans': 'The youngest person in the given statement is not named, so no single name can be used to identify them. The answer with one name should be…',     'tok': 35,  'wall': 1.04, 'wh_measured':  0.0000, 'flag': '🔴'},
+            {'model': 'qwen3:1.7b',       'params': '1.7B', 'ok': True,  'ans': 'Carol is the youngest. \n\n**Step-by-Step Explanation:**\n1. **Given Relationships:**\n   - Alice > Bob (Alice is older than Bob)\n   - Bob > Ca…',  'tok': 391, 'wall': 4.10, 'wh_measured':  0.0507, 'flag': '🟡'},
+            {'model': 'qwen3:4b',         'params': '4B',   'ok': True,  'ans': 'Carol',                                                                                                                                            'tok': 717, 'wall': 10.00,'wh_measured':  0.4993, 'flag': '🟢'},
+            {'model': 'qwen3:8b',         'params': '8B',   'ok': True,  'ans': 'Carol',                                                                                                                                            'tok': 200, 'wall': 6.25, 'wh_measured':  0.1739, 'flag': '🟡'},
+            {'model': 'mistral-nemo:12b', 'params': '12B',  'ok': True,  'ans': 'Carol',                                                                                                                                            'tok': 3,   'wall': 2.34, 'wh_measured':  0.0066, 'flag': '🔴'},
+            {'model': 'phi4',             'params': '14B',  'ok': True,  'ans': 'Carol is the youngest. Given that Alice is older than Bob and Bob is older than Carol, it follows that Carol is younger than both Alice and…',    'tok': 39,  'wall': 3.13, 'wh_measured':  0.0163, 'flag': '🔴'},
+            {'model': 'gpt-oss:20b',      'params': '20B',  'ok': True,  'ans': 'Carol',                                                                                                                                            'tok': 44,  'wall': 7.30, 'wh_measured':  0.1320, 'flag': '🟡'},
         ],
     },
-    "t1_addition": {
-        "label": "Addition (50)",
-        "prompt": "What is 25 + 17 + 8? Output only the number.",
-        "expected": "50",
-        "tagline": "Three-term addition. Two of five models can't reliably do it.",
-        "rows": [
-            {"model": "gemma3:12b",  "params": "12B",  "ok": True,  "ans": "50", "tok": 3,  "wall": 2.26},
-            {"model": "phi4",        "params": "14B",  "ok": True,  "ans": "50", "tok": 2,  "wall": 2.37},
-            {"model": "gpt-oss:20b", "params": "20B",  "ok": True,  "ans": "50", "tok": 62, "wall": 10.15},
-            {"model": "mistral",     "params": "7B",   "ok": False, "ans": '"...is 40."', "tok": 20, "wall": 1.80},
-            {"model": "tinyllama",   "params": "1.1B", "ok": False, "ans": '"=34" + Python', "tok": 90, "wall": 1.75},
+    't1_addition': {
+        'label': 'Addition (50)',
+        'prompt': 'What is 25 + 17 + 8? Output only the number.',
+        'expected': '50',
+        'tagline': "Three-term addition. Most models do it; some can't.",
+        'rows': [
+            {'model': 'tinyllama',        'params': '1.1B', 'ok': False, 'ans': 'The input string "25 + 17 + 8" is not understood by this program. Please try again or use different inputs to get a correct output.', 'tok': 35,  'wall': 1.03, 'wh_measured': -0.0016, 'flag': '🔴'},
+            {'model': 'qwen3:1.7b',       'params': '1.7B', 'ok': True,  'ans': '50',                                                                                                                                  'tok': 295, 'wall': 3.44, 'wh_measured':  0.0463, 'flag': '🟡'},
+            {'model': 'qwen3:4b',         'params': '4B',   'ok': True,  'ans': '50',                                                                                                                                  'tok': 583, 'wall': 8.39, 'wh_measured':  0.3507, 'flag': '🟡'},
+            {'model': 'qwen3:8b',         'params': '8B',   'ok': True,  'ans': '50',                                                                                                                                  'tok': 295, 'wall': 7.92, 'wh_measured':  0.3098, 'flag': '🟡'},
+            {'model': 'mistral-nemo:12b', 'params': '12B',  'ok': False, 'ans': '40',                                                                                                                                  'tok': 3,   'wall': 2.36, 'wh_measured':  0.0033, 'flag': '🔴'},
+            {'model': 'phi4',             'params': '14B',  'ok': True,  'ans': '50',                                                                                                                                  'tok': 2,   'wall': 2.12, 'wh_measured':  0.0012, 'flag': '🔴'},
+            {'model': 'gpt-oss:20b',      'params': '20B',  'ok': True,  'ans': '50',                                                                                                                                  'tok': 59,  'wall': 7.27, 'wh_measured':  0.1329, 'flag': '🟡'},
         ],
     },
 }
@@ -5575,7 +5581,9 @@ async def llm_compare_page(request: Request):
     function renderShowcase(key) {{
         const d = SHOWCASE[key];
         order.forEach(k => document.getElementById('tab-'+k).classList.toggle('active', k === key));
-        const rows = d.rows.map(r => ({{...r, whEst: wh(r.wall)}}));
+        // Prefer per-row wh_measured (real P110 from showcase regeneration);
+        // fall back to wall × 25 W estimate if a legacy row lacks it.
+        const rows = d.rows.map(r => ({{...r, whEst: (r.wh_measured != null ? r.wh_measured : wh(r.wall))}}));
         renderCompareCard({{
             promptText: d.prompt, expected: d.expected,
             rows: rows, tagline: d.tagline, sourceLabel: 'Showcase (estimated)'
@@ -6778,22 +6786,21 @@ async def rag_compare_models(
 # as a historical snapshot; a re-probe of the new 5-model panel via
 # /rag/compare-models is the planned follow-up that will replace this dict.
 _RAG_COMPARE_SHOWCASE = {
-    "rag_bbc_total": {
-        "label": "BBC Radio 2018 energy total",
-        "prompt": "According to the BBC Radio energy footprint paper (WHP 393), what was the total mean energy consumption for the 2018 baseline of BBC radio? Output the value and unit, e.g. '325 GWh'.",
-        "expected": "325 GWh",
-        "tagline": "Single corpus fact, single right answer. Retrieval surfaces BBC WHP 393 for all 4 models; the energy spread is purely the cost of inference at different model sizes.",
-        "source_paper": "BBC WHP 393 — Energy Footprint of Radio Services",
-        "rows": [
-            {"model": "tinyllama",  "params": "1.1B", "ok": True, "ans": "According to the BBC Radio energy footprint paper (WHP 393), the total mean energy consumption for the 2018 baseline was 325 GWh.",                                                        "tok": 41, "wall":  0.78},
-            {"model": "mistral",    "params": "7B",   "ok": True, "ans": "The total mean energy consumption for the 2018 baseline of BBC radio services was 325 GWh (Gigawatt-hours), as stated in the report on page 19.",                                       "tok": 98, "wall": 10.08},
-            {"model": "gemma3:12b", "params": "12B",  "ok": True, "ans": "According to the BBC Radio energy footprint paper (WHP 393), the total mean energy consumption for the 2018 baseline of BBC radio was **325 GWh**. Source: BBC WHP 393, page 19",       "tok": 72, "wall": 16.59},
-            {"model": "phi4",       "params": "14B",  "ok": True, "ans": "The total mean energy consumption for the 2018 baseline of BBC radio services was 325 GWh. This figure is mentioned in the excerpt from page 19.",                                      "tok": 53, "wall": 15.02},
+    'rag_bbc_total': {
+        'label': 'BBC Radio 2018 energy total',
+        'prompt': "According to the BBC Radio energy footprint paper (WHP 393), what was the total mean energy consumption for the 2018 baseline of BBC radio? Output the value and unit, e.g. '325 GWh'.",
+        'expected': '325 GWh',
+        'tagline': 'Single corpus fact, single right answer. Retrieval surfaces BBC WHP 393 for every model; the energy spread is purely the cost of inference at different model sizes.',
+        'source_paper': 'BBC WHP 393 — Energy Footprint of Radio Services',
+        'rows': [
+            {'model': 'tinyllama',        'params': '1.1B', 'ok': True, 'ans': 'The BBC Radio energy footprint paper (WHP 393) reported that in 2018, the total mean energy consumption for the BBC radio system was 325 GW…',   'tok': 236, 'wall': 1.56,  'wh_measured': 0.0080, 'flag': '🟡'},
+            {'model': 'qwen3:1.7b',       'params': '1.7B', 'ok': True, 'ans': 'The total mean energy consumption for BBC radio services in 2018, as stated in the document, was **325 GWh** (Gigawatt-hours). This value i…',  'tok': 426, 'wall': 4.29,  'wh_measured': 0.1179, 'flag': '🟡'},
+            {'model': 'qwen3:4b',         'params': '4B',   'ok': True, 'ans': 'Based on the provided excerpts from the BBC Energy Footprint report (WHP 393), the total mean energy consumption for BBC radio services in…',  'tok': 652, 'wall': 9.54,  'wh_measured': 0.4553, 'flag': '🟢'},
+            {'model': 'qwen3:8b',         'params': '8B',   'ok': True, 'ans': 'The total mean energy consumption for the BBC Radio services in 2018 was **325 GWh**. This figure is explicitly stated in the document and…', 'tok': 438, 'wall': 10.86, 'wh_measured': 0.6035, 'flag': '🟢'},
+            {'model': 'mistral-nemo:12b', 'params': '12B',  'ok': True, 'ans': 'According to the BBC Radio energy footprint paper (page 19), the total mean energy consumption for the 2018 baseline of BBC radio was 325 G…', 'tok': 39,  'wall': 4.90,  'wh_measured': 0.0740, 'flag': '🟡'},
+            {'model': 'phi4',             'params': '14B',  'ok': True, 'ans': 'According to the BBC Radio energy footprint paper, the total mean energy consumption for the 2018 baseline of BBC radio services was 325 GW…','tok': 62,  'wall': 4.88,  'wh_measured': 0.0801, 'flag': '🟡'},
+            {'model': 'gpt-oss:20b',      'params': '20B',  'ok': True, 'ans': '325 GWh',                                                                                                                                  'tok': 141, 'wall': 12.34, 'wh_measured': 0.3739, 'flag': '🟢'},
         ],
-        # Measured Wh per row (parallel array) — used because showcase rows
-        # come from real P110 measurement, not the wall_s × 25 W estimate
-        # the /llm/compare showcase uses. The JS prefers `whMeasured` if set.
-        "wh_measured": [0.0031, 0.2434, 0.4428, 0.3467],
     },
 }
 
@@ -7058,8 +7065,12 @@ async def rag_compare_page(request: Request):
         const d = SHOWCASE[key];
         order.forEach(k => document.getElementById('tab-'+k).classList.toggle('active', k === key));
         // Showcase uses real measured Wh per row (probe data), not the wall × 25W estimate.
+        // Prefer per-row wh_measured (real P110 from showcase regeneration);
+        // fall back to legacy parallel array d.wh_measured[i] if a row lacks
+        // its own value, then to wall × 25 W estimate.
         const measured = d.wh_measured || [];
-        const rows = d.rows.map((r, i) => ({{...r, whEst: (i < measured.length ? measured[i] : wh(r.wall))}}));
+        const rows = d.rows.map((r, i) => ({{...r, whEst: (r.wh_measured != null ? r.wh_measured
+                                                            : (i < measured.length ? measured[i] : wh(r.wall)))}}));
         document.getElementById('source-paper').textContent = d.source_paper || '—';
         renderCompareCard({{
             promptText: d.prompt, expected: d.expected,
