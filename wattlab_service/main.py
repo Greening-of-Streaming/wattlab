@@ -6313,13 +6313,61 @@ async def rag_page(request: Request):
     const RAG_STAGES = ['Baseline poll ({{BASELINE_S}}s)', 'Inference running', 'Complete'];
     const RAG_STAGE_IDX = {{baseline:0, inference:1, done:2}};
 
-    function renderRagProgress(stage, watts) {{
-        wlRenderProgress({{
-            header: 'Measuring RAG energy \u2014 do not close this tab',
-            stagesHtml: wlStageList(RAG_STAGES, RAG_STAGE_IDX[stage] ?? 0),
-            watts: watts,
-            elapsed: ragStartTime ? Date.now() - ragStartTime : null,
-        }});
+    // CR-050 alignment \u2014 3-mode compare progress: per-mode baseline + inference,
+    // with explicit cooldown stages between them, and a sub-line for the
+    // active-probe thermal-floor wait progress (mirrors /llm/compare).
+    const RAG_MODE_LABELS = ['Without RAG (no retrieval)', 'RAG (top-3)', 'RAG Large (top-8)'];
+    function ragCompareStages() {{
+        const out = [];
+        for (let i = 0; i < RAG_MODE_LABELS.length; i++) {{
+            out.push(RAG_MODE_LABELS[i] + ' \u2014 baseline');
+            out.push(RAG_MODE_LABELS[i] + ' \u2014 inference');
+            if (i < RAG_MODE_LABELS.length - 1) out.push('Cooldown (wait for thermal floor)');
+        }}
+        out.push('Complete');
+        return out;
+    }}
+    function ragCompareStageIdx(modeIdx, stage) {{
+        // stride 3 per mode (baseline, inference, cooldown), final 'Complete' at the end.
+        if (stage === 'done')      return RAG_MODE_LABELS.length * 3 - 1 + 1; // last slot
+        if (stage === 'cooldown')  return modeIdx * 3 + 2;
+        if (stage === 'baseline')  return modeIdx * 3;
+        if (stage === 'inference') return modeIdx * 3 + 1;
+        return 0;
+    }}
+
+    function renderRagProgress(stage, watts, data) {{
+        data = data || {{}};
+        const isCompare = (data.mode_index != null) || data.total_modes;
+        if (isCompare) {{
+            const stages = ragCompareStages();
+            const idx = ragCompareStageIdx(data.mode_index ?? 0, stage);
+            // Cooldown sub-line: live counter while waiting for the thermal floor.
+            let extra = '';
+            if (stage === 'cooldown' && data.cooldown_waited_s != null) {{
+                const ref = data.cooldown_reference_w != null
+                    ? Number(data.cooldown_reference_w).toFixed(1) + 'W' : '?';
+                const cur = data.cooldown_w != null
+                    ? Number(data.cooldown_w).toFixed(1) + 'W' : '?';
+                extra = '<div style="color:var(--text-3);font-size:0.78rem;margin-top:0.4rem">'
+                      + 'Cooldown &middot; waited ' + data.cooldown_waited_s + 's '
+                      + '&middot; current ' + cur + ' (target &le; ' + ref + ' +3W)</div>';
+            }}
+            wlRenderProgress({{
+                header: 'Comparing 3 RAG modes \u2014 do not close this tab',
+                stagesHtml: wlStageList(stages, idx),
+                watts: watts,
+                elapsed: ragStartTime ? Date.now() - ragStartTime : null,
+                extraHtml: extra,
+            }});
+        }} else {{
+            wlRenderProgress({{
+                header: 'Measuring RAG energy \u2014 do not close this tab',
+                stagesHtml: wlStageList(RAG_STAGES, RAG_STAGE_IDX[stage] ?? 0),
+                watts: watts,
+                elapsed: ragStartTime ? Date.now() - ragStartTime : null,
+            }});
+        }}
     }}
 
     async function pollRag(jobId) {{
@@ -6344,8 +6392,12 @@ async def rag_page(request: Request):
                 wlRenderQueued(data.queue_position);
                 ragTimer = setTimeout(() => pollRag(jobId), 3000);
             }} else {{
-                renderRagProgress(data.stage || 'baseline', watts);
-                ragTimer = setTimeout(() => pollRag(jobId), 2000);
+                renderRagProgress(data.stage || 'baseline', watts, data);
+                // Faster poll cadence during cooldown so the ticker advances
+                // visibly between server P110 reads (1 s) — matches the
+                // /llm/compare 4 Hz UX. Otherwise default 2 s polling.
+                const next = data.stage === 'cooldown' ? 750 : 2000;
+                ragTimer = setTimeout(() => pollRag(jobId), next);
             }}
         }} catch(e) {{
             ragTimer = setTimeout(() => pollRag(jobId), 5000);
@@ -6915,25 +6967,45 @@ async def rag_job_status(job_id: str):
 
 
 async def run_rag_compare_job(job_id: str, model_key: str, question: str):
-    s = cfg.load()
+    """3-mode RAG compare (baseline / rag / rag_large) on a single model.
+
+    CR-050 alignment (2026-05-27): now uses the same active-probe thermal-floor
+    cooldown as /rag/compare-models and /llm/compare-models, and emits explicit
+    `stage` transitions per mode so the shared `wlRenderProgress` widget
+    can show "Mode 2/3 · baseline" + cooldown progress instead of staying
+    frozen on "inference" through the entire cooldown gap.
+
+    Cooldown reference = mode #1's baseline (cold reading captured first).
+    """
+    from power import wait_for_thermal_floor
     partial_results = {}
     modes = ("baseline", "rag", "rag_large")
+    floor_reference_w = None
+    cooldowns = []
     try:
         for i, rag_mode in enumerate(modes):
-            jobs[job_id]["current_mode"] = rag_mode
-            jobs[job_id]["mode_index"] = i
-            jobs[job_id]["partial_results"] = dict(partial_results)
+            jobs[job_id]["current_mode"]     = rag_mode
+            jobs[job_id]["mode_index"]       = i
+            jobs[job_id]["total_modes"]      = len(modes)
+            jobs[job_id]["partial_results"]  = dict(partial_results)
+            # Inter-mode cooldown — same pattern as the N-model compare flows:
+            # actively wait for power to drop back to model #1's cold baseline
+            # ±3 W. Otherwise a fast mode after a long one measures a
+            # contaminated baseline and the confidence flag goes 🔴.
+            if i > 0 and floor_reference_w is not None:
+                jobs[job_id]["stage"] = "cooldown"
+                cd = await wait_for_thermal_floor(
+                    floor_reference_w, tolerance_w=3.0, poll_interval_s=1.0,
+                    settle_polls=3, max_wait_s=120,
+                    jobs=jobs, job_id=job_id,
+                )
+                cooldowns.append({"before_mode": rag_mode, **cd})
             result = await rag_module.run_rag_measurement(
                 model_key, rag_mode, question, jobs, job_id)
             partial_results[rag_mode] = result
             jobs[job_id]["partial_results"] = dict(partial_results)
-            # Cooldown between modes — lets residual heat dissipate so the next
-            # mode's baseline is measured on a cool system. Without this, a
-            # short-running mode after a long one shows negative ΔW (the
-            # baseline is contaminated by the previous mode's heat).
-            if i < len(modes) - 1:
-                jobs[job_id]["current_mode"] = "cooldown"
-                await asyncio.sleep(s["llm_rest_s"])
+            if floor_reference_w is None:
+                floor_reference_w = (result.get("energy") or {}).get("w_base")
 
         final = {
             "mode": "rag_compare",
@@ -6942,6 +7014,8 @@ async def run_rag_compare_job(job_id: str, model_key: str, question: str):
             "model_params": rag_module.MODELS[model_key]["params"],
             "question": question,
             "results": partial_results,
+            "floor_reference_w": floor_reference_w,
+            "cooldowns": cooldowns,
             "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
         }
         save_result("llm", job_id, final)
