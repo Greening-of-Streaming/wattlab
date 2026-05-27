@@ -29,6 +29,7 @@ Defaults give 25 distances × (CPU + GPU) ≈ 1h 57m wall time.
 import argparse
 import asyncio
 import csv
+import platform
 import statistics
 import subprocess
 import sys
@@ -247,6 +248,47 @@ def main():
 
     asyncio.run(run(args.distances, n_polls, args.pre_cool_s,
                     raw_path, summary_path))
+
+    # CR-012 — append a summary line to results/diagnostics/history.jsonl.
+    # Per-run CSVs stay as the raw record; the JSONL is a trend index so
+    # future drift queries don't have to walk every CSV.
+    try:
+        _append_probe_history(summary_path, args.distances)
+    except Exception as e:
+        print(f"WARN: probe history append failed: {e}", file=sys.stderr)
+
+
+def _append_probe_history(summary_path: Path, distances: list[int]):
+    """Compute drift-tracking rollups from the probe summary CSV and append
+    one line to results/diagnostics/history.jsonl (CR-012)."""
+    import persist  # noqa: PLC0415
+    rows = []
+    with summary_path.open() as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+    if not rows:
+        return
+    # Mean within-window CV across d≥5s — the noise floor for windows long
+    # enough to have settled past the immediate post-encode transient.
+    cvs = [float(r["cv_pct"]) for r in rows
+           if r.get("cv_pct") and int(r["distance_s"]) >= 5]
+    mean_within_window_cv_pct = round(statistics.mean(cvs), 4) if cvs else None
+    # Settled-idle floor: mean of the longest-distance baselines (cleanest
+    # cold reference the probe reached).
+    max_d = max(distances)
+    floor_w = [float(r["mean_w"]) for r in rows
+               if int(r["distance_s"]) == max_d and r.get("mean_w")]
+    settled_floor_w = round(statistics.mean(floor_w), 3) if floor_w else None
+    persist.append_history_line("diagnostics", {
+        "kind":                       "probe",
+        "summary_csv":                str(summary_path),
+        "distances":                  distances,
+        "n_pairs":                    len(distances),
+        "mean_within_window_cv_pct":  mean_within_window_cv_pct,
+        "settled_floor_w":            settled_floor_w,
+        "kernel":                     platform.release(),
+    })
 
 
 if __name__ == "__main__":

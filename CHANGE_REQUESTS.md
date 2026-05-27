@@ -153,49 +153,6 @@ Dom guessed five days of Claude Code work. Probably correct order of magnitude. 
 
 ---
 
-## CR-012 · Persist variance calibration history (and thermal-recovery probe history)
-
-**Status:** captured 2026-05-01 — nice-to-have. **Scope extended 2026-05-04 (post-meeting)** to cover the thermal-recovery probe's history too; both diagnostics share the same persistence shape.
-**Triggered by:** owner notes during Session 17 wrap — every variance calibration overwrites the previous values in `settings.json`, so there's no record of how variance has drifted across kernel updates, room-temperature changes, GPU driver bumps, or thermal-paste age. **Team meeting 2026-05-04 (#16)** confirmed the same need for the thermal-recovery probe — useful for system drift and portability checks across deployments.
-
-### Problem
-
-`settings.json` keeps only the **latest** `variance_pct`, `variance_idle_pct`, `variance_cpu_pct`, `variance_gpu_pct` — the four numbers written by `video.py:657` at the end of a calibration run. The previous run's numbers vanish on the next save. This makes it impossible to ask:
-- "Has the system become noisier over the last quarter?"
-- "Did the kernel 6.17 update change our baseline?"
-- "What was variance the day we ran the canonical Meridian benchmark?"
-
-For a measurement project that publishes confidence figures, that history is genuinely useful — and trivially cheap to keep.
-
-### Agreed direction
-
-Append every completed calibration to `results/variance/history.jsonl` (or similar). One JSON object per line, append-only:
-
-```json
-{"ts": "2026-05-01T18:42:11Z", "variance_pct": 1.08, "variance_idle_pct": 1.79,
- "variance_cpu_pct": 0.82, "variance_gpu_pct": 0.64,
- "w_base_mean": 53.2, "cpu_tctl_at_start": 41.2, "gpu_junction_at_start": 36.0,
- "runs": 10, "kernel": "6.17.0-22-generic", "git_sha": "880825c"}
-```
-
-Captures enough context that a future spike about "why did variance jump" is answerable. Use the existing `persist.py` save machinery if it fits (write a sibling helper or a `save_calibration` function), or a small append in `video.py` near line 657.
-
-Bonus: a small `/variance/history` page or JSON endpoint surfaces the trend (CR-004 graphing territory — could share that work).
-
-### Thermal-recovery probe history (folded in 2026-05-04)
-
-Same persistence shape, second JSONL file: `results/diagnostics/probe_history.jsonl`. Each line carries the probe's summary metrics (mean within-window CV across d≥5s, settled-idle floor, kernel + git_sha + ts) so the same trend page can render both calibration and probe drift over time.
-
-The probe already writes per-run CSVs under `results/diagnostics/recovery_<ts>{,_summary}.csv`; the new history file is a *summary index* so trend rendering doesn't have to walk every CSV. Append on probe completion (currently CLI; once CR-024 ships the in-process endpoint, the same hook fires).
-
-### Where it lives
-
-`video.py:651–658` — the block that writes back to `settings.json` is the natural place to also write the calibration history line. For the probe, the equivalent line in `bin/probe-thermal-recovery` (and later in `precalibration.py` once CR-024 lands).
-
-### Pre-conference: no, but cheap (~30 min). Could slot into any session as a low-priority filler. The data starts being valuable from the moment we start logging — every missed calibration is one more datapoint that's gone forever.
-
----
-
 ## CR-018 · Historical CO₂e comparison — full coverage upgrade (Tier 2 + Tier 3)
 
 **Status:** Tier 1 ✅ done 2026-05-03 (Session 18 part 14 — `bf462c3`); Tier 2 + Tier 3 captured for later.
@@ -844,20 +801,21 @@ For the record, several items came up that don't warrant new CR entries:
 
 ---
 
-## Groupings & dependencies (added 2026-05-08, S23 close-out review; updated 2026-05-11 after board meeting; 2026-05-12 close-out sweep — CR-032 / CR-034 / CR-036 / CR-038 / CR-042 moved to closed; S26 close-out 2026-05-20 — CR-037 / CR-040 / CR-027 moved to closed; S32 close-out 2026-05-27 — CR-054 / CR-055 / CR-056 / CR-058 findings-chain moved to closed)
+## Groupings & dependencies (added 2026-05-08, S23 close-out review; updated 2026-05-11 after board meeting; 2026-05-12 close-out sweep — CR-032 / CR-034 / CR-036 / CR-038 / CR-042 moved to closed; S26 close-out 2026-05-20 — CR-037 / CR-040 / CR-027 moved to closed; S32 close-out 2026-05-27 — CR-054 / CR-055 / CR-056 / CR-058 findings-chain + CR-012 history-journal moved to closed)
 
-The 16 active CRs cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
+The 15 active CRs cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
 
 ### Track A — Storage / persistence (Tania-elevated 2026-05-07)
 
-Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a lot of really interesting statistics on that"* — turned storage from quality-of-life into the gating decision for the analytics layer. Three CRs sit on this track:
+Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a lot of really interesting statistics on that"* — turned storage from quality-of-life into the gating decision for the analytics layer. Remaining CRs on this track:
 
-- **CR-012** persist variance calibration + thermal-recovery probe history *(small, well-scoped)*
 - **CR-031** sub-section 1 (DB choice with REM coherence — "I don't want five different databases")
 - **CR-003** iso-energy bitrate sweep *(downstream — the analytics use-case)*
 - **CR-007** carbon variance over time-of-day / season / location *(downstream — also analytics)*
 
-**Recommendation:** before implementing CR-012 in isolation, hold a brief design pass that decides the DB family for both OWL and REM. CR-012's persistence shape should drop into whatever container that pass chooses, not invent a third format. CR-003 and CR-007 inherit the same shape automatically.
+*(CR-012 calibration + probe history journal shipped S32 — JSONL files under `results/variance/` and `results/diagnostics/`. Append-only; first feed for the analytics layer. In `CHANGE_REQUESTS_CLOSED.md`.)*
+
+**Recommendation:** the storage-family decision (CR-031 §1) is the remaining bottleneck. CR-012's JSONL shape works standalone; whether the analytics layer reads it as-is or migrates onto whatever DB the §1 pass picks is a CR-031 decision. CR-003 and CR-007 still inherit the eventual storage shape automatically.
 
 ### Track B — Confidence model (CR-028 Phase 2 ✅ SHIPPED 2026-05-22)
 
@@ -950,7 +908,7 @@ S26 shipped the credibility three (CR-037, CR-040, CR-027); S28 (2026-05-22) shi
 Remaining order:
 
 1. **CR-057** home page repositioning to findings-first — **DRAFTED, awaiting lab UX review.** Mechanical work ~half day; design discussion is the bottleneck. Behind same `findings_enabled` flag for byte-identical rollback. Non-blocking — the rest of the backlog can progress without it.
-2. **Track A storage decision** — CR-031 §1 (REM coherence); unblocks CR-012 + analytics layer (CR-003, CR-007). Can run in parallel with CR-057 since they don't touch the same code.
+2. **Track A storage decision** — CR-031 §1 (REM coherence); unblocks the analytics layer (CR-003, CR-007). CR-012's JSONL journals are the first feed; the §1 decision is whether to consume them as-is or migrate onto a shared DB with REM. Can run in parallel with CR-057.
 3. **CR-045 (with/after CR-029)** — Tania-led; "Same Bitrate / Same Quality" toggle.
 4. **Track C — CR-024** re-run-probe button (CR-035 progress bar already shipped S23).
 5. **CR-039 / CR-041** as exploratory follow-ups (CR-039 lands on the shipped tethered AI pages; VMAF is its video sibling; CR-041 awaits chip arrival, output lands as a CR-054 finding).

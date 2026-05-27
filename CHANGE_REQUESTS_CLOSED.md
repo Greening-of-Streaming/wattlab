@@ -1734,3 +1734,46 @@ The capability matrix below the divider stays untouched. (It's a separate, worki
 ### Priority: shipped same commit as CR-055. Tightly coupled to the catalog (step 7 needs the catalog to link to).
 
 ---
+
+## CR-012 · Persist variance calibration history (and thermal-recovery probe history)
+
+**Status:** **shipped 2026-05-27 (S32 close-out, commit pending).** Both halves landed: variance calibration appends to `results/variance/history.jsonl` from `video.run_variance_calibration` (post-`cfg.save`); thermal-recovery probe appends a summary line to `results/diagnostics/history.jsonl` from `bin/probe-thermal-recovery` (post-CSV-write). New `persist.append_history_line()` helper holds the journal contract — append-only, `ts` + `owl_version` stamped on every line. CLI failure is non-fatal (try/except with stderr log). Probe rollups (`mean_within_window_cv_pct` across d≥5s, `settled_floor_w` at max distance) computed by reading the probe summary CSV back after it's written. **Tests:** 334 → 339 (+5). **CR-024 follow-up:** when the in-process probe endpoint ships, the same `_append_probe_history` rollup can be lifted into `precalibration.py` and the CLI becomes a thin wrapper.
+**Triggered by:** owner notes during Session 17 wrap — every variance calibration overwrites the previous values in `settings.json`, so there's no record of how variance has drifted across kernel updates, room-temperature changes, GPU driver bumps, or thermal-paste age. **Team meeting 2026-05-04 (#16)** confirmed the same need for the thermal-recovery probe — useful for system drift and portability checks across deployments.
+
+### Problem
+
+`settings.json` keeps only the **latest** `variance_pct`, `variance_idle_pct`, `variance_cpu_pct`, `variance_gpu_pct` — the four numbers written by `video.py:657` at the end of a calibration run. The previous run's numbers vanish on the next save. This makes it impossible to ask:
+- "Has the system become noisier over the last quarter?"
+- "Did the kernel 6.17 update change our baseline?"
+- "What was variance the day we ran the canonical Meridian benchmark?"
+
+For a measurement project that publishes confidence figures, that history is genuinely useful — and trivially cheap to keep.
+
+### Agreed direction
+
+Append every completed calibration to `results/variance/history.jsonl` (or similar). One JSON object per line, append-only:
+
+```json
+{"ts": "2026-05-01T18:42:11Z", "variance_pct": 1.08, "variance_idle_pct": 1.79,
+ "variance_cpu_pct": 0.82, "variance_gpu_pct": 0.64,
+ "w_base_mean": 53.2, "cpu_tctl_at_start": 41.2, "gpu_junction_at_start": 36.0,
+ "runs": 10, "kernel": "6.17.0-22-generic", "git_sha": "880825c"}
+```
+
+Captures enough context that a future spike about "why did variance jump" is answerable. Use the existing `persist.py` save machinery if it fits (write a sibling helper or a `save_calibration` function), or a small append in `video.py` near line 657.
+
+Bonus: a small `/variance/history` page or JSON endpoint surfaces the trend (CR-004 graphing territory — could share that work).
+
+### Thermal-recovery probe history (folded in 2026-05-04)
+
+Same persistence shape, second JSONL file: `results/diagnostics/probe_history.jsonl`. Each line carries the probe's summary metrics (mean within-window CV across d≥5s, settled-idle floor, kernel + git_sha + ts) so the same trend page can render both calibration and probe drift over time.
+
+The probe already writes per-run CSVs under `results/diagnostics/recovery_<ts>{,_summary}.csv`; the new history file is a *summary index* so trend rendering doesn't have to walk every CSV. Append on probe completion (currently CLI; once CR-024 ships the in-process endpoint, the same hook fires).
+
+### Where it lives
+
+`video.py:651–658` — the block that writes back to `settings.json` is the natural place to also write the calibration history line. For the probe, the equivalent line in `bin/probe-thermal-recovery` (and later in `precalibration.py` once CR-024 lands).
+
+### Pre-conference: no, but cheap (~30 min). Could slot into any session as a low-priority filler. The data starts being valuable from the moment we start logging — every missed calibration is one more datapoint that's gone forever.
+
+---

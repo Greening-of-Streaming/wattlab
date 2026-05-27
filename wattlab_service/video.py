@@ -1107,6 +1107,28 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
         cfg.save(current)
         result["variance_updated"] = True
 
+        # CR-012 — append a drift-tracking line to results/variance/history.jsonl.
+        # Latest values overwrite settings.json on every save; the journal keeps
+        # the trajectory so "did variance jump after kernel X?" stays answerable.
+        try:
+            import persist
+            import platform
+            all_idle = [w for window in idle_windows for w in window]
+            w_base_mean = sum(all_idle) / len(all_idle) if all_idle else None
+            persist.append_history_line("variance", {
+                "variance_pct":            round(mean_cv, 4),
+                "variance_idle_pct":       round(idle_cv, 4) if idle_cv is not None else None,
+                "variance_idle_drift_pct": round(idle_drift_cv, 4) if idle_drift_cv is not None else None,
+                "variance_cpu_pct":        round(cpu_cv, 4) if cpu_cv is not None else None,
+                "variance_gpu_pct":        round(gpu_cv, 4) if gpu_cv is not None else None,
+                "w_base_mean":             round(w_base_mean, 3) if w_base_mean is not None else None,
+                "runs":                    n_runs,
+                "runs_completed":          len(cpu_delta_w),
+                "kernel":                  platform.release(),
+            })
+        except Exception as e:
+            print(f"WARN: variance history append failed: {e}")
+
     if jobs:
         jobs[job_id]["stage"] = "done"
         jobs[job_id]["variance_result"] = result

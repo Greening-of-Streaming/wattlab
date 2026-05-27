@@ -58,6 +58,27 @@ def save_result(job_type: str, job_id: str, data: dict,
     return path
 
 
+def append_history_line(category: str, data: dict) -> Path:
+    """Append one JSON line to results/<category>/history.jsonl (CR-012).
+
+    Drift-tracking journal for variance calibration + thermal-recovery probe.
+    Append-only, no schema lock-in. `ts` and `owl_version` are stamped on
+    every line so future analyses can correlate drift with code changes,
+    kernel versions, hardware swaps.
+    """
+    out_dir = RESULTS_DIR / category
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "history.jsonl"
+    payload = {
+        "ts": datetime.now().isoformat(),
+        **data,
+        "owl_version": version.version_dict(),
+    }
+    with path.open("a") as f:
+        f.write(json.dumps(payload) + "\n")
+    return path
+
+
 def _visitor_match(data: dict, visitor_key: str | None) -> bool:
     """True if this record is visible to a caller with `visitor_key`.
 
