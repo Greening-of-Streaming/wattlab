@@ -170,6 +170,20 @@ def unload_all_loaded_models():
         unloaded.append(name)
     return unloaded
 
+
+def loaded_models() -> list:
+    """Names of models currently resident in Ollama VRAM (via /api/ps); [] if
+    none or Ollama unreachable. Used to wait out VRAM release before another
+    GPU consumer (e.g. the diffusers image pipeline) loads."""
+    import urllib.request, json
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/ps", timeout=5) as r:
+            data = json.loads(r.read())
+    except Exception:
+        return []
+    return [m.get("name") or m.get("model") for m in data.get("models", [])
+            if (m.get("name") or m.get("model"))]
+
 # --- Ollama inference ---
 
 def run_inference_streaming(model: str, prompt: str, on_token=None,

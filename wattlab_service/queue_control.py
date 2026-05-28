@@ -153,6 +153,23 @@ def depth() -> int:
     return len(pending_queue) + (1 if current_job_id else 0)
 
 
+def cancel_pending(job_id: str) -> bool:
+    """Remove a not-yet-started job from the queue (CR-061 benchmark cancel).
+
+    Returns True if `job_id` was queued and removed. The CURRENTLY RUNNING job
+    (`current_job_id`) is NOT affected — that case is handled cooperatively by
+    the job's own coroutine checking a cancel flag. Re-numbers the remaining
+    queue positions, mirroring the worker's renumber at _worker()."""
+    for i, e in enumerate(pending_queue):
+        if e["job_id"] == job_id:
+            pending_queue.pop(i)
+            for j, ee in enumerate(pending_queue):
+                if _jobs and ee["job_id"] in _jobs:
+                    _jobs[ee["job_id"]]["queue_position"] = j + 1
+            return True
+    return False
+
+
 def paused() -> bool:
     """True if the external pause flag file exists."""
     return Path(PAUSE_FLAG).exists()

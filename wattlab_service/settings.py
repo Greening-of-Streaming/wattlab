@@ -41,6 +41,14 @@ DEFAULTS = {
     "h264_bitrate_kbps": 4000,
     "h265_bitrate_kbps": 2000,
     "av1_bitrate_kbps":  1500,
+    # CR-029 §2 — apples-to-apples GOP. Pinned identically on every preset so
+    # the keyframe cadence is the same on the CPU and GPU paths (audit found
+    # VAAPI defaulted to 120 vs ~250-321 on the CPU encoders). 120 frames = 2 s
+    # on the 59.94 fps canonical Meridian source (a streaming-standard segment
+    # length). Operator-tunable; the rest of the normalization (profile, closed
+    # GOP, B-frames) lives in video._norm_args. Changing this re-bases the video
+    # numbers — re-run variance calibration after.
+    "encode_gop_frames": 120,
     # ffmpeg binary path — installed side-by-side with Ubuntu's stock 6.1.1
     # so the system /usr/bin/ffmpeg stays untouched for anything else
     # linked against its shared libs. The static build at this path is
@@ -93,6 +101,18 @@ DEFAULTS = {
     # links exist anywhere in OWL until CR-055 (catalog index) ships, so
     # `false` here completely undiscoverable + `true` is preview-by-URL.
     "findings_enabled":          True,
+    # CR-061 — in-app overnight benchmark. The set of "measures" is a registry
+    # in benchmark.py; these bench_run_* flags toggle which run, so retiring or
+    # adding a measure is a registry+flag change, not a code rewrite. Video is
+    # the anchor (all-codecs × reps × sources); the AI panels are coverage.
+    "bench_video_reps":   5,
+    "bench_sources":      ["meridian_120s", "bbb_120s"],
+    # Variance is gated by the existing `variance_runs` slider (0 = skip), not a
+    # bench_run_* flag — see benchmark.MEASURES["variance"].enabled_fn.
+    "bench_run_video":    True,
+    "bench_run_llm":      True,
+    "bench_run_rag":      True,
+    "bench_run_image":    True,
 }
 
 

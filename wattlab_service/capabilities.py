@@ -56,6 +56,7 @@ RESULTS_EXPORT_CSV = "results_export_csv" # bulk CSV/JSON export of run history 
 SETTINGS_READ_FULL = "settings_read_full" # render-mode predicate (editable inputs vs read-only)
 SETTINGS_WRITE     = "settings_write"
 VARIANCE_RUN       = "variance_run"
+BENCHMARK_RUN      = "benchmark_run"       # CR-061 — launch/cancel the in-app overnight benchmark
 
 
 # --- Capability → minimum tier ----------------------------------------------
@@ -89,6 +90,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     SETTINGS_READ_FULL: Tier.Lab,
     SETTINGS_WRITE:     Tier.Lab,
     VARIANCE_RUN:       Tier.Lab,
+    BENCHMARK_RUN:      Tier.Lab,
 }
 
 

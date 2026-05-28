@@ -435,6 +435,7 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
     results = []
     floor_reference_w = None
     cooldowns = []
+    failures = []
     try:
         for idx, mk in enumerate(panel, start=1):
             mc = IMAGE_MODELS[mk]
@@ -452,12 +453,24 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
                 )
                 cooldowns.append({"before_model": mk, **cd})
             slot = f"m{idx}"
-            r = await _run_single_image(
-                full_prompt, "gpu", job_id, jobs, slot, stopped,
-                model_key=mk, seed=seed,
-                steps_override=mc.get("compare_steps", 4),
-                batch_override=mc.get("compare_batch", 4),
-            )
+            try:
+                r = await _run_single_image(
+                    full_prompt, "gpu", job_id, jobs, slot, stopped,
+                    model_key=mk, seed=seed,
+                    steps_override=mc.get("compare_steps", 4),
+                    batch_override=mc.get("compare_batch", 4),
+                )
+            except Exception as ex:
+                # A model that fails to load/run must not take down the whole
+                # panel — record it and continue. (e.g. SDXL-Lightning is a
+                # UNet-only checkpoint with no model_index.json.) The surviving
+                # models still produce a comparison.
+                failures.append({"model_key": mk, "model_label": mc.get("label", mk),
+                                 "error": str(ex)})
+                if jobs is not None:
+                    jobs[job_id].setdefault("model_errors", []).append(
+                        {"model": mk, "error": str(ex)})
+                continue
             r["model_key"] = mk
             results.append(r)
             if floor_reference_w is None:
@@ -466,6 +479,11 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
         LOCK_FILE.unlink(missing_ok=True)
         loop = asyncio.get_event_loop()
         loop.run_in_executor(None, focus_mode_exit, stopped)
+
+    if not results:
+        raise RuntimeError(
+            "all image models failed: "
+            + "; ".join(f"{f['model_key']}: {f['error']}" for f in failures))
 
     if jobs is not None:
         jobs[job_id]["stage"] = "done"
@@ -490,6 +508,7 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
         "modifier": modifier,
         "seed": seed,
         "models": results,
+        "model_errors": failures,
         "small": small_alias,
         "large": large_alias,
         "analysis": analysis,

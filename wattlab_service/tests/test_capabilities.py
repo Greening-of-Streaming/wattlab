@@ -263,6 +263,7 @@ def test_required_tier_table_snapshot():
         "settings_read_full":  Tier.Lab,
         "settings_write":      Tier.Lab,
         "variance_run":        Tier.Lab,
+        "benchmark_run":       Tier.Lab,   # CR-061
     }
     assert capabilities._REQUIRED_TIER == expected
 

@@ -124,6 +124,73 @@ def _probe_dims(path) -> Optional[tuple]:
     return None
 
 
+def _probe_gop(path) -> dict:
+    """Average + max GOP (frames between keyframes) from packet keyframe
+    flags. Codec-agnostic and decode-free — unlike per-frame `pict_type`,
+    the packet `K` flag is reliable for H.264 / H.265 / AV1 alike, which is
+    why CR-029 §2's one-off ffprobe pass couldn't read HEVC/AV1 GOP."""
+    blank = {"gop_avg": None, "gop_max": None, "keyframe_count": None, "frame_count": None}
+    try:
+        out = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "packet=flags", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if out.returncode != 0:
+            return blank
+    except Exception:
+        return blank
+    flags = [ln for ln in out.stdout.split() if ln]
+    key_idx = [i for i, fl in enumerate(flags) if fl.startswith("K")]
+    if len(key_idx) < 2:
+        return {**blank, "keyframe_count": len(key_idx), "frame_count": len(flags) or None}
+    gaps = [b - a for a, b in zip(key_idx, key_idx[1:])]
+    return {
+        "gop_avg": round(sum(gaps) / len(gaps), 1),
+        "gop_max": max(gaps),
+        "keyframe_count": len(key_idx),
+        "frame_count": len(flags),
+    }
+
+
+def probe_output_stream(path) -> Optional[dict]:
+    """CR-029 §3 — capture an encoded output's actual stream parameters so the
+    CPU-vs-GPU apples-to-apples audit is provenance on every result, not a
+    one-off. Returns codec / profile / level / pix_fmt / bit_rate / B-frame
+    depth + GOP. Runs after the measurement window closes (called from
+    run_single alongside output_size_mb), so its draw never enters a reported
+    energy figure. Fails soft to None — provenance is nice-to-have, never a
+    reason to drop a measured result."""
+    if not Path(path).exists():
+        return None
+    try:
+        out = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries",
+             "stream=codec_name,profile,level,width,height,pix_fmt,bit_rate,has_b_frames",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        stream = json.loads(out.stdout).get("streams", [{}])[0]
+    except Exception:
+        return None
+    if not stream:
+        return None
+    br = stream.get("bit_rate")
+    level = stream.get("level")
+    return {
+        "codec": stream.get("codec_name"),
+        "profile": stream.get("profile"),
+        "level": level if isinstance(level, int) and level > 0 else None,
+        "width": stream.get("width"),
+        "height": stream.get("height"),
+        "pix_fmt": stream.get("pix_fmt"),
+        "bit_rate_bps": int(br) if br and str(br).isdigit() else None,
+        "has_b_frames": stream.get("has_b_frames"),
+        **_probe_gop(path),
+    }
+
+
 def _parse_vmaf_log(log_path) -> Optional[float]:
     """Pull the pooled-mean VMAF from a libvmaf json log; None if unparseable."""
     try:
@@ -277,6 +344,33 @@ def _clear_progress(jobs: Optional[dict], job_id: str) -> None:
         jobs[job_id].pop(k, None)
 
 
+# CR-029 §2 — apples-to-apples encode-parameter normalization (decision taken
+# 2026-05-28, pending Tania's review; see CHANGE_REQUESTS.md CR-029 §2).
+# THE SINGLE PLACE to change the normalization. Empirically grounded by the
+# 2026-05-28 ffprobe audit:
+#   - GOP: pinned identically on every preset (settings `encode_gop_frames`).
+#     CPU encoders get closed GOP + scene-cut OFF so the cadence is *exactly*
+#     the setting, matching the fixed-GOP VAAPI path (audit: CPU defaulted to
+#     249/250/321, VAAPI to 120).
+#   - Profile: pinned explicit (H.264 High, H.265/AV1 Main) so a driver/lib
+#     upgrade can't drift it. Already aligned by default; this locks it.
+#   - B-frames: REQUESTED on H.264/H.265 (`-bf 2`), but AMD VAAPI caps them
+#     (H.264 reorder depth 1, HEVC 0) — a hardware limit the request can't beat,
+#     surfaced per-result in stream.has_b_frames. AV1 uses native alt-ref (no -bf).
+#   - Level: NOT pinned — the residual H.265 4.1(CPU)/4.0(GPU) split is cosmetic
+#     at 1080p and forcing it on VAAPI is fragile. Documented in CR-029 §2.
+def _norm_args(preset_key: str) -> list:
+    gop = str(int(cfg.load().get("encode_gop_frames", 120)))
+    return {
+        "cpu":      ["-g", gop, "-profile:v", "high", "-bf", "2", "-x264-params", "scenecut=0:open_gop=0"],
+        "gpu":      ["-g", gop, "-profile:v", "high", "-bf", "2"],
+        "h265_cpu": ["-g", gop, "-profile:v", "main", "-bf", "2", "-x265-params", "scenecut=0:open-gop=0"],
+        "h265_gpu": ["-g", gop, "-profile:v", "main", "-bf", "2"],
+        "av1_cpu":  ["-g", gop, "-profile:v", "main", "-svtav1-params", "scd=0"],
+        "av1_gpu":  ["-g", gop, "-profile:v", "main"],
+    }[preset_key]
+
+
 PRESETS = {
     "cpu": {
         "label": "H.264 CPU",
@@ -284,7 +378,7 @@ PRESETS = {
         "detail_fn": lambda bps: f"libx264 · {bps} kbps ABR · 1080p · 24 cores",
         "cmd_fn": lambda i, o, bps: [
             _ffmpeg_bin(), "-y", "-i", str(i),
-            "-c:v", "libx264", "-b:v", f"{bps}k",
+            "-c:v", "libx264", "-b:v", f"{bps}k", *_norm_args("cpu"),
             "-vf", "scale=-2:1080",
             "-c:a", "aac", "-b:a", "128k",
             str(o)
@@ -301,7 +395,7 @@ PRESETS = {
             "-vaapi_device", "/dev/dri/renderD128",
             "-i", str(i),
             "-vf", "scale_vaapi=w=-2:h=1080:format=nv12",
-            "-c:v", "h264_vaapi", "-b:v", f"{bps}k",
+            "-c:v", "h264_vaapi", "-b:v", f"{bps}k", *_norm_args("gpu"),
             "-c:a", "aac", "-b:a", "128k",
             str(o)
         ]
@@ -312,7 +406,7 @@ PRESETS = {
         "detail_fn": lambda bps: f"libx265 · {bps} kbps ABR · 1080p · 24 cores",
         "cmd_fn": lambda i, o, bps: [
             _ffmpeg_bin(), "-y", "-i", str(i),
-            "-c:v", "libx265", "-b:v", f"{bps}k",
+            "-c:v", "libx265", "-b:v", f"{bps}k", *_norm_args("h265_cpu"),
             "-vf", "scale=-2:1080",
             "-c:a", "aac", "-b:a", "128k",
             str(o)
@@ -329,7 +423,7 @@ PRESETS = {
             "-vaapi_device", "/dev/dri/renderD128",
             "-i", str(i),
             "-vf", "scale_vaapi=w=-2:h=1080:format=nv12",
-            "-c:v", "hevc_vaapi", "-b:v", f"{bps}k",
+            "-c:v", "hevc_vaapi", "-b:v", f"{bps}k", *_norm_args("h265_gpu"),
             "-c:a", "aac", "-b:a", "128k",
             str(o)
         ]
@@ -340,7 +434,7 @@ PRESETS = {
         "detail_fn": lambda bps: f"libsvtav1 · {bps} kbps ABR · 1080p · 24 cores",
         "cmd_fn": lambda i, o, bps: [
             _ffmpeg_bin(), "-y", "-i", str(i),
-            "-c:v", "libsvtav1", "-b:v", f"{bps}k",
+            "-c:v", "libsvtav1", "-b:v", f"{bps}k", *_norm_args("av1_cpu"),
             "-vf", "scale=-2:1080",
             "-c:a", "aac", "-b:a", "128k",
             str(o)
@@ -357,7 +451,7 @@ PRESETS = {
             "-vaapi_device", "/dev/dri/renderD128",
             "-i", str(i),
             "-vf", "scale_vaapi=w=-2:h=1080:format=nv12",
-            "-c:v", "av1_vaapi", "-b:v", f"{bps}k",
+            "-c:v", "av1_vaapi", "-b:v", f"{bps}k", *_norm_args("av1_gpu"),
             "-c:a", "aac", "-b:a", "128k",
             str(o)
         ]
@@ -593,12 +687,19 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
     out_size_mb = round(output_path.stat().st_size / 1024 / 1024, 2) \
         if output_path.exists() and output_path.stat().st_size > 0 else None
 
+    # CR-029 §3 — terminal ffprobe of the encoded output (post-measurement
+    # window, like VMAF). Records the encoder's actual GOP / profile / level /
+    # B-frame structure so the CPU-vs-GPU (and AMD-vs-Nvidia, CR-060) apples-
+    # to-apples comparison is provenance on every result.
+    stream = probe_output_stream(output_path)
+
     return {
         "preset_key": preset_key,
         "preset_label": preset["label"],
         "preset_detail": preset["detail_fn"](bps),
         "transcode": transcode_result,
         "output_size_mb": out_size_mb,
+        "stream": stream,
         "energy": {
             "w_base": round(w_base, 2),
             "w_task": round(w_task, 2),

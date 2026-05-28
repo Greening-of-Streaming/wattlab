@@ -208,6 +208,18 @@ def _co2e_fields(energy: dict) -> dict:
 
 def _summarise(job_type: str, data: dict) -> dict:
     summary = {"job_id": data.get("job_id"), "saved_at": data.get("saved_at")}
+    if job_type == "benchmark":
+        # CR-061 — benchmark-run manifest. Self-describing: summarise from the
+        # steps list, tolerant of whatever measures a stored run contains.
+        steps = data.get("steps", [])
+        summary["benchmark_run_id"] = data.get("benchmark_run_id")
+        summary["status"] = data.get("status")
+        summary["started_at"] = data.get("started_at")
+        summary["finished_at"] = data.get("finished_at")
+        summary["total_steps"] = data.get("total_steps", len(steps))
+        summary["n_done"] = sum(1 for s in steps if s.get("status") == "done")
+        summary["n_error"] = sum(1 for s in steps if s.get("status") == "error")
+        return summary
     if job_type == "image":
         mode = data.get("mode", "cpu")
         summary["mode"] = mode

@@ -36,8 +36,9 @@ from capabilities import (
     PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
     VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD, WORKING_NAV,
     CUSTOM_PROMPT, BATCH_COMPARE, RAG_CORPUS_UPLOAD, RAG_CORPUS_DELETE_OWN, RESULTS_EXPORT_CSV,
-    SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN,
+    SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN, BENCHMARK_RUN,
 )
+import benchmark
 
 config = dotenv_values("/home/gos/wattlab/.env")
 app = FastAPI()
@@ -2173,9 +2174,46 @@ _RESULT_JS = """<script>
   };
 
   // \u2500\u2500\u2500 LLM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // Compact panel for the N-model compare results (llm compare_models +
+  // rag_compare_models). The standalone /llm/compare & /rag/compare pages have
+  // their own rich renderers; this is the shared read-only view used when a
+  // stored compare result is embedded (e.g. the benchmark detail page).
+  function wlRenderComparePanel(r){
+    var models = r.models || [];
+    var prompt = r.full_prompt || r.prompt || r.question || '';
+    var expected = r.expected || '';
+    var cheapest = r.cheapest_correct_key || null;
+    var pass = (r.panel_pass_rate != null) ? Math.round(r.panel_pass_rate * 100) + '%' : '—';
+    var rows = models.map(function(e){
+      e = e || {};
+      var conf = (e.confidence && e.confidence.flag) || '';
+      var win = (cheapest && e.model_key === cheapest);
+      var mwh = (e.mwh_per_token != null && e.delta_e_wh != null && e.delta_e_wh > 0) ? _f(e.mwh_per_token, 3) : '—';
+      return '<tr' + (win ? ' style="background:var(--accent-soft)"' : '') + '>'
+        + '<td style="text-align:left;padding:0.3rem 0.5rem;color:' + (win ? 'var(--accent)' : 'var(--text)') + '">' + (e.model_label || e.model_key || '?') + (win ? ' ★' : '') + '</td>'
+        + '<td style="text-align:center;padding:0.3rem 0.5rem">' + (e.correct ? '<span style="color:var(--accent)">✓</span>' : '<span style="color:var(--err)">✗</span>') + '</td>'
+        + '<td style="text-align:center;padding:0.3rem 0.5rem">' + conf + '</td>'
+        + '<td style="text-align:right;padding:0.3rem 0.5rem;color:var(--text-3)">' + (e.output_tokens != null ? e.output_tokens : '—') + '</td>'
+        + '<td style="text-align:right;padding:0.3rem 0.5rem;color:var(--text-3)">' + mwh + '</td>'
+        + '<td style="text-align:right;padding:0.3rem 0.5rem;color:var(--text-3)">' + (e.delta_e_wh != null ? _f(e.delta_e_wh, 4) : '—') + '</td></tr>';
+    }).join('');
+    var errs = (r.model_errors || []).map(function(f){
+      return '<div style="color:var(--err);font-size:0.72rem;font-family:monospace">⚠ ' + (f.model_key || '?') + ': ' + (f.error || '') + '</div>';
+    }).join('');
+    return '<div class="result-card">'
+      + (prompt ? '<div style="font-family:monospace;font-size:0.78rem;color:var(--text-3);margin-bottom:0.4rem">Prompt: ' + prompt + (expected ? ' · expected: <b>' + expected + '</b>' : '') + '</div>' : '')
+      + '<div style="font-size:0.78rem;color:var(--text-4);margin-bottom:0.5rem">panel pass rate: ' + pass + (cheapest ? ' · cheapest correct: <span style="color:var(--accent)">' + cheapest + '</span>' : '') + '</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:0.8rem;font-family:monospace">'
+      + '<thead><tr style="color:var(--text-4);font-size:0.7rem;text-transform:uppercase">'
+      + '<th style="text-align:left;padding:0.3rem 0.5rem">Model</th><th style="padding:0.3rem 0.5rem">OK</th><th style="padding:0.3rem 0.5rem">Conf</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">Tokens</th><th style="text-align:right;padding:0.3rem 0.5rem">mWh/tok</th><th style="text-align:right;padding:0.3rem 0.5rem">ΔE Wh</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table>' + errs + '</div>';
+  }
+
   window.wlRenderLLMCard = function(opts){
     var r = (opts && opts.result) || {};
     var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
+    if (r.mode === 'compare_models') return html + wlRenderComparePanel(r);
     if (r.mode === 'both') {
       var ce = r.cpu && r.cpu.energy, ge = r.gpu && r.gpu.energy;
       var ci = r.cpu && r.cpu.inference, gi = r.gpu && r.gpu.inference;
@@ -2271,6 +2309,7 @@ _RESULT_JS = """<script>
   window.wlRenderRAGCard = function(opts){
     var r = (opts && opts.result) || {};
     var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
+    if (r.mode === 'rag_compare_models') return html + wlRenderComparePanel(r);
     var modes  = ['baseline', 'rag', 'rag_blended', 'rag_large'];
     var labels = {baseline: 'No retrieval', rag: 'RAG', rag_blended: 'RAG Blended', rag_large: 'RAG Large'};
     var results = r.results || {};
@@ -3347,8 +3386,13 @@ async def video_page(request: Request):
         function col(res) {{
             const e = res.energy;
             const t = res.thermals;
-            const isEnergyWinner = a.energy_winner === (res.preset_key === 'cpu' ? 'CPU' : 'GPU');
-            const isSpeedWinner  = a.speed_winner  === (res.preset_key === 'cpu' ? 'CPU' : 'GPU');
+            // Side is CPU unless the preset key is a GPU variant. The bare
+            // 'cpu'/'gpu' keys are H.264 only; H.265/AV1 use h265_/av1_ prefixes,
+            // so a literal `=== 'cpu'` mismarked every non-H.264 comparison and
+            // both columns inherited the GPU winner's flag.
+            const side = res.preset_key.indexOf('gpu') !== -1 ? 'GPU' : 'CPU';
+            const isEnergyWinner = a.energy_winner === side;
+            const isSpeedWinner  = a.speed_winner  === side;
             const pptNote = t.gpu_ppt_mean_w
                 ? metricRow('GPU PPT mean', t.gpu_ppt_mean_w, 'W')
                   + '<div style="color:var(--text-4);font-size:0.72rem;padding:0.1rem 0 0.6rem 1rem">'
@@ -4152,6 +4196,10 @@ async def video_preview_cmd(preset: str = "both"):
 @app.post("/variance/run", dependencies=[Depends(requires(VARIANCE_RUN))])
 async def variance_run(request: Request):
     from video import run_variance_calibration
+    if int(cfg.load().get("variance_runs", 0)) <= 0:
+        return JSONResponse(
+            {"error": "Variance Runs is 0 — calibration disabled. Set it to ≥2 to run."},
+            status_code=400)
     job_id = str(uuid.uuid4())[:8]
     label = "Variance calibration — system offline"
 
@@ -4167,6 +4215,45 @@ async def variance_run(request: Request):
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
+
+
+@app.post("/benchmark/run", dependencies=[Depends(requires(BENCHMARK_RUN))])
+async def benchmark_run(request: Request):
+    """CR-061 — launch the in-app overnight benchmark as one queue job."""
+    bid = str(uuid.uuid4())[:8]
+    benchmark.create_run(bid, cfg.load())   # pre-create queued manifest
+    label = "Overnight benchmark"
+
+    async def coro():
+        try:
+            jobs[bid].update({"status": "running", "stage": "starting"})
+            result = await benchmark.run_benchmark_job(bid, jobs, cfg.load())
+            jobs[bid].update({"status": "done", "stage": "done", "result": result})
+        except Exception as e:
+            jobs[bid] = {**jobs.get(bid, {}), "status": "error",
+                         "stage": "error", "error": str(e)}
+
+    position = queue_control.enqueue(bid, "benchmark", label, coro, request=request)
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": bid, "queue_position": position}
+
+
+@app.post("/benchmark/cancel", dependencies=[Depends(requires(BENCHMARK_RUN))])
+async def benchmark_cancel(request: Request, job_id: str = Form(...)):
+    """Cancel a benchmark run. Running → cooperative flag (lands after the
+    current step); queued-but-not-started → drop from queue + mark cancelled."""
+    job_id = (job_id or "").strip()
+    if queue_control.current_job_id == job_id:
+        if job_id in jobs:
+            jobs[job_id]["cancel_requested"] = True
+        return {"ok": True, "state": "cancelling"}
+    if queue_control.cancel_pending(job_id):
+        if job_id in jobs:
+            jobs[job_id].update({"status": "cancelled", "stage": "cancelled"})
+        benchmark.cancel_queued(job_id)
+        return {"ok": True, "state": "cancelled_before_start"}
+    return JSONResponse({"ok": False, "state": "not_found"}, status_code=404)
 
 
 @app.get("/precalibration/data", dependencies=[Depends(requires(SETTINGS_READ_FULL))])
@@ -5693,7 +5780,15 @@ async def llm_compare_page(request: Request):
             const ratio = r.ok && trusted && cheapest ? (r.whEst / cheapest.whEst).toFixed(1) + '&times;' :
                           (r.ok && !trusted ? '<span title="noisy reading, see conf column">&mdash;</span>' : '&mdash;');
             const crown = (r === cheapest) ? ' <span class="crown">&#9733;</span>' : '';
-            const mwhTok = r.tok > 0 ? (r.whEst * 1000 / r.tok).toFixed(2) : '&mdash;';
+            // A negative mWh/token means the task drew below the measured idle
+            // floor — a sign-flipped noise artifact on a sub-floor model, and
+            // always a 🔴 row. Show an em-dash (with a hover note) instead of a
+            // misleading negative; the confidence column already carries the 🔴.
+            const mwhTok = (r.tok > 0 && r.whEst > 0)
+                ? (r.whEst * 1000 / r.tok).toFixed(2)
+                : (r.whEst <= 0
+                    ? '<span title="energy below measurement floor — not distinguishable from idle">&mdash;</span>'
+                    : '&mdash;');
             tr.innerHTML =
                 '<td class="model">' + escapeHTML(r.model.replace(':latest','')) +
                   ' <span style="color:var(--text-5);font-size:0.7rem">(' + r.params + ')</span>' + crown + '</td>' +
@@ -6210,6 +6305,146 @@ async def findings_catalog_page(request: Request):
     if not s.get("findings_enabled", False):
         return HTMLResponse("Not found", status_code=404)
     return HTMLResponse(_findings_catalog_page_html())
+
+
+# ── CR-061 benchmark results view ───────────────────────────────────────────
+
+_BENCH_STATUS_DOT = {"done": "🟢", "running": "🟡", "queued": "⚪",
+                     "cancelled": "⚫", "error": "🔴"}
+
+# Hydrate each step embed via the same /results/.../download.json + card
+# renderer pattern the /findings embeds use. Dispatch on `kind` (so rag→RAG
+# card) but fetch by the result_ref `type` (rag persists under results/llm/).
+_BENCH_HYDRATE_JS = """
+<script>
+(async function hydrateBenchEmbeds(){
+  const els = document.querySelectorAll('.bench-embed');
+  const renderers = {video: window.wlRenderVideoCard, llm: window.wlRenderLLMCard,
+                     image: window.wlRenderImageCard, rag: window.wlRenderRAGCard};
+  for (const el of els) {
+    const type = el.dataset.type, kind = el.dataset.kind, jobId = el.dataset.resultId;
+    const renderer = renderers[kind];
+    const loading = el.querySelector('.loading');
+    if (!renderer) { loading.textContent = 'no renderer for kind=' + kind; continue; }
+    try {
+      const r = await fetch('/results/' + type + '/' + jobId + '/download.json');
+      if (!r.ok) { loading.textContent = 'could not load ' + type + '/' + jobId + ' (HTTP ' + r.status + ')'; continue; }
+      const data = await r.json();
+      el.innerHTML = renderer({result: data, isPrev: true, savedAt: data.saved_at});
+    } catch(e) { loading.textContent = 'error: ' + e.message; }
+  }
+})();
+</script>
+"""
+
+
+def _benchmark_rows_html(runs: list) -> str:
+    if not runs:
+        return ('<p style="color:var(--text-3);font-family:monospace;font-size:0.85rem">'
+                'No benchmark runs yet. Launch one from <a href="/settings" '
+                'style="color:var(--accent)">/settings</a>.</p>')
+    rows = []
+    for r in runs:
+        bid = r.get("benchmark_run_id") or r.get("job_id")
+        status = r.get("status") or "?"
+        dot = _BENCH_STATUS_DOT.get(status, "⚪")
+        done, total = r.get("n_done", 0), r.get("total_steps", 0)
+        err = r.get("n_error", 0)
+        when = (r.get("started_at") or r.get("saved_at") or "")[:16].replace("T", " ")
+        err_html = (f' · <span style="color:var(--err)">{err} err</span>') if err else ""
+        rows.append(
+            f'<a class="finding-row" href="/benchmark/{html_lib.escape(bid)}">'
+            f'<div class="finding-row-top">'
+            f'<span class="finding-row-dot">{dot}</span>'
+            f'<span class="finding-row-headline">Benchmark {html_lib.escape(bid)} · '
+            f'{html_lib.escape(status)}</span>'
+            f'<span class="finding-row-date">{html_lib.escape(when)}</span></div>'
+            f'<div class="finding-row-claim">{done}/{total} steps done{err_html}</div></a>'
+        )
+    return "".join(rows)
+
+
+@app.get("/benchmark", response_class=HTMLResponse,
+         dependencies=[Depends(requires(BENCHMARK_RUN))])
+async def benchmark_list_page():
+    runs = list_results("benchmark", limit=50, visitor_key=None)
+    body = (
+        '<div class="finding-wrap">'
+        '<h1 style="font-size:1.2rem;color:var(--text)">Benchmark runs</h1>'
+        '<p style="color:var(--text-4);font-family:monospace;font-size:0.78rem">'
+        'Full-pipeline overnight benchmarks (CR-061). Launch + cancel from '
+        '<a href="/settings" style="color:var(--accent)">/settings</a>.</p>'
+        f'{_benchmark_rows_html(runs)}'
+        '</div>'
+    )
+    return HTMLResponse(
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Benchmark runs — OWL</title>'
+        f'{_BASE_STYLES}'
+        '<style>'
+        '.finding-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
+        '.finding-row{display:block;border:1px solid var(--border);padding:0.6rem 0.8rem;margin:0.5rem 0;text-decoration:none;background:var(--panel)}'
+        '.finding-row:hover{border-color:var(--accent)}'
+        '.finding-row-top{display:flex;gap:0.5rem;align-items:baseline}'
+        '.finding-row-dot{font-size:0.8rem}'
+        '.finding-row-headline{color:var(--text);font-family:monospace;font-size:0.85rem;flex:1}'
+        '.finding-row-date{color:var(--text-5);font-family:monospace;font-size:0.72rem}'
+        '.finding-row-claim{color:var(--text-3);font-family:monospace;font-size:0.75rem;margin-top:0.3rem}'
+        '</style></head><body style="background:var(--bg)">' + body + '</body></html>'
+    )
+
+
+@app.get("/benchmark/{bid}", response_class=HTMLResponse,
+         dependencies=[Depends(requires(BENCHMARK_RUN))])
+async def benchmark_detail_page(bid: str):
+    m = load_result("benchmark", bid, visitor_key=None)
+    if not m:
+        return HTMLResponse('<p style="font-family:monospace">Benchmark run not found. '
+                            '<a href="/benchmark">← all runs</a></p>', status_code=404)
+    status = m.get("status", "?")
+    cfg_blob = m.get("config", {})
+    steps_html = []
+    for st in m.get("steps", []):
+        dot = _BENCH_STATUS_DOT.get(st.get("status"), "⚪")
+        label = html_lib.escape(st.get("label", st.get("id", "?")))
+        sstatus = html_lib.escape(st.get("status", "?"))
+        err = st.get("error")
+        head = (f'<div style="font-family:monospace;font-size:0.82rem;margin:0.8rem 0 0.3rem">'
+                f'{dot} <b>{label}</b> · <span style="color:var(--text-4)">{sstatus}</span>'
+                + (f' · <span style="color:var(--err)">{html_lib.escape(str(err))}</span>' if err else '')
+                + '</div>')
+        ref = st.get("result_ref")
+        if ref and ref.get("job_id"):
+            head += (f'<div class="bench-embed" data-type="{html_lib.escape(ref.get("type",""))}" '
+                     f'data-kind="{html_lib.escape(st.get("kind",""))}" '
+                     f'data-result-id="{html_lib.escape(ref.get("job_id"))}">'
+                     f'<div class="loading" style="color:var(--text-5);font-family:monospace;'
+                     f'font-size:0.75rem">Loading…</div></div>')
+        steps_html.append(head)
+    body = (
+        '<div class="bench-wrap">'
+        f'<p style="font-family:monospace;font-size:0.78rem"><a href="/benchmark" style="color:var(--accent)">← all runs</a></p>'
+        f'<h1 style="font-size:1.2rem;color:var(--text)">{_BENCH_STATUS_DOT.get(status,"⚪")} Benchmark {html_lib.escape(bid)}</h1>'
+        f'<div style="color:var(--text-4);font-family:monospace;font-size:0.76rem;line-height:1.6">'
+        f'status: {html_lib.escape(status)} · {m.get("total_steps",0)} steps · '
+        f'started {html_lib.escape((m.get("started_at") or "—")[:19].replace("T"," "))}'
+        f'{(" · finished " + html_lib.escape((m.get("finished_at") or "")[:19].replace("T"," "))) if m.get("finished_at") else ""}<br>'
+        f'config: reps={cfg_blob.get("video_reps")} · sources={html_lib.escape(", ".join(cfg_blob.get("sources",[])))} · '
+        f'measures={html_lib.escape(", ".join(cfg_blob.get("enabled",[])))}</div>'
+        + "".join(steps_html)
+        + '</div>'
+    )
+    return HTMLResponse(
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<title>Benchmark {html_lib.escape(bid)} — OWL</title>'
+        f'{_BASE_STYLES}'
+        '<style>.bench-wrap{max-width:900px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}</style>'
+        '</head><body style="background:var(--bg)">' + body
+        + _CARBON_JS + _RESULT_JS + _BENCH_HYDRATE_JS
+        + '</body></html>'
+    )
 
 
 @app.get("/findings/{slug}", response_class=HTMLResponse,
@@ -7945,7 +8180,15 @@ async def rag_compare_page(request: Request):
             const ratio = r.ok && trusted && cheapest ? (r.whEst / cheapest.whEst).toFixed(1) + '&times;' :
                           (r.ok && !trusted ? '<span title="noisy reading, see conf column">&mdash;</span>' : '&mdash;');
             const crown = (r === cheapest) ? ' <span class="crown">&#9733;</span>' : '';
-            const mwhTok = r.tok > 0 ? (r.whEst * 1000 / r.tok).toFixed(2) : '&mdash;';
+            // A negative mWh/token means the task drew below the measured idle
+            // floor — a sign-flipped noise artifact on a sub-floor model, and
+            // always a 🔴 row. Show an em-dash (with a hover note) instead of a
+            // misleading negative; the confidence column already carries the 🔴.
+            const mwhTok = (r.tok > 0 && r.whEst > 0)
+                ? (r.whEst * 1000 / r.tok).toFixed(2)
+                : (r.whEst <= 0
+                    ? '<span title="energy below measurement floor — not distinguishable from idle">&mdash;</span>'
+                    : '&mdash;');
             tr.innerHTML =
                 '<td class="model">' + escapeHTML(r.model.replace(':latest','')) +
                   ' <span style="color:var(--text-5);font-size:0.7rem">(' + r.params + ')</span>' + crown + '</td>' +
@@ -8264,7 +8507,7 @@ async def settings_page(request: Request):
                 f'{ctrl}<span style="color:var(--text-3);font-size:0.8rem">{unit}</span>'
                 f'</div></div>')
 
-    def slider_field(fid, val, min_, max_, step, unit, hint=""):
+    def slider_field(fid, val, min_, max_, step, unit, hint="", label=None):
         if local:
             ctrl = (f'<input type="range" id="{fid}" min="{min_}" max="{max_}" step="{step}"'
                     f' value="{val}"'
@@ -8277,7 +8520,7 @@ async def settings_page(request: Request):
         hint_html = f'<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem">{hint}</div>' if hint else ""
         return (f'<div style="display:flex;justify-content:space-between;align-items:center;'
                 f'padding:0.5rem 0;border-bottom:1px solid var(--panel-2);gap:1rem">'
-                f'<div><label style="color:var(--text-2);font-size:0.85rem">{fid.replace("_"," ").title()}</label>'
+                f'<div><label style="color:var(--text-2);font-size:0.85rem">{label or fid.replace("_"," ").title()}</label>'
                 f'{hint_html}</div>'
                 f'<div style="display:flex;align-items:center;gap:0.5rem">'
                 f'{ctrl}<span style="color:var(--text-3);font-size:0.8rem">{unit}</span>'
@@ -8397,7 +8640,7 @@ async def settings_page(request: Request):
       the single-run flag. The composite <strong>Variance %</strong> (mean of the three) now feeds only the
       <em>legacy</em> fallback for results saved without raw samples. Queue is blocked for the duration.
     </div>
-    {slider_field("variance_runs",      s['variance_runs'],      2,  100, 1,  "runs",    "number of H264-CPU + H265-GPU run pairs")}
+    {slider_field("variance_runs",      s['variance_runs'],      0,  100, 2,  "runs",    "number of H264-CPU + H265-GPU run pairs · steps of 2 (a pair needs ≥2) · 0 disables calibration here and in the benchmark", label="Variance Runs (0 to skip)")}
     {slider_field("variance_cooldown_s",s['variance_cooldown_s'],10, 300, 10, "s",       "cooldown between each run pair")}
     <div style="padding:0.5rem 0;border-bottom:1px solid var(--panel-2)">
       <label style="color:var(--text-2);font-size:0.85rem">H.264 CPU command (derived)</label>
@@ -8422,6 +8665,16 @@ async def settings_page(request: Request):
         <div id="precal-stats" style="margin-top:0.75rem;font-size:0.78rem;color:var(--text-3);line-height:1.7"></div>
       </div>
     </details>''') if local else ''}
+
+    <div class="section">Overnight benchmark</div>
+    <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.5rem">
+      Full-pipeline benchmark (CR-061): variance calibration &rarr; video all-codecs &times; reps &times; sources &rarr; LLM/RAG/image compare panels.
+      Runs as <strong>one queue job that blocks other runs</strong>; follow it on <a href="/queue-status" style="color:var(--accent)">/queue-status</a>, view results at <a href="/benchmark" style="color:var(--accent)">/benchmark</a>.
+      <span style="color:var(--warn)">&#9888; calibration is ambient-sensitive &mdash; don't launch during a heat wave.</span>
+      Which measures &amp; sources run is set by <code>bench_run_*</code> / <code>bench_sources</code> in settings.json.
+    </div>
+    {slider_field("bench_video_reps", s['bench_video_reps'], 1, 10, 1, "reps", "video all-codecs repeats per source")}
+    {'<button onclick="runBenchmark()" id="benchBtn" style="background:var(--border);color:var(--accent);border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">&#9654; Run overnight benchmark</button> <button onclick="cancelBenchmark()" id="benchCancelBtn" style="background:var(--border);color:var(--err);border:1px solid var(--err);padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">&#9632; Cancel</button><div id="bench-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>' if local else '<div style="color:var(--text-5);font-size:0.78rem;margin-top:0.5rem">Benchmark requires lab access.</div>'}
 
     {(f'''<div class="section">Members</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
@@ -8458,7 +8711,8 @@ async def settings_page(request: Request):
                             'conf_green_polls','conf_yellow_polls',
                             'variance_runs','variance_cooldown_s',
                             'queue_anonymous_cap','queue_member_cap',
-                            'upload_size_anonymous_mb','upload_size_member_mb'];
+                            'upload_size_anonymous_mb','upload_size_member_mb',
+                            'bench_video_reps'];
         const str_fields = ['members'];
         const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};
@@ -8518,6 +8772,55 @@ async def settings_page(request: Request):
         }} catch(e) {{
             msg.innerHTML = '<span style="color:var(--err)">Failed: ' + e + '</span>';
             btn.disabled = false;
+        }}
+    }}
+
+    let _benchJobId = null;
+    async function runBenchmark() {{
+        const btn = document.getElementById('benchBtn');
+        const msg = document.getElementById('bench-msg');
+        if (!btn) return;
+        btn.disabled = true;
+        msg.innerHTML = '<span style="color:var(--warn)">Saving settings…</span>';
+        await saveSettings();
+        msg.innerHTML = '<span style="color:var(--warn)">Queuing benchmark…</span>';
+        try {{
+            const resp = await fetch('/benchmark/run', {{method: 'POST'}});
+            const data = await resp.json();
+            if (data.job_id) {{
+                _benchJobId = data.job_id;
+                msg.innerHTML = '<span style="color:var(--accent)">Benchmark ' + data.job_id
+                    + ' queued (position ' + data.queue_position + '). '
+                    + '<a href="/queue-status" style="color:var(--accent)">Follow on the queue →</a></span>';
+            }} else {{
+                msg.innerHTML = '<span style="color:var(--err)">Error: ' + JSON.stringify(data) + '</span>';
+                btn.disabled = false;
+            }}
+        }} catch(e) {{
+            msg.innerHTML = '<span style="color:var(--err)">Failed: ' + e + '</span>';
+            btn.disabled = false;
+        }}
+    }}
+    async function cancelBenchmark() {{
+        const msg = document.getElementById('bench-msg');
+        let jid = _benchJobId;
+        if (!jid) {{
+            // page may have reloaded — fall back to the running job if it's a benchmark
+            try {{
+                const q = await (await fetch('/queue')).json();
+                if (q.running && q.running.type === 'benchmark') jid = q.running.job_id;
+            }} catch(e) {{}}
+        }}
+        if (!jid) {{ msg.innerHTML = '<span style="color:var(--text-4)">No benchmark to cancel.</span>'; return; }}
+        const form = new FormData(); form.append('job_id', jid);
+        try {{
+            const resp = await fetch('/benchmark/cancel', {{method: 'POST', body: form}});
+            const data = await resp.json();
+            msg.innerHTML = '<span style="color:var(--warn)">Cancel: ' + (data.state || JSON.stringify(data))
+                + ' — takes effect after the current step.</span>';
+            const b = document.getElementById('benchBtn'); if (b) b.disabled = false;
+        }} catch(e) {{
+            msg.innerHTML = '<span style="color:var(--err)">Cancel failed: ' + e + '</span>';
         }}
     }}
 
@@ -10651,12 +10954,16 @@ async def image_start(request: Request,
 
 @app.get("/queue-status", response_class=HTMLResponse, dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_page(request: Request):
+    # Only Lab (BENCHMARK_RUN) may cancel — gate the button so anonymous
+    # viewers (QUEUE_VIEW is Anonymous-allowed) don't see a control they can't use.
+    can_cancel = "true" if can(audience.tier(request), BENCHMARK_RUN) else "false"
     return """<!DOCTYPE html>
 <html>
 <head>
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
   <title>OWL — Queue</title>
     <meta http-equiv="refresh" content="4">
+    <script>window.CAN_CANCEL=""" + can_cancel + """;</script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: monospace; background: var(--bg); color: var(--text);
@@ -10712,11 +11019,20 @@ async function load() {
     let html = '<div class="depth">' + q.depth + '</div>' +
                '<div class="depth-lbl">job' + (q.depth !== 1 ? 's' : '') + ' in queue</div>';
     if (q.running) {
-        html += '<div class="card running">' +
+        let runHtml = '<div class="card running">' +
                 '<span class="badge run">▶ RUNNING</span>' +
                 resumeLink(q.running.type, q.running.job_id) +
                 '<div class="label">' + (q.running.label || q.running.job_id) + '</div>' +
-                '<div class="stage">stage: ' + (q.running.stage || '…') + '</div></div>';
+                '<div class="stage">stage: ' + (q.running.stage || '…') + '</div>';
+        if (q.running.type === 'benchmark' && window.CAN_CANCEL) {
+            runHtml += '<button data-bid="' + q.running.job_id + '" onclick="cancelBench(this.dataset.bid)" ' +
+                'style="margin-top:0.5rem;background:transparent;color:var(--err);' +
+                'border:1px solid var(--err);padding:0.3rem 0.9rem;cursor:pointer;' +
+                'font-family:monospace;font-size:0.78rem">■ Cancel benchmark</button>' +
+                '<div style="color:var(--text-5);font-size:0.7rem;margin-top:0.3rem">' +
+                'cancel takes effect after the current step</div>';
+        }
+        html += runHtml + '</div>';
     }
     (q.pending || []).forEach((j, i) => {
         html += '<div class="card waiting">' +
@@ -10726,6 +11042,12 @@ async function load() {
                 '<div class="stage">waiting</div></div>';
     });
     el.innerHTML = html;
+}
+async function cancelBench(jid) {
+    if (!confirm('Cancel the running benchmark? It stops after the current step finishes.')) return;
+    const form = new FormData(); form.append('job_id', jid);
+    try { await fetch('/benchmark/cancel', {method:'POST', body: form}); } catch(e) {}
+    load();
 }
 load();
 </script>

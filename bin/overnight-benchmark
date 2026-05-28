@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""OWL overnight benchmark runner — the AMD baseline / full-pipeline pass.
+
+DEPRECATED (CR-061, 2026-05-28): superseded by the in-app benchmark — launch it
+from /settings, follow it on /queue-status, view results at /benchmark. Kept one
+release as a shell fallback; delete after a successful in-app overnight run.
+
+Drives the *real* HTTP endpoints (so every run goes through the actual queue +
+focus-mode + lock + confidence + VMAF + stream-probe + persistence path — i.e.
+"all our logic"), sequentially, one job at a time. Designed for an unattended
+overnight run on GoS1; localhost = Lab tier, so no auth is needed.
+
+Plan (defaults):
+  0. Variance calibration  — MANDATORY: the CR-029 §2 normalization re-based the
+     presets, so the stored variance_*_pct are stale. Ambient-sensitive — DO NOT
+     run during a heat wave (see memory variance-calibration-ambient-sensitive).
+  1. Video (the anchor)    — /video all-codecs (3 codecs × CPU/GPU) on each
+     source, N repeats. This is the star; everything below is coverage.
+  2. LLM   — /llm/compare-models  (one panel, fixed prompt + expected)
+  3. RAG   — /rag/compare-models  (one panel, fixed question + expected)
+  4. Image — /image/start device=compare_models (one panel, curated prompt)
+
+Results land in results/{type}/ as normal (energy + confidence + VMAF + the new
+stream block); this runner only orchestrates and prints a job-id manifest at the
+end for the offline analysis step. No new measurement code.
+
+Usage:
+  bin/overnight-benchmark                      # full run, defaults
+  bin/overnight-benchmark --dry-run            # print the plan, trigger nothing
+  bin/overnight-benchmark --video-reps 3 --sources meridian_120s
+  bin/overnight-benchmark --skip-calibration   # only if calibrated since the last preset change
+"""
+import argparse
+import json
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime
+
+DEFAULT_BASE = "http://127.0.0.1:8000"
+# generous per-step ceilings (s); a job that exceeds these is treated as hung
+TIMEOUTS = {"variance": 90 * 60, "video": 45 * 60, "ai": 40 * 60}
+
+
+def log(msg):
+    print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
+
+
+def _post(base, path, data):
+    body = urllib.parse.urlencode(data).encode()
+    req = urllib.request.Request(base + path, data=body, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
+
+
+def _get(base, path):
+    with urllib.request.urlopen(base + path, timeout=30) as r:
+        return json.loads(r.read())
+
+
+def trigger_and_wait(base, label, post_path, post_data, poll_path, timeout_s, poll_s=5):
+    """POST a job, then poll its status to completion. Returns (job_id, result).
+    Retries a 429 'queue full' (shouldn't happen single-threaded, but be safe)."""
+    log(f"▶ {label}")
+    resp = None
+    for _ in range(12):
+        resp = _post(base, post_path, post_data)
+        if "job_id" in resp:
+            break
+        if str(resp.get("error", "")).startswith("Queue full"):
+            log("  queue full — retrying in 15s…")
+            time.sleep(15)
+            continue
+        raise RuntimeError(f"{label}: trigger rejected: {resp}")
+    if not resp or "job_id" not in resp:
+        raise RuntimeError(f"{label}: queue stayed full")
+    job_id = resp["job_id"]
+    log(f"  job_id={job_id} — polling…")
+    t0 = time.time()
+    last_stage = None
+    while time.time() - t0 < timeout_s:
+        st = _get(base, poll_path.format(job_id))
+        status, stage = st.get("status"), st.get("stage")
+        if stage and stage != last_stage:
+            log(f"    …{stage}")
+            last_stage = stage
+        if status == "done":
+            log(f"  ✓ {label} — {int(time.time() - t0)}s (job {job_id})")
+            return job_id, st.get("result")
+        if status == "error":
+            raise RuntimeError(f"{label}: job errored: {st.get('error')}")
+        if status == "not_found":
+            raise RuntimeError(f"{label}: job {job_id} vanished from the queue")
+        time.sleep(poll_s)
+    raise RuntimeError(f"{label}: timed out after {timeout_s}s (job {job_id})")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="OWL overnight benchmark runner")
+    ap.add_argument("--base-url", default=DEFAULT_BASE)
+    ap.add_argument("--video-reps", type=int, default=5)
+    ap.add_argument("--sources", default="meridian_120s,bbb_120s",
+                    help="comma-separated preloaded source keys")
+    ap.add_argument("--skip-calibration", action="store_true")
+    ap.add_argument("--skip-ai", action="store_true")
+    ap.add_argument("--llm-prompt", default="What is the capital of France? Reply with just the city name.")
+    ap.add_argument("--llm-expected", default="Paris")
+    ap.add_argument("--rag-question", default="What is OWL measuring and in what unit?")
+    ap.add_argument("--rag-expected", default="energy")
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    sources = [s.strip() for s in args.sources.split(",") if s.strip()]
+    base = args.base_url.rstrip("/")
+    manifest = {"started": datetime.now().isoformat(), "base": base,
+                "video": [], "llm": None, "rag": None, "image": None, "variance": None}
+
+    # ---- plan -------------------------------------------------------------
+    log("=" * 64)
+    log("OWL overnight benchmark")
+    log(f"  video: all-codecs × {args.video_reps} reps × {sources}")
+    log(f"  AI:    {'skipped' if args.skip_ai else 'llm + rag + image compare × 1 each'}")
+    log(f"  calibration: {'SKIPPED' if args.skip_calibration else 'step 0 (re-baseline after the preset change)'}")
+    if not args.skip_calibration:
+        log("  ⚠ calibration is ambient-sensitive — confirm NORMAL ambient (no heat wave)")
+    log("=" * 64)
+    if args.dry_run:
+        log("dry-run: nothing triggered.")
+        return 0
+
+    # connectivity check
+    try:
+        _get(base, "/queue")
+    except Exception as e:
+        log(f"FATAL: service not reachable at {base} ({e})")
+        return 1
+
+    t_start = time.time()
+    try:
+        # ---- step 0: variance calibration ---------------------------------
+        if not args.skip_calibration:
+            jid, _ = trigger_and_wait(base, "Variance calibration", "/variance/run", {},
+                                      "/video/job/{}", TIMEOUTS["variance"])
+            manifest["variance"] = jid
+
+        # ---- step 1: video all-codecs (the anchor) ------------------------
+        for src in sources:
+            for rep in range(1, args.video_reps + 1):
+                jid, _ = trigger_and_wait(
+                    base, f"Video all-codecs · {src} · rep {rep}/{args.video_reps}",
+                    "/video/use-source", {"source_key": src, "preset": "all_codecs"},
+                    "/video/job/{}", TIMEOUTS["video"])
+                manifest["video"].append({"source": src, "rep": rep, "job_id": jid})
+
+        # ---- steps 2-4: AI coverage (non-exhaustive, individually non-fatal)
+        # The video baseline + calibration are the critical output and have
+        # already run; a single AI panel failing must not discard them.
+        if not args.skip_ai:
+            ai_steps = [
+                ("llm", "LLM compare-models", "/llm/compare-models",
+                 {"prompt": args.llm_prompt, "expected": args.llm_expected, "device": "gpu"},
+                 "/llm/job/{}"),
+                ("rag", "RAG compare-models", "/rag/compare-models",
+                 {"question": args.rag_question, "expected": args.rag_expected}, "/rag/job/{}"),
+                ("image", "Image compare-models", "/image/start",
+                 {"device": "compare_models"}, "/image/job/{}"),
+            ]
+            for key, label, path, data, poll in ai_steps:
+                try:
+                    jid, _ = trigger_and_wait(base, label, path, data, poll, TIMEOUTS["ai"])
+                    manifest[key] = jid
+                except Exception as e:
+                    log(f"  ⚠ {label} failed (non-fatal): {e}")
+    except Exception as e:
+        log(f"ABORTED: {e}")
+        _print_manifest(manifest, t_start, ok=False)
+        return 1
+
+    _print_manifest(manifest, t_start, ok=True)
+    return 0
+
+
+def _print_manifest(manifest, t_start, ok):
+    log("=" * 64)
+    log(f"{'COMPLETE' if ok else 'PARTIAL (aborted)'} — total {int(time.time() - t_start)}s")
+    log(f"  variance : {manifest['variance']}")
+    log(f"  video    : {len(manifest['video'])} runs — "
+        + ", ".join(f"{v['source'][:8]}#{v['rep']}={v['job_id']}" for v in manifest["video"]))
+    log(f"  llm/rag/image : {manifest['llm']} / {manifest['rag']} / {manifest['image']}")
+    log("  job result files: results/{type}/*_{job_id}.json")
+    # machine-readable manifest on the last line for the offline analysis step
+    print("MANIFEST_JSON " + json.dumps(manifest), flush=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

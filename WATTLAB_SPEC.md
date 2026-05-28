@@ -140,16 +140,19 @@ Current problem: TinyLlama (1-4s inference) is below P110 minimum measurable dur
 - This is the primary "proof it's real" mechanism for demo mode
 
 ### 2.4 Video — H.265/HEVC and AV1 Presets
-Add to existing CPU/GPU comparison:
 
-| Preset | Encoder | Notes |
+All six presets shipped. **Rate control is ABR (`-b:v Nk`), not CRF/QP** — `/video` moved off CRF/QP at S13 so CPU and GPU share the same per-codec bitrate target (apples-to-apples energy comparison). Each preset also runs `scale(_vaapi)` to 1080p + `aac` 128k audio. The live source of truth is `video.PRESETS`.
+
+| Preset | Encoder | Rate control |
 |---|---|---|
-| H.264 CPU | libx264 CRF 23 | Current |
-| H.264 GPU | h264_vaapi QP 23 | Current |
-| H.265 CPU | libx265 CRF 28 | New |
-| H.265 GPU | hevc_vaapi QP 28 | New |
-| AV1 CPU | libaom-av1 CRF 35 | New — will be slow |
-| AV1 GPU | av1_vaapi QP 35 | New |
+| H.264 CPU | libx264 | 4000 kbps ABR |
+| H.264 GPU | h264_vaapi | 4000 kbps ABR |
+| H.265 CPU | libx265 | 2000 kbps ABR |
+| H.265 GPU | hevc_vaapi | 2000 kbps ABR |
+| AV1 CPU | libsvtav1 | 1500 kbps ABR |
+| AV1 GPU | av1_vaapi | 1500 kbps ABR |
+
+Bitrates are operator-tunable (`h264/h265/av1_bitrate_kbps` in settings.json). **The presets pin only codec + bitrate + scale + audio** — GOP, B-frames, profile, and level are encoder-defaulted and **differ between the CPU and GPU paths** (e.g. VAAPI defaults to GOP 120 vs ~250 on the CPU encoders; `hevc_vaapi` emits no B-frames while `libx265` does). See **CR-029 §2** for the measured audit and the apples-to-apples normalisation decision; every result now carries the encoded stream's actual params (`stream` block, CR-029 §3). A second benchmark family at each codec's *natural* operating point (CRF/QP constant-quality) is **CR-045 V1**.
 
 Multi-preset "Compare all" mode: runs all selected presets sequentially, presents full comparison table. User selects which presets to include via checkboxes.
 

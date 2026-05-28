@@ -264,7 +264,7 @@ Leverage: the panel becomes self-contained — operator clicks a button, walks a
 
 ## CR-025 · Migrate to a real-time Linux kernel for tighter measurement determinism
 
-**Status:** captured 2026-05-04 (Session 21) as exploratory; **upgraded to confirmed direction by team meeting 2026-05-04** (item 30). Originally tagged "maybe" because the wins are bounded by the current P110 API resolution; the meeting agreed to pursue regardless because "Ubuntu focus mode may not suppress background activity enough" and the RT investigation creates a path to higher-resolution sensor work later.
+**Status:** **Low priority (downgraded 2026-05-28 — owner: "we won't be going there for a while").** Originally captured 2026-05-04 (Session 21) as exploratory; upgraded to confirmed direction by team meeting 2026-05-04 (item 30). Tagged "maybe" because the wins are bounded by the current P110 API resolution; the meeting agreed to pursue regardless because "Ubuntu focus mode may not suppress background activity enough" and the RT investigation creates a path to higher-resolution sensor work later. **Must not interleave with the CR-060 GPU swap** — RT + a card swap together would confound the AMD↔Nvidia comparison, and PREEMPT_RT independently risks ROCm/VAAPI. Revisit well after the swap.
 **Triggered by:** owner — meeting question on whether `systemctl stop` (focus mode) becomes more effective on a real-time Linux. Honest answer surfaced a different framing: RT and focus mode address orthogonal noise sources, and there's a coherent story where they stack rather than overlap.
 
 ### Problem (what we're trying to improve)
@@ -362,7 +362,7 @@ Worth a 30-minute discussion with the measurement team rather than a unilateral 
 
 ## CR-029 · Encoding rigor pass (apples-to-apples credibility)
 
-**Status:** captured 2026-05-04 (post-meeting). High priority. Bundles items 18, 19, 20, 21, 22, 23 — Tania's video credibility workstream. Coherent because each item is a step in the same chain: *what is each encoder actually doing → are CPU and GPU comparable → can we present it cleanly*.
+**Status:** captured 2026-05-04 (post-meeting). High priority. **Now the immediate priority (2026-05-28):** §2's encode-parameter decisions gate the CR-060 AMD baseline — a video benchmark captured on parameters §2 is about to rewrite would be stale, so §2 must be settled *before* the night-time AMD baseline run. Bundles items 18, 19, 20, 21, 22, 23 — Tania's video credibility workstream. Coherent because each item is a step in the same chain: *what is each encoder actually doing → are CPU and GPU comparable → can we present it cleanly*.
 **Triggered by:** team meeting 2026-05-04 — for the canonical ABR all-codecs benchmark to be cited externally, the pipeline has to be auditable and the comparison's semantics explicit (apples-to-apples vs. typical use).
 
 ### Problem
@@ -379,9 +379,31 @@ The current `/video` flow runs presets that look comparable but haven't been for
 **Six items, sequenced:**
 
 1. **Document the pipeline** on `/methodology` — new subsection under "Video transcoding". Cover: input read, decode (CPU vs `hwaccel vaapi`), pixel-format handling (`scale_vaapi` + `format=nv12`), encoder defaults this deployment relies on, output container. One pass per codec/path. Source from the actual command, not from memory.
+   - **Progress (2026-05-28):** partially shipped — `/methodology` already carries the ABR apples-to-apples framing + two explicit GOP/profile-equivalence open-items (`main.py:11368`, `:11406`). `WATTLAB_SPEC.md` §2.4 was **stale** (listed CRF/QP + `libaom-av1`; code has run ABR + `libsvtav1` since S13) and was **corrected 2026-05-28**. Remaining: the full per-codec pipeline subsection.
 2. **Validate CPU vs GPU encode parameters** (Tania-led). For each codec, compare what the CPU and GPU encoders actually produce: profile, level, B-frames, GOP, refs, slices. Write findings to `WATTLAB_SPEC.md` and adjust commands as needed to bring them into apples-to-apples shape (or document explicitly where they can't be).
    - **VMAF already exposes a concrete instance to chase down (2026-05-22, clean 🟢 run `e18a9d57`):** at the same 1500 kbps AV1 target, `av1_vaapi` (hw) hit the target (20.34 MB) while `libsvtav1` (sw) undershot to ~967 kbps (14.51 MB) yet scored *higher* VMAF (92.74 vs 90.79). So "same bitrate target" is not being honoured equally across encoders, and the hw encoder is less bit-efficient. This is exactly the apples-to-apples gap this item is meant to characterise — the VMAF axis (CR-044) now makes it measurable. See CLAUDE.md Key Findings (AV1 hardware vs software).
+   - **Measured audit (2026-05-28 — ffprobe on 12s `meridian_120s` encodes, ABR ladder 4000/2000/1500).** The presets are bare (codec + bitrate + scale + audio; **no `-g` / `-bf` / `-profile` / `-level` / `-refs` anywhere in `video.PRESETS`**), so GOP and B-frame structure are encoder-defaulted and diverge systematically:
+
+     | Preset | Profile | Level | GOP (keyint) | B-frames |
+     |---|---|---|---|---|
+     | libx264 (CPU) | High | 4.2 | **249** | max 3 (has_b 2) |
+     | h264_vaapi (GPU) | High | 4.2 | **120** | max 2 (has_b 1) |
+     | libx265 (CPU) | Main | 4.1 | ~250 | uses B (has_b 2) |
+     | hevc_vaapi (GPU) | Main | 4.0 | **120** | **none (has_b 0)** |
+     | libsvtav1 (CPU) | Main | 4.0 | **321** | none (AV1 alt-ref) |
+     | av1_vaapi (GPU) | Main | 4.0 | **120** | none (AV1 alt-ref) |
+
+     Headline gaps: **(a)** every VAAPI encoder defaults to **GOP 120**; every CPU encoder runs 2–2.7× longer (x264 249 / svtav1 321 / x265 ~250) — a driver-vs-library default split consistent across all three codecs. **(b)** `hevc_vaapi` uses **zero B-frames** while `libx265` uses them; H.264 B-depth differs (CPU 3 / GPU 2). **(c)** profiles align across the board; H.265 level differs slightly (4.1 vs 4.0). **(d)** scalers differ (`scale` libswscale on CPU vs `scale_vaapi` on GPU). These explain the cross-CPU/GPU VMAF gaps — e.g. AV1 **92.29 (CPU) vs 81.48 (GPU)** at near-equal file size on BBB (run `a4332530`), an 11-point gap driven by encoder internals + content, not bitrate. **The fix: pin `-g` / `-bf` / `-profile` / `-level` (and force B-frames on `hevc_vaapi`) across all six presets, or document each residual gap.** This doubles as a **CR-060 requirement** — NVENC's defaults differ again, so bare presets would float the AMD↔Nvidia comparison on three different driver defaults.
+     - *Method caveat:* per-frame `pict_type` is reliable for H.264 but not populated for HEVC/AV1 via ffprobe's CSV path, so the H.265/AV1 B-frame/GOP figures lean on `has_b_frames` + packet-keyframe counting. §3's ffprobe-on-output (now wired) makes GOP codec-agnostic by deriving it from packet keyframe flags.
+   - **Decision taken (2026-05-28 — provisional, pending Tania's review).** We can't gate the GPU-swap baseline on Tania's availability, so a defensible normalization was chosen now, validated on real encoders, with a one-line update path:
+     - **GOP — pinned & normalized (the big win).** Settings key `encode_gop_frames` (default **120** = 2 s on the 59.94 fps Meridian, a streaming-standard segment length), applied identically to all six presets; CPU encoders also get **closed GOP + scene-cut disabled** (`scenecut=0:open_gop=0` / `open-gop=0` / SVT `scd=0`) so the cadence is *exactly* the setting. Validation: all six now produce GOP avg=max=120 (was 249/250/321 CPU vs 120 GPU). Pure win, low risk.
+     - **Profiles — pinned explicit** (H.264 High, H.265/AV1 Main). Already aligned by default; pinning locks them against driver/lib drift. Zero behaviour change.
+     - **B-frames — documented as a hardware limit, not normalized.** `-bf 2` is *requested* on H.264/H.265, but AMD VAAPI caps it (validation: `h264_vaapi` reorder depth **1**, `hevc_vaapi` **0**) while the CPU encoders honour 2. This is a VAAPI pipeline limitation the flag can't beat — so the CPU encoders retain a B-frame compression advantage the GPU paths *structurally cannot match*. This is itself a finding (part of why VAAPI is less bit-efficient), surfaced per-result in `stream.has_b_frames`. Not a settings choice; flagged for Tania to confirm she's happy treating it as a documented residual rather than dropping the GPU B-frame request entirely.
+     - **Level — left as-is.** The H.265 4.1 (CPU) / 4.0 (GPU) split is cosmetic at 1080p and forcing `-level` on VAAPI is fragile. Documented residual.
+     - **Update path:** GOP → `settings.json` `encode_gop_frames`; everything else → **one function, `video._norm_args`**. When Tania revises any value: change there, **re-run variance calibration** (the calibration workload is `video.PRESETS`, so the existing `variance_*_pct` are now stale and must be re-measured), then re-capture the AMD baseline. This re-bases all video numbers vs pre-2026-05-28 results — intended (that's the point of §2).
+     - **Implemented:** `video._norm_args` + `encode_gop_frames` setting; tests in `tests/test_encode_norm.py`; full suite green.
 3. **Verify sample output files.** Pick at least two recent encodes per codec. Inspect with `ffprobe -show_format -show_streams` and `mediainfo`. Confirm: bitrate matches target, codec matches command, profile/level reasonable, file size in expected range. Once-off audit; capture findings.
+   - **Progress (2026-05-28): ✅ wired as a standing pass, not a once-off.** `video.probe_output_stream()` runs as a terminal ffprobe after each encode's measurement window closes (alongside `output_size_mb`, so its draw never enters an energy figure); result JSON now carries a `stream` block per encode — actual codec / profile / level / pix_fmt / bit_rate / `has_b_frames` + GOP (avg/max, from packet keyframe flags, codec-agnostic).
 4. **Add two comparison modes to `/video`.**
    - **"Compare all codecs · apples-to-apples"** — current behaviour, identical bitrate per codec from settings.
    - **"Compare all codecs · typical use"** — each codec at its real-world operating point. Bitrates per codec to be agreed but provisionally H.264 6000 kbps, H.265 3500 kbps, AV1 2500 kbps (representative of streaming-platform mid-tier; needs Tania confirm).
@@ -422,6 +444,7 @@ Leverage is high: this is the work that turns OWL's video numbers from "interest
 ### Cross-references (added 2026-05-27)
 
 - **CR-054** (findings catalog): §1's `/methodology` documentation becomes the `methodology_ref` target for video findings. §2's CPU-vs-GPU validation work, if it changes the AV1 numbers, ships as a new finding version (`av1-hw-sw-vmaf-tradeoff-v2.md` with `supersedes: av1-hw-sw-vmaf-tradeoff`) — CR-054's versioning primitive is designed for exactly this case.
+- **CR-060** (added 2026-05-28): §2 is the load-bearing gate on the CR-060 AMD baseline. The cross-card (AMD↔Nvidia) comparison freezes the video encode commands; if §2 rewrites them after the baseline, the night's run is stale. Lock §2's parameters into the suite before capturing the AMD baseline. See CR-060's baseline-integrity gate.
 
 ---
 
@@ -769,6 +792,63 @@ When implementing, the density audit at PR review is non-optional. Concrete test
 ### Priority: **awaiting lab review.**
 
 Smallest-footprint flow change in the findings chain that touches the *most-visited* surface — so the design risk is highest. The mechanical work is ~half a day; the design discussion is the bottleneck. **Not blocking** — CR-057 staying captured lets the rest of the backlog progress; the findings chain still pays off (catalog + worked example + bulk import + /demo rewire shipped) even if `/` never moves.
+
+---
+
+## CR-060 · GPU-backend abstraction (AMD VAAPI/ROCm ↔ Nvidia NVENC/CUDA)
+
+**Status:** drafted 2026-05-28 — design agreed with owner; awaiting board sign-off on the GPU purchase before implementation.
+**Triggered by:** Pixop conversion (CUDA-only) → planned RX 7800 XT → RTX 5080 swap. Full hardware/strategy context in memory `gpu-swap-nvidia-initiative` + board lazy-consensus email 2026-05-28.
+
+### Problem
+
+Every GPU-touching path in OWL assumes AMD: `video.py` hardcodes VAAPI encoders/filters/device in the `PRESETS` lambdas (~280–365); `power.py` reads AMD lm-sensors keys (`amdgpu_chip()`, `junction`, `PPT`, ~36–71); `image_gen.py` sets the ROCm `HSA_OVERRIDE_GFX_VERSION` env + hardcodes "RX 7800 XT, ROCm" labels. To swap in an Nvidia card — and keep AMD runnable as a future GoS2 reference — the codebase must run on **both**, selectable by config. Because GoS1 is one box with a single P110, an in-place swap makes the card the only variable, so an identical benchmark suite before/after yields the AMD-vs-Nvidia energy comparison for free.
+
+`llm.py` / `rag.py` are already GPU-agnostic (all GPU work is behind Ollama); their only coupling is thermal reads via `power.py`, so fixing `power.py` fixes them.
+
+### Agreed direction
+
+Full design doc: `~/.claude/plans/i-want-to-discuss-cosmic-beacon.md`. Headline decisions (locked 2026-05-28):
+
+1. **Long-term dual-card** — a real polymorphic backend abstraction (new `gpu_backend.py` with a frozen dataclass per card + `current()` resolving the config), not a throwaway migration.
+2. **Explicit config** — a `gpu_backend` setting (`amd_vaapi` | `nvidia_nvenc`) in `settings.json` DEFAULTS, **stamped onto every result** beside `owl_version` (`persist.py:51` + `append_history_line` `:75`).
+3. **AMD-baseline-first sequencing** — capture the AMD benchmark baseline while the AMD card is still installed, then physically swap and re-run. The abstraction is a pure refactor; its correctness is proven by a cheap **byte-identical-command test** (assembled ffmpeg arg lists match today's literals — no hardware, no measurement re-run) rather than a ΔWh re-validation. Per owner (2026-05-28), a software abstraction layer's effect on measured energy is imperceptible, so this is a correctness check, not a confounder gate.
+
+Seam covers: video encoder/filter/hwaccel/device (VAAPI↔NVENC), torch env + device (ROCm `HSA_OVERRIDE`↔none; device string stays `"cuda"` for both), and GPU sensor resolution (lm-sensors `amdgpu`↔`nvidia-smi`), keeping the returned keys `gpu_junction`/`gpu_ppt_w` stable so `main.py` telemetry + AI modules need no change. Benchmark suite = thin orchestration over the existing `/llm/compare` `/rag/compare` `/image/compare` (CR-048/049/050) + video `all_codecs`; no new measurement code.
+
+Environment prerequisites (not code): rebuild ffmpeg with `--enable-nvenc` (keep libvmaf); swap torch `+rocm6.2`→`+cu12x`; install Nvidia driver/CUDA. Plan two saved driver/venv states for the swap-iterate cycle.
+
+### Baseline-integrity gate (sequencing vs other CRs — folded in 2026-05-28)
+
+The cross-card comparison is only valid if the GPU is the sole variable, so the AMD baseline and the Nvidia re-run must bracket a frozen measurement environment. Constraints found in the 2026-05-28 open-CR sweep, by severity:
+
+- **CR-029 (fix first — the active blocker).** Its §2 encode-parameter audit (GOP / profile / B-frames) rewrites the very ffmpeg commands the suite freezes. Lock §2's parameter decisions *into* the baseline before the night run — don't benchmark a night on params CR-029 is about to change.
+- **CR-025 (shelved — now low priority).** RT kernel + CPU isolation + `taskset` in the ffmpeg chain would change measured energy/variance and risks ROCm/VAAPI. Must land well before the baseline or well after the swap, never during.
+- **CR-031 §2 (co-design).** Refactors `power.py` into a dispatcher — the same file as this CR's GPU-sensor seam. Design the power-source and GPU-backend abstractions together, or sequence them; don't let two `power.py` refactors collide. Its resolution-aware confidence also changes result labels.
+- **CR-024 (verify-neutral).** Shares the measurement spine (`transcode` / `focus_mode` / `LOCK_FILE`). Claims behaviour-neutral; confirm the probe CSVs are unchanged before trusting a baseline captured around it.
+- **CR-045 (downstream).** Its V1 CQ presets use VAAPI-specific `qp` / `global_quality`, so they are GPU-backend-coupled and ride on this CR's abstraction to go cross-card (NVENC uses `-cq` / `-rc`). Also entangled with CR-029.
+- **CR-041 (reuse).** Its `chip_instance_id` is the sibling provenance pattern to `gpu_backend`; the "compare results across a hardware field" machinery is shared — reuse, don't reinvent.
+
+Two non-CR freezes:
+- **Variance calibration:** capture the AMD baseline calibration under normal ambient — NOT during the current Paris heat wave (inflates the floor 2–6×; memory `variance-calibration-ambient-sensitive`). Same constraint as the post-swap Nvidia calibration.
+- **`ffmpeg_bin`:** the suite runs on `/usr/local/bin/ffmpeg-master`. The NVENC rebuild (this CR) and the deferred ffmpeg old-vs-new energy test both change that binary — keep them out of the comparison window.
+
+**Not a confounder: this abstraction itself.** Per owner, a pure software abstraction layer's energy impact is imperceptible (see decision #3) — it does not need a re-baseline.
+
+### Open questions
+
+- **`scale_cuda` availability** — needs a cuda-filters ffmpeg build. If absent, the Nvidia scale step diverges (hwupload_cuda or CPU scale) and the pipeline is no longer directly comparable. Decide the Nvidia filter chain explicitly before benchmarking.
+- **Sampling semantics** — nvidia-smi `power.draw` (instantaneous) vs AMD `power1_average` (averaged). Document; consider an averaging window for parity.
+- **Post-swap obligations** — re-run variance calibration (**not during the Paris heat wave** — memory `variance-calibration-ambient-sensitive`) and supersede AMD-measured findings via the `/findings` `supersedes:` machinery.
+
+### Out of scope (track separately)
+
+- Label-only pass: ~15 hardcoded "RX 7800 XT"/"ROCm" UI strings in `main.py` + `reproduce.py:29` `_HARDWARE["gpu"]` will misreport on Nvidia.
+- 7800 XT disposition (sell vs shelve as AMD reference) — see memory.
+
+### Lab look & feel constraint
+
+No new UI surface; the backend chip on a result card (if surfaced at all) is a single token in the existing provenance line. Don't add a card.
 
 ---
 
