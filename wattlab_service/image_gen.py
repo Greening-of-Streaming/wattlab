@@ -11,9 +11,12 @@ from video import focus_mode_enter, focus_mode_exit
 import settings as cfg
 from confidence import confidence
 from power import get_power_watts, read_sensors_dict
+import gpu
 
-# Required for gfx1101 (RX 7800 XT) with PyTorch ROCm — must be set before torch import
-os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "11.0.0")
+# GPU-vendor env (must be set before torch import). On AMD this sets the ROCm
+# HSA_OVERRIDE_GFX_VERSION; on NVIDIA it is a no-op. Vendor-resolved in gpu.py
+# so a card swap needs no change here (CR-060).
+gpu.BACKEND.torch_env_setup()
 
 
 LOCK_FILE = Path("/tmp/gos-measure.lock")
@@ -311,7 +314,7 @@ async def run_image_measurement(prompt: str, job_id: str,
     w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
     energy = _calc_energy(w_base, w_task, delta_t, readings, batch, baseline_samples_w)
 
-    device_label = "GPU (RX 7800 XT, ROCm)" if device == "gpu" else "CPU (Ryzen 9 7900)"
+    device_label = f"GPU ({gpu.BACKEND.device_label()})" if device == "gpu" else "CPU (Ryzen 9 7900)"
     scope = (f"Device layer only (GoS1). {device_label}. "
              f"Model: {cfg_m['label']} ({cfg_m['params']}) at {cfg_m['size_px']}px. "
              f"No amortised training cost.")

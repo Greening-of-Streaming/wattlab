@@ -22,15 +22,29 @@ import re
 import zipfile
 from datetime import datetime
 
-# OWL runs on one machine and results don't store a per-run HW fingerprint, so
-# the bundle records GoS1's. Keep in sync with CLAUDE.md "GoS1 Server".
+import gpu
+
+# OWL runs on one machine, so the bundle records GoS1's hardware. The GPU is
+# now resolved per result: results carry a `gpu_hardware` stamp (CR-060), so a
+# bundle built from a result captured on a different card reports that card —
+# critical once the RTX 5080 swap lands. Keep CPU/RAM/etc in sync with
+# CLAUDE.md "GoS1 Server".
 _HARDWARE = {
     "cpu": "AMD Ryzen 9 7900 (24 cores)",
-    "gpu": "AMD Radeon RX 7800 XT (VAAPI / ROCm)",
     "ram_gb": 61,
     "kernel": "6.17",
     "os": "Ubuntu 24.04",
 }
+
+_ENCODE_LABEL = {"vaapi": "VAAPI / ROCm", "nvenc": "NVENC / CUDA"}
+
+
+def _gpu_hw_label(result: dict) -> str:
+    """GPU descriptor for the bundle: prefer the result's own `gpu_hardware`
+    stamp (the card it was actually measured on), else the live backend."""
+    stamp = result.get("gpu_hardware") or gpu.stamp()
+    enc = _ENCODE_LABEL.get(stamp.get("encode"), stamp.get("encode") or "CPU only")
+    return f"{stamp.get('name', 'unknown GPU')} ({enc})"
 
 _MERIDIAN = {
     "name": "meridian_120s.mp4",
@@ -247,7 +261,8 @@ def build_bundle(job_type, job_id, result, variance_pct):
         "owl_result": f"{job_type}/{job_id}",
         "owl_version": result.get("owl_version"),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "hardware": {**_HARDWARE, "ffmpeg_version": ffmpeg_version},
+        "hardware": {**_HARDWARE, "gpu": _gpu_hw_label(result),
+                     "ffmpeg_version": ffmpeg_version},
         "source_asset": _MERIDIAN,
         "scope": result.get("scope", "Device layer only (GoS1)."),
         "comparison_note": ("Pass = your ΔE falls within OWL's k=3σ envelope on "

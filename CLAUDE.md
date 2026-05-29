@@ -1,6 +1,6 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current.
-# Last updated: 2026-05-27 (Session 32 close-out — findings-chain CR-054/055/056/058 + CR-012 history-journal migrated to closed; CR-057 home-page repositioning drafted (awaiting lab UX review); CR-012 shipped (variance + thermal-probe drift journals: results/{variance,diagnostics}/history.jsonl via new persist.append_history_line, append-only, ts + owl_version stamped). Active 15 CRs, 339 tests.)
+# Last updated: 2026-05-29 (Session 35 — CR-060 GPU-backend abstraction shipped (pre-swap): new gpu.py resolves AmdBackend/NvidiaBackend/NoGpuBackend once at import → swap+reboot picks up the new card with zero code edits. video/power/image_gen/persist route through it; AMD path byte-identical (proven by test); every result stamped gpu_hardware={vendor,name,encode}. Auto-detect (deliberate reversal of CR-060's "explicit config" decision — owner asked for "swap = just a reboot"), OWL_GPU_VENDOR override + gpu_display_name curated-copy setting retained. AMD pre-swap baseline frozen at docs/gpu_swap_amd_baseline.md. Active 15 CRs, 385 tests.)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - JOURNAL.md — session-by-session change log (full detail; not auto-loaded)
@@ -55,9 +55,8 @@ Bbox Wi-Fi 7 (192.168.1.x)
 
 ## Thermal Sensors
 - One source of truth: `power.read_sensors_dict()` → `{cpu_tctl, gpu_junction, gpu_ppt_w}`. The per-module `read_sensors()` wrappers (video/llm/image_gen/rag) just delegate to it.
-- CPU: `data['k10temp-pci-00c3']['Tctl']['temp1_input']` (k10temp is on the CPU bus — name is stable).
-- GPU: chip key is **resolved dynamically** via `power.amdgpu_chip(data)` — the one amdgpu chip with a `junction` sub-key (the discrete RX 7800 XT; the iGPU has only `edge`/`PPT`). *Do not hardcode the PCI address* — it shifts on PCIe re-enumeration (the S24 NVMe add moved it `amdgpu-pci-0300` → `amdgpu-pci-0400`, which silently broke the old lookups). Then `data[gpu]['junction']['temp2_input']` and `data[gpu]['PPT']['power1_average']`.
-- Read via: `subprocess.run(['sensors', '-j'], ...)`
+- CPU: `data['k10temp-pci-00c3']['Tctl']['temp1_input']` (k10temp is on the CPU bus — name is stable). Read in `power.py` via `subprocess.run(['sensors', '-j'], ...)`.
+- GPU: **vendor-abstracted (CR-060).** The GPU half of `read_sensors_dict()` delegates to `gpu.BACKEND.read_gpu_sensors()`, which returns the same `{gpu_junction, gpu_ppt_w}` shape on any card. AMD path: the one amdgpu chip with a `junction` sub-key (discrete card; iGPU has only `edge`/`PPT`) — resolved dynamically by `gpu.AmdBackend._amdgpu_chip` (aliased as `power.amdgpu_chip`), *never* by PCI address (it shifts on PCIe re-enumeration — the S24 NVMe add moved it `amdgpu-pci-0300`→`0400` and silently broke the old lookups), then `['junction']['temp2_input']` + `['PPT']['power1_average']`. Nvidia path: `nvidia-smi --query-gpu=temperature.gpu,power.draw` (temp mapped to `gpu_junction` to keep the schema stable; note `power.draw` is instantaneous vs AMD's `power1_average` — see CR-060 open Q).
 
 ## Environment
 - `.env` at `/home/gos/wattlab/.env` — gitignored
@@ -65,7 +64,7 @@ Bbox Wi-Fi 7 (192.168.1.x)
 
 ## Installed Packages
 - Python: tapo==0.8.12, python-dotenv, fastapi, uvicorn, python-multipart, torch 2.5.1+rocm6.2, diffusers, transformers, accelerate, pillow
-- System: lm-sensors, ffmpeg 6.1.1, nmap
+- System: lm-sensors, ffmpeg 6.1.1, nmap. The `/usr/local/bin/ffmpeg-master` build (driven by `ffmpeg_bin`) **already ships the NVENC encoders** (`h264_nvenc`/`hevc_nvenc`/`av1_nvenc`) + the `scale_cuda` filter — so no ffmpeg rebuild is needed for the CR-060 Nvidia swap (resolves the old open Q). `av1_nvenc` exposes no `-profile` knob; `-rc cbr` is the ABR-equivalent. (Still pending for the swap: torch `+rocm6.2`→`+cu12x` wheel + Nvidia driver/CUDA.)
 - AI: Ollama 0.20.2 (systemd service, port 11434)
 - Models (S30 ladder refresh, 2026-05-27): tinyllama:latest (1.1B, anchor), qwen3:1.7b (modern tiny), qwen3:4b (modern small — also CANONICAL_RAG_MODEL), qwen3:8b (modern 8B), mistral-nemo:12b (French AI lab × NVIDIA — replaced mistral 7B + gemma3:12b), phi4:latest (14B reasoning), gpt-oss:20b (ceiling, MXFP4 partial-offload). Compare-panel = 5 of these: tinyllama / qwen3:4b / mistral-nemo:12b / phi4 / gpt-oss:20b. Retired: mistral 7B + gemma3:12b. x/z-image-turbo (12GB, GPU blocked), x/flux2-klein (5.7GB, CUDA/MLX only).
 - Image gen: stabilityai/sd-turbo + stabilityai/sdxl-turbo via diffusers (CPU for SD-Turbo only; GPU via ROCm for both; cached in ~/.cache/huggingface). **Cached but not yet wired into the pipeline (S30 audit):** Sana 0.6B (`Efficient-Large-Model/Sana_600M_512px_diffusers`, ~9 GB on disk fp16+fp32+Gemma-2B text encoder) and SDXL-Lightning 4-step UNet (`ByteDance/SDXL-Lightning`, 2 GB). SD 3.5 Medium (`stabilityai/stable-diffusion-3.5-medium`) is the next add but needs HF token + accepted license (gated). **Avoid on this hw:** FLUX.1-schnell — bitsandbytes NF4 is CUDA-only; ROCm path is ~80s/image + ~35 GB host-RAM spike at quantization load.
@@ -89,13 +88,14 @@ wattlab/
 ├── .chroma/        ->  /srv/data/owl/.chroma        # symlink (S24); RAG vector store
 └── wattlab_service/
     ├── main.py                   # FastAPI routes + all HTML UI + queue worker
-    ├── video.py                  # P110 + ffmpeg + thermals + focus mode
-    ├── llm.py                    # Ollama inference + P110 measurement
+    ├── video.py                  # P110 + ffmpeg + thermals + focus mode (GPU presets via gpu.BACKEND)
+    ├── llm.py                    # Ollama inference + P110 measurement (GPU-agnostic via Ollama)
     ├── image_gen.py              # SD-Turbo CPU diffusion + P110 measurement
-    ├── persist.py                # Flat-file result storage + CSV/JSON export
-    ├── settings.py               # Lab config (15 params, settings.json)
+    ├── persist.py                # Flat-file result storage + CSV/JSON export (stamps gpu_hardware)
+    ├── settings.py               # Lab config (settings.json)
     ├── sources.py                # Pre-loaded test content registry
-    └── power.py                  # Power measurement interface (Tapo P110); swap here for PDU/IPMI
+    ├── gpu.py                    # CR-060 — GPU vendor abstraction (AMD VAAPI/ROCm ↔ Nvidia NVENC/CUDA); auto-detected at import into gpu.BACKEND
+    └── power.py                  # Power measurement interface (Tapo P110); GPU telemetry delegates to gpu.py
 ```
 
 ## Measurement Protocol
@@ -154,6 +154,9 @@ Earlier sessions (S1–S25) live in `JOURNAL.md`; recent arc below.
 - **S31 (2026-05-27 overnight):** AI-comparison trilogy — CR-048 (`/llm/compare`) + CR-049 (`/rag/compare`) + CR-050 (dynamic model catalog + active-probe thermal floor + Ollama eviction + N-way `/image/compare`). 290 tests.
 - **S32 (2026-05-27):** CR-051 RAG corpus self-service (Member upload + delete, audit log, ownership matrix). 292 → 307 tests.
 - **S32 close-out (2026-05-27 evening):** Findings-chain shipped behind `findings_enabled` flag — CR-054 (data model + AV1 worked example), CR-055 (`/findings` index), CR-056 (bulk import of 5 more findings), CR-058 (`/demo` step 7 rewire). CR-057 (home-page repositioning) drafted, awaiting lab UX review. CR-012 also closed — variance + thermal-probe drift journals (`results/{variance,diagnostics}/history.jsonl` via new `persist.append_history_line`). 307 → 339 tests.
+- **S33 (2026-05-28):** S32 close-out + md tidy + `/findings` bug fixes (wlCarbonStrip include; sequential embed hydration to dodge nginx 3-conn 429s) + kicked off overnight variance calibration. 339 tests.
+- **S34 (2026-05-28):** CR-061 in-app benchmark orchestrator (`benchmark.py` + `results/benchmark/`, multi-step variance→video→llm→rag→image run) + CR-029 §2 encode normalization.
+- **S35 (2026-05-29):** CR-060 GPU-backend abstraction shipped pre-swap (`gpu.py`; AMD byte-identical; auto-detect + `gpu_hardware` stamp). Overnight benchmark `e29ccef7` analysed → AMD pre-swap baseline frozen (`docs/gpu_swap_amd_baseline.md`). 339 → 385 tests.
 
 ### Deferred / open (active items only — completed ones removed; see CHANGE_REQUESTS_CLOSED.md / JOURNAL.md for history)
 - **Transcoding apples-to-apples (GOP / profile)** — see **CR-029** sub-item 2 (Tania-led); VMAF (CR-044) now makes the gap measurable (see AV1 hw-vs-sw Key Finding).

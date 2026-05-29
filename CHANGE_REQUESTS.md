@@ -797,8 +797,23 @@ Smallest-footprint flow change in the findings chain that touches the *most-visi
 
 ## CR-060 · GPU-backend abstraction (AMD VAAPI/ROCm ↔ Nvidia NVENC/CUDA)
 
-**Status:** drafted 2026-05-28 — design agreed with owner; awaiting board sign-off on the GPU purchase before implementation.
+**Status:** **abstraction SHIPPED 2026-05-29 (S35), pre-swap — AMD validated, Nvidia path awaiting the physical RTX 5080.** The software layer is done, tested, and stamping provenance; what remains is hardware validation + the env prereqs (torch wheel, driver) on the actual card. Keep open until the 5080 is in and a re-run confirms NVENC.
 **Triggered by:** Pixop conversion (CUDA-only) → planned RX 7800 XT → RTX 5080 swap. Full hardware/strategy context in memory `gpu-swap-nvidia-initiative` + board lazy-consensus email 2026-05-28.
+
+### What shipped (S35)
+
+New `wattlab_service/gpu.py` — `AmdBackend` / `NvidiaBackend` / `NoGpuBackend`, resolved **once at import** into `gpu.BACKEND` (so a card swap + reboot is picked up with zero code edits). Each backend supplies: GPU sensor read (`{gpu_junction, gpu_ppt_w}`), ffmpeg GPU encode pieces (hwaccel args / scale filter / encoder / codec norm args), torch env setup, device label, and a provenance `stamp()`. Refactored consumers: `power.read_sensors_dict` (GPU half → backend; `amdgpu_chip` kept as a back-compat alias), `video.py` (3 GPU presets → `_gpu_cmd()`), `image_gen.py` (env + label), `persist.save_result` (stamps `gpu_hardware`). Methodology Hardware-Disclosure table now dynamic via the `gpu_display_name` setting (curated default preserved). 339 → 385 tests; new `tests/test_gpu_backend.py`.
+
+**Three deliberate departures from the locked design below — flagged, not silent:**
+1. **Module named `gpu.py`, not `gpu_backend.py`** (cosmetic).
+2. **Auto-detect, NOT explicit config (reverses decision #2).** Owner's S35 instruction was *"swapping a new GPU just requires a reboot"* — explicit config can't satisfy that (needs a settings edit), auto-detect can. Detection order: `nvidia-smi` → sensors amdgpu → none. The explicit-config *intent* is preserved via an `OWL_GPU_VENDOR` env override **and** the per-result `gpu_hardware` stamp. Owner okayed auto-detect 2026-05-29 ("let's go for autodetect… we'll see if it works or whether we were too ambitious").
+3. **AMD path proven by a byte-identical-command test (as planned)** — no ΔWh re-baseline (a pure software abstraction's energy effect is imperceptible per owner; see memory `software-abstraction-energy-imperceptible`).
+
+**Open-Q resolved:** `scale_cuda` + `h264/hevc/av1_nvenc` are **already present** in the `ffmpeg-master` build — no ffmpeg rebuild needed. `-rc cbr` valid; `av1_nvenc` has no `-profile` knob (handled). Still pending: torch `+cu12x` wheel + Nvidia driver/CUDA. NVENC commands are a best-effort first cut to validate on the 5080.
+
+**Label pass — partially done:** the authoritative methodology Hardware table is now dynamic. The remaining ~13 scattered "RX 7800 XT"/"ROCm" UI copy strings in `main.py` + `reproduce.py:29` `_HARDWARE["gpu"]` are still static (several also list retired models — fold into a copy refresh, not this CR).
+
+**AMD pre-swap energy baseline frozen:** `docs/gpu_swap_amd_baseline.md` (overnight benchmark `e29ccef7`, n=10 × 6 presets × 2 sources; variance 3.07% warm-ambient; no VMAF that run). This is the reference the 5080's NVENC numbers compare against.
 
 ### Problem
 

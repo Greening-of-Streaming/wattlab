@@ -55,6 +55,12 @@ DEFAULTS = {
     # what fixes the scale_vaapi surface-pool leak that previously
     # required a -t cap on every VAAPI encode.
     "ffmpeg_bin": "/usr/local/bin/ffmpeg-master",
+    # CR-060 — curated GPU name for public UI copy (Hardware Disclosure table).
+    # Functional code (encode/sensors/torch) and the per-result provenance stamp
+    # auto-detect the card (gpu.py) so a swap needs only a reboot; this string is
+    # cosmetic and overrides the messy lspci-derived name. Set "" to fall back to
+    # auto-detection. UPDATE THIS when the physical card changes.
+    "gpu_display_name": "AMD Radeon RX 7800 XT, 16GB VRAM (11.1GB usable)",
     # CR-044 — VMAF perceptual quality score on >1-video comparison cards.
     # Computed as a TERMINAL pass after a job's measurement window closes,
     # so its CPU draw never enters a reported energy figure. Requires the

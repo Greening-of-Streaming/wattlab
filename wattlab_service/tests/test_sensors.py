@@ -42,18 +42,16 @@ def test_amdgpu_chip_none_when_no_discrete_gpu():
     assert power.amdgpu_chip(data) is None
 
 
-def test_read_sensors_dict_uses_resolver(monkeypatch):
-    fake = {
-        "k10temp-pci-00c3": {"Tctl": {"temp1_input": 56.5}},
-        "amdgpu-pci-0e00": {"PPT": {"power1_average": 8.0}},
-        "amdgpu-pci-0400": {"junction": {"temp2_input": 38.0},
-                            "PPT": {"power1_average": 18.0}},
-    }
-
+def test_read_sensors_dict_composes_cpu_and_gpu_backend(monkeypatch):
+    # Post-CR-060 the CPU temp still comes from lm-sensors in power.py, but the
+    # GPU temp/power is delegated to the resolved GPU backend (gpu.py) so the
+    # read is vendor-agnostic. Patch both halves and assert the composition.
     class _R:
-        stdout = json.dumps(fake)
+        stdout = json.dumps({"k10temp-pci-00c3": {"Tctl": {"temp1_input": 56.5}}})
 
     monkeypatch.setattr(power.subprocess, "run", lambda *a, **k: _R())
+    monkeypatch.setattr(power.gpu, "read_gpu_sensors",
+                        lambda: {"gpu_junction": 38.0, "gpu_ppt_w": 18.0})
     assert power.read_sensors_dict() == {
         "cpu_tctl": 56.5, "gpu_junction": 38.0, "gpu_ppt_w": 18.0,
     }
@@ -64,6 +62,8 @@ def test_read_sensors_dict_safe_on_garbage(monkeypatch):
         stdout = "not json at all"
 
     monkeypatch.setattr(power.subprocess, "run", lambda *a, **k: _R())
+    monkeypatch.setattr(power.gpu, "read_gpu_sensors",
+                        lambda: {"gpu_junction": None, "gpu_ppt_w": None})
     assert power.read_sensors_dict() == {
         "cpu_tctl": None, "gpu_junction": None, "gpu_ppt_w": None,
     }

@@ -16,6 +16,8 @@ import subprocess
 from dotenv import dotenv_values
 from tapo import ApiClient
 
+import gpu
+
 _config = dotenv_values("/home/gos/wattlab/.env")
 
 
@@ -33,42 +35,36 @@ async def get_power_watts() -> float:
             await asyncio.sleep(1)
 
 
-def amdgpu_chip(data: dict) -> "str | None":
-    """Pick the discrete GPU's chip key out of a parsed `sensors -j` dict.
-
-    `sensors` names amdgpu chips by PCI address (`amdgpu-pci-0400`, …) and
-    that address shifts whenever PCIe enumeration changes — adding the S24
-    NVMe data disk moved it `amdgpu-pci-0300` → `amdgpu-pci-0400`, which
-    silently broke the old hardcoded lookups (GPU temp/PPT showed "—"). The
-    discrete RX 7800 XT is the only amdgpu chip that reports a `junction`
-    temperature (the integrated Radeon on the Ryzen exposes just `edge` +
-    `PPT`), so resolve by that rather than by a fixed bus address.
-    """
-    return next((k for k, v in data.items()
-                 if k.startswith('amdgpu') and isinstance(v, dict) and 'junction' in v),
-                None)
+# Back-compat alias — the amdgpu chip resolver now lives on the AMD GPU
+# backend (gpu.py). Kept here so existing imports `from power import
+# amdgpu_chip` keep working.
+amdgpu_chip = gpu.AmdBackend._amdgpu_chip
 
 
 def read_sensors_dict() -> dict:
-    """One-shot read of lm-sensors: CPU Tctl, GPU junction temp, GPU PPT (W).
-    Returns None for any value that can't be parsed. Safe to call frequently
-    (subprocess is ~10ms). The single source of truth — the per-measurement
-    modules' `read_sensors()` wrappers delegate here.
+    """One-shot read of telemetry: CPU Tctl (lm-sensors) + GPU temp/power
+    (delegated to the resolved GPU backend — AMD via sensors amdgpu, NVIDIA
+    via nvidia-smi). Returns None for any value that can't be parsed. Safe to
+    call frequently. The single source of truth — the per-measurement modules'
+    `read_sensors()` wrappers delegate here.
+
+    The GPU half is vendor-agnostic: `gpu.read_gpu_sensors()` returns the same
+    `{gpu_junction, gpu_ppt_w}` shape regardless of the installed card, so a
+    GPU swap needs no change here (see gpu.py / CR-060).
     """
+    cpu = None
     try:
         result = subprocess.run(['sensors', '-j'], capture_output=True, text=True)
         data = json.loads(result.stdout)
-        gpu = amdgpu_chip(data)
         cpu = data.get('k10temp-pci-00c3', {}).get('Tctl', {}).get('temp1_input')
-        gpu_junc = data.get(gpu, {}).get('junction', {}).get('temp2_input')
-        gpu_ppt = data.get(gpu, {}).get('PPT', {}).get('power1_average')
-        return {
-            "cpu_tctl": cpu,
-            "gpu_junction": gpu_junc,
-            "gpu_ppt_w": gpu_ppt,
-        }
     except Exception:
-        return {"cpu_tctl": None, "gpu_junction": None, "gpu_ppt_w": None}
+        cpu = None
+    g = gpu.read_gpu_sensors()
+    return {
+        "cpu_tctl": cpu,
+        "gpu_junction": g.get("gpu_junction"),
+        "gpu_ppt_w": g.get("gpu_ppt_w"),
+    }
 
 
 # CR-050 follow-up — active-probe thermal floor wait. Used between models in

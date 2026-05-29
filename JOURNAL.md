@@ -7,6 +7,24 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 35 — 2026-05-29
+
+GPU-backend abstraction (CR-060) shipped **pre-swap**, and the first overnight benchmark analysed into a frozen AMD baseline. Sequencing was deliberate: capture the AMD numbers and lock the abstraction while the AMD card is still in the box, so the upcoming RTX 5080 swap (hopefully later today) yields the AMD↔Nvidia comparison for free.
+
+- **AMD pre-swap baseline frozen — `docs/gpu_swap_amd_baseline.md`.** Analysed the overnight orchestrated benchmark `e29ccef7` (24 steps, 0 errors, 6h31m): variance calibration + 20 video reps (3 codecs × CPU/GPU × 2 sources, n=10) + LLM/RAG/image panels. Headline: VAAPI GPU beats CPU ~4–4.5× on energy and ~4× on time for H.265/AV1; ~a wash on H.264 energy but ~2× faster. GPU PPT under load ~46–52 W (idle ~4 W). Caveats recorded: variance ran at **3.07%** (warm-ambient, not the clean 1.29%), **no VMAF** that batch (energy-only), AV1-CPU/bbb cv≈40.6% (one outlier), and the LLM panel's "capital of France" prompt gave 2 models a 2-token denominator (mWh/tok artifacts). Full provenance (all 21 result IDs) in the doc.
+- **CR-060 abstraction shipped.** New `wattlab_service/gpu.py` resolves `AmdBackend` / `NvidiaBackend` / `NoGpuBackend` once at import into `gpu.BACKEND` — a card swap + reboot is picked up with zero code edits. Each backend supplies GPU sensor read, ffmpeg GPU encode pieces (hwaccel / scale filter / encoder / norm args), torch env setup, device label, and a provenance `stamp()`. Refactored: `power.read_sensors_dict` (GPU half delegates; `amdgpu_chip` kept as alias), `video.py` (3 GPU presets → `_gpu_cmd()`), `image_gen.py` (HSA env + device label), `persist.save_result` (stamps `gpu_hardware = {vendor, name, encode}` — key is `gpu_hardware` not `gpu`, since video both-mode already uses a top-level `gpu`). Methodology Hardware table dynamic via new `gpu_display_name` setting (curated default kept). **AMD output proven byte-identical to the pre-refactor literals by `tests/test_gpu_backend.py`** → no ΔWh re-baseline. 339 → 385 tests.
+- **Deliberate reversal: auto-detect, not explicit config.** CR-060's locked decision #2 was an explicit `gpu_backend` setting. Owner's instruction this session — *"swapping a new GPU just requires a reboot"* — explicit config can't satisfy (needs a settings edit). Shipped auto-detect (nvidia-smi → sensors amdgpu → none) as default, keeping the explicit intent via an `OWL_GPU_VENDOR` override + the per-result stamp. Owner okayed: *"let's go for autodetect, then when I get back with the new card we'll see if it works or whether we were too ambitious."*
+- **Env open-question resolved.** The existing `/usr/local/bin/ffmpeg-master` **already ships** `h264_nvenc` / `hevc_nvenc` / `av1_nvenc` + the `scale_cuda` filter — no ffmpeg rebuild needed for the swap. Confirmed `-rc cbr` valid (ABR-equivalent); `av1_nvenc` has no `-profile` knob (omitted). Still pending on the physical swap: torch `+rocm6.2`→`+cu12x` wheel + Nvidia driver/CUDA.
+- **Not committed:** `settings.json` — its working-tree diff is the warm-ambient 3.07% recalibration (which we agreed not to bake into git, see memory `variance-calibration-ambient-sensitive`) plus unrelated CR-061 bench config. Left as live state per convention; the `gpu_display_name` default lives in `settings.py` DEFAULTS, not `settings.json`.
+
+---
+
+## Session 34 — 2026-05-28
+
+CR-061 in-app benchmark orchestrator + CR-029 §2 encode normalization (commit `88a2696`). `benchmark.py` + `results/benchmark/` — a multi-step run (variance → video all-codecs reps → llm/rag/image compare panels) driven from the app, each step referencing the individual result files it produced. This is the orchestration that produced the S35 overnight baseline. (Brief entry — backfilled S35; see commit for detail.)
+
+---
+
 ## Session 33 — 2026-05-28
 
 S32 close-out + md tidy + overnight calibration. The S32 evening shipped the findings-chain (CR-054 / 055 / 056 / 058) and CR-012 (variance + thermal-probe history journals); this session migrated all five to `CHANGE_REQUESTS_CLOSED.md`, drafted CR-057, fixed two `/findings` bugs surfaced by the lab review, pruned the repo's `.md` files, and kicked off an overnight variance calibration to refresh the idle/cpu/gpu numbers.

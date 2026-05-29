@@ -10,6 +10,7 @@ from collections import deque
 from pathlib import Path
 from typing import Callable, Optional
 import settings as cfg
+import gpu
 from confidence import confidence
 from power import get_power_watts, read_sensors_dict
 UPLOAD_DIR = Path("/tmp/wattlab_uploads")
@@ -360,15 +361,41 @@ def _clear_progress(jobs: Optional[dict], job_id: str) -> None:
 #   - Level: NOT pinned — the residual H.265 4.1(CPU)/4.0(GPU) split is cosmetic
 #     at 1080p and forcing it on VAAPI is fragile. Documented in CR-029 §2.
 def _norm_args(preset_key: str) -> list:
+    """CPU-side encode-param fragments (vendor-neutral). The GPU equivalents
+    are supplied by the resolved GPU backend (gpu.BACKEND.ffmpeg_gpu_norm_args)
+    so they track whatever card is installed — see _gpu_cmd()."""
     gop = str(int(cfg.load().get("encode_gop_frames", 120)))
     return {
         "cpu":      ["-g", gop, "-profile:v", "high", "-bf", "2", "-x264-params", "scenecut=0:open_gop=0"],
-        "gpu":      ["-g", gop, "-profile:v", "high", "-bf", "2"],
         "h265_cpu": ["-g", gop, "-profile:v", "main", "-bf", "2", "-x265-params", "scenecut=0:open-gop=0"],
-        "h265_gpu": ["-g", gop, "-profile:v", "main", "-bf", "2"],
         "av1_cpu":  ["-g", gop, "-profile:v", "main", "-svtav1-params", "scd=0"],
-        "av1_gpu":  ["-g", gop, "-profile:v", "main"],
     }[preset_key]
+
+
+def _gpu_cmd(codec: str, i, o, bps: int) -> list:
+    """Build a GPU encode command from the resolved backend (gpu.BACKEND).
+    `codec` is the vendor-neutral key (h264/h265/av1); the backend maps it to
+    the right hwaccel flags, scale filter, encoder and norm args for AMD VAAPI
+    or NVIDIA NVENC. The full pipeline (hw decode + scale + encode) is preserved
+    across vendors — representative of live encoding workflows."""
+    b = gpu.BACKEND
+    gop = str(int(cfg.load().get("encode_gop_frames", 120)))
+    return [
+        _ffmpeg_bin(), "-y",
+        *b.ffmpeg_hwaccel_args(),
+        "-i", str(i),
+        "-vf", b.ffmpeg_scale_filter(1080),
+        "-c:v", b.ffmpeg_encoder(codec), "-b:v", f"{bps}k",
+        *b.ffmpeg_gpu_norm_args(codec, gop),
+        "-c:a", "aac", "-b:a", "128k",
+        str(o)
+    ]
+
+
+def _gpu_detail(codec: str, bps: int) -> str:
+    """e.g. 'h264_vaapi · 4000 kbps ABR · 1080p · full pipeline' — encoder name
+    reflects the installed card (vaapi / nvenc)."""
+    return f"{gpu.BACKEND.ffmpeg_encoder(codec)} · {bps} kbps ABR · 1080p · full pipeline"
 
 
 PRESETS = {
@@ -387,18 +414,8 @@ PRESETS = {
     "gpu": {
         "label": "H.264 GPU",
         "bitrate_key": "h264_bitrate_kbps",
-        "detail_fn": lambda bps: f"h264_vaapi · {bps} kbps ABR · 1080p · full pipeline",
-        "cmd_fn": lambda i, o, bps: [
-            _ffmpeg_bin(), "-y",
-            "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
-            "-extra_hw_frames", "32",
-            "-vaapi_device", "/dev/dri/renderD128",
-            "-i", str(i),
-            "-vf", "scale_vaapi=w=-2:h=1080:format=nv12",
-            "-c:v", "h264_vaapi", "-b:v", f"{bps}k", *_norm_args("gpu"),
-            "-c:a", "aac", "-b:a", "128k",
-            str(o)
-        ]
+        "detail_fn": lambda bps: _gpu_detail("h264", bps),
+        "cmd_fn": lambda i, o, bps: _gpu_cmd("h264", i, o, bps)
     },
     "h265_cpu": {
         "label": "H.265 CPU",
@@ -415,18 +432,8 @@ PRESETS = {
     "h265_gpu": {
         "label": "H.265 GPU",
         "bitrate_key": "h265_bitrate_kbps",
-        "detail_fn": lambda bps: f"hevc_vaapi · {bps} kbps ABR · 1080p · full pipeline",
-        "cmd_fn": lambda i, o, bps: [
-            _ffmpeg_bin(), "-y",
-            "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
-            "-extra_hw_frames", "32",
-            "-vaapi_device", "/dev/dri/renderD128",
-            "-i", str(i),
-            "-vf", "scale_vaapi=w=-2:h=1080:format=nv12",
-            "-c:v", "hevc_vaapi", "-b:v", f"{bps}k", *_norm_args("h265_gpu"),
-            "-c:a", "aac", "-b:a", "128k",
-            str(o)
-        ]
+        "detail_fn": lambda bps: _gpu_detail("h265", bps),
+        "cmd_fn": lambda i, o, bps: _gpu_cmd("h265", i, o, bps)
     },
     "av1_cpu": {
         "label": "AV1 CPU",
@@ -443,18 +450,8 @@ PRESETS = {
     "av1_gpu": {
         "label": "AV1 GPU",
         "bitrate_key": "av1_bitrate_kbps",
-        "detail_fn": lambda bps: f"av1_vaapi · {bps} kbps ABR · 1080p · full pipeline",
-        "cmd_fn": lambda i, o, bps: [
-            _ffmpeg_bin(), "-y",
-            "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
-            "-extra_hw_frames", "32",
-            "-vaapi_device", "/dev/dri/renderD128",
-            "-i", str(i),
-            "-vf", "scale_vaapi=w=-2:h=1080:format=nv12",
-            "-c:v", "av1_vaapi", "-b:v", f"{bps}k", *_norm_args("av1_gpu"),
-            "-c:a", "aac", "-b:a", "128k",
-            str(o)
-        ]
+        "detail_fn": lambda bps: _gpu_detail("av1", bps),
+        "cmd_fn": lambda i, o, bps: _gpu_cmd("av1", i, o, bps)
     },
 }
 

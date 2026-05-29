@@ -22,58 +22,80 @@ def _gop(monkeypatch, n):
     monkeypatch.setattr(video.cfg, "load", lambda: {"encode_gop_frames": n})
 
 
-# ── _norm_args ──────────────────────────────────────────────────────────────
+# Post-CR-060 the CPU norm args live in video._norm_args, but the GPU norm args
+# come from the resolved GPU backend (gpu.BACKEND). So assert encode
+# normalization on the *assembled command* — the vendor-resolved thing that
+# actually runs — rather than on the helper. `_norm(k)` returns the encode-arg
+# slice between the bitrate target and the audio codec.
+def _norm(k):
+    cmd = video.build_preset_cmd(k, "IN.mp4", "OUT.mp4")
+    i = cmd.index("-b:v") + 2          # past "-b:v", past its value
+    j = cmd.index("-c:a")
+    return cmd[i:j]                    # GPU: norm only; CPU: norm + scale filter
+
+
+# ── encode normalization (assembled command) ─────────────────────────────────
 
 def test_every_preset_pins_a_gop(monkeypatch):
     _gop(monkeypatch, 120)
     for k in ALL:
-        a = video._norm_args(k)
+        a = _norm(k)
         assert "-g" in a and a[a.index("-g") + 1] == "120"
-        assert "-profile:v" in a
+        # Profile is pinned wherever the encoder exposes one. av1 *hardware*
+        # encoders may omit it (av1_nvenc has no -profile option) — a documented
+        # encoder limitation, like AMD VAAPI's B-frame cap. CPU + h264/h265 GPU
+        # always pin it.
+        if k != "av1_gpu":
+            assert "-profile:v" in a
 
 
 def test_gop_is_identical_across_all_presets(monkeypatch):
     _gop(monkeypatch, 96)
-    gops = {video._norm_args(k)[video._norm_args(k).index("-g") + 1] for k in ALL}
+    gops = {_norm(k)[_norm(k).index("-g") + 1] for k in ALL}
     assert gops == {"96"}   # one value, every preset
 
 
 def test_gop_is_operator_tunable(monkeypatch):
     _gop(monkeypatch, 48)
-    assert video._norm_args("gpu")[video._norm_args("gpu").index("-g") + 1] == "48"
+    assert _norm("gpu")[_norm("gpu").index("-g") + 1] == "48"
 
 
 def test_gop_defaults_to_120_when_unset(monkeypatch):
     monkeypatch.setattr(video.cfg, "load", lambda: {})  # key absent
-    assert video._norm_args("cpu")[video._norm_args("cpu").index("-g") + 1] == "120"
+    assert _norm("cpu")[_norm("cpu").index("-g") + 1] == "120"
 
 
 def test_bframes_requested_on_h264_h265_not_av1(monkeypatch):
     _gop(monkeypatch, 120)
     for k in BF_PRESETS:
-        assert "-bf" in video._norm_args(k), f"{k} should request B-frames"
+        assert "-bf" in _norm(k), f"{k} should request B-frames"
     for k in ("av1_cpu", "av1_gpu"):
-        assert "-bf" not in video._norm_args(k), f"{k} (AV1) must not pass -bf"
+        assert "-bf" not in _norm(k), f"{k} (AV1) must not pass -bf"
 
 
 def test_scenecut_disabled_on_cpu_only(monkeypatch):
     _gop(monkeypatch, 120)
     # CPU encoders need explicit scene-cut off for a deterministic GOP;
-    # VAAPI is fixed-GOP natively and takes no such param.
-    assert "scenecut=0:open_gop=0" in video._norm_args("cpu")
-    assert "scenecut=0:open-gop=0" in video._norm_args("h265_cpu")
-    assert "scd=0" in video._norm_args("av1_cpu")
+    # hardware encoders (VAAPI/NVENC) are fixed-GOP natively and take no such param.
+    assert "scenecut=0:open_gop=0" in _norm("cpu")
+    assert "scenecut=0:open-gop=0" in _norm("h265_cpu")
+    assert "scd=0" in _norm("av1_cpu")
     for k in ("gpu", "h265_gpu", "av1_gpu"):
-        joined = " ".join(video._norm_args(k))
+        joined = " ".join(_norm(k))
         assert "scenecut" not in joined and "scd=" not in joined
 
 
 def test_profiles_pinned_expected(monkeypatch):
     _gop(monkeypatch, 120)
-    prof = lambda k: video._norm_args(k)[video._norm_args(k).index("-profile:v") + 1]
+    prof = lambda k: _norm(k)[_norm(k).index("-profile:v") + 1]
     assert prof("cpu") == "high" and prof("gpu") == "high"
     assert prof("h265_cpu") == "main" and prof("h265_gpu") == "main"
-    assert prof("av1_cpu") == "main" and prof("av1_gpu") == "main"
+    assert prof("av1_cpu") == "main"
+    # av1 GPU pins a profile on backends that expose one (AMD VAAPI: main);
+    # av1_nvenc has no -profile knob, so only assert when present.
+    av1g = _norm("av1_gpu")
+    if "-profile:v" in av1g:
+        assert av1g[av1g.index("-profile:v") + 1] == "main"
 
 
 # ── flags reach the assembled command + variance template ───────────────────

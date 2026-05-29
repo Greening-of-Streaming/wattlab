@@ -6,6 +6,7 @@ from pathlib import Path
 
 import carbon
 import canonical
+import gpu
 import version
 
 RESULTS_DIR = Path("/home/gos/wattlab/results")
@@ -49,6 +50,11 @@ def save_result(job_type: str, job_id: str, data: dict,
     # Stamp the exact code that produced this result (provenance for CR-040
     # reproduce bundles + Track A analytics / re-flagging after formula changes).
     payload["owl_version"] = version.version_dict()
+    # Stamp the GPU that produced this result (CR-060) so AMD (VAAPI/ROCm) and
+    # NVIDIA (NVENC/CUDA) runs can never be silently compared across a hw swap.
+    # Key is `gpu_hardware`, NOT `gpu` — the video CPU-vs-GPU "both" mode already
+    # uses a top-level `gpu` key for the GPU-side measurement (video.py).
+    payload["gpu_hardware"] = gpu.stamp()
     carbon.walk_and_enrich(payload)
     # CR-037 — anchor AI energy to a real video encode ("≈ N× a 120s encode").
     # AI result types only; video would just read "≈ 1×" of itself.

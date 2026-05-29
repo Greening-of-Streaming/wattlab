@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
 from power import get_power_watts, read_sensors_dict
+import gpu
 import video as vid
 from video import run_video_measurement, run_both_measurement, run_all_measurement, run_video_measurement_path, run_both_measurement_path, UPLOAD_DIR, LOCK_FILE
 from sources import get_all_sources, get_grouped_sources, PRELOADED
@@ -11667,12 +11668,12 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <table class="hw-table">
     <tr><td>Server</td><td>GoS1 &mdash; custom build, Ubuntu 24, kernel 6.17</td></tr>
     <tr><td>CPU</td><td>AMD Ryzen 9 7900, 24 cores (12C/24T), 65W TDP</td></tr>
-    <tr><td>GPU</td><td>AMD Radeon RX 7800 XT, 16GB VRAM (11.1GB usable), VAAPI + ROCm</td></tr>
+    <tr><td>GPU</td><td>{GPU_HW}</td></tr>
     <tr><td>RAM</td><td>61 GB DDR5</td></tr>
     <tr><td>Storage</td><td>500 GB NVMe SSD (OS + working set) + 4 TB NVMe SSD (test media &amp; result archive, mounted <code>/srv/data</code>)</td></tr>
     <tr><td>Idle power</td><td>~56&ndash;58W (stable); brief drift to ~60&ndash;63W after sustained load. Measured by the May-2026 thermal-recovery probe, post second-NVMe + 5th case fan (~3&ndash;5W above the prior ~51&ndash;54W baseline)</td></tr>
     <tr><td>Measurement</td><td>Tapo P110 smart plug, 1-second polling via local API (tapo 0.8.12)</td></tr>
-    <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code>, May 2026 &mdash; carries the upstream <code>scale_vaapi</code> surface-pool fix) &mdash; libx264, libx265, libsvtav1 (CPU); h264_vaapi, hevc_vaapi, av1_vaapi (GPU, full VAAPI pipeline)</td></tr>
+    <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code>, May 2026 &mdash; carries the upstream <code>scale_vaapi</code> surface-pool fix) &mdash; libx264, libx265, libsvtav1 (CPU); {VIDEO_GPU_ENCODERS}</td></tr>
     <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; TinyLlama 1.1B, Mistral 7B, Gemma 3 12B (CPU + ROCm GPU); Phi-4 14B available for RAG</td></tr>
     <tr><td>Image</td><td>PyTorch + diffusers &mdash; SD-Turbo (~1B), SDXL-Turbo (~3.5B, GPU only); CPU + ROCm GPU</td></tr>
   </table>
@@ -11782,6 +11783,29 @@ def _recovery_chart_payload(cooldown_s):
 
 
 @app.get("/methodology", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
+def _gpu_display_name() -> str:
+    """Card name for UI copy. Settings `gpu_display_name` (a curated string like
+    'AMD Radeon RX 7800 XT, 16GB VRAM') wins if set; otherwise the auto-detected
+    name from gpu.BACKEND. A reboot alone is always correct (detection); the
+    override only exists to prettify the messy lspci string (CR-060)."""
+    return cfg.load().get("gpu_display_name") or gpu.BACKEND.name
+
+
+def _gpu_hw_row() -> str:
+    """Hardware-Disclosure GPU cell: '<name>, <ENCODE> + <RUNTIME>'."""
+    enc = {"amd": "VAAPI + ROCm", "nvidia": "NVENC + CUDA"}.get(gpu.BACKEND.vendor, "CPU only")
+    return f"{_gpu_display_name()}, {enc}"
+
+
+def _gpu_video_encoders() -> str:
+    """Hardware-Disclosure Video cell GPU-encoder list, vendor-resolved."""
+    if gpu.BACKEND.vendor == "none":
+        return "(no discrete GPU — CPU encode only)"
+    encs = ", ".join(gpu.BACKEND.ffmpeg_encoder(c) for c in ("h264", "h265", "av1"))
+    pipe = "full VAAPI pipeline" if gpu.BACKEND.vendor == "amd" else "full NVENC/CUDA pipeline"
+    return f"{encs} (GPU, {pipe})"
+
+
 async def methodology_page(request: Request):
     # Inject live settings into placeholder fields so the methodology page
     # can never silently drift from the actual configuration in settings.json.
@@ -11802,6 +11826,8 @@ async def methodology_page(request: Request):
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
             .replace("{VARIANCE_RUNS}",      str(s.get("variance_runs",      "—")))
             .replace("{VARIANCE_COOLDOWN_S}",str(s.get("variance_cooldown_s","—")))
+            .replace("{GPU_HW}",             _gpu_hw_row())
+            .replace("{VIDEO_GPU_ENCODERS}", _gpu_video_encoders())
             .replace("{RECOVERY_CHART_DATA}", json.dumps(recovery))
             .replace("{POSITION_PAPER_URL}",  POSITION_PAPER_URL)
             .replace("{GOS_URL}",             GOS_URL)
