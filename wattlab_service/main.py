@@ -2711,6 +2711,7 @@ async def index(request: Request):
         </div>
         <div class="nav-util">
             <a href="/queue-status">⏱ Queue</a>
+            <a href="/benchmark">📊 Benchmarks</a>
             <a href="/settings">⚙ Settings</a>
             <a href="/methodology">📐 Methodology</a>
         </div>
