@@ -37,6 +37,7 @@ from capabilities import (
     PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
     VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD, WORKING_NAV,
     CUSTOM_PROMPT, BATCH_COMPARE, RAG_CORPUS_UPLOAD, RAG_CORPUS_DELETE_OWN, RESULTS_EXPORT_CSV,
+    BENCHMARK_VIEW,
     SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN, BENCHMARK_RUN,
 )
 import benchmark
@@ -6323,12 +6324,12 @@ _BENCH_HYDRATE_JS = """
   const renderers = {video: window.wlRenderVideoCard, llm: window.wlRenderLLMCard,
                      image: window.wlRenderImageCard, rag: window.wlRenderRAGCard};
   for (const el of els) {
-    const type = el.dataset.type, kind = el.dataset.kind, jobId = el.dataset.resultId;
+    const type = el.dataset.type, kind = el.dataset.kind, jobId = el.dataset.resultId, bid = el.dataset.bid;
     const renderer = renderers[kind];
     const loading = el.querySelector('.loading');
     if (!renderer) { loading.textContent = 'no renderer for kind=' + kind; continue; }
     try {
-      const r = await fetch('/results/' + type + '/' + jobId + '/download.json');
+      const r = await fetch('/benchmark/' + bid + '/result/' + type + '/' + jobId + '.json');
       if (!r.ok) { loading.textContent = 'could not load ' + type + '/' + jobId + ' (HTTP ' + r.status + ')'; continue; }
       const data = await r.json();
       el.innerHTML = renderer({result: data, isPrev: true, savedAt: data.saved_at});
@@ -6366,7 +6367,7 @@ def _benchmark_rows_html(runs: list) -> str:
 
 
 @app.get("/benchmark", response_class=HTMLResponse,
-         dependencies=[Depends(requires(BENCHMARK_RUN))])
+         dependencies=[Depends(requires(BENCHMARK_VIEW))])
 async def benchmark_list_page():
     runs = list_results("benchmark", limit=50, visitor_key=None)
     body = (
@@ -6397,7 +6398,7 @@ async def benchmark_list_page():
 
 
 @app.get("/benchmark/{bid}", response_class=HTMLResponse,
-         dependencies=[Depends(requires(BENCHMARK_RUN))])
+         dependencies=[Depends(requires(BENCHMARK_VIEW))])
 async def benchmark_detail_page(bid: str):
     m = load_result("benchmark", bid, visitor_key=None)
     if not m:
@@ -6417,7 +6418,8 @@ async def benchmark_detail_page(bid: str):
                 + '</div>')
         ref = st.get("result_ref")
         if ref and ref.get("job_id"):
-            head += (f'<div class="bench-embed" data-type="{html_lib.escape(ref.get("type",""))}" '
+            head += (f'<div class="bench-embed" data-bid="{html_lib.escape(bid)}" '
+                     f'data-type="{html_lib.escape(ref.get("type",""))}" '
                      f'data-kind="{html_lib.escape(st.get("kind",""))}" '
                      f'data-result-id="{html_lib.escape(ref.get("job_id"))}">'
                      f'<div class="loading" style="color:var(--text-5);font-family:monospace;'
@@ -6445,6 +6447,36 @@ async def benchmark_detail_page(bid: str):
         '</head><body style="background:var(--bg)">' + body
         + _CARBON_JS + _RESULT_JS + _BENCH_HYDRATE_JS
         + '</body></html>'
+    )
+
+
+@app.get("/benchmark/{bid}/result/{job_type}/{job_id}.json",
+         dependencies=[Depends(requires(BENCHMARK_VIEW))])
+async def benchmark_result_json(bid: str, job_type: str, job_id: str):
+    """CR-061 — serve a benchmark step's result to anyone who can VIEW the
+    benchmark (Member+). The generic /results/.../download.json is visitor-
+    scoped (own-jobs only, CR-026), so a member can't load Lab-produced
+    benchmark results through it. This loads unscoped, but ONLY for (type,
+    job_id) pairs actually referenced by THIS manifest — so it can't be used
+    to read another visitor's private results."""
+    if job_type not in ("video", "llm", "image"):
+        return JSONResponse({"error": "Invalid type"}, status_code=400)
+    manifest = load_result("benchmark", bid, visitor_key=None)
+    if not manifest:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    allowed = set()
+    for st in manifest.get("steps", []):
+        ref = st.get("result_ref")
+        if ref and ref.get("job_id"):
+            allowed.add((ref.get("type"), ref.get("job_id")))
+    if (job_type, job_id) not in allowed:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    data = load_result(job_type, job_id, visitor_key=None)
+    if not data:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return StreamingResponse(
+        io.BytesIO(json.dumps(data, indent=2).encode()),
+        media_type="application/json",
     )
 
 

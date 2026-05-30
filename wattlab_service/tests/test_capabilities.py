@@ -96,9 +96,10 @@ def test_anonymous_cannot_read_full_settings():
     "batch_compare",
     "rag_corpus_upload",
     "results_export_csv",
+    "benchmark_view",
 ])
 def test_anonymous_cannot_use_member_capabilities(cap):
-    """The four Member-tier capabilities are the public/private boundary the
+    """The Member-tier capabilities are the public/private boundary the
     capability matrix calls out. Anonymous must be denied."""
     assert capabilities.can(Tier.Anonymous, cap) is False
 
@@ -108,6 +109,7 @@ def test_anonymous_cannot_use_member_capabilities(cap):
     "batch_compare",
     "rag_corpus_upload",
     "results_export_csv",
+    "benchmark_view",
 ])
 def test_member_can_use_member_capabilities(cap):
     assert capabilities.can(Tier.Member, cap) is True
@@ -259,6 +261,7 @@ def test_required_tier_table_snapshot():
         "rag_corpus_upload":     Tier.Member,
         "rag_corpus_delete_own": Tier.Member,  # CR-051
         "results_export_csv":    Tier.Member,
+        "benchmark_view":        Tier.Member,  # CR-061 — view runs/results; running stays Lab
         # Lab — instrument operators
         "settings_read_full":  Tier.Lab,
         "settings_write":      Tier.Lab,
