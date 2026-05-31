@@ -302,6 +302,7 @@ def _summarise(job_type: str, data: dict) -> dict:
             summary["confidence"] = e.get("confidence", {}).get("flag")
     else:  # llm (including rag)
         mode = data.get("mode", "single")
+        summary["mode"] = mode
         summary["model"] = data.get("model_label")
         if mode == "rag":
             summary["task"] = f"RAG/{data.get('rag_mode', 'baseline')}"

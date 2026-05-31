@@ -61,10 +61,38 @@ def test_every_finding_source_result_id_exists_on_disk():
 
 
 def test_av1_finding_result_url_shape():
-    """The download URL constructed from a source_result_id matches OWL's
-    /results/<type>/<job_id>/download.json endpoint shape."""
+    """The download URL constructed from a source_result_id points at the
+    finding-source carve-out endpoint, NOT the visitor-scoped /results one
+    (which 404s lab-measured finding sources for every non-Lab visitor)."""
     url = findings.result_download_url("video/e18a9d57")
-    assert url == "/results/video/e18a9d57/download.json"
+    assert url == "/findings/source/video/e18a9d57/download.json"
+
+
+# --- finding-source carve-out endpoint ------------------------------------
+# Regression guard for the recurring embed 404 ("could not load
+# video/<id> (HTTP 404)"). The generic /results/.../download.json applies
+# CR-026 visitor scoping, so a non-Lab visitor never matched the
+# lab-measured finding sources. The test suite runs as Lab (loopback), which
+# is precisely why that 404 stayed invisible here for so long — so these
+# tests pin the *content* and the *gate* of the dedicated carve-out, which is
+# visitor-independent by construction.
+
+def test_finding_source_endpoint_serves_cited_result():
+    r = client.get("/findings/source/video/e18a9d57/download.json")
+    assert r.status_code == 200, r.text[:300]
+    assert "e18a9d57" in str(r.json().get("job_id"))
+
+
+def test_finding_source_endpoint_rejects_uncited_result():
+    # Scoped carve-out, not a general CR-026 bypass: an id no published
+    # finding cites must 404 even if a matching file exists on disk.
+    r = client.get("/findings/source/video/not-a-cited-id/download.json")
+    assert r.status_code == 404
+
+
+def test_finding_source_endpoint_rejects_bad_type():
+    r = client.get("/findings/source/benchmark/e18a9d57/download.json")
+    assert r.status_code == 400
 
 
 # --- route ----------------------------------------------------------------

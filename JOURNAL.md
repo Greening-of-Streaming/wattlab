@@ -7,6 +7,55 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 37 — 2026-06-01
+
+Two long-standing `/demo` guided-tour bugs fixed at the root (owner: *"You've fixed both
+these problems several times, but it keeps coming back. Might need a deeper fix than the
+last times."*), plus `/findings` chrome polish.
+
+- **Tour no longer trappable on the LLM / Image steps.** Symptom: stepping to LLM (or
+  Image) offered only "run a standard generation" with no way to advance until you actually
+  ran one; Video and RAG were fine. Root cause: `/demo/last/{llm,image}` returns the
+  *newest* persisted result, which is frequently a `compare_models` / `rag_compare_models`
+  record (their `task` is `None`, so the old `"RAG"`-prefix filter never excluded them).
+  Those carry no top-level `.energy`, so `renderLLMResult` / `renderDemoImageResult` hit an
+  early-return guard that re-shows the run buttons and **never called `revealNext`** —
+  `renderVideoResult` / `renderRAGResult` have no such guard, which is exactly why Video and
+  RAG worked and LLM/Image didn't. Fixes: (1) `goStep` now reveals the step's Next button
+  **on entry** for steps 1–4 unconditionally — tour navigation is never gated on a renderer
+  recognising the pre-loaded shape (kills the whole class); (2) defensive `revealNext` added
+  to both guarded renderers' early-return branch; (3) `/demo/last/{llm,image}` now filters on
+  `mode` (single inference / single cpu-gpu image) rather than the unreliable `task` text, so
+  the single-run card never receives a compare record and shows "format not recognised".
+  Added `summary["mode"]` to the llm summariser to support the filter.
+- **Findings embeds no longer 404 for non-Lab visitors — the *real* root cause found.**
+  Symptom: every finding page showed "could not load video/<id> (HTTP 404)" for its source
+  measurements. Cited finding sources are lab-measured (`visitor_key=None`); the embed JS
+  fetched `/results/<type>/<id>/download.json`, which applies **CR-026 visitor scoping**, so a
+  non-Lab visitor (`a:<ip>` / `m:<email>`) never matched the lab record → 404, every time.
+  Prior fixes chased the job_id parsing and the markdown ids; the visitor filter was the wall.
+  **Why it kept coming back: the test suite runs as Lab (TestClient = loopback), so the scoped
+  404 was invisible to every test.** Fix: new endpoint
+  `/findings/source/{type}/{job_id}/download.json` — a *scoped* CR-026 carve-out (same pattern
+  as `/demo/last`): loads with `visitor_key=None`, but only for a result a published finding
+  actually cites (gate built from `findings.list_all()` source ids — not a general bypass).
+  Pointed both the embed-hydration JS and `findings.result_download_url` (the "raw measurement"
+  link) at it. Added 3 regression tests pinning the carve-out's content + gate, deliberately
+  visitor-independent.
+- **/findings chrome.** Index gets a "Beta · under development" badge beside the H1 + a
+  `← Home` back link (and `<title>` → "OWL — Findings (Beta)"); each finding page gets an
+  `OWL / ← All findings` breadcrumb so it's no longer a dead-end. Kept the bespoke finding
+  footer (carries permalink + version + citation metadata) rather than swapping in the full
+  `_FOOTER` with its floating queue badge / live-telemetry poller on what is a static
+  publication page.
+- **Tests 389 → 392** (391 passing). The lone failure `test_encode_norm` is pre-existing and
+  unrelated — fails identically with this session's changes stashed, tied to the uncommitted
+  `settings.json`.
+- **Not committed:** `settings.json` (live calibration/bench state, per convention) and the
+  untracked `data_exports/` + `static/dl-…` ForTania export.
+
+---
+
 ## Session 36 — 2026-05-29 (GPU swap — first light, RTX 5080)
 
 The RTX 5080 is **in the box and detected**. `gpu.BACKEND` auto-resolved to `NvidiaBackend` with zero code edits (CR-060 working as designed): card at PCI `02:00.0` (GB203), driver `610.43.02`, CUDA UMD 13.3, `OWL_GPU_VENDOR` unset. iGPU (Raphael) correctly did *not* false-detect. First investigation was the owner's question: **why is idle power so much higher with the new card.**

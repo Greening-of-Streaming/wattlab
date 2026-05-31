@@ -139,14 +139,18 @@ def resolve_result_path(result_id: str) -> Path | None:
 
 
 def result_download_url(result_id: str) -> str:
-    """Map a `<type>/<token>` source_result_id to the existing OWL endpoint
-    `/results/<type>/<job_id>/download.json`. The endpoint accepts the bare
-    job_id (last underscore-separated piece of the filename)."""
+    """Map a `<type>/<token>` source_result_id to the finding-source download
+    endpoint `/findings/source/<type>/<job_id>/download.json`.
+
+    NOT `/results/...`: that endpoint applies CR-026 own-jobs scoping, which
+    404s lab-measured finding sources (visitor_key=None) for every non-Lab
+    visitor. The /findings/source carve-out serves cited sources unfiltered.
+    Both accept the bare job_id (last underscore-separated piece)."""
     type_, token = result_id.split("/", 1)
     # `token` is usually just `<job_id>`; if a date prefix is present (legacy
     # IDs), strip it. The download endpoint accepts the bare job_id.
     job_id = token.split("_")[-1]
-    return f"/results/{type_}/{job_id}/download.json"
+    return f"/findings/source/{type_}/{job_id}/download.json"
 
 
 # --- private helpers -------------------------------------------------------

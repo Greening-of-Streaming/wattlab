@@ -6094,7 +6094,11 @@ def _finding_page_html(f, public_base_url: str) -> str:
       continue;
     }
     try {
-      const r = await fetch('/results/' + type + '/' + jobId + '/download.json');
+      // Scoped CR-026 carve-out: finding sources are lab-measured
+      // (visitor_key=None) and the generic /results endpoint would 404 them
+      // for any non-Lab visitor. /findings/source/* serves the same data
+      // unfiltered, but only for results a published finding actually cites.
+      const r = await fetch('/findings/source/' + type + '/' + jobId + '/download.json');
       if (!r.ok) {
         el.querySelector('.loading').textContent =
           'could not load ' + rid + ' (HTTP ' + r.status + ')';
@@ -6140,6 +6144,19 @@ def _finding_page_html(f, public_base_url: str) -> str:
         '</style>'
         '</head><body style="background:var(--bg)">'
         f'<div class="finding-wrap">'
+          # Breadcrumb back-nav — same palette as the site-wide _BACK chrome,
+          # but routes to the findings catalog (the finding's natural parent)
+          # as well as Home, so a finding page is no longer a dead-end.
+          f'<div style="margin-bottom:1.25rem;font-size:0.82rem;color:var(--text-3)">'
+            f'<a href="/" style="color:var(--text-3);text-decoration:none" '
+            f'onmouseover="this.style.color=\'#00ff99\'" onmouseout="this.style.color=\'#777\'">'
+            f'<img src="/static/owl.svg" alt="OWL" '
+            f'style="height:18px;width:18px;vertical-align:middle;margin-right:0.3rem">OWL</a>'
+            f'<span style="color:var(--text-5);margin:0 0.5rem">/</span>'
+            f'<a href="/findings" style="color:var(--text-3);text-decoration:none" '
+            f'onmouseover="this.style.color=\'#00ff99\'" onmouseout="this.style.color=\'#777\'">'
+            f'&larr; All findings</a>'
+          f'</div>'
           f'{supersedes_html}'
           f'<section class="finding-hero">'
             f'<h1 class="finding-headline">{e(f.headline)}</h1>'
@@ -6266,7 +6283,7 @@ def _findings_catalog_page_html() -> str:
         '<!DOCTYPE html><html><head>'
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<title>OWL — Findings</title>'
+        '<title>OWL — Findings (Beta)</title>'
         '<meta name="description" content="OWL findings — citable energy measurements from the Greening of Streaming bench.">'
         f'{_BASE_STYLES}'
         f'{_FINDINGS_CATALOG_CSS}'
@@ -6274,13 +6291,19 @@ def _findings_catalog_page_html() -> str:
           '.findings-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
           '.findings-hero{border-bottom:1px solid var(--border);padding-bottom:0.85rem;margin-bottom:1rem}'
           '.findings-title{font-size:1.25rem;line-height:1.4;margin:0 0 0.4rem 0;color:var(--accent);font-weight:600}'
+          '.findings-beta{display:inline-block;margin-left:0.5rem;vertical-align:middle;'
+            'font-family:monospace;font-size:0.62rem;font-weight:600;letter-spacing:0.04em;'
+            'text-transform:uppercase;color:var(--warn);border:1px solid var(--border-3);'
+            'background:rgba(255,170,0,0.06);padding:0.15rem 0.45rem;border-radius:2px}'
           '.findings-tagline{color:var(--text-3);font-family:monospace;font-size:0.78rem;line-height:1.55}'
           '.findings-footer{margin-top:1.5rem;padding-top:0.85rem;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-4);font-family:monospace}'
         '</style>'
         '</head><body style="background:var(--bg)">'
         '<div class="findings-wrap">'
+          f'{_BACK}'
           '<section class="findings-hero">'
-            '<h1 class="findings-title">OWL Findings</h1>'
+            '<h1 class="findings-title">OWL Findings'
+            '<span class="findings-beta">Beta · under development</span></h1>'
             '<div class="findings-tagline">'
               'Curated, citable measurements from the Greening of Streaming bench. '
               'Each finding links to its source measurement at live-run fidelity, with '
@@ -8458,14 +8481,68 @@ async def demo_last_result(job_type: str, task_eq: str | None = None):
     if task_eq:
         runs = [r for r in runs if r.get("task") == task_eq]
     elif job_type == "llm":
-        # Plain-LLM default: exclude RAG (rag, rag_compare) records.
-        runs = [r for r in runs if not (r.get("task") or "").startswith("RAG")]
+        # Plain-LLM default: only a genuine single inference. Compare/RAG
+        # records (mode=compare_models, rag_compare_models, rag, rag_compare,
+        # both, batch, all, …) persist under results/llm/ too but carry a
+        # different card shape. Pre-loading one into /demo's single-run widget
+        # rendered a "format not recognised" card and (pre-fix) trapped the
+        # tour, since the single-run renderer bailed before revealing Next.
+        # Filter on `mode` (more reliable than the `task` text — compare
+        # records have task=None, so the old "RAG" prefix test let them pass).
+        runs = [r for r in runs if r.get("mode", "single") == "single"]
+    elif job_type == "image":
+        # Same reasoning: the image step's single-run card only handles a
+        # single cpu/gpu generation, not an N-way compare_models record.
+        runs = [r for r in runs if r.get("mode", "cpu") in ("cpu", "gpu")]
     if not runs:
         return JSONResponse({"error": "no result"}, status_code=404)
     full = load_result(job_type, runs[0]["job_id"], visitor_key=None)
     if full is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     return full
+
+
+# Deep fix for the recurring findings-embed 404 (e.g. "could not load
+# video/2328a8ab (HTTP 404)").
+#
+# A published finding cites lab-measured source results, which carry
+# visitor_key=None (or the owner's key). The generic
+# /results/.../download.json applies CR-026 own-jobs scoping, so a non-Lab
+# caller (Anonymous 'a:<ip>' / Member 'm:<email>') never matches the lab
+# record and ALWAYS gets a 404 — for every embed, on every visit. Earlier
+# fixes chased the job_id parsing and the markdown ids; the real wall is the
+# visitor filter, which is why it kept coming back.
+#
+# This endpoint is the structural fix: it loads with visitor_key=None (like
+# the /demo/last carve-out), but ONLY for a result that a published finding
+# actually cites — so it is a *scoped* exception, not a general CR-026 bypass.
+# A finding source is published-by-definition and must be visible to every
+# visitor regardless of who measured it.
+@app.get("/findings/source/{job_type}/{job_id}/download.json",
+         dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def finding_source_result(job_type: str, job_id: str):
+    if job_type not in ("video", "llm", "image"):
+        return JSONResponse({"error": "Invalid type"}, status_code=400)
+    # Set of (type, token) the published catalog cites, with token normalised
+    # the same way the embed JS / result_download_url do (bare job_id = last
+    # underscore-separated segment), so date-prefixed legacy ids match too.
+    cited = set()
+    for f in findings_mod.list_all():
+        for rid in f.source_result_ids:
+            if "/" not in rid:
+                continue
+            t, tail = rid.split("/", 1)
+            cited.add((t, tail.split("_")[-1]))
+    if (job_type, job_id.split("_")[-1]) not in cited:
+        return JSONResponse({"error": "Not a cited finding source"}, status_code=404)
+    data = load_result(job_type, job_id, visitor_key=None)
+    if not data:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    content = json.dumps(data, indent=2)
+    return StreamingResponse(
+        io.BytesIO(content.encode()),
+        media_type="application/json",
+    )
 
 @app.get("/results/{job_type}/{job_id}/download.json", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def results_download_json(job_type: str, job_id: str, request: Request):
@@ -9570,14 +9647,18 @@ function goStep(n) {{
   document.getElementById('step-counter').textContent = (n + 1) + ' / 7';
   currentStep = n;
   window.scrollTo(0, 0);
+  // Tour navigation is NEVER gated on a pre-loaded result rendering. Reveal
+  // the measurement step's Next button on entry so the visitor can always
+  // advance — even when /demo/last/* returns a shape the single-run card
+  // renderer doesn't recognise (a compare/RAG record), which previously left
+  // renderLLMResult / renderDemoImageResult bailing out before revealNext and
+  // trapped the tour on the LLM and Image steps. The pre-load below is
+  // decorative: it populates the card but must not be able to block the tour.
+  if (n >= 1 && n <= 4) revealNext(n);
   if (n === 1 && !videoResult) loadVideoStep();
   if (n === 2 && !llmResult) loadLLMStep();
   if (n === 3 && !imageResult) loadImageStep();
   if (n === 4 && !ragResult) loadRAGStep();
-  if (n === 1 && videoResult) revealNext(1);
-  if (n === 2 && llmResult) revealNext(2);
-  if (n === 3 && imageResult) revealNext(3);
-  if (n === 4 && ragResult) revealNext(4);
   if (n === 6) buildSummary();
 }}
 
@@ -9889,6 +9970,7 @@ function renderLLMResult(r, savedAt, isPrev) {{
   if (!r.energy && !(r.runs && r.runs.length) && !r.summary && r.mode !== 'both') {{
     document.getElementById('llm-btns').style.display = 'flex';
     document.getElementById('llm-status').innerHTML = html;
+    revealNext(2);  // unrecognised shape ≠ trapped tour: still let them advance
     return;
   }}
   document.getElementById('llm-status').innerHTML = html;
@@ -10117,6 +10199,7 @@ function renderDemoImageResult(r) {{
     document.getElementById('image-btns').style.display = 'flex';
     document.getElementById('image-status').innerHTML =
       wlRenderImageCard({{result: r, isPrev: false}});
+    revealNext(3);  // unrecognised shape ≠ trapped tour: still let them advance
     return;
   }}
   document.getElementById('image-status').innerHTML =
