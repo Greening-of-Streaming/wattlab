@@ -1777,3 +1777,39 @@ The probe already writes per-run CSVs under `results/diagnostics/recovery_<ts>{,
 ### Pre-conference: no, but cheap (~30 min). Could slot into any session as a low-priority filler. The data starts being valuable from the moment we start logging — every missed calibration is one more datapoint that's gone forever.
 
 ---
+
+## CR-062 · S38 omnibus — unified cooldown/wait-for-idle + compare-flow & Lab-tooling fixes
+
+**Status:** ✅ shipped 2026-06-02 (S38) on `feature/cr-062-cooldown-and-lab-ux`. Umbrella CR retro-created to record a multi-theme session (agreed: one umbrella rather than splitting). 391 → 427 tests passing (the lone `test_encode_norm` failure is pre-existing and unrelated). **Known issue deferred** (see end). settings.json deliberately held out of the commit (live calibration state).
+
+**Triggered by:** a day of iterative work that shipped without a CR; created+closed for traceability before committing.
+
+### Theme 1 — Unified cooldown / wait-for-idle (the headline)
+- New settings: `cooldown_wait_for_idle` (master toggle, default ON) + `cooldown_idle_{tolerance_w,settle_polls,max_wait_s}` + `cooldown_dialog_watchdog_s`.
+- `power.cooldown_between_runs(...)` is now the **single code path** for every inter-pass cooldown (video/llm/rag/image compares + batch + variance). Toggle ON → active-probe `wait_for_thermal_floor`; OFF → fixed `*_cooldown_s` sleep. `respect_toggle=False` keeps variance on its fixed protocol.
+- Idle-wait **timeout dialog** (Wait again ≤3 / Run anyway / Cancel) for attended Lab compare runs (`allow_dialog` + `interactive_eligible` set at enqueue); `cooldown_dialog_watchdog_s` auto-applies the non-interactive fallback (one fixed sleep → proceed, `settled:false`). `power.CooldownCancelled` + `POST /job/{id}/cooldown-decision`.
+- Per-result `cooldowns:[{method,waited_s,settled,final_w,timed_out}]` stamping; result-card summary (`wlCooldownSummary`) + persistent live "Cooldowns done" log on /llm/compare & /rag/compare; honest `Rest (→ idle)` stage labels (toggle-aware `_bake_durations`); `/video` adaptive 1s-during-cooldown polling.
+- /settings: toggle greys the fixed rest fields + advanced idle tunables. Tests: `test_cooldown.py`.
+
+### Theme 2 — /video codec split
+"Compare all codecs" → three boxes: **Compare codecs · CPU**, **· GPU**, **Compare all (CPU vs GPU)**. New `video.run_codecs_single_measurement(side)`, shared `wlRenderCodecsSingle` card (fresh + expand), per-mode Previous-Runs labels, `persist._summarise` widened. Tests: `test_codecs_split.py`.
+
+### Theme 3 — Image compare 2-of-3 fix
+`_summarise` now carries the full `models` list; the **fresh** compare card was routed to the shared N-aware `wlRenderImageCard` (legacy 2-model `renderCompareModels` retired to a shim) so 3-model runs show 3 cards in both fresh and Previous-Runs views.
+
+### Theme 4 — Lab test-data cleanup
+`persist.delete_result` + Lab-gated `DELETE /results/{type}/{id}` (SETTINGS_WRITE) + a collapsed "Test data cleanup (Lab)" dropdown on /settings (dropdown is the guard; no per-delete confirm). Tests: `test_delete_result.py`.
+
+### Theme 5 — Queue resume routing
+`queue_control.enqueue(page=...)` stores `resume_page`; `snapshot` exposes it; `resumeLink` uses it (falls back to `/<type>`). Compare endpoints pass `/llm/compare` / `/rag/compare`, and those pages gained the `?job=` resume handler they lacked. Tests updated + `test_snapshot_carries_resume_page`.
+
+### Theme 6 — JS bundling fix
+Moved the cooldown dialog helpers + `wlCooldownSummary` into `_CARBON_JS` (bundled on every page) — they had been in `_PROGRESS_JS`, which the compare pages don't load, causing a `ReferenceError` in the poll loop that froze compare-page progress on the submit message. Regression guard: `test_js_bundling.py`.
+
+### Known issue (deferred — promote to active CR if it lingers)
+- **/video `Rest (→ idle)` live counter doesn't tick.** The readout line renders and the label is correct, but the seconds counter doesn't visibly increment during the GPU codec-sweep rest (adaptive 1s polling is in place; suspect the readout isn't re-rendering per poll or the rest settles within ~1 poll). Authoritative per-rest `waited_s` is still in the result JSON + card summary. To fix later.
+
+### Infra note (not code; logged here for the record)
+- GoS1 `eno2` (Realtek RTL8125 2.5GbE, r8169) link **flaps** caused intermittent loss of all remote access (DuckDNS + tailscale die together, recover together). Suspect EEE (802.3az, "enabled-active") and/or 2.5G autoneg with the firmware-updated Bbox. Mitigations to try: `ethtool --set-eee eno2 eee off`, reseat/swap cable + different Bbox port, or pin 1G. Not yet a CR.
+
+---

@@ -272,8 +272,12 @@ async def run_benchmark_job(bid: str, jobs: dict, s: dict) -> dict:
             continue
 
         sub_id = uuid.uuid4().hex[:8]
+        # Benchmark sub-steps are unattended — never offer the idle-wait timeout
+        # dialog (power.cooldown_between_runs reads this off the job dict). They
+        # bypass queue_control.enqueue, so this is the only place it'd be set.
         jobs[sub_id] = {"stage": "queued", "type": step["kind"], "label": step["label"],
-                        "benchmark_run_id": bid, "result": None, "error": None}
+                        "benchmark_run_id": bid, "result": None, "error": None,
+                        "interactive_eligible": False}
         try:
             step["result_ref"] = await m.run(step, jobs, sub_id, s)
             step["status"] = "done"

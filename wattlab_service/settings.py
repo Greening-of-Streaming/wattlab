@@ -8,6 +8,22 @@ DEFAULTS = {
     "video_cooldown_s": 60,
     "llm_rest_s": 10,
     "llm_unload_settle_s": 3,
+    # --- Unified cooldown between measurement passes (power.cooldown_between_runs) ---
+    # Master toggle. ON  → wait until wall power settles back to the captured idle
+    #                       floor before the next pass (active-probe, the rag/compare
+    #                       technique) for EVERY cooldown that respects the toggle.
+    #                 OFF → fixed sleep of the relevant *_cooldown_s / *_rest_s key.
+    # Variance calibration ignores this (respect_toggle=False) — it always runs its
+    # fixed variance_cooldown_s protocol.
+    "cooldown_wait_for_idle": True,
+    # Idle-wait tuning (were hardcoded at the 4 compare call sites pre-unification).
+    "cooldown_idle_tolerance_w": 3.0,   # settled = reading ≤ floor + this
+    "cooldown_idle_settle_polls": 3,    # consecutive in-band reads to confirm settle
+    "cooldown_idle_max_wait_s": 120,    # cap before timeout → dialog / fallback
+    # On idle-wait timeout in an ATTENDED Lab run, park the job and show the
+    # Wait-again / Run-anyway / Cancel dialog. Auto-resolve to the non-interactive
+    # default (one fixed fallback sleep, then proceed, settled:false) after:
+    "cooldown_dialog_watchdog_s": 75,
     # Confidence — poll count thresholds (kept)
     "conf_green_polls": 10,
     "conf_yellow_polls": 5,

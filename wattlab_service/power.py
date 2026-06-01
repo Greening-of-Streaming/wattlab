@@ -127,3 +127,138 @@ async def wait_for_thermal_floor(reference_w: float,
         else:
             consecutive = 0
         await asyncio.sleep(poll_interval_s)
+
+
+class CooldownCancelled(Exception):
+    """Raised by cooldown_between_runs() when the operator picks 'Cancel' in the
+    idle-wait timeout dialog. Job runners catch this to abort the run cleanly."""
+    pass
+
+
+# --- Unified cooldown dispatcher ------------------------------------------------
+# SINGLE source of truth for every inter-pass cooldown in OWL. Each call site
+# (video / llm / rag / image compares + batch) routes through here instead of an
+# inline asyncio.sleep() or a direct wait_for_thermal_floor() call, so the
+# fixed-vs-idle strategy is decided in exactly one place and is tunable from
+# /settings. Variance calibration calls with respect_toggle=False so it always
+# keeps its fixed protocol regardless of the toggle.
+async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
+                                stage="cooldown", jobs=None, job_id=None,
+                                respect_toggle=True, allow_dialog=False) -> dict:
+    """Cool down between two measurement passes.
+
+    Strategy is chosen by the `cooldown_wait_for_idle` setting:
+      • toggle OFF, or no reference_w, or respect_toggle=False
+            → fixed asyncio.sleep(fixed_seconds).            method="fixed"
+      • toggle ON
+            → active-probe wait_for_thermal_floor() to reference_w.
+              settle              → method="idle",          settled=True
+              timeout, interactive→ park job: Wait again (≤3) / Run anyway /
+                                    Cancel, with a cooldown_dialog_watchdog_s
+                                    watchdog that auto-applies the default.
+              timeout, otherwise  → ONE fixed_seconds fallback sleep, proceed.
+                                    method="idle+fallback",  settled=False
+
+    Forced-through runs carry settled=False + timed_out=True so a result is never
+    silently treated as cleanly-spaced. Returns a dict meant to be persisted into
+    the result's energy block: {method, waited_s, settled, final_w, timed_out}.
+    """
+    import asyncio
+    import settings as _settings
+    s = _settings.load()
+
+    def _stage(st):
+        if jobs is not None and job_id is not None:
+            jobs[job_id]["stage"] = st
+
+    use_idle = (respect_toggle
+                and bool(s.get("cooldown_wait_for_idle", True))
+                and reference_w is not None)
+
+    if not use_idle:
+        _stage(stage)
+        if jobs is not None and job_id is not None:
+            jobs[job_id]["cooldown_fixed_s"] = fixed_seconds
+        await asyncio.sleep(fixed_seconds)
+        return {"method": "fixed", "waited_s": float(fixed_seconds),
+                "settled": True, "final_w": None, "timed_out": False}
+
+    tol = float(s.get("cooldown_idle_tolerance_w", 3.0))
+    settle_polls = int(s.get("cooldown_idle_settle_polls", 3))
+    max_wait = int(s.get("cooldown_idle_max_wait_s", 120))
+    watchdog_s = int(s.get("cooldown_dialog_watchdog_s", 75))
+
+    total_waited = 0.0
+    re_waits = 0
+    MAX_RE_WAITS = 3
+    while True:
+        _stage(stage)
+        cd = await wait_for_thermal_floor(
+            reference_w, tolerance_w=tol, poll_interval_s=1.0,
+            settle_polls=settle_polls, max_wait_s=max_wait,
+            jobs=jobs, job_id=job_id,
+        )
+        total_waited += cd["waited_s"]
+        if cd["settled"]:
+            return {"method": "idle", "waited_s": round(total_waited, 2),
+                    "settled": True, "final_w": cd["final_w"], "timed_out": False}
+
+        # --- idle-wait timed out ---
+        # Offer the dialog only when the call site opted in (allow_dialog — set
+        # at the compare-flow sites where nothing is held across the cooldown so
+        # a Cancel unwinds cleanly) AND the run is an attended Lab one
+        # (interactive_eligible, read off the job dict — set at enqueue,
+        # overridden False by batch/benchmark). No call site threads a tier flag
+        # through the measurement functions.
+        interactive = bool(allow_dialog and jobs is not None and job_id is not None
+                           and jobs.get(job_id, {}).get("interactive_eligible"))
+        decision = "fallback"
+        if interactive and jobs is not None and job_id is not None:
+            decision = await _await_cooldown_decision(
+                jobs, job_id,
+                allow_wait_again=(re_waits < MAX_RE_WAITS),
+                watchdog_s=watchdog_s,
+            )
+
+        if decision == "wait" and re_waits < MAX_RE_WAITS:
+            re_waits += 1
+            continue
+        if decision == "cancel":
+            raise CooldownCancelled()
+        if decision == "run":
+            # Operator chose to proceed NOW — no extra sleep.
+            return {"method": "idle", "waited_s": round(total_waited, 2),
+                    "settled": False, "final_w": cd["final_w"], "timed_out": True}
+        # 'fallback' — non-interactive default or watchdog expiry: one fixed
+        # sleep guarantees a minimum gap, then proceed.
+        _stage(stage)
+        if jobs is not None and job_id is not None:
+            jobs[job_id]["cooldown_fixed_s"] = fixed_seconds
+        await asyncio.sleep(fixed_seconds)
+        total_waited += fixed_seconds
+        return {"method": "idle+fallback", "waited_s": round(total_waited, 2),
+                "settled": False, "final_w": cd["final_w"], "timed_out": True}
+
+
+async def _await_cooldown_decision(jobs, job_id, *, allow_wait_again, watchdog_s):
+    """Park the job awaiting an operator click on the idle-wait timeout dialog.
+    The POST /job/{id}/cooldown-decision endpoint writes
+    jobs[job_id]['cooldown_decision']. Returns 'wait' | 'run' | 'cancel', or
+    'fallback' if no answer arrives within watchdog_s."""
+    import asyncio, time
+    jobs[job_id]["cooldown_decision"] = None
+    jobs[job_id]["cooldown_decision_options"] = (
+        ["wait", "run", "cancel"] if allow_wait_again else ["run", "cancel"]
+    )
+    jobs[job_id]["stage"] = "awaiting_cooldown_decision"
+    t0 = time.time()
+    try:
+        while time.time() - t0 < watchdog_s:
+            d = jobs[job_id].get("cooldown_decision")
+            if d in ("wait", "run", "cancel"):
+                return d
+            await asyncio.sleep(0.5)
+        return "fallback"
+    finally:
+        jobs[job_id]["cooldown_decision"] = None
+        jobs[job_id].pop("cooldown_decision_options", None)

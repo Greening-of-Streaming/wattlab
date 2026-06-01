@@ -10,7 +10,7 @@ from pathlib import Path
 from video import focus_mode_enter, focus_mode_exit
 import settings as cfg
 from confidence import confidence
-from power import get_power_watts, read_sensors_dict
+from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 import gpu
 
 # GPU-vendor env (must be set before torch import). On AMD this sets the ROCm
@@ -365,11 +365,14 @@ async def run_image_both_measurement(prompt: str, job_id: str,
     cpu_result = await _run_single_image(full_prompt, "cpu", job_id, jobs,
                                           "cpu", stopped, model_key=model_key)
 
-    # --- Cooldown ---
-    if jobs is not None:
-        jobs[job_id]["stage"] = "cooldown"
-    cooldown = s.get("video_cooldown_s", 30)
-    await asyncio.sleep(cooldown)
+    # --- Cooldown (unified dispatcher: idle-wait or fixed per settings) ---
+    # reference_w = the CPU pass's cold baseline. Binary compare → allow_dialog
+    # stays False (focus/lock held across this gap, no try/finally here).
+    cd_cpu_gpu = await cooldown_between_runs(
+        fixed_seconds=s.get("video_cooldown_s", 30),
+        reference_w=(cpu_result.get("energy") or {}).get("w_base"),
+        stage="cooldown", jobs=jobs, job_id=job_id,
+    )
 
     # --- GPU pass ---
     gpu_result = await _run_single_image(full_prompt, "gpu", job_id, jobs,
@@ -395,6 +398,7 @@ async def run_image_both_measurement(prompt: str, job_id: str,
         "cpu": cpu_result,
         "gpu": gpu_result,
         "analysis": analysis,
+        "cooldown": cd_cpu_gpu,
         "scope": (f"Device layer only (GoS1). CPU vs GPU comparison. "
                   f"Model: {cfg_m['label']} ({cfg_m['params']}). "
                   f"No amortised training cost."),
@@ -415,8 +419,6 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
       cooldowns=[per-gap diagnostics],
       small/large aliases for backwards-compat with legacy 2-model renderers.
     """
-    from power import wait_for_thermal_floor
-
     panel = list(IMAGE_MODELS.keys())
     if len(panel) < 2:
         raise ValueError("compare-models requires at least 2 enabled image models")
@@ -449,10 +451,11 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
             if idx > 1 and floor_reference_w is not None:
                 if jobs is not None:
                     jobs[job_id]["stage"] = "cooldown"
-                cd = await wait_for_thermal_floor(
-                    floor_reference_w, tolerance_w=3.0, poll_interval_s=1.0,
-                    settle_polls=3, max_wait_s=120,
-                    jobs=jobs, job_id=job_id,
+                cd = await cooldown_between_runs(
+                    fixed_seconds=cfg.load().get("video_cooldown_s", 60),
+                    reference_w=floor_reference_w,
+                    stage="cooldown", jobs=jobs, job_id=job_id,
+                    allow_dialog=True,
                 )
                 cooldowns.append({"before_model": mk, **cd})
             slot = f"m{idx}"

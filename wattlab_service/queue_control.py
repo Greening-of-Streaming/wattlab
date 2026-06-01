@@ -114,7 +114,7 @@ def start(jobs: dict, lock_file: Path) -> asyncio.Task:
 
 
 def enqueue(job_id: str, job_type: str, label: str, coro_fn,
-            *, request: "Request | None" = None):
+            *, request: "Request | None" = None, page: "str | None" = None):
     """Add a job to the FIFO queue.
 
     Returns the 1-based queue position, or None if the queue is full
@@ -138,6 +138,14 @@ def enqueue(job_id: str, job_type: str, label: str, coro_fn,
         "stage": "queued", "queue_position": position,
         "type": job_type, "label": label,
         "result": None, "error": None,
+        # Attended Lab runs (vk is None) may be offered the idle-wait timeout
+        # dialog by power.cooldown_between_runs. Members/Anonymous, batch and
+        # benchmark runs are never interactive (the latter override this False).
+        "interactive_eligible": vk is None,
+        # Page to reconnect to from /queue-status ↩ Resume. Defaults (None) to
+        # /<job_type>; sub-pages like /llm/compare & /rag/compare pass it
+        # explicitly so Resume lands on the page the job was started from.
+        "resume_page": page,
     }
     pending_queue.append({
         "job_id": job_id, "type": job_type,
@@ -185,9 +193,11 @@ def snapshot() -> dict:
             "stage": j.get("stage"),
             "type": j.get("type"),
             "label": j.get("label"),
+            "resume_page": j.get("resume_page"),
         }
     pending_info = [
-        {"job_id": e["job_id"], "type": e["type"], "label": e["label"], "position": i + 1}
+        {"job_id": e["job_id"], "type": e["type"], "label": e["label"], "position": i + 1,
+         "resume_page": (_jobs.get(e["job_id"]) or {}).get("resume_page")}
         for i, e in enumerate(pending_queue)
     ]
     return {

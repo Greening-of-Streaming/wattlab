@@ -162,6 +162,7 @@ def test_snapshot_running_job_populated():
         "stage": "measuring",
         "type": "video",
         "label": "h264-cpu",
+        "resume_page": None,
     }
 
 
@@ -170,8 +171,15 @@ def test_snapshot_pending_jobs_listed_with_positions():
     queue_control.enqueue("j2", "llm", "b", _noop_coro())
     snap = queue_control.snapshot()
     assert len(snap["pending"]) == 2
-    assert snap["pending"][0] == {"job_id": "j1", "type": "video", "label": "a", "position": 1}
-    assert snap["pending"][1] == {"job_id": "j2", "type": "llm",   "label": "b", "position": 2}
+    assert snap["pending"][0] == {"job_id": "j1", "type": "video", "label": "a", "position": 1, "resume_page": None}
+    assert snap["pending"][1] == {"job_id": "j2", "type": "llm",   "label": "b", "position": 2, "resume_page": None}
+
+
+def test_snapshot_carries_resume_page():
+    # Sub-pages (e.g. /rag/compare) pass page= so ↩ Resume lands on the right page.
+    queue_control.enqueue("jc", "rag", "RAG compare", _noop_coro(), page="/rag/compare")
+    snap = queue_control.snapshot()
+    assert snap["pending"][0]["resume_page"] == "/rag/compare"
 
 
 # --- Per-tier concurrent-job cap (CR-001 part D) ----------------------------

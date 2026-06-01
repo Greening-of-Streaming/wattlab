@@ -10,13 +10,13 @@ from fastapi import FastAPI, File, UploadFile, Form, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
-from power import get_power_watts, read_sensors_dict
+from power import get_power_watts, read_sensors_dict, CooldownCancelled
 import gpu
 import video as vid
-from video import run_video_measurement, run_both_measurement, run_all_measurement, run_video_measurement_path, run_both_measurement_path, UPLOAD_DIR, LOCK_FILE
+from video import run_video_measurement, run_both_measurement, run_all_measurement, run_codecs_single_measurement, run_video_measurement_path, run_both_measurement_path, UPLOAD_DIR, LOCK_FILE
 from sources import get_all_sources, get_grouped_sources, PRELOADED
 from llm import run_llm_measurement, run_llm_batch_measurement, run_llm_both_measurement, MODELS, TASKS, COMPARE_PROMPTS, grade as llm_grade
-from persist import save_result, list_results, load_result, to_csv
+from persist import save_result, list_results, load_result, to_csv, delete_result
 from image_gen import (run_image_measurement, run_image_both_measurement,
                         run_image_compare_models_measurement, IMAGE_MODELS,
                         IMAGE_STEPS_CPU, IMAGE_STEPS_GPU, GPU_BATCH_SIZE)
@@ -832,6 +832,67 @@ _CARBON_JS = """
   //                   the 24/7 projection multiplier scales each sub-run by
   //                   its own duration, not the headline's
   // Single-run callers pass null/undefined and behave unchanged.
+  // Idle-wait timeout dialog (attended Lab runs). Here in _CARBON_JS (IIFE → must
+  // attach to window) so it's available on every page the poll loops run on,
+  // including /llm/compare & /rag/compare which don't load _PROGRESS_JS.
+  var _wlCdShown = false;
+  window.wlCooldownDialogClose = function(){
+    var ov = document.getElementById('wl-cd-overlay');
+    if (ov) ov.remove();
+    _wlCdShown = false;
+  };
+  window.wlCooldownDecide = function(jobId, decision){
+    var body = new URLSearchParams();
+    body.append('decision', decision);
+    fetch('/job/' + jobId + '/cooldown-decision', {method: 'POST', body: body}).catch(function(){});
+    window.wlCooldownDialogClose();
+  };
+  window.wlCooldownDialog = function(jobId, options){
+    if (_wlCdShown) return;
+    _wlCdShown = true;
+    options = (options && options.length) ? options : ['run', 'cancel'];
+    var labels = {wait: '⟳ Wait again', run: '▶ Run anyway', cancel: '✕ Cancel run'};
+    var colors = {wait: 'var(--accent)', run: 'var(--warn)', cancel: 'var(--err)'};
+    var ov = document.createElement('div');
+    ov.id = 'wl-cd-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+    var box = document.createElement('div');
+    box.style.cssText = 'background:var(--bg);border:1px solid var(--warn);max-width:440px;padding:1.5rem;font-family:monospace';
+    var title = document.createElement('div');
+    title.style.cssText = 'color:var(--warn);font-size:1rem;margin-bottom:0.6rem';
+    title.textContent = 'Cooldown did not reach the idle floor';
+    var msg = document.createElement('div');
+    msg.style.cssText = 'color:var(--text-3);font-size:0.82rem;line-height:1.5;margin-bottom:1rem';
+    msg.textContent = 'Power has not settled back to the idle floor within the max wait. Run anyway proceeds now and records the next run as not cleanly spaced (settled:false). If unanswered, it auto-proceeds (one fixed rest, then run) after the watchdog.';
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:0.5rem;flex-wrap:wrap';
+    options.forEach(function(o){
+      var b = document.createElement('button');
+      b.textContent = labels[o] || o;
+      b.style.cssText = 'font-family:monospace;font-size:0.85rem;padding:0.5rem 0.9rem;cursor:pointer;background:var(--panel);border:1px solid ' + (colors[o] || 'var(--border)') + ';color:' + (colors[o] || 'var(--text)');
+      b.onclick = function(){ window.wlCooldownDecide(jobId, o); };
+      row.appendChild(b);
+    });
+    box.appendChild(title); box.appendChild(msg); box.appendChild(row);
+    ov.appendChild(box);
+    document.body.appendChild(ov);
+  };
+
+  // Compact summary of the inter-run cooldowns stamped on a result
+  // (r.cooldowns = [{method, waited_s, settled, timed_out}, …]). Generic across
+  // llm / rag / image / video compares. Returns '' when absent (old results).
+  // Lives in _CARBON_JS so it's available on every page wlCarbonStrip is.
+  window.wlCooldownSummary = function(cooldowns){
+    if (!cooldowns || !cooldowns.length) return '';
+    var parts = cooldowns.map(function(c){
+      var s = (c && c.waited_s != null) ? Number(c.waited_s).toFixed(0) + 's' : '?';
+      var m = (c && c.method === 'fixed') ? 'fixed' : (c && c.settled ? 'idle' : 'idle\\u2192fallback');
+      return s + ' (' + m + ')';
+    });
+    return '<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.5rem">'
+         + '\\u23f3 Cooldowns between runs: ' + parts.join(' \\u00b7 ') + '</div>';
+  };
+
   window.wlCarbonStrip = function(wh, label, durationS, savedIntensityG, subRuns){
     if (wh == null || isNaN(wh)) return '';
     var elId = 'carbon-strip-' + Math.random().toString(36).slice(2,9);
@@ -1874,13 +1935,17 @@ function wlRenderQueued(pos, opts) {
         + '<div style="color:var(--text-3);font-size:0.82rem">Another measurement is running. Your job will start automatically.</div>'
         + '</div>';
 }
+// (Idle-wait timeout dialog helpers wlCooldownDialog/Close/Decide live in
+// _CARBON_JS \u2014 bundled on every page incl. /llm/compare & /rag/compare, which
+// don't load _PROGRESS_JS. Keeping them here caused a ReferenceError in those
+// pages' poll loops that froze the progress on the submit message.)
 // Shared per-workload stage labels \u2014 referenced from main pages and
 // from /demo's poll loops, so the stage list can't drift between them.
 // Static expected-duration suffix (e.g. "Baseline (10s)", "Cooldown (90s)")
 // is baked at module load via the .replace() chain below \u2014 keeps the
 // visitor oriented during long quiet stages without a live timer (which
 // would imply more precision than the static expectation actually has).
-var WL_VIDEO_STAGES = ['Baseline ({BASELINE_S}s)', 'Encoding', 'Cooldown ({COOLDOWN_S}s)', 'Complete'];
+var WL_VIDEO_STAGES = ['Baseline ({BASELINE_S}s)', 'Encoding', '{COOLDOWN_LABEL}', 'Complete'];
 var WL_LLM_STAGES   = ['Baseline ({BASELINE_S}s)', 'Inference running', 'Complete'];
 var WL_IMAGE_STAGES = ['Baseline ({BASELINE_S}s)', 'Generating image', 'Complete'];
 var WL_RAG_STAGES   = ['Baseline poll ({BASELINE_S}s)', 'Inference running', 'Complete'];
@@ -1891,9 +1956,18 @@ var WL_RAG_STAGES   = ['Baseline poll ({BASELINE_S}s)', 'Inference running', 'Co
 # refresh, same constraint /methodology's baseline copy already documents.
 def _bake_durations(template: str) -> str:
     s = cfg.load()
+    cd = str(s.get("video_cooldown_s", "\u2014"))
+    # When wait-for-idle is on, the rest is NOT a fixed Xs sleep \u2014 it runs until
+    # wall power returns to the idle floor (up to cooldown_idle_max_wait_s). So
+    # the label must not claim a fixed "(10s)" or it reads as a fixed cooldown.
+    idle_on = bool(s.get("cooldown_wait_for_idle", True))
+    rest_label     = "Rest (\u2192 idle)"     if idle_on else f"Rest ({cd}s)"
+    cooldown_label = "Cooldown (\u2192 idle)" if idle_on else f"Cooldown ({cd}s)"
     return (template
+            .replace("{REST_LABEL}", rest_label)
+            .replace("{COOLDOWN_LABEL}", cooldown_label)
             .replace("{BASELINE_S}", str(s.get("baseline_polls", "\u2014")))
-            .replace("{COOLDOWN_S}", str(s.get("video_cooldown_s", "\u2014")))
+            .replace("{COOLDOWN_S}", cd)
             .replace("{LLM_REST_S}", str(s.get("llm_rest_s", "\u2014"))))
 
 _PROGRESS_JS = _bake_durations(_PROGRESS_JS)
@@ -2021,6 +2095,80 @@ _RESULT_JS = """<script>
   };
 
   // \u2500\u2500\u2500 Video \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // Single-device codec sweep card (modes codecs_cpu / codecs_gpu). One shared
+  // helper used by BOTH the /video fresh-run renderResult and the prev-row /
+  // cross-page wlRenderVideoCard, so the card can't drift between the two.
+  window.wlRenderCodecsSingle = function(r){
+    var codecs = r.codecs || {};
+    var a = r.analysis || {};
+    var side = r.side || (r.mode === 'codecs_gpu' ? 'gpu' : 'cpu');
+    var sideLbl = side.toUpperCase();
+    var devLbl = side === 'gpu' ? 'GPU (hardware)' : 'CPU (software)';
+    var codecOrder = [['h264','H.264'],['h265','H.265'],['av1','AV1']];
+    var rows = '', subRuns = [], bestVmaf = null, bestVmafLbl = null;
+    codecOrder.forEach(function(co){
+      var key = co[0], lbl = co[1];
+      var c = codecs[key]; if (!c) return;
+      var sub = c[side]; if (!sub || !sub.energy) return;
+      var e = sub.energy;
+      var conf = (e.confidence && e.confidence.flag) || '';
+      var isEff  = a.most_efficient && a.most_efficient.codec === key;
+      var isFast = a.fastest && a.fastest.codec === key;
+      if (sub.vmaf != null && (bestVmaf == null || sub.vmaf > bestVmaf)) {
+        bestVmaf = sub.vmaf; bestVmafLbl = lbl;
+      }
+      rows += '<tr>'
+        + '<td style="text-align:left;color:var(--text);padding:0.3rem 0.5rem">'
+        + lbl + (isEff ? ' ✓' : '') + (isFast ? ' \U0001F3C1' : '') + '</td>'
+        + '<td style="text-align:right;padding:0.3rem 0.5rem">' + _f(e.delta_t_s,1) + 's</td>'
+        + '<td style="text-align:right;color:' + (isEff?'var(--accent)':'var(--text-3)')
+        + ';padding:0.3rem 0.5rem">' + _f(e.delta_e_wh,4) + ' Wh</td>'
+        + '<td style="text-align:right;color:var(--text-3);padding:0.3rem 0.5rem">' + _f(sub.output_size_mb,2) + ' MB</td>'
+        + '<td style="text-align:right;color:var(--text-3);padding:0.3rem 0.5rem">' + _f(sub.vmaf,1) + '</td>'
+        + '<td style="text-align:center;padding:0.3rem 0.5rem">' + conf + '</td>'
+        + '</tr>';
+      if (e.co2e) subRuns.push({label: sub.preset_label || (lbl+' '+sideLbl),
+                                grams: e.co2e.grams, deltaWh: e.delta_e_wh, durationS: e.delta_t_s});
+    });
+    var bestE = null, bestLabel = null;
+    if (a.most_efficient && a.most_efficient.codec) {
+      var mc = (codecs[a.most_efficient.codec] || {})[side];
+      if (mc && mc.energy) { bestE = mc.energy; bestLabel = a.most_efficient.label; }
+    }
+    var stripWh = bestE ? bestE.delta_e_wh : null;
+    var stripDur = bestE ? bestE.delta_t_s : null;
+    var stripSavedG = bestE && bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
+    var stripLabel = (bestLabel || 'Most efficient') + ' · most efficient codec on ' + sideLbl;
+    var parts = [];
+    if (a.most_efficient) parts.push('<span>⚡ Most efficient: <span style="color:var(--accent)">'
+        + a.most_efficient.label + ' (' + a.most_efficient.delta_e_wh + ' Wh)</span></span>');
+    if (a.fastest) parts.push('<span>\U0001F3C1 Fastest: <span style="color:var(--accent)">'
+        + a.fastest.label + ' (' + a.fastest.delta_t_s + 's)</span></span>');
+    if (bestVmafLbl) parts.push('<span>\U0001F3AF Best quality: <span style="color:var(--accent)">'
+        + bestVmafLbl + ' (' + _f(bestVmaf,1) + ' VMAF)</span></span>');
+    var highlights = parts.length
+      ? '<div style="display:flex;gap:1.5rem;flex-wrap:wrap;font-size:0.85rem;margin-bottom:0.75rem">'
+        + parts.join('') + '</div>'
+      : '';
+    return '<div class="result-card">'
+      + '<h2 style="margin-bottom:0.5rem">Codecs on ' + devLbl + ' — Energy & Quality</h2>'
+      + highlights
+      + '<table style="width:100%;border-collapse:collapse;font-size:0.82rem;font-family:monospace;margin-bottom:0.5rem">'
+      + '<thead><tr style="color:var(--text-4);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em">'
+      + '<th style="text-align:left;padding:0.3rem 0.5rem 0.5rem 0">Codec</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">Time</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">Energy</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">Output</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">VMAF</th>'
+      + '<th style="text-align:center;padding:0.3rem 0.5rem">Conf</th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>'
+      + '<div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.5rem">'
+      + '✓ most efficient · \U0001F3C1 fastest · same source + target bitrate · VMAF = perceptual quality 0–100 (higher better)</div>'
+      + (stripWh != null ? wlCarbonStrip(stripWh, stripLabel, stripDur, stripSavedG, subRuns) : '')
+      + '<p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>'
+      + '</div>';
+  };
+
   window.wlRenderVideoCard = function(opts){
     var r = (opts && opts.result) || {};
     var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
@@ -2123,6 +2271,9 @@ _RESULT_JS = """<script>
             + '</div>';
       return html;
     }
+    if (r.mode === 'codecs_cpu' || r.mode === 'codecs_gpu') {
+      return html + window.wlRenderCodecsSingle(r);
+    }
     if (r.mode === 'both') {
       var cpu = r.cpu || {}, gpu = r.gpu || {}, a = r.analysis || {};
       var ce = cpu.energy, ge = gpu.energy;
@@ -2209,7 +2360,7 @@ _RESULT_JS = """<script>
       + '<thead><tr style="color:var(--text-4);font-size:0.7rem;text-transform:uppercase">'
       + '<th style="text-align:left;padding:0.3rem 0.5rem">Model</th><th style="padding:0.3rem 0.5rem">OK</th><th style="padding:0.3rem 0.5rem">Conf</th>'
       + '<th style="text-align:right;padding:0.3rem 0.5rem">Tokens</th><th style="text-align:right;padding:0.3rem 0.5rem">mWh/tok</th><th style="text-align:right;padding:0.3rem 0.5rem">ΔE Wh</th></tr></thead>'
-      + '<tbody>' + rows + '</tbody></table>' + errs + '</div>';
+      + '<tbody>' + rows + '</tbody></table>' + errs + wlCooldownSummary(r.cooldowns) + '</div>';
   }
 
   window.wlRenderLLMCard = function(opts){
@@ -2516,6 +2667,7 @@ _RESULT_JS = """<script>
                                 'Image · cheapest of ' + perModel.length + ' models (' + bestM.label + ')',
                                 bestM.energy.delta_t_s, bestSavedG, subRunsCM)
                 : '')
+            + wlCooldownSummary(r.cooldowns)
             + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
             + '</div>';
       return html;
@@ -3025,11 +3177,29 @@ async def video_page(request: Request):
     </div>
 
     {lk_batch_badge}
+    <div class="{lk_batch_class}" style="border:1px solid #00ff9933;padding:0.9rem 1rem;margin-bottom:0.6rem;
+                display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem"
+         id="preset-codecs_cpu" onclick="if(CAN_BATCH_COMPARE) selectPreset('codecs_cpu')">
+        <div>
+            <div style="color:var(--accent);font-size:0.9rem;font-weight:bold">Compare codecs · CPU (software)</div>
+            <div style="color:var(--text-3);font-size:0.75rem;margin-top:0.2rem">H.264 · H.265 · AV1 on CPU · same source · same target bitrate — which codec is cheapest in software</div>
+        </div>
+        <div style="color:var(--text-4);font-size:0.75rem">~3× longer · locks queue</div>
+    </div>
+    <div class="{lk_batch_class}" style="border:1px solid #00ff9933;padding:0.9rem 1rem;margin-bottom:0.6rem;
+                display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem"
+         id="preset-codecs_gpu" onclick="if(CAN_BATCH_COMPARE) selectPreset('codecs_gpu')">
+        <div>
+            <div style="color:var(--accent);font-size:0.9rem;font-weight:bold">Compare codecs · GPU (hardware)</div>
+            <div style="color:var(--text-3);font-size:0.75rem;margin-top:0.2rem">H.264 · H.265 · AV1 on GPU · same source · same target bitrate — which codec is cheapest in hardware</div>
+        </div>
+        <div style="color:var(--text-4);font-size:0.75rem">~3× longer · locks queue</div>
+    </div>
     <div class="{lk_batch_class}" style="border:1px solid #00ff9933;padding:0.9rem 1rem;margin-bottom:1.5rem;
                 display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem"
          id="preset-all_codecs" onclick="if(CAN_BATCH_COMPARE) selectPreset('all_codecs')">
         <div>
-            <div style="color:var(--accent);font-size:0.9rem;font-weight:bold">Compare all codecs</div>
+            <div style="color:var(--accent);font-size:0.9rem;font-weight:bold">Compare all (CPU vs GPU)</div>
             <div style="color:var(--text-3);font-size:0.75rem;margin-top:0.2rem">H.264 · H.265 · AV1 · CPU + GPU · same source · same target bitrate — full matrix</div>
         </div>
         <div style="color:var(--text-4);font-size:0.75rem">~6× longer · locks queue</div>
@@ -3163,10 +3333,10 @@ async def video_page(request: Request):
     const _SINGLE = ['Baseline ({{BASELINE_S}}s)', 'Encode', 'Done'];
     const _SINGLE_MAP = {{'starting':0, 'baseline':0, 'cpu_encode':1, 'gpu_encode':1,
                           'h265_cpu_encode':1, 'h265_gpu_encode':1, 'av1_cpu_encode':1, 'done':2}};
-    const _BOTH_STAGES = ['Baseline ({{BASELINE_S}}s)', 'CPU encode', 'Rest ({{COOLDOWN_S}}s)', 'Baseline 2 ({{BASELINE_S}}s)', 'GPU encode', 'VMAF (quality)', 'Done'];
+    const _BOTH_STAGES = ['Baseline ({{BASELINE_S}}s)', 'CPU encode', '{{REST_LABEL}}', 'Baseline 2 ({{BASELINE_S}}s)', 'GPU encode', 'VMAF (quality)', 'Done'];
     const _BOTH_MAP = {{'starting':0, 'baseline':0, 'cpu_encode':1, 'rest':2,
                         'baseline_2':3, 'gpu_encode':4, 'vmaf':5, 'done':6}};
-    const _ALL_STAGES = ['H.264 CPU','Rest ({{COOLDOWN_S}}s)','H.264 GPU','Rest ({{COOLDOWN_S}}s)','H.265 CPU','Rest ({{COOLDOWN_S}}s)','H.265 GPU','Rest ({{COOLDOWN_S}}s)','AV1 CPU','Rest ({{COOLDOWN_S}}s)','AV1 GPU','VMAF (quality)','Done'];
+    const _ALL_STAGES = ['H.264 CPU','{{REST_LABEL}}','H.264 GPU','{{REST_LABEL}}','H.265 CPU','{{REST_LABEL}}','H.265 GPU','{{REST_LABEL}}','AV1 CPU','{{REST_LABEL}}','AV1 GPU','VMAF (quality)','Done'];
     const _ALL_MAP = {{'starting':0,
         'h264_cpu_baseline':0,'h264_cpu_encode':0,
         'h264_rest':1,
@@ -3181,6 +3351,23 @@ async def video_page(request: Request):
         'av1_gpu_baseline':10,'av1_gpu_encode':10,
         'vmaf':11,
         'done':12}};
+    // Single-device codec sweeps (3 codecs on one device).
+    const _CODECS_CPU_STAGES = ['H.264 CPU','{{REST_LABEL}}','H.265 CPU','{{REST_LABEL}}','AV1 CPU','VMAF (quality)','Done'];
+    const _CODECS_GPU_STAGES = ['H.264 GPU','{{REST_LABEL}}','H.265 GPU','{{REST_LABEL}}','AV1 GPU','VMAF (quality)','Done'];
+    const _CODECS_CPU_MAP = {{'starting':0,
+        'h264_cpu_baseline':0,'h264_cpu_encode':0,
+        'h265_cpu_rest':1,
+        'h265_cpu_baseline':2,'h265_cpu_encode':2,
+        'av1_cpu_rest':3,
+        'av1_cpu_baseline':4,'av1_cpu_encode':4,
+        'vmaf':5,'done':6}};
+    const _CODECS_GPU_MAP = {{'starting':0,
+        'h264_gpu_baseline':0,'h264_gpu_encode':0,
+        'h265_gpu_rest':1,
+        'h265_gpu_baseline':2,'h265_gpu_encode':2,
+        'av1_gpu_rest':3,
+        'av1_gpu_baseline':4,'av1_gpu_encode':4,
+        'vmaf':5,'done':6}};
     const STAGES = {{
         cpu:        _SINGLE,
         gpu:        _SINGLE,
@@ -3192,6 +3379,8 @@ async def video_page(request: Request):
         h265_both:  _BOTH_STAGES,
         av1_both:   _BOTH_STAGES,
         all_codecs: _ALL_STAGES,
+        codecs_cpu: _CODECS_CPU_STAGES,
+        codecs_gpu: _CODECS_GPU_STAGES,
     }};
 
     const STAGE_MAP = {{
@@ -3205,18 +3394,23 @@ async def video_page(request: Request):
         h265_both:  _BOTH_MAP,
         av1_both:   _BOTH_MAP,
         all_codecs: _ALL_MAP,
+        codecs_cpu: _CODECS_CPU_MAP,
+        codecs_gpu: _CODECS_GPU_MAP,
     }};
 
     function selectPreset(key) {{
         selectedPreset = key;
         document.querySelectorAll('.preset').forEach(el => el.classList.remove('selected'));
-        // also reset all_codecs highlight
-        const allEl = document.getElementById('preset-all_codecs');
-        if (allEl) allEl.style.borderColor = '#00ff9933';
+        // reset the batch-sweep box highlights (all-codecs + the two single-device sweeps)
+        const BATCH_BOXES = ['all_codecs', 'codecs_cpu', 'codecs_gpu'];
+        BATCH_BOXES.forEach(k => {{
+            const b = document.getElementById('preset-' + k);
+            if (b) b.style.borderColor = '#00ff9933';
+        }});
         const el = document.getElementById('preset-' + key);
         if (el) {{
             el.classList.add('selected');
-            if (key === 'all_codecs') el.style.borderColor = '#00ff99';
+            if (BATCH_BOXES.includes(key)) el.style.borderColor = '#00ff99';
         }}
         fetchCmdPreview(key);
     }}
@@ -3236,6 +3430,19 @@ async def video_page(request: Request):
                      + 'VMAF \xb7 ' + (data.vmaf_done || 0) + ' of ' + data.vmaf_total
                      + ' encode' + (data.vmaf_total > 1 ? 's' : '') + ' scored</div>';
         }}
+        // Idle-wait cooldown readout. cooldown_waited_s is set ONLY by the
+        // active-probe path (power.wait_for_thermal_floor) \u2014 so when this line
+        // shows, the cooldown is genuinely waiting for the idle floor, not the
+        // fixed Rest(Xs) the static stage label implies. Absent => fixed rest.
+        let cdLine = '';
+        if (data && data.cooldown_waited_s != null && serverStage &&
+            (serverStage.indexOf('rest') !== -1 || serverStage.indexOf('cooldown') !== -1)) {{
+            const ref = data.cooldown_reference_w != null ? Number(data.cooldown_reference_w).toFixed(1) + 'W' : '?';
+            const cw  = data.cooldown_w != null ? Number(data.cooldown_w).toFixed(1) + 'W' : '?';
+            cdLine = '<div style="color:var(--warn);font-size:0.72rem;margin-top:0.4rem">'
+                   + '\u23f3 Waiting for idle floor \xb7 ' + Number(data.cooldown_waited_s).toFixed(0)
+                   + 's \xb7 now ' + cw + ' \xb7 target \u2264 ' + ref + '+3W</div>';
+        }}
         wlRenderProgress({{
             header: 'Running measurement \u2014 do not close this tab',
             stagesHtml: wlStageList(stages, currentStage),
@@ -3244,7 +3451,7 @@ async def video_page(request: Request):
             progressPct: data && data.progress_pct,
             etaS:        data && data.eta_s,
             encodeSpeed: data && data.encode_speed,
-            extraHtml: vmafLine + '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.4rem">Job: ' + jobId + ' \xb7 polling every 5s</div>',
+            extraHtml: vmafLine + cdLine + '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.4rem">Job: ' + jobId + '</div>',
         }});
     }}
 
@@ -3328,7 +3535,14 @@ async def video_page(request: Request):
                 setTimeout(() => pollJob(jobId, mode), 3000);
             }} else {{
                 renderProgress(jobId, mode, data.stage || "starting", watts, data);
-                setTimeout(() => pollJob(jobId, mode), 5000);
+                // Poll fast during an idle-wait cooldown so the "waiting Xs for
+                // floor" readout actually shows — GPU rests settle in a few
+                // seconds and were slipping between the 5s polls. Normal cadence
+                // otherwise (encodes are long).
+                const _st = data.stage || '';
+                const _inCooldown = data.cooldown_waited_s != null &&
+                    (_st.indexOf('rest') !== -1 || _st.indexOf('cooldown') !== -1);
+                setTimeout(() => pollJob(jobId, mode), _inCooldown ? 1000 : 2000);
             }}
         }} catch(e) {{
             setTimeout(() => pollJob(jobId, mode), 5000);
@@ -3651,6 +3865,8 @@ async def video_page(request: Request):
             html = renderBoth(r) + links;
         }} else if (r.mode === 'all_codecs') {{
             html = renderAllCodecs(r) + links;
+        }} else if (r.mode === 'codecs_cpu' || r.mode === 'codecs_gpu') {{
+            html = window.wlRenderCodecsSingle(r) + links;
         }} else {{
             html = renderSingle(r.result) + links;
         }}
@@ -3679,7 +3895,11 @@ async def video_page(request: Request):
                 codec = [r.cpu_preset, r.gpu_preset].filter(Boolean).join(' vs ');
                 summary = `CPU ${{r.cpu_delta_e_wh}} Wh ${{r.cpu_confidence ? '<span class="conf-badge">'+r.cpu_confidence+'</span>' : ''}} · GPU ${{r.gpu_delta_e_wh}} Wh ${{r.gpu_confidence ? '<span class="conf-badge">'+r.gpu_confidence+'</span>' : ''}}`;
             }} else if (r.mode === 'all_codecs') {{
-                codec = 'H.264 · H.265 · AV1 — all codecs';
+                codec = 'H.264 · H.265 · AV1 — all codecs (CPU vs GPU)';
+                summary = `Best: ${{r.most_efficient||'—'}} (${{r.best_delta_e_wh||'—'}} Wh) · Fastest: ${{r.fastest||'—'}} ${{r.all_green ? '<span class="conf-badge">🟢</span>' : ''}}`;
+            }} else if (r.mode === 'codecs_cpu' || r.mode === 'codecs_gpu') {{
+                const dev = r.mode === 'codecs_gpu' ? 'GPU (hardware)' : 'CPU (software)';
+                codec = `H.264 · H.265 · AV1 — ${{dev}}`;
                 summary = `Best: ${{r.most_efficient||'—'}} (${{r.best_delta_e_wh||'—'}} Wh) · Fastest: ${{r.fastest||'—'}} ${{r.all_green ? '<span class="conf-badge">🟢</span>' : ''}}`;
             }} else {{
                 codec = r.preset || '';
@@ -4047,6 +4267,9 @@ async def run_job(job_id: str, input_path: Path, preset: str, delete_after: bool
         }
         if preset == "all_codecs":
             result = await run_all_measurement(input_path, job_id, jobs)
+        elif preset in ("codecs_cpu", "codecs_gpu"):
+            result = await run_codecs_single_measurement(
+                input_path, job_id, jobs, side=preset.split("_", 1)[1])
         elif preset in _BOTH_PRESETS:
             p_cpu, p_gpu = _BOTH_PRESETS[preset]
             result = await run_both_measurement(input_path, job_id, jobs,
@@ -4081,11 +4304,11 @@ async def use_preloaded_source(
     custom_cmd_cpu: str = Form(None),
     custom_cmd_gpu: str = Form(None),
 ):
-    if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs"):
+    if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs", "codecs_cpu", "codecs_gpu"):
         return JSONResponse({"error": "Invalid preset"}, status_code=400)
     # CR-001 capability dispatch: all-codecs sweep is BATCH_COMPARE; any
     # custom ffmpeg arg is CUSTOM_PROMPT.
-    if preset == "all_codecs":
+    if preset in ("all_codecs", "codecs_cpu", "codecs_gpu"):
         gate(request, BATCH_COMPARE)
     if any((custom_cmd, custom_cmd_cpu, custom_cmd_gpu)):
         gate(request, CUSTOM_PROMPT)
@@ -4118,10 +4341,10 @@ async def upload_video(
     custom_cmd_cpu: str = Form(None),
     custom_cmd_gpu: str = Form(None),
 ):
-    if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs"):
+    if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs", "codecs_cpu", "codecs_gpu"):
         return JSONResponse({"error": "Invalid preset"}, status_code=400)
     # CR-001 capability dispatch — same shape as /video/use-source.
-    if preset == "all_codecs":
+    if preset in ("all_codecs", "codecs_cpu", "codecs_gpu"):
         gate(request, BATCH_COMPARE)
     if any((custom_cmd, custom_cmd_cpu, custom_cmd_gpu)):
         gate(request, CUSTOM_PROMPT)
@@ -4183,6 +4406,15 @@ async def video_preview_cmd(preset: str = "both"):
         for cpu_k, gpu_k in pairs:
             cmds[cpu_k] = " ".join(build_preset_cmd(cpu_k, placeholder_in, placeholder_out))
             cmds[gpu_k] = " ".join(build_preset_cmd(gpu_k, placeholder_in, placeholder_out))
+        return {"mode": "all_codecs", "cmds": cmds}
+    elif preset in ("codecs_cpu", "codecs_gpu"):
+        # Single-device codec sweep — 3 read-only cmds. Reuses the all_codecs
+        # preview shape so fetchCmdPreview's label map renders them.
+        side = preset.split("_", 1)[1]
+        keys = {"cpu": ["cpu", "h265_cpu", "av1_cpu"],
+                "gpu": ["gpu", "h265_gpu", "av1_gpu"]}[side]
+        cmds = {k: " ".join(build_preset_cmd(k, placeholder_in, placeholder_out))
+                for k in keys}
         return {"mode": "all_codecs", "cmds": cmds}
     elif preset in _BOTH_MAP:
         p_cpu, p_gpu = _BOTH_MAP[preset]
@@ -4257,6 +4489,29 @@ async def benchmark_cancel(request: Request, job_id: str = Form(...)):
         benchmark.cancel_queued(job_id)
         return {"ok": True, "state": "cancelled_before_start"}
     return JSONResponse({"ok": False, "state": "not_found"}, status_code=404)
+
+
+@app.post("/job/{job_id}/cooldown-decision", dependencies=[Depends(requires(BENCHMARK_RUN))])
+async def cooldown_decision(job_id: str, decision: str = Form(...)):
+    """Resolve the idle-wait timeout dialog for an attended Lab run.
+
+    power.cooldown_between_runs parks the job at stage 'awaiting_cooldown_decision'
+    and polls jobs[job_id]['cooldown_decision']; this writes it. Gated to Lab
+    (BENCHMARK_RUN) — the dialog is only ever offered to Lab runs. 'wait' is only
+    accepted while it's still in the offered options (bounded re-waits)."""
+    decision = (decision or "").strip()
+    j = jobs.get(job_id)
+    if not j:
+        return JSONResponse({"ok": False, "error": "unknown job"}, status_code=404)
+    if j.get("stage") != "awaiting_cooldown_decision":
+        return JSONResponse({"ok": False, "error": "job is not awaiting a cooldown decision"},
+                            status_code=409)
+    allowed = j.get("cooldown_decision_options") or ["run", "cancel"]
+    if decision not in allowed:
+        return JSONResponse({"ok": False, "error": f"decision must be one of {allowed}"},
+                            status_code=400)
+    j["cooldown_decision"] = decision
+    return {"ok": True, "decision": decision}
 
 
 @app.get("/precalibration/data", dependencies=[Depends(requires(SETTINGS_READ_FULL))])
@@ -5176,6 +5431,9 @@ async def run_llm_all_job(job_id: str, model_key: str, warm: bool, device: str):
             }
         save_result("llm", job_id, final)
         jobs[job_id] = {"status": "done", "stage": "done", "result": final}
+    except CooldownCancelled:
+        jobs[job_id] = {"status": "cancelled", "stage": "cancelled",
+                        "error": "Cancelled by operator during cooldown."}
     except Exception as e:
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
@@ -5220,7 +5478,7 @@ async def run_llm_compare_models_job(job_id: str, prompt: str, expected: str, de
     2026-05-26 probe used to pick these showcase prompts.
     """
     panel = list(MODELS.keys())
-    from power import wait_for_thermal_floor
+    from power import cooldown_between_runs, CooldownCancelled
     from llm import unload_all_loaded_models
     try:
         jobs[job_id].update({
@@ -5252,10 +5510,11 @@ async def run_llm_compare_models_job(job_id: str, prompt: str, expected: str, de
                 # Brief wait for VRAM to actually free (Ollama unload is async).
                 if evicted:
                     await asyncio.sleep(3)
-                cd = await wait_for_thermal_floor(
-                    floor_reference_w, tolerance_w=3.0, poll_interval_s=1.0,
-                    settle_polls=3, max_wait_s=120,
-                    jobs=jobs, job_id=job_id,
+                cd = await cooldown_between_runs(
+                    fixed_seconds=cfg.load().get("llm_rest_s", 10),
+                    reference_w=floor_reference_w,
+                    stage="cooldown", jobs=jobs, job_id=job_id,
+                    allow_dialog=True,
                 )
                 cd["evicted_before_wait"] = evicted
                 cooldowns.append({"before_model": model_key, **cd})
@@ -5313,6 +5572,9 @@ async def run_llm_compare_models_job(job_id: str, prompt: str, expected: str, de
         }
         save_result("llm", job_id, final)
         jobs[job_id] = {"status": "done", "stage": "done", "result": final}
+    except CooldownCancelled:
+        jobs[job_id] = {"status": "cancelled", "stage": "cancelled",
+                        "error": "Cancelled by operator during cooldown."}
     except Exception as e:
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
@@ -5343,7 +5605,8 @@ async def llm_compare_models(
     async def coro():
         await run_llm_compare_models_job(job_id, prompt, expected, device)
 
-    position = queue_control.enqueue(job_id, "llm", label, coro, request=request)
+    position = queue_control.enqueue(job_id, "llm", label, coro, request=request,
+                                     page="/llm/compare")
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -5619,6 +5882,7 @@ async def llm_compare_page(request: Request):
     // every 1 s and the UI only polls /job/{id} every 2 s.
     let cooldownTicker = null;
     let cooldownState = null;
+    let cooldownLog = [];   // finished inter-model waits, persisted across stages
 
     function stopCooldownTicker() {{
         if (cooldownTicker) {{ clearInterval(cooldownTicker); cooldownTicker = null; }}
@@ -5640,9 +5904,16 @@ async def llm_compare_page(request: Request):
             const ref = s.cdRef != null ? Number(s.cdRef).toFixed(1) + 'W' : '?';
             cdInfo = ' · waiting ' + liveS.toFixed(1) + 's for floor (target ≤ ' + ref + ' +3W)';
         }}
+        let logInfo = '';
+        if (cooldownLog.length) {{
+            logInfo = '<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.25rem">'
+                    + '⏳ Cooldowns done: '
+                    + cooldownLog.map(function(w) {{ return Number(w).toFixed(0) + 's'; }}).join(' · ')
+                    + '</div>';
+        }}
         const el = document.getElementById('run-status');
         if (el) el.innerHTML =
-            '<div style="color:var(--warn);font-size:0.85rem">' + msg + watts + cdInfo + '</div>';
+            '<div style="color:var(--warn);font-size:0.85rem">' + msg + watts + cdInfo + '</div>' + logInfo;
     }}
 
     function paramsToNumeric(p) {{
@@ -5887,7 +6158,8 @@ async def llm_compare_page(request: Request):
                 }});
                 document.getElementById('run-status').innerHTML =
                     '<div style="color:var(--accent);font-size:0.85rem">&#10003; Done. Result rendered above. ' +
-                    '<a href="/results/llm/' + jobId + '/download.json" style="color:var(--accent)">&darr; JSON</a></div>';
+                    '<a href="/results/llm/' + jobId + '/download.json" style="color:var(--accent)">&darr; JSON</a></div>'
+                    + wlCooldownSummary(r.cooldowns);
                 document.getElementById('runBtn').disabled = false;
                 document.querySelector('.prompt-card').scrollIntoView({{behavior:'smooth', block:'start'}});
             }} else if (data.status === 'error') {{
@@ -5897,9 +6169,18 @@ async def llm_compare_page(request: Request):
                 document.getElementById('runBtn').disabled = false;
             }} else {{
                 const stage = data.stage || 'queued';
+                if (stage === 'awaiting_cooldown_decision') {{
+                    wlCooldownDialog(jobId, data.cooldown_decision_options);
+                }} else {{ wlCooldownDialogClose(); }}
                 const cdVal = data.cooldown_waited_s;
                 const prev = cooldownState;
                 const cdChanged = !prev || prev.cdWaited !== cdVal;
+                // Reset the log at run start (model 1 / queued); record a finished
+                // wait each time we leave the 'cooldown' stage so it persists.
+                if (!data.current_model_idx || data.current_model_idx <= 1) cooldownLog = [];
+                if (prev && prev.stage === 'cooldown' && stage !== 'cooldown' && prev.cdWaited != null) {{
+                    cooldownLog.push(prev.cdWaited);
+                }}
                 cooldownState = {{
                     stage: stage,
                     qpos:  data.queue_position,
@@ -5928,6 +6209,9 @@ async def llm_compare_page(request: Request):
     }}
 
     renderShowcase('t2_count');
+    // Resume a queued/running compare job (↩ Resume from /queue-status).
+    const _resumeJob = new URLSearchParams(location.search).get('job');
+    if (_resumeJob) {{ var _rb = document.getElementById('runBtn'); if (_rb) _rb.disabled = true; pollCompare(_resumeJob); }}
     </script>
     {_FOOTER}
 </body>
@@ -7054,6 +7338,9 @@ async def rag_page(request: Request):
                 wlRenderQueued(data.queue_position);
                 ragTimer = setTimeout(() => pollRag(jobId), 3000);
             }} else {{
+                if (data.stage === 'awaiting_cooldown_decision') {{
+                    wlCooldownDialog(jobId, data.cooldown_decision_options);
+                }} else {{ wlCooldownDialogClose(); }}
                 renderRagProgress(data.stage || 'baseline', watts);
                 ragTimer = setTimeout(() => pollRag(jobId), 2000);
             }}
@@ -7659,7 +7946,7 @@ async def run_rag_compare_job(job_id: str, model_key: str, question: str):
 
     Cooldown reference = mode #1's baseline (cold reading captured first).
     """
-    from power import wait_for_thermal_floor
+    from power import cooldown_between_runs, CooldownCancelled
     partial_results = {}
     modes = rag_module.COMPARE_MODES   # single source of truth — see rag.py
     floor_reference_w = None
@@ -7676,10 +7963,11 @@ async def run_rag_compare_job(job_id: str, model_key: str, question: str):
             # contaminated baseline and the confidence flag goes 🔴.
             if i > 0 and floor_reference_w is not None:
                 jobs[job_id]["stage"] = "cooldown"
-                cd = await wait_for_thermal_floor(
-                    floor_reference_w, tolerance_w=3.0, poll_interval_s=1.0,
-                    settle_polls=3, max_wait_s=120,
-                    jobs=jobs, job_id=job_id,
+                cd = await cooldown_between_runs(
+                    fixed_seconds=cfg.load().get("llm_rest_s", 10),
+                    reference_w=floor_reference_w,
+                    stage="cooldown", jobs=jobs, job_id=job_id,
+                    allow_dialog=True,
                 )
                 cooldowns.append({"before_mode": rag_mode, **cd})
             result = await rag_module.run_rag_measurement(
@@ -7702,6 +7990,9 @@ async def run_rag_compare_job(job_id: str, model_key: str, question: str):
         }
         save_result("llm", job_id, final)
         jobs[job_id] = {"stage": "done", "result": final}
+    except CooldownCancelled:
+        jobs[job_id] = {"stage": "cancelled",
+                        "error": "Cancelled by operator during cooldown."}
     except Exception as e:
         jobs[job_id] = {"stage": "error", "error": str(e)}
 
@@ -7731,7 +8022,8 @@ async def rag_run_compare(
     async def coro():
         await run_rag_compare_job(job_id, model_key, effective_question)
 
-    position = queue_control.enqueue(job_id, "rag", label, coro, request=request)
+    position = queue_control.enqueue(job_id, "rag", label, coro, request=request,
+                                     page="/rag/compare")
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -7751,7 +8043,7 @@ async def run_rag_compare_models_job(job_id: str, question: str, expected: str):
     rag.py is automatically reflected on /rag/compare.
     """
     panel = list(rag_module.MODELS.keys())
-    from power import wait_for_thermal_floor
+    from power import cooldown_between_runs, CooldownCancelled
     from llm import unload_all_loaded_models
     try:
         jobs[job_id].update({
@@ -7779,10 +8071,11 @@ async def run_rag_compare_models_job(job_id: str, question: str, expected: str):
                 jobs[job_id]["current_model_label"] = rag_module.MODELS[model_key]["label"]
                 if evicted:
                     await asyncio.sleep(3)
-                cd = await wait_for_thermal_floor(
-                    floor_reference_w, tolerance_w=3.0, poll_interval_s=1.0,
-                    settle_polls=3, max_wait_s=120,
-                    jobs=jobs, job_id=job_id,
+                cd = await cooldown_between_runs(
+                    fixed_seconds=cfg.load().get("llm_rest_s", 10),
+                    reference_w=floor_reference_w,
+                    stage="cooldown", jobs=jobs, job_id=job_id,
+                    allow_dialog=True,
                 )
                 cd["evicted_before_wait"] = evicted
                 cooldowns.append({"before_model": model_key, **cd})
@@ -7838,6 +8131,9 @@ async def run_rag_compare_models_job(job_id: str, question: str, expected: str):
         }
         save_result("llm", job_id, final)
         jobs[job_id] = {"status": "done", "stage": "done", "result": final}
+    except CooldownCancelled:
+        jobs[job_id] = {"status": "cancelled", "stage": "cancelled",
+                        "error": "Cancelled by operator during cooldown."}
     except Exception as e:
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
 
@@ -7867,7 +8163,8 @@ async def rag_compare_models(
     async def coro():
         await run_rag_compare_models_job(job_id, question, expected)
 
-    position = queue_control.enqueue(job_id, "rag", label, coro, request=request)
+    position = queue_control.enqueue(job_id, "rag", label, coro, request=request,
+                                     page="/rag/compare")
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
@@ -8122,6 +8419,7 @@ async def rag_compare_page(request: Request):
     // every 1 s and the UI only polls /job/{id} every 2 s.
     let cooldownTicker = null;
     let cooldownState = null;
+    let cooldownLog = [];   // finished inter-model waits, persisted across stages
 
     function stopCooldownTicker() {{
         if (cooldownTicker) {{ clearInterval(cooldownTicker); cooldownTicker = null; }}
@@ -8143,9 +8441,16 @@ async def rag_compare_page(request: Request):
             const ref = s.cdRef != null ? Number(s.cdRef).toFixed(1) + 'W' : '?';
             cdInfo = ' · waiting ' + liveS.toFixed(1) + 's for floor (target ≤ ' + ref + ' +3W)';
         }}
+        let logInfo = '';
+        if (cooldownLog.length) {{
+            logInfo = '<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.25rem">'
+                    + '⏳ Cooldowns done: '
+                    + cooldownLog.map(function(w) {{ return Number(w).toFixed(0) + 's'; }}).join(' · ')
+                    + '</div>';
+        }}
         const el = document.getElementById('run-status');
         if (el) el.innerHTML =
-            '<div style="color:var(--warn);font-size:0.85rem">' + msg + watts + cdInfo + '</div>';
+            '<div style="color:var(--warn);font-size:0.85rem">' + msg + watts + cdInfo + '</div>' + logInfo;
     }}
 
     const tabs = document.getElementById('tabs');
@@ -8391,7 +8696,8 @@ async def rag_compare_page(request: Request):
                 }});
                 document.getElementById('run-status').innerHTML =
                     '<div style="color:var(--accent);font-size:0.85rem">&#10003; Done. Result rendered above. ' +
-                    '<a href="/results/llm/' + jobId + '/download.json" style="color:var(--accent)">&darr; JSON</a></div>';
+                    '<a href="/results/llm/' + jobId + '/download.json" style="color:var(--accent)">&darr; JSON</a></div>'
+                    + wlCooldownSummary(r.cooldowns);
                 document.getElementById('runBtn').disabled = false;
                 document.querySelector('.prompt-card').scrollIntoView({{behavior:'smooth', block:'start'}});
             }} else if (data.status === 'error') {{
@@ -8401,9 +8707,18 @@ async def rag_compare_page(request: Request):
                 document.getElementById('runBtn').disabled = false;
             }} else {{
                 const stage = data.stage || 'queued';
+                if (stage === 'awaiting_cooldown_decision') {{
+                    wlCooldownDialog(jobId, data.cooldown_decision_options);
+                }} else {{ wlCooldownDialogClose(); }}
                 const cdVal = data.cooldown_waited_s;
                 const prev = cooldownState;
                 const cdChanged = !prev || prev.cdWaited !== cdVal;
+                // Reset the log at run start (model 1 / queued); record a finished
+                // wait each time we leave the 'cooldown' stage so it persists.
+                if (!data.current_model_idx || data.current_model_idx <= 1) cooldownLog = [];
+                if (prev && prev.stage === 'cooldown' && stage !== 'cooldown' && prev.cdWaited != null) {{
+                    cooldownLog.push(prev.cdWaited);
+                }}
                 cooldownState = {{
                     stage: stage,
                     qpos:  data.queue_position,
@@ -8432,6 +8747,9 @@ async def rag_compare_page(request: Request):
     }}
 
     renderShowcase(order[0]);
+    // Resume a queued/running compare job (↩ Resume from /queue-status).
+    const _resumeJob = new URLSearchParams(location.search).get('job');
+    if (_resumeJob) {{ var _rb = document.getElementById('runBtn'); if (_rb) _rb.disabled = true; pollCompare(_resumeJob); }}
     </script>
     {_FOOTER}
 </body>
@@ -8441,11 +8759,24 @@ async def rag_compare_page(request: Request):
 # --- Results: list, JSON download, CSV download ---
 
 @app.get("/results/{job_type}/list", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def results_list(job_type: str, request: Request):
+async def results_list(job_type: str, request: Request, limit: int = 10):
     if job_type not in ("video", "llm", "image"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
     # CR-026: own-jobs scope for non-Lab. Lab passes None → unfiltered.
-    return list_results(job_type, visitor_key=queue_control.visitor_key(request))
+    return list_results(job_type, limit=max(1, min(limit, 200)),
+                        visitor_key=queue_control.visitor_key(request))
+
+
+@app.delete("/results/{job_type}/{job_id}", dependencies=[Depends(requires(SETTINGS_WRITE))])
+async def results_delete(job_type: str, job_id: str):
+    """Lab-only — delete a stored result JSON (dev cleanup of test runs). Gated
+    on SETTINGS_WRITE (Lab tier). CSV is generated on the fly, so the JSON is the
+    only artifact to remove."""
+    if job_type not in ("video", "llm", "image"):
+        return JSONResponse({"ok": False, "error": "Invalid type"}, status_code=400)
+    if delete_result(job_type, job_id):
+        return {"ok": True, "deleted": job_id}
+    return JSONResponse({"ok": False, "error": "Not found"}, status_code=404)
 
 
 # CR-026 carve-out for /demo's "show last result" panel.
@@ -8618,6 +8949,22 @@ async def settings_page(request: Request):
                 f'{ctrl}<span style="color:var(--text-3);font-size:0.8rem">{unit}</span>'
                 f'</div></div>')
 
+    def toggle_field(fid, val, hint="", onchange=""):
+        oc = f' onchange="{onchange}"' if onchange else ""
+        if local:
+            checked = "checked" if val else ""
+            ctrl = (f'<input type="checkbox" id="{fid}" {checked}{oc}'
+                    f' style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer">')
+        else:
+            ctrl = (f'<span style="font-family:monospace;color:var(--accent);font-size:0.95rem">'
+                    f'{"ON" if val else "OFF"}</span>')
+        hint_html = f'<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem">{hint}</div>' if hint else ""
+        return (f'<div style="display:flex;justify-content:space-between;align-items:baseline;'
+                f'padding:0.5rem 0;border-bottom:1px solid var(--panel-2);gap:1rem">'
+                f'<div><label style="color:var(--text-2);font-size:0.85rem">{fid.replace("_"," ").title()}</label>'
+                f'{hint_html}</div>'
+                f'<div style="display:flex;align-items:baseline;gap:0.5rem">{ctrl}</div></div>')
+
     def slider_field(fid, val, min_, max_, step, unit, hint="", label=None):
         if local:
             ctrl = (f'<input type="range" id="{fid}" min="{min_}" max="{max_}" step="{step}"'
@@ -8713,9 +9060,19 @@ async def settings_page(request: Request):
 
     <div class="section">Measurement</div>
     {field("baseline_polls",    s['baseline_polls'],    5,  60,  "× 1s",   "baseline window duration")}
-    {field("video_cooldown_s",  s['video_cooldown_s'],  10, 300, "s",      "rest between CPU and GPU runs")}
-    {field("llm_rest_s",        s['llm_rest_s'],        5,  120, "s",      "pause between runs in batch mode")}
     {field("llm_unload_settle_s", s['llm_unload_settle_s'], 1, 30, "s",   "wait after model unload before baseline")}
+
+    <div class="section">Cooldown between passes</div>
+    {toggle_field("cooldown_wait_for_idle", s.get('cooldown_wait_for_idle', True),
+                  "ON: wait for wall power to settle back to the idle floor before each next pass "
+                  "(active-probe, the /rag /llm compare technique). OFF: use the fixed rest periods below. "
+                  "Variance calibration always keeps its fixed protocol.", onchange="syncCooldownMode()")}
+    {field("video_cooldown_s",  s['video_cooldown_s'],  10, 300, "s",      "fixed rest between CPU and GPU runs (used when wait-for-idle is OFF; also the fallback after an idle-wait timeout)")}
+    {field("llm_rest_s",        s['llm_rest_s'],        5,  120, "s",      "fixed pause between LLM batch / compare runs (used when wait-for-idle is OFF; also the timeout fallback)")}
+    {field("cooldown_idle_tolerance_w", s.get('cooldown_idle_tolerance_w', 3.0), 0.5, 20, "W", "idle-wait: settle when a reading is within this of the captured floor", step=0.5)}
+    {field("cooldown_idle_settle_polls", s.get('cooldown_idle_settle_polls', 3), 1, 10, "polls", "idle-wait: consecutive in-band reads needed to confirm settle")}
+    {field("cooldown_idle_max_wait_s", s.get('cooldown_idle_max_wait_s', 120), 10, 600, "s", "idle-wait: cap before timeout → dialog (Lab) or fixed fallback")}
+    {field("cooldown_dialog_watchdog_s", s.get('cooldown_dialog_watchdog_s', 75), 15, 300, "s", "idle-wait timeout dialog: auto-apply the fallback if no operator answer within this")}
 
     <div class="section">Staging</div>
     {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
@@ -8787,6 +9144,17 @@ async def settings_page(request: Request):
     {slider_field("bench_video_reps", s['bench_video_reps'], 1, 10, 1, "reps", "video all-codecs repeats per source")}
     {'<button onclick="runBenchmark()" id="benchBtn" style="background:var(--border);color:var(--accent);border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">&#9654; Run overnight benchmark</button> <button onclick="cancelBenchmark()" id="benchCancelBtn" style="background:var(--border);color:var(--err);border:1px solid var(--err);padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">&#9632; Cancel</button><div id="bench-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>' if local else '<div style="color:var(--text-5);font-size:0.78rem;margin-top:0.5rem">Benchmark requires lab access.</div>'}
 
+    {('''<details class="calib-details" id="testdataDetails">
+      <summary>Test data cleanup (Lab)</summary>
+      <div class="panel">
+        <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
+          Delete stored result JSON for dev / test runs (CSV is generated on the fly, so removing the
+          JSON removes the run entirely). Newest first, up to 50 per type. <span style="color:var(--warn)">No undo &mdash; deletes immediately.</span>
+        </div>
+        <div id="testdata-panel" style="font-size:0.8rem;color:var(--text-3)">loading&hellip;</div>
+      </div>
+    </details>''') if local else ''}
+
     {(f'''<div class="section">Members</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
       Magic-link allowlist (<code>data/members.json</code>) — one email per line.
@@ -8814,8 +9182,30 @@ async def settings_page(request: Request):
             document.querySelectorAll('.model-toggle[data-surface="' + surfaceKey + '"]:checked')
         ).map(el => el.dataset.key);
     }}
+    function syncCooldownMode() {{
+        // When wait-for-idle is ON, the fixed rest periods are greyed (the
+        // idle tunables drive cooldown instead); when OFF, the idle tunables
+        // are greyed. Mirrors power.cooldown_between_runs's strategy switch.
+        var tog = document.getElementById('cooldown_wait_for_idle');
+        if (!tog || tog.type !== 'checkbox') return;   // read-only view → no-op
+        var on = tog.checked;
+        function setDisabled(id, dis) {{
+            var el = document.getElementById(id);
+            if (el) {{ el.disabled = dis; el.style.opacity = dis ? '0.35' : '1'; }}
+        }}
+        setDisabled('video_cooldown_s', on);
+        setDisabled('llm_rest_s', on);
+        ['cooldown_idle_tolerance_w','cooldown_idle_settle_polls',
+         'cooldown_idle_max_wait_s','cooldown_dialog_watchdog_s'].forEach(function(id) {{
+            setDisabled(id, !on);
+        }});
+    }}
+    document.addEventListener('DOMContentLoaded', syncCooldownMode);
+
     async function saveSettings() {{
         const num_fields = ['baseline_polls','video_cooldown_s','llm_rest_s','llm_unload_settle_s',
+                            'cooldown_idle_tolerance_w','cooldown_idle_settle_polls',
+                            'cooldown_idle_max_wait_s','cooldown_dialog_watchdog_s',
                             'h264_bitrate_kbps','h265_bitrate_kbps','av1_bitrate_kbps',
                             'variance_pct','variance_green_x','variance_yellow_x',
                             'conf_positive_green','conf_positive_yellow',
@@ -8824,12 +9214,17 @@ async def settings_page(request: Request):
                             'queue_anonymous_cap','queue_member_cap',
                             'upload_size_anonymous_mb','upload_size_member_mb',
                             'bench_video_reps'];
+        const bool_fields = ['cooldown_wait_for_idle'];
         const str_fields = ['members'];
         const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};
         for (const f of num_fields) {{
             const el = document.getElementById(f);
             if (el) body[f] = parseFloat(el.value);
+        }}
+        for (const f of bool_fields) {{
+            const el = document.getElementById(f);
+            if (el) body[f] = el.checked;
         }}
         for (const f of str_fields) {{
             const el = document.getElementById(f);
@@ -8990,6 +9385,62 @@ async def settings_page(request: Request):
         _precalDetails.addEventListener('toggle', () => {{
             if (_precalDetails.open) loadPrecalibration();
         }});
+    }}
+
+    // Lab-only test-data cleanup panel. Lists recent results per type and lets
+    // a Lab user delete a run's stored JSON via DELETE /results/<type>/<id>.
+    // Delete buttons carry the id in data-attrs (no inline-quote escaping).
+    async function loadTestData() {{
+        const panel = document.getElementById('testdata-panel');
+        if (!panel) return;
+        const types = [['llm', 'LLM / RAG'], ['image', 'Image'], ['video', 'Video']];
+        let html = '';
+        for (const pair of types) {{
+            const t = pair[0], lbl = pair[1];
+            let runs = [];
+            try {{
+                const resp = await fetch('/results/' + t + '/list?limit=50');
+                runs = await resp.json();
+                if (!Array.isArray(runs)) runs = [];
+            }} catch(e) {{ runs = []; }}
+            html += '<div style="margin:0.75rem 0 0.3rem;color:var(--text-2)">' + lbl
+                  + ' <span style="color:var(--text-5)">(' + runs.length + ')</span></div>';
+            if (!runs.length) {{ html += '<div style="color:var(--text-5);font-size:0.75rem">none</div>'; continue; }}
+            html += runs.map(function(r) {{
+                const date = (r.saved_at || '').slice(0, 16).replace('T', ' ');
+                const mode = r.mode ? ' &middot; ' + r.mode : '';
+                return '<div style="display:flex;justify-content:space-between;align-items:center;'
+                     + 'padding:0.25rem 0;border-bottom:1px solid var(--panel-2);gap:0.5rem">'
+                     + '<span style="color:var(--text-3);font-size:0.75rem;font-family:monospace">'
+                     + date + ' &middot; ' + r.job_id + mode + '</span>'
+                     + '<button class="td-del" data-type="' + t + '" data-id="' + r.job_id + '" '
+                     + 'style="background:none;border:1px solid var(--err);color:var(--err);'
+                     + 'font-size:0.72rem;padding:0.1rem 0.5rem;cursor:pointer">&#10005; delete</button>'
+                     + '</div>';
+            }}).join('');
+        }}
+        panel.innerHTML = html;
+        panel.querySelectorAll('.td-del').forEach(function(b) {{
+            b.onclick = function() {{ deleteTestResult(b.getAttribute('data-type'), b.getAttribute('data-id')); }};
+        }});
+    }}
+
+    async function deleteTestResult(jobType, jobId) {{
+        // No per-delete confirm by design — the collapsed dropdown is the guard
+        // (Lab tool). Deletes immediately and refreshes the panel.
+        try {{
+            const resp = await fetch('/results/' + jobType + '/' + jobId, {{method: 'DELETE'}});
+            const d = await resp.json().catch(function() {{ return {{}}; }});
+            if (d && d.ok) loadTestData();          // refresh the panel in place
+            else alert('Delete failed: ' + ((d && d.error) || resp.status));
+        }} catch(e) {{ alert('Delete failed: ' + e); }}
+    }}
+
+    // Lazy-load the cleanup lists when the dropdown is first opened (and refresh
+    // on each open). Keeps the panel out of the way until the Lab user wants it.
+    const _tdDetails = document.getElementById('testdataDetails');
+    if (_tdDetails) {{
+        _tdDetails.addEventListener('toggle', function() {{ if (_tdDetails.open) loadTestData(); }});
     }}
     </script>
     {_FOOTER}
@@ -10477,14 +10928,13 @@ async def image_page(request: Request):
                             f'{conf.get("flag","")} {conf.get("label","")} &nbsp;·&nbsp; '
                             f'{s.get("wh_per_image","?")} Wh/img &nbsp;·&nbsp; {s.get("delta_t_s","?")}s'
                             f'</span></div>')
-                # New schema: r["models"] is a list of per-model run dicts.
-                # Legacy schema (pre-2026-05-27): r["small"] + r["large"] only.
+                # New schema: r["models"] is a list of per-model summary dicts
+                # (already flattened by persist._summarise — size_px / delta_t_s
+                # naming, not raw generation/energy). Legacy schema
+                # (pre-2026-05-27): r["small"] + r["large"] only.
                 model_list = r.get("models") or []
                 if model_list:
-                    rows_html = "".join(_mdl_html({**m.get("generation", {}),
-                                                    **m.get("energy", {}),
-                                                    "confidence": (m.get("energy") or {}).get("confidence"),
-                                                    "model_key": m.get("model_key")}) for m in model_list)
+                    rows_html = "".join(_mdl_html(m) for m in model_list)
                     n_label = f"Compare {len(model_list)} models (GPU)"
                 else:
                     rows_html = _mdl_html(r.get("small", {})) + _mdl_html(r.get("large", {}))
@@ -10781,6 +11231,10 @@ async function pollJob(jobId) {{
 
   if (j.stage === 'queued') {{ wlRenderQueued(j.queue_position); return; }}
 
+  if (j.stage === 'awaiting_cooldown_decision') {{
+    wlCooldownDialog(jobId, j.cooldown_decision_options);
+  }} else {{ wlCooldownDialogClose(); }}
+
   const powerR = await fetch('/power');
   const powerJ = await powerR.json().catch(() => ({{}}));
   renderProgress(j.stage, j.result, powerJ.watts ?? null);
@@ -10788,7 +11242,13 @@ async function pollJob(jobId) {{
   if (j.stage === 'done' && j.result) {{
     clearInterval(pollTimer);
     if (j.result.mode === 'both') renderImageBoth(j.result);
-    else if (j.result.mode === 'compare_models') renderCompareModels(j.result);
+    else if (j.result.mode === 'compare_models') {{
+      // Use the shared N-aware card (reads r.models) — the legacy
+      // renderCompareModels only knew r.small/r.large, so a 3-model run
+      // showed just 2. Same renderer as the prev-row / demo expand paths.
+      document.getElementById('status').innerHTML =
+        wlRenderImageCard({{result: j.result, isPrev: false}});
+    }}
     else renderResult(j.result);
     document.getElementById('run-btn').disabled = false;
     document.getElementById('compare-btn').disabled = false;
@@ -10903,58 +11363,11 @@ function _modelCard(side_r) {{
 }}
 
 function renderCompareModels(r) {{
-  const a = r.analysis;
-  const _stripWh = (r.small && r.small.energy && r.large && r.large.energy)
-    ? Math.min(r.small.energy.delta_e_wh, r.large.energy.delta_e_wh)
-    : ((r.small && r.small.energy && r.small.energy.delta_e_wh) || (r.large && r.large.energy && r.large.energy.delta_e_wh));
-  const _winE = (r.small && r.small.energy && r.large && r.large.energy)
-    ? (r.small.energy.delta_e_wh <= r.large.energy.delta_e_wh ? r.small.energy : r.large.energy)
-    : ((r.small && r.small.energy) || (r.large && r.large.energy));
-  const _stripDur = _winE ? _winE.delta_t_s : null;
-  const _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
-    ? _winE.co2e.intensity.g_per_kwh : null;
-  // CR-032 — sub-runs across the two model sizes.
-  const _subRuns = [
-    {{label: (r.small && r.small.generation && r.small.generation.model_label) || 'Small model',  e: r.small && r.small.energy}},
-    {{label: (r.large && r.large.generation && r.large.generation.model_label) || 'Large model',  e: r.large && r.large.energy}}
-  ].filter(s => s.e && s.e.co2e).map(s => ({{
-    label: s.label,
-    grams: s.e.co2e.grams,
-    deltaWh: s.e.delta_e_wh,
-    durationS: s.e.delta_t_s
-  }}));
-  // CR-038 — structured efficiency verdict above the per-model cards.
-  const _imgCMVerdict = wlEfficiencyVerdict([
-    r.small && r.small.energy
-      ? {{label: (r.small.generation && r.small.generation.model_label) || 'Small',
-          energy: (r.small.energy.wh_per_image || r.small.energy.delta_e_wh)}}
-      : null,
-    r.large && r.large.energy
-      ? {{label: (r.large.generation && r.large.generation.model_label) || 'Large',
-          energy: (r.large.energy.wh_per_image || r.large.energy.delta_e_wh)}}
-      : null
-  ], {{unit: 'Wh/image'}});
-  document.getElementById('status').innerHTML = `
-    <div class="result-box">
-      <h2>SD-Turbo vs SDXL-Turbo — Same Prompt + Seed</h2>
-      <div style="background:var(--panel);border:1px solid var(--border-3);padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.85rem;color:var(--text-2)">
-        ${{a.finding}}
-      </div>
-      ${{_imgCMVerdict}}
-      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;align-items:stretch">
-        ${{_modelCard(r.small)}}
-        ${{_modelCard(r.large)}}
-      </div>
-      <div style="font-size:0.75rem;color:var(--text-4);margin-top:0.5rem">
-        Prompt: "${{r.full_prompt}}" · modifier: <em>${{r.modifier}}</em> · seed: ${{r.seed}}
-      </div>
-      <div style="font-size:0.75rem;color:var(--text-4);margin-top:0.75rem;font-style:italic">
-        Quality is subjective. Judge the visual output above — is the larger model's image worth
-        ${{a.energy_ratio_large_over_small}}× the energy for this prompt?
-      </div>
-      ${{wlCarbonStrip(_stripWh, 'Image gen · smaller of the two models', _stripDur, _stripSavedG, _subRuns)}}
-      <p class="scope-note">${{r.scope}}</p>
-    </div>`;
+  // Legacy 2-model renderer retired (2026-06-02): it only read r.small/r.large,
+  // so a 3-model compare showed just 2 cards. Delegate to the shared N-aware
+  // card so this can't drift again. Kept as a shim for any stray caller.
+  document.getElementById('status').innerHTML =
+    wlRenderImageCard({{result: r, isPrev: false}});
 }}
 
 function renderResult(r) {{
@@ -11059,6 +11472,10 @@ async def image_start(request: Request,
                     prompt, job_id, jobs, device=device, model_key=model_key)
             save_result("image", job_id, result)
             jobs[job_id]["result"] = result
+        except CooldownCancelled:
+            jobs[job_id]["stage"] = "cancelled"
+            jobs[job_id]["error"] = "Cancelled by operator during cooldown."
+            LOCK_FILE.unlink(missing_ok=True)
         except Exception as e:
             jobs[job_id]["error"] = str(e)
             LOCK_FILE.unlink(missing_ok=True)
@@ -11112,9 +11529,13 @@ async def queue_page(request: Request):
     <div id="pause-banner"></div>
     <div id="content"><p class="empty">Loading…</p></div>
 <script>
-function resumeLink(type, jobId) {
+function resumeLink(type, jobId, page) {
     if (!type || !jobId || type === 'variance') return '';
-    return ' <a href="/' + type + '?job=' + jobId + '" style="color:var(--accent);font-size:0.75rem;' +
+    // page (set at enqueue for sub-pages like /llm/compare, /rag/compare) wins;
+    // otherwise default to /<type>. Without this, compare jobs resumed onto the
+    // base page (/rag, /llm) and lost the rich compare progress.
+    const base = page || ('/' + type);
+    return ' <a href="' + base + '?job=' + jobId + '" style="color:var(--accent);font-size:0.75rem;' +
            'text-decoration:none;margin-left:0.75rem">↩ Resume</a>';
 }
 async function load() {
@@ -11138,7 +11559,7 @@ async function load() {
     if (q.running) {
         let runHtml = '<div class="card running">' +
                 '<span class="badge run">▶ RUNNING</span>' +
-                resumeLink(q.running.type, q.running.job_id) +
+                resumeLink(q.running.type, q.running.job_id, q.running.resume_page) +
                 '<div class="label">' + (q.running.label || q.running.job_id) + '</div>' +
                 '<div class="stage">stage: ' + (q.running.stage || '…') + '</div>';
         if (q.running.type === 'benchmark' && window.CAN_CANCEL) {
@@ -11154,7 +11575,7 @@ async function load() {
     (q.pending || []).forEach((j, i) => {
         html += '<div class="card waiting">' +
                 '<span class="badge wait"># ' + j.position + '</span>' +
-                resumeLink(j.type, j.job_id) +
+                resumeLink(j.type, j.job_id, j.resume_page) +
                 '<div class="label">' + j.label + '</div>' +
                 '<div class="stage">waiting</div></div>';
     });

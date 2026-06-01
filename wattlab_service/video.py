@@ -12,7 +12,7 @@ from typing import Callable, Optional
 import settings as cfg
 import gpu
 from confidence import confidence
-from power import get_power_watts, read_sensors_dict
+from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 UPLOAD_DIR = Path("/tmp/wattlab_uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 LOCK_FILE = Path("/tmp/gos-measure.lock")
@@ -872,6 +872,7 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) 
     stopped = focus_mode_enter()
     LOCK_FILE.write_text(job_id)
     results = {}
+    cooldowns = []   # diagnostics: method (idle/fixed) + waited_s per gap
     try:
         for idx, (codec_name, cpu_key, gpu_key) in enumerate(codec_pairs):
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_cpu_baseline"
@@ -880,7 +881,11 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) 
             cpu_result = await run_single(input_path, job_id, cpu_key, base_cpu, jobs=jobs)
 
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_rest"
-            await asyncio.sleep(s["video_cooldown_s"])
+            cd = await cooldown_between_runs(
+                fixed_seconds=s["video_cooldown_s"], reference_w=base_cpu["w_base"],
+                stage=f"{codec_name}_rest", jobs=jobs, job_id=job_id,
+            )
+            cooldowns.append({"before": f"{codec_name}_gpu", **cd})
 
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_gpu_baseline"
             base_gpu = await measure_baseline(polls=s["baseline_polls"])
@@ -894,7 +899,11 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) 
             }
             if idx < len(codec_pairs) - 1:
                 if jobs: jobs[job_id]["stage"] = f"{codec_name}_inter_rest"
-                await asyncio.sleep(s["video_cooldown_s"])
+                cd = await cooldown_between_runs(
+                    fixed_seconds=s["video_cooldown_s"], reference_w=base_cpu["w_base"],
+                    stage=f"{codec_name}_inter_rest", jobs=jobs, job_id=job_id,
+                )
+                cooldowns.append({"before": "next_codec", **cd})
     finally:
         LOCK_FILE.unlink(missing_ok=True)
         loop = asyncio.get_event_loop()
@@ -912,6 +921,70 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) 
         "job_id": job_id,
         "codecs": results,
         "analysis": analyse_all(results),
+        "cooldowns": cooldowns,
+        "scope": "Device layer only (GoS1 server). Network, CDN, CPE excluded.",
+    }
+
+
+async def run_codecs_single_measurement(input_path: Path, job_id: str,
+                                        jobs: dict = None, side: str = "cpu") -> dict:
+    """Run all 3 codecs (H.264 / H.265 / AV1) on ONE device — CPU (software) or
+    GPU (hardware). Codec-vs-codec energy + quality on a single device, with no
+    CPU↔GPU confound. Sibling of run_all_measurement (the 6-way pairwise). The
+    result reuses the same {codecs: {codec: {<side>: run}}} shape and analyse_all
+    summary, so persist + the shared card just key off mode codecs_cpu/codecs_gpu.
+
+    Stage names mirror the all_codecs scheme ({codec}_{side}_{baseline,encode}
+    + {next_codec}_{side}_rest) so the /video progress widget can map them.
+    """
+    s = cfg.load()
+    presets_by_side = {
+        "cpu": [("h264", "cpu"), ("h265", "h265_cpu"), ("av1", "av1_cpu")],
+        "gpu": [("h264", "gpu"), ("h265", "h265_gpu"), ("av1", "av1_gpu")],
+    }
+    if side not in presets_by_side:
+        raise ValueError(f"side must be cpu or gpu, got {side!r}")
+    codec_steps = presets_by_side[side]
+    stopped = focus_mode_enter()
+    LOCK_FILE.write_text(job_id)
+    results = {}
+    last_floor = None
+    cooldowns = []   # diagnostics: method (idle/fixed) + waited_s per inter-codec gap
+    try:
+        for idx, (codec_name, preset_key) in enumerate(codec_steps):
+            if idx > 0:
+                # Cooldown before each subsequent codec (named for the upcoming
+                # codec, matching the all_codecs *_rest convention).
+                if jobs: jobs[job_id]["stage"] = f"{codec_name}_{side}_rest"
+                cd = await cooldown_between_runs(
+                    fixed_seconds=s["video_cooldown_s"], reference_w=last_floor,
+                    stage=f"{codec_name}_{side}_rest", jobs=jobs, job_id=job_id,
+                )
+                cooldowns.append({"before_codec": codec_name, **cd})
+            if jobs: jobs[job_id]["stage"] = f"{codec_name}_{side}_baseline"
+            base = await measure_baseline(polls=s["baseline_polls"])
+            last_floor = base["w_base"]
+            if jobs: jobs[job_id]["stage"] = f"{codec_name}_{side}_encode"
+            res = await run_single(input_path, job_id, preset_key, base, jobs=jobs)
+            results[codec_name] = {side: res}
+    finally:
+        LOCK_FILE.unlink(missing_ok=True)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, focus_mode_exit, stopped)
+
+    # CR-044 — terminal VMAF pass (lock released, focus exiting): score the 3
+    # retained encodes against the source. Never polled, never billed.
+    single_sides = [data[side] for data in results.values() if side in data]
+    await _attach_vmaf(single_sides, input_path, job_id, s, jobs)
+
+    if jobs: jobs[job_id]["stage"] = "done"
+    return {
+        "mode": f"codecs_{side}",
+        "job_id": job_id,
+        "side": side,
+        "codecs": results,
+        "analysis": analyse_all(results),
+        "cooldowns": cooldowns,
         "scope": "Device layer only (GoS1 server). Network, CDN, CPE excluded.",
     }
 
@@ -958,7 +1031,10 @@ async def run_both_measurement(input_path: Path, job_id: str, jobs: dict = None,
         cpu_result = await run_single(input_path, job_id, preset_cpu, baseline,
                                       custom_cmd_cpu, jobs=jobs)
         if jobs is not None: jobs[job_id]["stage"] = "rest"
-        await asyncio.sleep(s["video_cooldown_s"])
+        cd_cpu_gpu = await cooldown_between_runs(
+            fixed_seconds=s["video_cooldown_s"], reference_w=baseline["w_base"],
+            stage="rest", jobs=jobs, job_id=job_id,
+        )
         if jobs is not None: jobs[job_id]["stage"] = "baseline_2"
         gpu_baseline = await measure_baseline(polls=s["baseline_polls"])
         if jobs is not None: jobs[job_id]["stage"] = "gpu_encode"
@@ -981,6 +1057,7 @@ async def run_both_measurement(input_path: Path, job_id: str, jobs: dict = None,
         "cpu": cpu_result,
         "gpu": gpu_result,
         "analysis": analysis,
+        "cooldown": cd_cpu_gpu,
         "scope": "Device layer only (GoS1 server). Network, CDN, CPE excluded.",
     }
 
@@ -1066,9 +1143,13 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
         # sleep just gives residual activity time to decay. Reuses
         # variance_cooldown_s — same scale as the existing inter-run gaps,
         # so bumping that setting also lengthens this pre-roll.
-        if jobs:
-            jobs[job_id]["stage"] = "pre-calibration cooldown"
-        await asyncio.sleep(cooldown)
+        # Routed through the unified dispatcher for a single code path, but
+        # respect_toggle=False keeps variance on its fixed protocol regardless
+        # of cooldown_wait_for_idle — the controlled gap is what it measures.
+        await cooldown_between_runs(
+            fixed_seconds=cooldown, respect_toggle=False,
+            stage="pre-calibration cooldown", jobs=jobs, job_id=job_id,
+        )
 
         for i in range(n_runs):
             run_label = f"{i + 1}/{n_runs}"
@@ -1108,9 +1189,11 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
                 cpu_failed += 1
                 failure_stderr.append(f"run {run_label} cpu: {cpu_result.get('stderr','')[-200:]}")
 
-            # --- Cooldown between CPU and GPU ---
-            _stage("cooldown")
-            await asyncio.sleep(cooldown)
+            # --- Cooldown between CPU and GPU (fixed protocol; respect_toggle=False) ---
+            await cooldown_between_runs(
+                fixed_seconds=cooldown, respect_toggle=False,
+                stage=f"run {run_label} — cooldown", jobs=jobs, job_id=job_id,
+            )
 
             # --- GPU baseline (collect raw readings for idle CV) ---
             _stage("GPU baseline")
@@ -1142,8 +1225,10 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
 
             # --- Inter-run cooldown (skip after last run) ---
             if i < n_runs - 1:
-                _stage("inter-run cooldown")
-                await asyncio.sleep(cooldown)
+                await cooldown_between_runs(
+                    fixed_seconds=cooldown, respect_toggle=False,
+                    stage=f"run {run_label} — inter-run cooldown", jobs=jobs, job_id=job_id,
+                )
 
     finally:
         LOCK_FILE.unlink(missing_ok=True)

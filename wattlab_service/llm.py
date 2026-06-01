@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 import settings as cfg
 from confidence import confidence
-from power import get_power_watts, read_sensors_dict
+from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -365,9 +365,14 @@ async def run_llm_both_measurement(model_key: str, task_key: str,
         baseline_samples=_b_cpu["samples_w"]
     )
 
-    # --- Cooldown + re-baseline ---
-    if jobs and job_id: jobs[job_id]["stage"] = "cooldown"
-    await asyncio.sleep(s["video_cooldown_s"])
+    # --- Cooldown + re-baseline (unified dispatcher: idle-wait or fixed) ---
+    # reference_w = the CPU pass's cold baseline. Binary compare → allow_dialog
+    # stays False (focus/lock are held across this gap), so on idle-wait timeout
+    # it takes the non-interactive fixed fallback rather than the dialog.
+    cd_cpu_gpu = await cooldown_between_runs(
+        fixed_seconds=s["video_cooldown_s"], reference_w=w_base_cpu,
+        stage="cooldown", jobs=jobs, job_id=job_id,
+    )
 
     if jobs and job_id: jobs[job_id]["stage"] = "baseline_gpu"
     unload_model(model_key)
@@ -399,6 +404,7 @@ async def run_llm_both_measurement(model_key: str, task_key: str,
         "cpu": cpu_result,
         "gpu": gpu_result,
         "analysis": analysis,
+        "cooldown": cd_cpu_gpu,
         "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
     }
 
@@ -463,8 +469,12 @@ async def run_llm_batch_measurement(model_key: str, task_key: str, repeats: int,
 
     for i in range(repeats):
         if i > 0:
-            if jobs and job_id: jobs[job_id]["stage"] = f"rest_{i}"
-            await asyncio.sleep(s["llm_rest_s"])
+            # Unified dispatcher. Batch is non-interactive (allow_dialog stays
+            # False); reference_w = the single cold baseline this batch reuses.
+            await cooldown_between_runs(
+                fixed_seconds=s["llm_rest_s"], reference_w=w_base,
+                stage=f"rest_{i}", jobs=jobs, job_id=job_id,
+            )
 
         if jobs and job_id:
             jobs[job_id]["stage"] = f"inference_{i + 1}_of_{repeats}"

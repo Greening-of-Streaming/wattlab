@@ -139,6 +139,21 @@ def load_result(job_type: str, job_id: str,
     return data
 
 
+def delete_result(job_type: str, job_id: str) -> bool:
+    """Delete the stored result JSON for one job (Lab-only dev cleanup; gated at
+    the route). Returns True if a file was removed. There is no separate CSV to
+    delete — CSV is generated on the fly from the JSON. job_id is matched via the
+    same dir-scoped glob load_result uses, so it can't escape RESULTS_DIR."""
+    out_dir = RESULTS_DIR / job_type
+    if not out_dir.exists():
+        return False
+    removed = False
+    for p in out_dir.glob(f"*_{job_id}.json"):
+        p.unlink(missing_ok=True)
+        removed = True
+    return removed
+
+
 def to_csv(job_type: str, data: dict) -> str:
     """Flatten a result dict to CSV string."""
     output = io.StringIO()
@@ -243,11 +258,11 @@ def _summarise(job_type: str, data: dict) -> dict:
                     "b64_png": gen.get("b64_png", ""),
                 }
         elif mode == "compare_models":
-            for side in ("small", "large"):
-                s = data.get(side, {})
+            def _model_summary(s):
                 e = s.get("energy", {})
                 gen = s.get("generation", {})
-                summary[side] = {
+                return {
+                    "model_key": s.get("model_key"),
                     "model_label": gen.get("model_label"),
                     "size_px": gen.get("size"),
                     "wh_per_image": e.get("wh_per_image"),
@@ -256,6 +271,13 @@ def _summarise(job_type: str, data: dict) -> dict:
                     "confidence": e.get("confidence", {}),
                     "b64_png": gen.get("b64_png", ""),
                 }
+            # Legacy small/large aliases (pre-2026-05-27 records have only these).
+            for side in ("small", "large"):
+                summary[side] = _model_summary(data.get(side, {}))
+            # N-way schema: carry the full per-model list so the renderer can
+            # show every model (not just the first two). Without this, summaries
+            # dropped to small/large and a 3-model run rendered only 2 cards.
+            summary["models"] = [_model_summary(m) for m in data.get("models", [])]
         else:
             e = data.get("energy", {})
             gen = data.get("generation", {})
@@ -280,7 +302,7 @@ def _summarise(job_type: str, data: dict) -> dict:
             summary["gpu_duration_s"] = gpu_e.get("delta_t_s")
             summary["cpu_confidence"] = cpu_e.get("confidence", {}).get("flag")
             summary["gpu_confidence"] = gpu_e.get("confidence", {}).get("flag")
-        elif mode == "all_codecs":
+        elif mode in ("all_codecs", "codecs_cpu", "codecs_gpu"):
             a = data.get("analysis", {})
             best = a.get("most_efficient")
             summary["most_efficient"] = best["label"] if best else None
