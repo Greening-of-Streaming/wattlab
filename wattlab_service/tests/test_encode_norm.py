@@ -105,7 +105,11 @@ def test_build_preset_cmd_carries_normalization(monkeypatch):
     for k in ALL:
         cmd = video.build_preset_cmd(k, "{input}", "{output}")
         assert "-g" in cmd and cmd[cmd.index("-g") + 1] == "120"
-        assert "-profile:v" in cmd
+        # av1_nvenc (NVIDIA backend, CR-060) exposes no -profile:v knob — every
+        # other encoder carries one. Assert profile only where it applies.
+        enc = cmd[cmd.index("-c:v") + 1] if "-c:v" in cmd else ""
+        if enc != "av1_nvenc":
+            assert "-profile:v" in cmd
         # GOP must sit after the codec/bitrate, before the output path
         assert cmd.index("-g") > cmd.index("-c:v")
         assert cmd.index("-g") < len(cmd) - 1
