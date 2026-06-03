@@ -14,11 +14,14 @@ import main
 client = TestClient(main.app)
 
 PAGES = ["/llm/compare", "/rag/compare", "/rag", "/image", "/video", "/enhance-run"]
+# Fetch as Lab so member-gated pages (e.g. /enhance-run) are still inspectable;
+# the public pages render identically for Lab.
+LAB = {"x-real-ip": "127.0.0.1"}
 
 
 @pytest.mark.parametrize("path", PAGES)
 def test_cooldown_dialog_defined_where_called(path):
-    html = client.get(path).text
+    html = client.get(path, headers=LAB).text
     if "wlCooldownDialog(" in html:
         assert "window.wlCooldownDialog =" in html, f"{path} calls wlCooldownDialog but never defines it"
         assert "window.wlCooldownDialogClose =" in html, f"{path} calls the dialog but lacks wlCooldownDialogClose"
@@ -26,6 +29,6 @@ def test_cooldown_dialog_defined_where_called(path):
 
 @pytest.mark.parametrize("path", PAGES)
 def test_cooldown_summary_defined_where_called(path):
-    html = client.get(path).text
+    html = client.get(path, headers=LAB).text
     if "wlCooldownSummary(" in html:
         assert "window.wlCooldownSummary =" in html, f"{path} calls wlCooldownSummary but never defines it"

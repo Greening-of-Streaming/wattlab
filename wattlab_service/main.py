@@ -4615,7 +4615,7 @@ def _enhance_cfg_band(pf: dict) -> str:
 
 
 @app.get("/enhance-run", response_class=HTMLResponse,
-         dependencies=[Depends(requires(PUBLIC_PAGE))])
+         dependencies=[Depends(requires(ENHANCE_RUN))])
 async def enhance_run_page(request: Request):
     pf = pixop.preflight()
     can_run = can(audience.tier(request), ENHANCE_RUN)
@@ -4679,7 +4679,7 @@ async def enhance_run_start(request: Request,
     return {"job_id": job_id, "queue_position": position}
 
 
-@app.get("/enhance-run/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
+@app.get("/enhance-run/job/{job_id}", dependencies=[Depends(requires(ENHANCE_RUN))])
 async def enhance_job_status(job_id: str):
     return _job_status(job_id)
 

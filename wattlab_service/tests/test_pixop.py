@@ -364,8 +364,15 @@ def test_start_route_409_when_not_configured(monkeypatch):
     assert "reasons" in r.json()
 
 
-def test_enhance_page_renders_and_is_hidden():
-    r = client.get("/enhance-run")
+def test_enhance_page_blocked_for_anonymous():
+    # Secret: the PAGE itself (not just the run) is gated — anonymous can't even
+    # see it exists. (Earlier it was PUBLIC_PAGE, which leaked the whole page.)
+    r = client.get("/enhance-run", headers=ANON)
+    assert r.status_code == 403
+
+
+def test_enhance_page_renders_for_member_and_is_hidden():
+    r = client.get("/enhance-run", headers=LAB)   # Lab ≥ Member
     assert r.status_code == 200
     # Vendor-neutral: never names the partner on the page.
     assert "Pixop" not in r.text
