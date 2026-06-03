@@ -262,6 +262,7 @@ def test_required_tier_table_snapshot():
         "rag_corpus_delete_own": Tier.Member,  # CR-051
         "results_export_csv":    Tier.Member,
         "benchmark_view":        Tier.Member,  # CR-061 — view runs/results; running stays Lab
+        "enhance_run":           Tier.Member,  # S40 — partner transcode (Pixop) demo, off-LAN via magic-link
         # Lab — instrument operators
         "settings_read_full":  Tier.Lab,
         "settings_write":      Tier.Lab,

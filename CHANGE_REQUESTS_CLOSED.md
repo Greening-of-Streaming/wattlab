@@ -1813,3 +1813,39 @@ Moved the cooldown dialog helpers + `wlCooldownSummary` into `_CARBON_JS` (bundl
 - GoS1 `eno2` (Realtek RTL8125 2.5GbE, r8169) link **flaps** caused intermittent loss of all remote access (DuckDNS + tailscale die together, recover together). Suspect EEE (802.3az, "enabled-active") and/or 2.5G autoneg with the firmware-updated Bbox. Mitigations to try: `ethtool --set-eee eno2 eee off`, reseat/swap cable + different Bbox port, or pin 1G. Not yet a CR.
 
 ---
+
+## CR-063 · S40 — Pixop partner-transcode integration (`/enhance-run`)
+
+**Status:** ✅ shipped 2026-06-03 (S40) on `main`. First real third-party AI-enhancement vendor (Pixop) measured inside OWL on the RTX 5080. `test_pixop.py` = 34 tests; suite at 473 passing (alongside a parallel FLUX/image-models session sharing the tree). **Service restart required** to load the new routes + page template. settings.json held out of the commit (live state); the FLUX session's `image_gen.py`/`model_catalog.py`/its tests are NOT part of this CR. Deferred items named at the end.
+
+**Triggered by:** Jon (Pixop) stood up Pixop's transcoder in Docker on GoS1 and asked Ben to test it (board direction: keep AI tethered to streaming; Pixop is the first concrete vendor integration — see the GPU-swap-to-Nvidia initiative, CR-060). Builds on the RTX 5080 swap that made CUDA-only Pixop runnable.
+
+### What shipped
+
+**Hidden, member-gated page + measurement wrapper.** New route `/enhance-run` (NOT in the nav grid; vendor-neutral copy — never prints "Pixop"/"NVEncC" in user HTML; title bar reads "UNDER DEVELOPMENT … GoS ONLY"). New `pixop.py` wraps the `pixop/live:2026.06.03` Docker image (a NVEncC wrapper) in OWL's existing measurement harness by **reusing** `video.py`'s `measure_baseline`/`poll_during_task`/`focus_mode_*`/`probe_output_stream` + `power.cooldown_between_runs` + `confidence` — no harness reimplementation. Result is shaped like a video single-result so the render helpers + `persist` CO₂e/`gpu_hardware` stamping work unchanged; persists to `results/enhance/`. Routes: page, `/enhance-run/self-test`, `/start`, `/job/{id}`, `/output/{name}`, `/input/{name}`.
+
+**Capability.** New `ENHANCE_RUN` in `capabilities.py`. Shipped Lab-only, then **lowered Lab→Member** the same session so allowlisted members (Jon `jon@pixop.com`, Tania `tania@vividmanta.com` — both already in `data/members.json`) can run the demo off-LAN via magic-link. Anonymous stays fully blocked (run/self-test/output/input all 403). Snapshot test + `test_pixop` updated.
+
+**Verified container contract (corrected mid-session — the earlier "license baked in" intel was wrong, cost one debug cycle).** From Jon's `run_pixop_nvencc.sh`: the licence is **mounted** at `/opt/pixop/license.jwt:ro` (NOT baked, NOT an env var — a real encode dies `Failed to load pixop license file` without it; `--check-device` passes regardless, which is why self-test-green ≠ transcode-works); single host mount `-v <workdir>:/mnt/host`; the preset `.args` is **expanded host-side into argv** (`pixop.read_preset_args`, mirroring Jon's bash parser — NOT `--option-file`); runtime flags `--network host --init --user <uid>:<gid>` + `NVIDIA_DRIVER_CAPABILITIES`/`UCX_ERROR_SIGNALS`/`PIXOP_LOG_MODE` env. The `PIXOP_LIVE_PULSE_*` telemetry env in Jon's script is **not required** (verified). OWL owns its workdir `/srv/data/owl/pixop/{input,output,presets}` (gos-owned, auto-created; staging via `sudo cp` from Jon's 0750 home then `chown gos:gos`). `preflight()` gates on image+workdir+licence+preset+input and drives a graceful "not configured" banner; a no-licence `--check-device` self-test proves docker+GPU plumbing.
+
+**Realtime / Live feasibility verdict.** Every run computes a steady-state realtime factor `RTF = encode_fps / source_fps` (encode fps parsed from NVEncC's `encoded N frames, X fps` summary; source fps/duration via a post-measurement `_probe_input`). Verdict ≥1.15 `live` / ≥1.0 `marginal` / <1.0 `file` / else `unknown`; card shows a colour-keyed row + "wall-clock N× incl. cold start" caveat. Maps to Pixop's two products (Live = linear / <600 ms latency wants W-per-channel + realtime headroom; File = batch wants Wh-per-asset). Verified: BBB FHD = `live` (~2.2×), Meridian ×2→4K = `file` (~0.34×).
+
+**"Serve as Live" 1× pacer.** Checkbox → `live=true` runs `ffmpeg -re -i <file> -c copy -f mpegts - | docker run -i … nvencc --input-format mpegts -i -`. The host pacer stream-copies at 1× (no decode), **P110-measured at +0.1–0.2 W over idle** (below the ~0.9 W noise floor, input-independent — decode-pacing the HDR clip cost +2.6 W by contrast), so NO ffmpeg-subtraction phase is needed; nvencc does its own decode exactly as in batch. In live mode the verdict switches to sustain-based (`live_sustained` if wall ≥ 0.9× content, else `live_behind`) since paced encode-fps is pinned to source rate; the card labels ΔW as "live average power, linear content". Verified end-to-end: BBB FHD live = 32 s wall / 30 s content → sustained.
+
+**Demo polish.** Input preview + output download/inline-`<video>` (best-effort; HDR HEVC may not play inline → Download is the reliable path); CO₂e strip via `wlCarbonStrip`; preset dropdown shows a plain-language description derived from the **actual** preset flags (`pixop.describe_preset`, e.g. "upscale to 1080p · SDR→HDR · 20 Mbps"); in-page video paused on run-start so the browser doesn't keep GoS1 serving bytes during the measurement window.
+
+### First measurements (device layer, GoS1 RTX 5080)
+- **BBB FHD** (`nvencc_fhd_pq_20mbps`): ΔW ≈ 129 W, ΔE ≈ 1.01 Wh batch / ≈ 1.1 Wh at 1×; `live`-capable.
+- **Meridian ×2→4K** (`nvencc_2x_p3pq_2020_pq_pass_35mbps`): 88.8 s, ΔW 370 W, ΔE 9.13 Wh, 🟢; `file`/batch only.
+- Framing agreed with Ben: per-clip Wh barely moves between batch and 1×; for linear/live the headline is **sustained ΔW per channel**, NOT a 24/7 extrapolation (8 kWh/day = the misleading way to read a burst). Pixop Live's net-energy story is the **delivery-side offset** (head-end processing paid once vs network+decode paid per-viewer × millions) — OWL measures the in-scope head-end, names the out-of-scope offset.
+
+### Single-sourcing / contract held
+- Cooldown via `power.cooldown_between_runs` only (no raw sleep). Baseline/poll/probe/focus-mode imported from `video.py`. Capability is one row in `capabilities.py`; routes speak `ENHANCE_RUN`, never compare tiers. Result stamped with `gpu.stamp()`.
+
+### Deferred (promote to active CR if they become urgent)
+- **ms latency** — NOT faked (a fabricated number next to Pixop's instrumented <600 ms would undercut credibility). Gated on aligning with how Pixop defines/measures their latency (glass-to-glass vs encoder-only), or running pixop/live in its real SRT-ingest server mode.
+- **VMAF / quality grading** — VMAF is wrong for super-resolution (no native ground-truth reference; HDR-VMAF is itself fraught). To be worked out with Tania (grade input vs output some sound way).
+- **CO₂e strip** — present but needs adjusting; energy (W/Wh) is the figure GoS stands behind, CO₂e is reference-only.
+- **Pre-run auto-disable of the Live toggle** for known-`file` content — NOT built (no reliable pre-run verdict cache); the run honestly reports `live_behind` instead.
+
+---

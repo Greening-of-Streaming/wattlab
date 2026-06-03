@@ -52,6 +52,7 @@ RAG_CORPUS_UPLOAD     = "rag_corpus_upload"      # PDF upload into the RAG corpu
 RAG_CORPUS_DELETE_OWN = "rag_corpus_delete_own"  # CR-051 — delete a corpus PDF you uploaded (Lab can delete any via tier override)
 RESULTS_EXPORT_CSV = "results_export_csv" # bulk CSV/JSON export of run history (≠ RESULTS_DOWNLOAD)
 BENCHMARK_VIEW     = "benchmark_view"     # CR-061 — view benchmark runs + results pages (Member); running stays Lab (BENCHMARK_RUN)
+ENHANCE_RUN        = "enhance_run"         # partner GPU transcode/upscale (Pixop) — hidden /enhance-run page (S40: Lab→Member so Jon/Tania can run the demo via magic-link off-LAN)
 
 # Lab-only
 SETTINGS_READ_FULL = "settings_read_full" # render-mode predicate (editable inputs vs read-only)
@@ -87,6 +88,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     RAG_CORPUS_DELETE_OWN: Tier.Member,
     RESULTS_EXPORT_CSV:    Tier.Member,
     BENCHMARK_VIEW:        Tier.Member,
+    ENHANCE_RUN:           Tier.Member,   # S40 — partner-transcode demo, off-LAN via magic-link
 
     # Lab — instrument operators
     SETTINGS_READ_FULL: Tier.Lab,

@@ -13,7 +13,7 @@ import main
 
 client = TestClient(main.app)
 
-PAGES = ["/llm/compare", "/rag/compare", "/rag", "/image", "/video"]
+PAGES = ["/llm/compare", "/rag/compare", "/rag", "/image", "/video", "/enhance-run"]
 
 
 @pytest.mark.parametrize("path", PAGES)

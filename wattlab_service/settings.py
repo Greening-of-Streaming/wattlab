@@ -86,6 +86,16 @@ DEFAULTS = {
     "vmaf_enabled": True,
     "vmaf_n_subsample": 1,   # score every Nth frame (TEMPORAL only). 1 = full.
     "vmaf_n_threads": 12,    # libvmaf worker threads (box has 24 cores).
+    # Pixop partner GPU transcode/upscale (hidden /enhance-run page, Lab-only).
+    # The pixop/live image wraps NVEncC; its license is baked INTO the image
+    # (/opt/pixop/license.jwt) so OWL supplies NONE. OWL owns its own workdir
+    # (/srv/data/owl is gos-owned → no root chown needed); it mounts the three
+    # subdirs to the container's /mnt/host/{input,output,presets} contract.
+    "pixop_image_tag": "pixop/live:2026.06.03",
+    "pixop_workdir": "/srv/data/owl/pixop",  # contains input/ output/ presets/
+    "pixop_presets": [],                     # [] = auto-list *.args in presets/
+    "pixop_cooldown_s": 60,
+    "pixop_docker_timeout_s": 1800,
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
     # CR-015 — auto-lower the maintenance flag after this many minutes of

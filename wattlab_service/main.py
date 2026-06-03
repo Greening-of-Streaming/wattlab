@@ -38,9 +38,10 @@ from capabilities import (
     VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD, WORKING_NAV,
     CUSTOM_PROMPT, BATCH_COMPARE, RAG_CORPUS_UPLOAD, RAG_CORPUS_DELETE_OWN, RESULTS_EXPORT_CSV,
     BENCHMARK_VIEW,
-    SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN, BENCHMARK_RUN,
+    SETTINGS_READ_FULL, SETTINGS_WRITE, VARIANCE_RUN, BENCHMARK_RUN, ENHANCE_RUN,
 )
 import benchmark
+import pixop
 
 config = dotenv_values("/home/gos/wattlab/.env")
 app = FastAPI()
@@ -1949,6 +1950,7 @@ var WL_VIDEO_STAGES = ['Baseline ({BASELINE_S}s)', 'Encoding', '{COOLDOWN_LABEL}
 var WL_LLM_STAGES   = ['Baseline ({BASELINE_S}s)', 'Inference running', 'Complete'];
 var WL_IMAGE_STAGES = ['Baseline ({BASELINE_S}s)', 'Generating image', 'Complete'];
 var WL_RAG_STAGES   = ['Baseline poll ({BASELINE_S}s)', 'Inference running', 'Complete'];
+var WL_ENHANCE_STAGES = ['Baseline ({BASELINE_S}s)', 'Transcoding', '{COOLDOWN_LABEL}', 'Probe', 'Done'];
 </script>"""
 
 # Bake settings-driven durations into the shared stage labels at module
@@ -4251,6 +4253,460 @@ async def video_enhance_page(request: Request):
             .replace("{AUTH_CHIP}",        _auth_chip_html(request))
             .replace("{PROGRESS_JS}",      _PROGRESS_JS)
             .replace("{FOOTER}",           _FOOTER))
+
+
+# ── Hidden Lab-only "partner GPU transcode/upscale" measurement (Pixop) ──────
+# Reachable by URL only — NOT in the nav grid — until Pixop green-lights a public
+# launch. Vendor-neutral copy (never prints "Pixop"/"NVEncC"). The real measured
+# run wraps the pixop/live docker image in OWL's harness (pixop.py); it lights up
+# once a preset .args + an input clip are staged in the OWL workdir. A no-license
+# `--check-device` self-test proves the docker+GPU plumbing today.
+
+def _enhance_options_html(items: list) -> str:
+    return "".join(f'<option value="{html_lib.escape(x)}">{html_lib.escape(x)}</option>'
+                   for x in items)
+
+
+def _enhance_preset_options_html(presets: list) -> str:
+    """Preset <option>s with a plain-language description (derived from the
+    actual preset flags) in brackets after the filename."""
+    out = []
+    for p in presets:
+        desc = pixop.describe_preset(p)
+        label = f"{p}  ({desc})" if desc else p
+        out.append(f'<option value="{html_lib.escape(p)}">{html_lib.escape(label)}</option>')
+    return "".join(out)
+
+
+_ENHANCE_RUN_HTML = """<!DOCTYPE html>
+<html>
+<head>
+  <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+  <title>UNDER DEVELOPMENT — Video enhancement (GoS only)</title>
+  <style>
+    {AUTH_CHIP_STYLES}
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: var(--bg); color: var(--text);
+           max-width: 820px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { color: var(--accent); margin-bottom: 0.25rem; font-size: 1.45rem; }
+    .subtitle { color: var(--text-3); font-size: 0.82rem; margin-bottom: 1.25rem;
+                letter-spacing: 0.04em; }
+    .back { display: inline-block; color: var(--text-4); text-decoration: none;
+            font-size: 0.82rem; margin-bottom: 1.0rem; }
+    .back:hover { color: var(--accent); }
+    .lead-band { background: rgba(0,255,153,0.05); border-left: 3px solid var(--accent);
+                 padding: 0.8rem 1rem; margin-bottom: 1.25rem; color: var(--text-2);
+                 font-size: 0.84rem; line-height: 1.6; }
+    .cfg-band { padding: 0.7rem 1rem; margin-bottom: 1.25rem; font-size: 0.8rem;
+                line-height: 1.55; border-left: 3px solid var(--warn);
+                background: rgba(255,170,0,0.05); color: var(--text-2); }
+    .cfg-band.ok { border-left-color: var(--accent); background: rgba(0,255,153,0.04); }
+    .cfg-band ul { margin: 0.35rem 0 0 1.1rem; }
+    .cfg-band code { color: var(--text-3); }
+    .panel { border: 1px solid var(--border-2); padding: 1rem 1.15rem;
+             margin-bottom: 1.25rem; background: var(--panel); }
+    .panel.lock-block { opacity: 0.5; }
+    .row { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: flex-end;
+           margin-bottom: 0.75rem; }
+    .row > div { display: flex; flex-direction: column; gap: 0.25rem; }
+    label { color: var(--text-4); font-size: 0.68rem; letter-spacing: 0.05em;
+            text-transform: uppercase; }
+    select { background: var(--bg); color: var(--text); border: 1px solid var(--border-3);
+             font-family: monospace; padding: 0.45rem 0.5rem; min-width: 230px; }
+    button { background: var(--accent); color: #061a10; border: none; font-family: monospace;
+             font-weight: bold; padding: 0.55rem 1.1rem; cursor: pointer; font-size: 0.85rem; }
+    button.secondary { background: transparent; color: var(--text-2);
+                       border: 1px solid var(--border-3); font-weight: normal; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .lock-badge { display: inline-block; color: var(--warn); text-decoration: none;
+                  font-size: 0.78rem; margin-left: 0.5rem; }
+    #status { margin-bottom: 1.25rem; }
+    pre { white-space: pre-wrap; word-break: break-word; background: var(--bg);
+          border: 1px solid var(--border-2); padding: 0.75rem; font-size: 0.74rem;
+          color: var(--text-3); max-height: 320px; overflow: auto; }
+    .result-card { display: none; border: 1px solid var(--accent); padding: 1rem 1.15rem;
+                   margin-bottom: 1.25rem; background: rgba(0,255,153,0.025); }
+    .rc-header { color: var(--accent); font-size: 0.7rem; letter-spacing: 0.08em;
+                 text-transform: uppercase; margin-bottom: 0.6rem; }
+    .rc-kpi { display: flex; gap: 1.6rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .rc-kpi > div { display: flex; flex-direction: column; gap: 0.18rem; }
+    .rc-kpi .val { color: var(--accent); font-size: 1.2rem; }
+    .rc-kpi .lbl { color: var(--text-4); font-size: 0.66rem; letter-spacing: 0.05em;
+                   text-transform: uppercase; }
+    .metric { display: flex; justify-content: space-between; gap: 1rem;
+              padding: 0.25rem 0; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
+    .metric .val { color: var(--text-2); }
+    details { margin-top: 0.75rem; font-size: 0.78rem; color: var(--text-4); }
+    .footer-note { color: var(--text-4); font-size: 0.78rem; line-height: 1.6;
+                   border-left: 2px solid var(--border-2); padding-left: 0.9rem;
+                   margin-top: 2.5rem; }
+  </style>
+</head>
+<body>
+{AUTH_CHIP}
+<a href="/" class="back">&larr; Home</a>
+
+<h1><span style="color:var(--warn)">UNDER DEVELOPMENT</span> Video enhancement <span style="color:var(--warn)">GoS ONLY</span> <span style="font-size:0.7rem;color:var(--warn)">&middot; Lab</span></h1>
+<div class="subtitle">Hidden &middot; partner GPU transcode / upscale &middot; energy measurement</div>
+
+<div class="lead-band">
+  Measures the <strong>energy cost</strong> of a partner GPU transcode/upscale pass
+  (e.g. SD&nbsp;&rarr;&nbsp;HD with ×2 super-resolution + HDR passthrough) on the
+  GoS1 RTX&nbsp;5080. The transcode runs in a vendor container; OWL wraps it in the
+  standard harness &mdash; focus mode, P110 polling at 1&nbsp;Hz, ΔWh with a
+  confidence flag. Device layer only; network / CDN / CPE excluded.
+</div>
+
+{CFG_BAND}
+
+<div class="panel {LOCK_CLASS}">
+  <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem">
+    <span style="color:var(--text-3);font-size:0.82rem">Run a measured enhancement</span>
+    {LOCK_BADGE}
+  </div>
+  <div class="row">
+    <div>
+      <label for="inSel">Input clip</label>
+      <select id="inSel" onchange="updateInputPreview()"{DISABLED}>{INPUT_OPTIONS}</select>
+    </div>
+    <div>
+      <label for="preSel">Preset (.args)</label>
+      <select id="preSel"{DISABLED}>{PRESET_OPTIONS}</select>
+    </div>
+    <div>
+      <button id="runBtn" onclick="startRun()"{RUN_DISABLED}>Run &amp; measure</button>
+    </div>
+  </div>
+  <label style="display:flex;align-items:center;gap:0.45rem;color:var(--text-2);font-size:0.8rem;margin-bottom:0.5rem;cursor:pointer">
+    <input type="checkbox" id="liveTog"{RUN_DISABLED}> Serve as Live — pace input at 1× realtime
+  </label>
+  <div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.75rem">
+    Feeds the encoder at 1× (the linear/live profile) so ΔW reads as sustained per-channel
+    power. Best on Live-capable presets (the FHD ones); the ×2→4K SR can't sustain 1× on
+    one GPU and will report "fell behind."
+  </div>
+  <div id="input-preview" style="display:none;margin-bottom:0.75rem">
+    <div style="color:var(--text-4);font-size:0.68rem;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.3rem">Input preview</div>
+    <video id="inVid" controls preload="metadata" muted style="width:100%;max-height:320px;background:#000"></video>
+  </div>
+  <button class="secondary" id="stBtn" onclick="selfTest()"{ST_DISABLED}>Run self-test (--check-device)</button>
+  <div style="color:var(--text-4);font-size:0.72rem;margin-top:0.5rem">
+    Self-test proves docker + GPU + image plumbing without measuring energy.
+  </div>
+</div>
+
+<div id="status"></div>
+<div id="result-card" class="result-card"></div>
+<div id="selftest-out"></div>
+
+<div class="footer-note">
+  A partner GPU transcode is measured with the same protocol as every other OWL
+  workload &mdash; see <a href="/methodology">/methodology</a>. Energy is the
+  headline; perceptual quality of super-resolution has no native ground-truth
+  reference, so it is not asserted here.
+</div>
+
+{PROGRESS_JS}
+{FOOTER}
+
+<script>
+function _enhStageIdx(stage) {
+  var m = {baseline:0, transcoding:1, cooldown:2, probe:3, done:4};
+  return m[stage] != null ? m[stage] : 0;
+}
+function updateInputPreview() {
+  var sel = document.getElementById('inSel');
+  var wrap = document.getElementById('input-preview');
+  var vid = document.getElementById('inVid');
+  if (!sel || !sel.value) { wrap.style.display = 'none'; return; }
+  vid.src = '/enhance-run/input/' + encodeURIComponent(sel.value);
+  wrap.style.display = 'block';
+}
+async function startRun() {
+  var input = document.getElementById('inSel').value;
+  var preset = document.getElementById('preSel').value;
+  if (!input || !preset) return;
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('result-card').style.display = 'none';
+  document.getElementById('selftest-out').innerHTML = '';
+  // Measurement hygiene: pause any in-page video so the browser doesn't keep
+  // GoS1 serving bytes (disk/network/CPU) during the baseline + run window.
+  // (Decode is client-side, but the FileResponse fetch is not.)
+  document.querySelectorAll('video').forEach(function(v){ try { v.pause(); } catch(e) {} });
+  var form = new FormData();
+  form.append('input_name', input);
+  form.append('preset_name', preset);
+  form.append('live', document.getElementById('liveTog').checked ? 'true' : 'false');
+  try {
+    var resp = await fetch('/enhance-run/start', { method:'POST', body:form });
+    var data = await resp.json();
+    if (!resp.ok) {
+      document.getElementById('status').innerHTML =
+        '<div style="color:var(--err)">' + (data.error || 'Failed')
+        + (data.reasons ? ' — ' + data.reasons.join('; ') : '') + '</div>';
+      document.getElementById('runBtn').disabled = false;
+      return;
+    }
+    pollJob(data.job_id);
+  } catch(e) {
+    document.getElementById('status').innerHTML = '<div style="color:var(--err)">' + e + '</div>';
+    document.getElementById('runBtn').disabled = false;
+  }
+}
+async function pollJob(jobId) {
+  try {
+    var [resp, powerR] = await Promise.all([
+      fetch('/enhance-run/job/' + jobId),
+      fetch('/power').catch(function(){ return null; }),
+    ]);
+    var data = await resp.json();
+    var watts = powerR ? ((await powerR.json().catch(function(){return {};})).watts ?? null) : null;
+    if (data.status === 'done') {
+      document.getElementById('status').innerHTML = '';
+      renderResult(data.result);
+      document.getElementById('runBtn').disabled = false;
+    } else if (data.status === 'error') {
+      document.getElementById('status').innerHTML =
+        '<div style="color:var(--err)">Error: ' + data.error + '</div>';
+      document.getElementById('runBtn').disabled = false;
+    } else if (data.stage === 'queued') {
+      wlRenderQueued(data.queue_position);
+      setTimeout(function(){ pollJob(jobId); }, 3000);
+    } else {
+      var idx = _enhStageIdx(data.stage || 'baseline');
+      wlRenderProgress({
+        header: 'Measuring — do not close this tab',
+        stagesHtml: wlStageList(WL_ENHANCE_STAGES, idx),
+        watts: watts,
+      });
+      var inCooldown = (data.stage || '').indexOf('cooldown') !== -1 && data.cooldown_waited_s != null;
+      setTimeout(function(){ pollJob(jobId); }, inCooldown ? 1000 : 2000);
+    }
+  } catch(e) {
+    setTimeout(function(){ pollJob(jobId); }, 5000);
+  }
+}
+function _row(label, val, unit) {
+  return '<div class="metric"><span>' + label + '</span><span class="val">'
+       + val + (unit ? ' ' + unit : '') + '</span></div>';
+}
+function renderResult(meas) {
+  var r = meas.result || {};
+  var e = r.energy || {};
+  var t = r.transcode || {};
+  var s = r.stream || {};
+  var conf = e.confidence || {};
+  var card = document.getElementById('result-card');
+  var streamRows = '';
+  if (s && s.codec) {
+    streamRows += _row('Output', (s.width||'?') + '×' + (s.height||'?') + ' · ' + s.codec
+                  + (s.pix_fmt ? ' · ' + s.pix_fmt : ''), '');
+    if (s.bit_rate_bps) streamRows += _row('Output bitrate', (s.bit_rate_bps/1e6).toFixed(1), 'Mbps');
+  }
+  if (r.output_size_mb != null) streamRows += _row('Output size', r.output_size_mb, 'MB');
+  var failHtml = t.success === false
+    ? '<div style="color:var(--err);font-size:0.8rem;margin:0.4rem 0">Transcode failed (rc '
+      + t.returncode + ') — ' + (t.stderr_tail || '').slice(-300) + '</div>'
+    : '';
+  // Output viewer — only when the run produced a file (success + name on disk).
+  var outHtml = '';
+  if (r.output_name && t.success !== false) {
+    var url = '/enhance-run/output/' + encodeURIComponent(r.output_name);
+    outHtml =
+        '<div style="margin-top:0.85rem">'
+      + '<div style="display:flex;gap:0.8rem;align-items:center;margin-bottom:0.4rem">'
+      +   '<a href="' + url + '" download style="color:var(--accent)">⬇ Download output</a>'
+      +   '<span style="color:var(--text-4);font-size:0.72rem">' + r.output_name + '</span>'
+      + '</div>'
+      + '<video controls preload="metadata" style="width:100%;background:#000" src="' + url + '"></video>'
+      + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
+      +   'HEVC 10-bit / HDR may not play inline in every browser — use Download if the player is blank.'
+      + '</div></div>';
+  }
+  // Realtime / Live feasibility verdict.
+  var rt = r.realtime;
+  var rtHtml = '';
+  if (rt && rt.verdict && rt.verdict !== 'unknown') {
+    if (rt.live) {
+      // 1x-paced run: did the box sustain realtime (no back-pressure)?
+      var lmap = {
+        live_sustained: ['▶ Live 1× — sustained realtime', 'var(--accent)'],
+        live_behind:    ['■ Live 1× — fell behind (can\\'t sustain on this GPU)', 'var(--warn)']
+      };
+      var lv = lmap[rt.verdict] || ['', 'var(--text-3)'];
+      rtHtml = '<div style="font-size:0.88rem;color:' + lv[1] + ';margin-bottom:0.2rem">' + lv[0] + '</div>'
+             + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.7rem">'
+             + 'paced at 1× · ΔW below = live average power, linear content'
+             + (rt.rtf_wall != null ? ' · ran ' + rt.rtf_wall + '× content time' : '') + '</div>';
+    } else {
+      var vmap = {
+        live:     ['▶ Live-capable',                      'var(--accent)'],
+        marginal: ['▷ Marginal — realtime, no headroom',  'var(--warn)'],
+        file:     ['■ File / batch only',                 'var(--text-3)']
+      };
+      var v = vmap[rt.verdict] || ['', 'var(--text-3)'];
+      var detail = (rt.rtf_steady != null ? rt.rtf_steady + '× realtime' : '')
+        + (rt.encode_fps != null && rt.source_fps != null
+            ? ' (' + rt.encode_fps + ' fps enc vs ' + rt.source_fps + ' fps source)' : '');
+      rtHtml = '<div style="font-size:0.88rem;color:' + v[1] + ';margin-bottom:0.2rem">'
+             + v[0] + (detail ? ' · ' + detail : '') + '</div>'
+             + (rt.rtf_wall != null
+                 ? '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.7rem">wall-clock '
+                   + rt.rtf_wall + '× incl. cold start</div>'
+                 : '<div style="margin-bottom:0.5rem"></div>');
+    }
+  }
+  card.innerHTML =
+      '<div class="rc-header">Result · ' + (r.preset_label || 'Partner GPU transcode') + '</div>'
+    + failHtml
+    + rtHtml
+    + '<div class="rc-kpi">'
+    +   '<div><span class="val">' + wlFmt(e.delta_t_s, 1) + ' s</span><span class="lbl">Duration</span></div>'
+    +   '<div><span class="val">' + wlFmt(e.delta_w, 1) + ' W</span><span class="lbl">ΔW mean</span></div>'
+    +   '<div><span class="val">' + wlFmt(e.delta_e_wh, 4) + ' Wh</span><span class="lbl">ΔE</span></div>'
+    +   '<div><span class="val">' + (conf.flag || '') + ' ' + (conf.label || '') + '</span><span class="lbl">Confidence</span></div>'
+    + '</div>'
+    + (streamRows ? '<div style="margin-top:0.5rem">' + streamRows + '</div>' : '')
+    + outHtml
+    + (window.wlCarbonStrip ? wlCarbonStrip(e.delta_e_wh,
+          (r.preset_label || 'Partner GPU transcode'), e.delta_t_s,
+          (e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)) : '')
+    + '<details><summary>preset · ' + (r.preset_detail || '') + '</summary>'
+    +   '<pre>' + (t.docker_cmd || '') + '</pre></details>';
+  card.style.display = 'block';
+}
+async function selfTest() {
+  var btn = document.getElementById('stBtn');
+  btn.disabled = true;
+  document.getElementById('selftest-out').innerHTML =
+    '<div style="color:var(--warn);font-size:0.82rem;margin-bottom:0.5rem">Running --check-device…</div>';
+  try {
+    var resp = await fetch('/enhance-run/self-test', { method:'POST' });
+    var d = await resp.json();
+    var head = d.ok ? '<span style="color:var(--accent)">✓ plumbing OK</span>'
+                    : '<span style="color:var(--err)">✗ ' + (d.error || ('rc ' + d.returncode)) + '</span>';
+    document.getElementById('selftest-out').innerHTML =
+      '<div style="font-size:0.82rem;margin-bottom:0.4rem">' + head
+      + ' <span style="color:var(--text-4)">· ' + (d.duration_s ?? '?') + 's · ' + (d.image_tag||'') + '</span></div>'
+      + '<pre>' + ((d.stdout_tail || '') + '\\n' + (d.stderr_tail || '')).trim() + '</pre>';
+  } catch(e) {
+    document.getElementById('selftest-out').innerHTML = '<div style="color:var(--err)">' + e + '</div>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+// Show the input preview for the initially-selected clip (Lab + configured).
+updateInputPreview();
+</script>
+</body>
+</html>"""
+
+
+def _enhance_cfg_band(pf: dict) -> str:
+    if pf["ok_transcode"]:
+        return ('<div class="cfg-band ok">&#10003; Configured &middot; '
+                f'{len(pf["inputs"])} input(s), {len(pf["presets"])} preset(s) staged &middot; '
+                f'image <code>{html_lib.escape(pf["image_tag"])}</code> present.</div>')
+    items = "".join(f"<li>{html_lib.escape(r)}</li>" for r in pf["reasons"])
+    selftest = ("Self-test is available." if pf["ok_selftest"]
+                else "Self-test needs the docker image.")
+    return ('<div class="cfg-band">&#9888; Not yet runnable &mdash; staging incomplete. '
+            f'Run is disabled until resolved:<ul>{items}</ul>{selftest}</div>')
+
+
+@app.get("/enhance-run", response_class=HTMLResponse,
+         dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def enhance_run_page(request: Request):
+    pf = pixop.preflight()
+    can_run = can(audience.tier(request), ENHANCE_RUN)
+    run_enabled = can_run and pf["ok_transcode"]
+    st_enabled = can_run and pf["ok_selftest"]
+    return (_ENHANCE_RUN_HTML
+            .replace("{AUTH_CHIP_STYLES}", _AUTH_CHIP_STYLES)
+            .replace("{AUTH_CHIP}",        _auth_chip_html(request))
+            .replace("{CFG_BAND}",         _enhance_cfg_band(pf))
+            .replace("{LOCK_BADGE}",       _lock_badge_html(request, ENHANCE_RUN, "Members only"))
+            .replace("{LOCK_CLASS}",       _lock_class(request, ENHANCE_RUN))
+            .replace("{DISABLED}",         "" if run_enabled else " disabled")
+            .replace("{RUN_DISABLED}",     "" if run_enabled else " disabled")
+            .replace("{ST_DISABLED}",      "" if st_enabled else " disabled")
+            .replace("{INPUT_OPTIONS}",    _enhance_options_html(pf["inputs"]))
+            .replace("{PRESET_OPTIONS}",   _enhance_preset_options_html(pf["presets"]))
+            .replace("{PROGRESS_JS}",      _PROGRESS_JS)
+            .replace("{FOOTER}",           _FOOTER))
+
+
+@app.post("/enhance-run/self-test", dependencies=[Depends(requires(ENHANCE_RUN))])
+async def enhance_self_test():
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, pixop.self_test)
+
+
+async def run_enhance_job(job_id: str, input_name: str, preset_name: str,
+                          live: bool = False):
+    try:
+        jobs[job_id].update({"status": "running", "stage": "starting"})
+        result = await pixop.run_enhance_measurement(input_name, preset_name, job_id,
+                                                     jobs, live=live)
+        save_result("enhance", job_id, result)
+        jobs[job_id].update({"status": "done", "stage": "done", "result": result})
+    except Exception as e:
+        jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+
+
+@app.post("/enhance-run/start", dependencies=[Depends(requires(ENHANCE_RUN))])
+async def enhance_run_start(request: Request,
+                            input_name: str = Form(...),
+                            preset_name: str = Form(...),
+                            live: str = Form("false")):
+    pf = pixop.preflight()
+    if not pf["ok_transcode"]:
+        return JSONResponse({"error": "Partner transcode not configured",
+                             "reasons": pf["reasons"]}, status_code=409)
+    if input_name not in pf["inputs"] or preset_name not in pf["presets"]:
+        return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
+    is_live = str(live).lower() in ("true", "1", "on", "yes")
+    job_id = str(uuid.uuid4())[:8]
+    label = f"Enhance — {preset_name}" + (" · Live 1×" if is_live else "")
+
+    async def coro():
+        await run_enhance_job(job_id, input_name, preset_name, live=is_live)
+
+    position = queue_control.enqueue(job_id, "enhance", label, coro,
+                                     request=request, page="/enhance-run")
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}
+
+
+@app.get("/enhance-run/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
+async def enhance_job_status(job_id: str):
+    return _job_status(job_id)
+
+
+@app.get("/enhance-run/output/{name}", dependencies=[Depends(requires(ENHANCE_RUN))])
+async def enhance_output(name: str):
+    """Serve a measured enhance output for download/preview. Lab-only (same cap
+    as the run). Basename-only allow-list — no path traversal."""
+    _, out, _ = pixop._workdir_paths(pixop.config())
+    if Path(name).name != name:
+        return HTMLResponse("not found", status_code=404)
+    path = out / name
+    if not path.exists() or not path.is_file():
+        return HTMLResponse("not found", status_code=404)
+    return FileResponse(path, media_type="video/mp4", filename=name)
+
+
+@app.get("/enhance-run/input/{name}", dependencies=[Depends(requires(ENHANCE_RUN))])
+async def enhance_input(name: str):
+    """Serve a staged input clip for in-page preview. Lab-only; basename allow-list."""
+    inp, _, _ = pixop._workdir_paths(pixop.config())
+    if Path(name).name != name:
+        return HTMLResponse("not found", status_code=404)
+    path = inp / name
+    if not path.exists() or not path.is_file():
+        return HTMLResponse("not found", status_code=404)
+    return FileResponse(path, media_type="video/mp4", filename=name)
 
 
 # --- Job runner ---
