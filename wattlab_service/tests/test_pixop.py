@@ -442,3 +442,242 @@ def test_enhance_run_is_member_tier():
     assert capabilities.can(Tier.Anonymous, capabilities.ENHANCE_RUN) is False
     assert capabilities.can(Tier.Member, capabilities.ENHANCE_RUN) is True
     assert capabilities.can(Tier.Lab, capabilities.ENHANCE_RUN) is True
+
+
+# --- ffmpeg comparison: preset spec + gating --------------------------------
+
+def test_parse_preset_spec_upscale_only(tmp_path, monkeypatch):
+    (tmp_path / "presets").mkdir(parents=True)
+    (tmp_path / "presets" / "up.args").write_text(
+        "--codec hevc\n--output-res 1920x1080\n--cbr 12000\n--transfer bt709\n")
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    spec = pixop.parse_preset_spec("up.args")
+    assert spec["width"] == 1920 and spec["height"] == 1080
+    assert spec["bitrate_kbps"] == 12000
+    assert spec["hdr_convert"] is False
+    assert spec["stays_sdr"] is True
+    assert pixop.ffmpeg_comparable("up.args") is True
+
+
+def test_parse_preset_spec_scale_factor(tmp_path, monkeypatch):
+    (tmp_path / "presets").mkdir(parents=True)
+    (tmp_path / "presets" / "sr.args").write_text("--output-res 0x0,scale=2\n--cbr 20000\n")
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    spec = pixop.parse_preset_spec("sr.args")
+    assert spec["scale_factor"] == 2.0
+    assert spec["width"] is None  # 0x0 → relative, no absolute dims
+
+
+def test_ffmpeg_comparable_false_for_hdr_convert(tmp_path, monkeypatch):
+    (tmp_path / "presets").mkdir(parents=True)
+    (tmp_path / "presets" / "hdr.args").write_text(
+        "--output-res 3840x2160\n--vpp-colorspace sdr_to_hdr=on\n--cbr 40000\n")
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    assert pixop.parse_preset_spec("hdr.args")["hdr_convert"] is True
+    assert pixop.ffmpeg_comparable("hdr.args") is False
+
+
+# --- build_ffmpeg_upscale_cmd -----------------------------------------------
+
+def test_build_ffmpeg_upscale_cmd_shape(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop.cfg, "load", lambda: {"ffmpeg_bin": "ffmpeg-x"})
+    cmd = pixop.build_ffmpeg_upscale_cmd("clip.mov", "out.mp4", 1920, 1080,
+                                         12000, "lanczos")
+    s = " ".join(cmd)
+    assert cmd[0] == "ffmpeg-x"
+    assert "scale=1920:1080:flags=lanczos" in s
+    assert "-b:v" in cmd and "12000k" in cmd
+    assert "-re" not in cmd                      # batch by default
+    assert s.endswith("out.mp4")
+
+
+def test_build_ffmpeg_upscale_cmd_live_adds_re(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop.cfg, "load", lambda: {"ffmpeg_bin": "ffmpeg"})
+    cmd = pixop.build_ffmpeg_upscale_cmd("clip.mov", "out.mp4", 1280, 720,
+                                         None, "bicubic", live=True)
+    assert "-re" in cmd
+    assert "scale=1280:720:flags=bicubic" in " ".join(cmd)
+    # falls back to the default bitrate when the preset has none
+    assert f"{pixop._DEFAULT_FF_BITRATE_KBPS}k" in cmd
+
+
+def test_resolve_target_dims_prefers_ml_output(tmp_path):
+    spec = {"width": 1920, "height": 1080, "scale_factor": None}
+    ml = {"result": {"stream": {"width": 3840, "height": 2160}}}
+    assert pixop._resolve_target_dims(spec, ml, tmp_path / "x") == (3840, 2160)
+
+
+def test_build_comparison_ratios_and_quality_tbd():
+    ml = {"result": {"output_size_mb": 60.0,
+                     "energy": {"delta_e_wh": 0.40, "delta_w": 200.0, "delta_t_s": 30.0}}}
+    ff = {"result": {"output_size_mb": 40.0,
+                     "energy": {"delta_e_wh": 0.10, "delta_w": 50.0, "delta_t_s": 25.0}}}
+    c = pixop._build_comparison(ml, ff)
+    assert c["energy_ratio"] == 4.0      # 0.40 / 0.10
+    assert c["size_ratio"] == 1.5        # 60 / 40
+    assert c["quality"] == "TBD"
+    assert "VMAF" in c["quality_note"]
+
+
+# --- complexity probes (pure parsers) ---------------------------------------
+
+def test_parse_siti_summary_takes_last_block():
+    # siti prints an empty init block (Total frames: 0, nan) then the real one.
+    text = (
+        "[Parsed_siti_0] SITI Summary:\n"
+        "Total frames: 0\n\nSpatial Information:\nAverage: -nan\nMax: 0.000000\nMin: 0.000000\n"
+        "\nTemporal Information:\nAverage: -nan\nMax: 0.000000\nMin: 0.000000\n"
+        "[Parsed_siti_0] SITI Summary:\n"
+        "Total frames: 48\n\nSpatial Information:\nAverage: 102.436302\nMax: 104.224983\nMin: 99.5\n"
+        "\nTemporal Information:\nAverage: 15.155403\nMax: 17.224213\nMin: 0.0\n")
+    out = pixop._parse_siti_summary(text)
+    assert out == {"si_mean": 102.44, "si_max": 104.22,
+                   "ti_mean": 15.16, "ti_max": 17.22}
+
+
+def test_parse_siti_summary_none_when_no_real_block():
+    text = ("SITI Summary:\nTotal frames: 0\nSpatial Information:\nAverage: -nan\n"
+            "Max: 0.0\nTemporal Information:\nAverage: -nan\nMax: 0.0\n")
+    assert pixop._parse_siti_summary(text) is None
+
+
+def test_aggregate_frame_sizes():
+    frames = [
+        {"pict_type": "I", "pkt_size": "10240"},   # 10 KB
+        {"pict_type": "P", "pkt_size": "5120"},    # 5 KB
+        {"pict_type": "B", "pkt_size": "2048"},    # 2 KB
+        {"pict_type": "B", "pkt_size": "2048"},
+        {"pict_type": "I", "pkt_size": "10240"},
+        {"pict_type": "X"},                         # no size → skipped
+    ]
+    out = pixop._aggregate_frame_sizes(frames)
+    assert out["frames"] == 5
+    assert out["keyframes"] == 2
+    assert out["i_mean_kb"] == 10.0
+    assert out["p_mean_kb"] == 5.0
+    assert out["b_mean_kb"] == 2.0
+    assert out["max_kb"] == 10.0
+
+
+def test_aggregate_frame_sizes_none_when_empty():
+    assert pixop._aggregate_frame_sizes([]) is None
+    assert pixop._aggregate_frame_sizes([{"pict_type": "I"}]) is None
+
+
+def test_parse_psnr_and_ssim():
+    psnr_line = "[Parsed_psnr_4] PSNR y:26.56 u:23.56 v:21.04 average:24.541559 min:24.3 max:24.9"
+    ssim_line = "[Parsed_ssim_4] SSIM Y:0.858 (8.4) U:0.79 (6.9) V:0.77 (6.4) All:0.834249 (7.8)"
+    assert pixop._parse_psnr(psnr_line) == 24.54
+    assert pixop._parse_ssim(ssim_line) == 0.8342
+    assert pixop._parse_psnr("PSNR y:inf average:inf min:inf") == float("inf")
+    assert pixop._parse_psnr("no metric here") is None
+    assert pixop._parse_ssim("no metric here") is None
+
+
+def test_probe_ab_quality_identical_is_json_safe(monkeypatch):
+    # PSNR=inf (bit-identical) must not leak a non-JSON float into the result.
+    monkeypatch.setattr(pixop, "_run_ab_metric",
+                        lambda a, b, m: ("average:inf" if m == "psnr" else "SSIM All:1.000000 (x)"))
+    out = pixop.probe_ab_quality("a.mp4", "b.mp4")
+    assert out == {"psnr_db": None, "identical": True, "ssim": 1.0}
+
+
+# --- run_enhance_compare_measurement (harness mocked) -----------------------
+
+def _mock_harness(monkeypatch, tmp_path, *, out_w=1920, out_h=1080):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "preflight",
+                        lambda c=None: {"ok_transcode": True,
+                                        "inputs": ["clip.mov"], "presets": ["up.args"],
+                                        "reasons": []})
+    monkeypatch.setattr(pixop, "LOCK_FILE", tmp_path / "lock")
+    monkeypatch.setattr(pixop, "focus_mode_enter", lambda: [])
+    monkeypatch.setattr(pixop, "focus_mode_exit", lambda stopped: None)
+
+    async def fake_baseline(polls=10):
+        return {"w_base": 50.0, "baseline_samples_w": [50.0, 50.1],
+                "cpu_temp_base": 40.0, "gpu_temp_base": 35.0}
+
+    async def fake_poll(stop_event):
+        return [{"t": 1.0, "watts": 250.0, "cpu_tctl": 60.0,
+                 "gpu_junction": 70.0, "gpu_ppt_w": 300.0}]
+
+    async def fake_cooldown(**kw):
+        return {"method": "fixed", "waited_s": 1, "settled": True}
+
+    monkeypatch.setattr(pixop, "measure_baseline", fake_baseline)
+    monkeypatch.setattr(pixop, "poll_during_task", fake_poll)
+    monkeypatch.setattr(pixop, "cooldown_between_runs", fake_cooldown)
+    monkeypatch.setattr(pixop, "probe_output_stream",
+                        lambda p: {"codec": "hevc", "width": out_w, "height": out_h})
+    monkeypatch.setattr(pixop, "_probe_input", lambda p: (30.0, 24.0))
+    monkeypatch.setattr(pixop, "probe_complexity",
+                        lambda p, c=None: {"si_mean": 50.0, "frames": 10, "keyframes": 1})
+    monkeypatch.setattr(pixop, "probe_ab_quality",
+                        lambda a, b: {"psnr_db": 38.5, "ssim": 0.97})
+    monkeypatch.setattr(pixop, "run_transcode_subprocess",
+                        lambda cmd, t, pacer_cmd=None: {"success": True, "returncode": 0,
+                                        "duration_s": 20.0, "docker_cmd": " ".join(cmd),
+                                        "live": pacer_cmd is not None, "stdout_tail": "",
+                                        "stderr_tail": "", "encode_stats": None})
+
+
+def test_run_enhance_compare_shape(tmp_path, monkeypatch):
+    (tmp_path / "presets").mkdir(parents=True)
+    (tmp_path / "presets" / "up.args").write_text("--output-res 1920x1080\n--cbr 12000\n")
+    (tmp_path / "input").mkdir(exist_ok=True)
+    (tmp_path / "input" / "clip.mov").write_text("x")
+    _mock_harness(monkeypatch, tmp_path)
+
+    jobs = {"j1": {}}
+    res = asyncio.run(
+        pixop.run_enhance_compare_measurement("clip.mov", "up.args", "j1", jobs))
+
+    assert res["mode"] == "enhance_compare"
+    assert res["ml"]["result"]["preset_key"] == "up.args"
+    assert res["ffmpeg"]["result"]["preset_key"] == "ffmpeg:lanczos"
+    assert res["target_res"] == "1920x1080"
+    # (energy_ratio is 0/None here only because the mocked transcode is instant;
+    #  the ratio maths is covered by test_build_comparison_ratios)
+    assert "energy_ratio" in res["comparison"]
+    assert res["comparison"]["quality"] == "TBD"
+    # the coarse stage advanced to done; both passes wrote distinct outputs
+    assert jobs["j1"]["stage"] == "done"
+    assert res["ml"]["result"]["output_name"] != res["ffmpeg"]["result"]["output_name"]
+    # terminal complexity probe attached to both passes + source
+    assert res["ml"]["result"]["complexity"]["si_mean"] == 50.0
+    assert res["ffmpeg"]["result"]["complexity"]["frames"] == 10
+    assert res["source_complexity"]["si_mean"] == 50.0
+    # A↔B differential quality on the comparison
+    assert res["comparison"]["ab_quality"] == {"psnr_db": 38.5, "ssim": 0.97}
+
+
+def test_run_enhance_compare_rejects_hdr_preset(tmp_path, monkeypatch):
+    (tmp_path / "presets").mkdir(parents=True)
+    (tmp_path / "presets" / "up.args").write_text(
+        "--output-res 3840x2160\n--vpp-colorspace sdr_to_hdr=on\n")
+    (tmp_path / "input").mkdir(exist_ok=True)
+    (tmp_path / "input" / "clip.mov").write_text("x")
+    _mock_harness(monkeypatch, tmp_path)
+    with pytest.raises(RuntimeError, match="SDR→HDR"):
+        asyncio.run(
+            pixop.run_enhance_compare_measurement("clip.mov", "up.args", "j9", {"j9": {}}))
+
+
+# --- start-compare route gating ---------------------------------------------
+
+def test_start_compare_route_forbidden_for_anonymous():
+    r = client.post("/enhance-run/start-compare",
+                    data={"input_name": "x", "preset_name": "y"}, headers=ANON)
+    assert r.status_code == 403
+
+
+def test_start_compare_route_409_when_not_configured(monkeypatch):
+    monkeypatch.setattr(pixop, "preflight",
+                        lambda c=None: {"ok_transcode": False, "inputs": [],
+                                        "presets": [], "reasons": ["no input clip"]})
+    r = client.post("/enhance-run/start-compare",
+                    data={"input_name": "x", "preset_name": "y"}, headers=LAB)
+    assert r.status_code == 409

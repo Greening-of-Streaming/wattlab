@@ -24,6 +24,8 @@ through `power.cooldown_between_runs` (no raw asyncio.sleep), keeping the
 cooldown-dispatcher audit clean.
 """
 import asyncio
+import json
+import math
 import os
 import re
 import subprocess
@@ -130,6 +132,53 @@ def describe_preset(preset_name: str, c: Optional[dict] = None) -> str:
     if mb:
         bits.append(f"{round(int(mb.group(1)) / 1000)} Mbps")
     return " · ".join(bits)
+
+
+def parse_preset_spec(preset_name: str, c: Optional[dict] = None) -> dict:
+    """Structured view of a preset's flags, for the ffmpeg apples-to-apples
+    baseline: target resolution / scale factor, target bitrate (kbps), and
+    whether it does an SDR→HDR colour conversion. Fail-soft to a dict of Nones.
+
+    `hdr_convert` is the gate for the ffmpeg comparison — libswscale can't
+    replicate a real SDR→HDR tone-map apples-to-apples (the Tania call), so
+    only upscale-only presets qualify for a fair plain-ffmpeg baseline."""
+    c = c or config()
+    _, _, pre = _workdir_paths(c)
+    spec = {"width": None, "height": None, "scale_factor": None,
+            "bitrate_kbps": None, "hdr_convert": False, "stays_sdr": False}
+    try:
+        args = " ".join(read_preset_args(pre / preset_name))
+    except Exception:
+        return spec
+    if not args:
+        return spec
+    m = re.search(r"--output-res\s+(\S+)", args)
+    if m:
+        res = m.group(1)
+        sm = re.search(r"scale=(\d+(?:\.\d+)?)", res)
+        if sm:
+            spec["scale_factor"] = float(sm.group(1))
+        wxh = res.split(",")[0]
+        if "x" in wxh.lower() and wxh != "0x0":
+            try:
+                w, h = wxh.lower().split("x")
+                spec["width"], spec["height"] = int(w), int(h)
+            except ValueError:
+                pass
+    mb = re.search(r"--cbr\s+(\d+)", args)
+    if mb:
+        spec["bitrate_kbps"] = int(mb.group(1))
+    if "sdr_to_hdr=on" in args:
+        spec["hdr_convert"] = True
+    elif "transfer bt709" in args:
+        spec["stays_sdr"] = True
+    return spec
+
+
+def ffmpeg_comparable(preset_name: str, c: Optional[dict] = None) -> bool:
+    """True if a preset is a fair target for a plain-ffmpeg upscale baseline —
+    i.e. it does NOT do an SDR→HDR conversion. Upscale-only presets qualify."""
+    return not parse_preset_spec(preset_name, c).get("hdr_convert")
 
 
 def list_inputs(c: Optional[dict] = None) -> list[str]:
@@ -302,6 +351,231 @@ def build_docker_cmd(input_name: str, preset_name: str, output_name: str,
     return cmd
 
 
+_DEFAULT_FF_BITRATE_KBPS = 10000   # fallback when a preset carries no --cbr
+
+
+def _ffmpeg_output_name(input_name: str, preset_name: str, ff_filter: str) -> str:
+    return f"{Path(input_name).stem}__{Path(preset_name).stem}__ff-{ff_filter}.mp4"
+
+
+def build_ffmpeg_upscale_cmd(input_name: str, output_name: str,
+                             target_w: int, target_h: int,
+                             bitrate_kbps: Optional[int], ff_filter: str,
+                             c: Optional[dict] = None, live: bool = False) -> list[str]:
+    """A traditional (non-ML) upscale baseline: ffmpeg's `scale` filter at the
+    SAME target resolution + bitrate as the partner preset, encoded with HEVC
+    (NVENC) so the ONLY variable vs the AI pass is the scaling algorithm
+    (Lanczos / Bicubic interpolation vs learned super-resolution). Runs
+    bare-metal on the host (no container), writing straight into the OWL output
+    dir.  This is NOT an apples-to-apples for SDR→HDR presets — callers must gate
+    on `ffmpeg_comparable` first (see the Tania call).
+
+    live=True adds `-re` so the input is read at native frame rate (1× realtime),
+    matching the partner Live profile for a paced comparison."""
+    c = c or config()
+    inp, out, _ = _workdir_paths(c)
+    ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
+    flag = ff_filter if ff_filter in ("lanczos", "bicubic") else "lanczos"
+    kbps = bitrate_kbps or _DEFAULT_FF_BITRATE_KBPS
+    cmd = [ff, "-y"]
+    if live:
+        cmd.append("-re")
+    cmd += [
+        "-i", str(inp / input_name),
+        "-vf", f"scale={target_w}:{target_h}:flags={flag}",
+        "-c:v", "hevc_nvenc", "-rc", "cbr", "-b:v", f"{kbps}k",
+        "-c:a", "copy",
+        "-f", "mp4", str(out / output_name),
+    ]
+    return cmd
+
+
+def _probe_dims(path) -> tuple[Optional[int], Optional[int]]:
+    """(width, height) of a clip's first video stream, or (None, None)."""
+    try:
+        out = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=p=0:s=x", str(path)],
+            capture_output=True, text=True, timeout=10)
+        val = out.stdout.strip()
+        if "x" in val:
+            w, h = val.split("x")[:2]
+            return int(w), int(h)
+    except Exception:
+        pass
+    return None, None
+
+
+# --- Terminal complexity probes (post-measurement; NO energy impact) --------
+# How "busy"/detailed the resulting file is — SI/TI (ITU-T P.910 spatial &
+# temporal information, via ffmpeg's `siti` filter) + per-frame-type size stats
+# (ffprobe). Run AFTER the measurement window closes (like probe_output_stream /
+# compute_vmaf), so their decode draw never enters a reported energy figure.
+# Parsing is split into pure helpers so it's unit-testable without ffmpeg.
+
+_SITI_COMPLEXITY_TIMEOUT_S = 600
+
+
+def _parse_siti_summary(text: str) -> Optional[dict]:
+    """Pull {si_mean, si_max, ti_mean, ti_max} from `siti=print_summary=1`
+    stderr. The summary is emitted twice (an empty init pass with `Total
+    frames: 0` then the real one) — take the LAST block with a positive frame
+    count. nan/unparseable → None per field; all-None → None."""
+    best = None
+    for m in re.finditer(r"Total frames:\s*(\d+)(.*?)(?=Total frames:|\Z)", text, re.S):
+        if int(m.group(1)) > 0:
+            best = m.group(2)
+    if not best:
+        return None
+    parts = re.split(r"Temporal Information", best, maxsplit=1)
+    si_seg, ti_seg = parts[0], (parts[1] if len(parts) > 1 else "")
+
+    def _f(label, seg):
+        m = re.search(label + r":\s*(\S+)", seg)
+        if not m:
+            return None
+        try:
+            v = float(m.group(1))
+        except ValueError:
+            return None
+        return None if math.isnan(v) else round(v, 2)
+
+    out = {"si_mean": _f("Average", si_seg), "si_max": _f("Max", si_seg),
+           "ti_mean": _f("Average", ti_seg), "ti_max": _f("Max", ti_seg)}
+    return out if any(v is not None for v in out.values()) else None
+
+
+def _aggregate_frame_sizes(frames: list) -> Optional[dict]:
+    """Per-frame-type size stats from a list of ffprobe frame dicts
+    (pict_type + pkt_size). Bigger / denser frames ⇒ more complexity."""
+    by = {"I": [], "P": [], "B": []}
+    sizes = []
+    for f in frames or []:
+        s = f.get("pkt_size")
+        if s is None:
+            continue
+        try:
+            s = int(s)
+        except (TypeError, ValueError):
+            continue
+        sizes.append(s)
+        t = f.get("pict_type")
+        if t in by:
+            by[t].append(s)
+    if not sizes:
+        return None
+    kb = lambda lst: round(sum(lst) / len(lst) / 1024, 1) if lst else None
+    return {
+        "frames": len(sizes),
+        "keyframes": len(by["I"]),
+        "mean_kb": round(sum(sizes) / len(sizes) / 1024, 1),
+        "max_kb": round(max(sizes) / 1024, 1),
+        "i_mean_kb": kb(by["I"]),
+        "p_mean_kb": kb(by["P"]),
+        "b_mean_kb": kb(by["B"]),
+    }
+
+
+def probe_siti(path, c: Optional[dict] = None) -> Optional[dict]:
+    """SI/TI of a clip via ffmpeg's `siti` filter. Fail-soft to None."""
+    ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
+    try:
+        r = subprocess.run([ff, "-i", str(path), "-vf", "siti=print_summary=1",
+                            "-f", "null", "-"], capture_output=True, text=True,
+                           timeout=_SITI_COMPLEXITY_TIMEOUT_S)
+    except Exception:
+        return None
+    return _parse_siti_summary(r.stderr or "")
+
+
+def probe_frame_stats(path) -> Optional[dict]:
+    """Per-frame-type size stats via ffprobe -show_frames. Fail-soft to None."""
+    try:
+        r = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "frame=pict_type,pkt_size", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=_SITI_COMPLEXITY_TIMEOUT_S)
+        frames = json.loads(r.stdout).get("frames", [])
+    except Exception:
+        return None
+    return _aggregate_frame_sizes(frames)
+
+
+def probe_complexity(path, c: Optional[dict] = None) -> Optional[dict]:
+    """Resulting-file complexity: SI/TI + frame-size stats merged. Terminal,
+    fail-soft — returns a partial dict, or None if both probes miss."""
+    out = {}
+    siti = probe_siti(path, c)
+    if siti:
+        out.update(siti)
+    fr = probe_frame_stats(path)
+    if fr:
+        out.update(fr)
+    return out or None
+
+
+# --- A↔B differential quality (NOT vs ground truth — VMAF is wrong here) -----
+# The two outputs are the SAME resolution, so PSNR/SSIM between them is a clean
+# reference comparison: "how different is the AI output from the plain resize?"
+# High PSNR (>~45 dB) / SSIM (~1.0) ⇒ near-identical; lower ⇒ the AI added detail
+# the resize didn't. No quality VERDICT (we don't rank upscalers) — just a delta.
+
+def _parse_psnr(text: str) -> Optional[float]:
+    m = re.search(r"average:\s*(inf|[\d.]+)", text or "")
+    if not m:
+        return None
+    if m.group(1) == "inf":
+        return float("inf")
+    try:
+        return round(float(m.group(1)), 2)
+    except ValueError:
+        return None
+
+
+def _parse_ssim(text: str) -> Optional[float]:
+    m = re.search(r"SSIM .*?All:\s*([\d.]+)", text or "")
+    if not m:
+        return None
+    try:
+        return round(float(m.group(1)), 4)
+    except ValueError:
+        return None
+
+
+def _run_ab_metric(path_a, path_b, metric: str) -> str:
+    """One ffmpeg pass computing `metric` (psnr|ssim) between two equal-size
+    clips, normalised to a common format/SAR first. Returns stderr (or '')."""
+    ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
+    fc = ("[0:v]format=yuv420p,setsar=1[a];"
+          "[1:v]format=yuv420p,setsar=1[b];[a][b]" + metric)
+    try:
+        r = subprocess.run([ff, "-i", str(path_a), "-i", str(path_b),
+                            "-filter_complex", fc, "-f", "null", "-"],
+                           capture_output=True, text=True,
+                           timeout=_SITI_COMPLEXITY_TIMEOUT_S)
+        return r.stderr or ""
+    except Exception:
+        return ""
+
+
+def probe_ab_quality(path_a, path_b) -> Optional[dict]:
+    """PSNR + SSIM between two equal-resolution outputs. `identical` flags the
+    PSNR=inf (bit-identical) case so it stays JSON-safe. Fail-soft to None."""
+    out = {}
+    psnr = _parse_psnr(_run_ab_metric(path_a, path_b, "psnr"))
+    if psnr is not None:
+        if psnr == float("inf"):
+            out["psnr_db"] = None
+            out["identical"] = True
+        else:
+            out["psnr_db"] = psnr
+    ssim = _parse_ssim(_run_ab_metric(path_a, path_b, "ssim"))
+    if ssim is not None:
+        out["ssim"] = ssim
+    return out or None
+
+
 # NVEncC prints a summary line like
 #   "encoded 705 frames, 51.91 fps, 18067.47 kbps, 63.27 MB"
 # when the encode completes. That fps is the steady-state throughput (excludes
@@ -443,40 +717,37 @@ def build_realtime(content_s: Optional[float], source_fps: Optional[float],
 
 # --- Measured run -----------------------------------------------------------
 
-async def run_enhance_measurement(input_name: str, preset_name: str,
-                                  job_id: str, jobs: Optional[dict] = None,
-                                  live: bool = False) -> dict:
-    """Measure the energy of one partner GPU transcode/upscale.
+async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
+                         input_name: str, input_path, output_name: str,
+                         output_path, cmd: list[str], pacer_cmd, live: bool,
+                         preset_key: str, preset_label: str, preset_detail: str,
+                         update_stage: bool = True,
+                         cooldown_stage: str = "cooldown",
+                         do_cooldown: bool = True) -> dict:
+    """One measured transcode/upscale pass through the standard harness (focus →
+    baseline → 1 Hz poll → cooldown → ΔW/ΔE + confidence → terminal probe),
+    returning the single-run result dict shape. Shared by the partner-GPU run
+    AND the ffmpeg baseline so both go through the identical harness; the only
+    difference between them is the command they wrap.
 
-    Mirrors video.run_video_measurement + run_single: focus mode → baseline →
-    1 Hz polling around the docker transcode → ΔW/ΔE + confidence → cooldown →
-    terminal output probe. Returns a dict shaped like the video single result so
-    the page's render helpers + persist's CO2e/gpu_hardware stamping work unchanged.
-    """
-    c = config()
-    pf = preflight(c)
-    if not pf["ok_transcode"]:
-        raise RuntimeError("partner transcode not configured: " + "; ".join(pf["reasons"]))
-    if input_name not in pf["inputs"]:
-        raise RuntimeError(f"unknown input: {input_name!r}")
-    if preset_name not in pf["presets"]:
-        raise RuntimeError(f"unknown preset: {preset_name!r}")
+    update_stage=False lets a multi-pass caller (the compare runner) own the
+    coarse jobs[*]['stage'] while this still reports its fine step via
+    jobs[*]['substage']; `cooldown_stage` is the stage label the cooldown writes
+    (so the coarse stage stays stable for the compare progress).
+    do_cooldown=False skips the trailing cooldown — pointless after the LAST
+    measured pass, since no measurement follows it (result['cooldown'] = None)."""
+    def _stage(name):
+        if jobs is not None:
+            jobs[job_id]["substage"] = name
+            if update_stage:
+                jobs[job_id]["stage"] = name
 
-    inp, out, _ = _workdir_paths(c)
-    input_path = inp / input_name
-    output_name = _output_name(input_name, preset_name)
-    output_path = out / output_name
-    cmd = build_docker_cmd(input_name, preset_name, output_name, c, live=live)
-    pacer_cmd = build_pacer_cmd(input_name, c) if live else None
-
-    if jobs is not None:
-        jobs[job_id]["stage"] = "baseline"
+    _stage("baseline")
     stopped = focus_mode_enter()
     baseline = await measure_baseline(polls=c["baseline_polls"])
     LOCK_FILE.write_text(job_id)
     try:
-        if jobs is not None:
-            jobs[job_id]["stage"] = "transcoding"
+        _stage("transcoding")
         stop_event = asyncio.Event()
         poll_task = asyncio.create_task(poll_during_task(stop_event))
         t_start = time.time()
@@ -487,12 +758,13 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         stop_event.set()
         readings = await poll_task
 
-        if jobs is not None:
-            jobs[job_id]["stage"] = "cooldown"
-        cd = await cooldown_between_runs(
-            fixed_seconds=c["cooldown_s"], reference_w=baseline["w_base"],
-            stage="cooldown", jobs=jobs, job_id=job_id,
-        )
+        cd = None
+        if do_cooldown:
+            _stage("cooldown")
+            cd = await cooldown_between_runs(
+                fixed_seconds=c["cooldown_s"], reference_w=baseline["w_base"],
+                stage=cooldown_stage, jobs=jobs, job_id=job_id,
+            )
     finally:
         LOCK_FILE.unlink(missing_ok=True)
         asyncio.get_event_loop().run_in_executor(None, focus_mode_exit, stopped)
@@ -514,8 +786,7 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
     gpu_ppts = [r["gpu_ppt_w"] for r in readings if r.get("gpu_ppt_w")]
 
     # --- Terminal probe (after lock released — never polled) ---
-    if jobs is not None:
-        jobs[job_id]["stage"] = "probe"
+    _stage("probe")
     out_size_mb = round(output_path.stat().st_size / 1024 / 1024, 2) \
         if output_path.exists() and output_path.stat().st_size > 0 else None
     stream = probe_output_stream(output_path)
@@ -525,13 +796,13 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
     realtime = build_realtime(content_s, source_fps,
                               transcode_result.get("encode_stats"),
                               transcode_result.get("duration_s"), live=live)
-    # NB: no VMAF here. For super-resolution there is no 1080p ground-truth
-    # reference — VMAF vs a bicubic-upscaled source would penalise the AI detail
-    # the enhancement adds, so it would be a misleading quality number. Energy is
-    # the headline; output stream params are the provenance. (Honest-metric call.)
+    # NB: no VMAF here. For super-resolution there is no ground-truth reference —
+    # VMAF vs a bicubic-upscaled source would penalise the AI detail the
+    # enhancement adds, so it would be a misleading quality number. Energy is the
+    # headline; output stream params are the provenance. (Honest-metric call.)
 
-    if jobs is not None:
-        jobs[job_id]["stage"] = "done"
+    if update_stage:
+        _stage("done")
 
     return {
         "mode": "enhance",
@@ -539,10 +810,9 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         "baseline": baseline,
         "cooldown": cd,
         "result": {
-            "preset_key": preset_name,
-            "preset_label": ("Partner GPU transcode / upscale"
-                             + (" · Live (1× paced)" if live else "")),
-            "preset_detail": preset_name,
+            "preset_key": preset_key,
+            "preset_label": preset_label,
+            "preset_detail": preset_detail,
             "live": live,
             "input_name": input_name,
             "output_name": output_name,
@@ -572,5 +842,177 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
                 "gpu_ppt_peak_w": round(max(gpu_ppts), 1) if gpu_ppts else None,
             },
         },
+        "scope": SCOPE,
+    }
+
+
+async def run_enhance_measurement(input_name: str, preset_name: str,
+                                  job_id: str, jobs: Optional[dict] = None,
+                                  live: bool = False) -> dict:
+    """Measure the energy of one partner GPU transcode/upscale.
+
+    Validates input/preset, builds the verified docker command, then delegates to
+    the shared `_measured_pass` harness. Returns a dict shaped like the video
+    single result so the page's render helpers + persist's CO2e/gpu_hardware
+    stamping work unchanged.
+    """
+    c = config()
+    pf = preflight(c)
+    if not pf["ok_transcode"]:
+        raise RuntimeError("partner transcode not configured: " + "; ".join(pf["reasons"]))
+    if input_name not in pf["inputs"]:
+        raise RuntimeError(f"unknown input: {input_name!r}")
+    if preset_name not in pf["presets"]:
+        raise RuntimeError(f"unknown preset: {preset_name!r}")
+
+    inp, out, _ = _workdir_paths(c)
+    output_name = _output_name(input_name, preset_name)
+    cmd = build_docker_cmd(input_name, preset_name, output_name, c, live=live)
+    pacer_cmd = build_pacer_cmd(input_name, c) if live else None
+
+    return await _measured_pass(
+        c=c, job_id=job_id, jobs=jobs, input_name=input_name,
+        input_path=inp / input_name, output_name=output_name,
+        output_path=out / output_name, cmd=cmd, pacer_cmd=pacer_cmd, live=live,
+        preset_key=preset_name,
+        preset_label=("Partner GPU transcode / upscale"
+                      + (" · Live (1× paced)" if live else "")),
+        preset_detail=preset_name, update_stage=True)
+
+
+# --- Compare: ML / partner upscale vs traditional ffmpeg upscale ------------
+
+def _resolve_target_dims(spec: dict, ml: dict, input_path) -> tuple[int, int]:
+    """Target W×H for the ffmpeg baseline. Prefer the partner output's ACTUAL
+    dims (guarantees both outputs land at identical resolution); else the
+    preset's explicit --output-res; else source dims × scale_factor (even)."""
+    s = (ml.get("result") or {}).get("stream") or {}
+    if s.get("width") and s.get("height"):
+        return int(s["width"]), int(s["height"])
+    if spec.get("width") and spec.get("height"):
+        return int(spec["width"]), int(spec["height"])
+    sw, sh = _probe_dims(input_path)
+    f = spec.get("scale_factor") or 2.0
+    if sw and sh:
+        return int(sw * f) // 2 * 2, int(sh * f) // 2 * 2
+    return 1920, 1080
+
+
+def _build_comparison(ml: dict, ff: dict) -> dict:
+    """The head-to-head summary: energy, file size, duration — plus a quality
+    slot deliberately left TBD (no native ground-truth reference for upscaling;
+    VMAF N/A — the Tania call). Ratios are ML ÷ traditional."""
+    mr = ml.get("result") or {}
+    fr = ff.get("result") or {}
+    me = mr.get("energy") or {}
+    fe = fr.get("energy") or {}
+    ml_wh, ff_wh = me.get("delta_e_wh"), fe.get("delta_e_wh")
+    ml_mb, ff_mb = mr.get("output_size_mb"), fr.get("output_size_mb")
+    return {
+        "ml_delta_e_wh": ml_wh,
+        "ff_delta_e_wh": ff_wh,
+        "energy_ratio": round(ml_wh / ff_wh, 2) if (ml_wh and ff_wh) else None,
+        "ml_size_mb": ml_mb,
+        "ff_size_mb": ff_mb,
+        "size_ratio": round(ml_mb / ff_mb, 2) if (ml_mb and ff_mb) else None,
+        "ml_delta_t_s": me.get("delta_t_s"),
+        "ff_delta_t_s": fe.get("delta_t_s"),
+        "quality": "TBD",
+        "quality_note": ("No native ground-truth reference for upscaling — "
+                         "perceptual quality is for the viewer to judge (VMAF N/A)."),
+    }
+
+
+async def run_enhance_compare_measurement(input_name: str, preset_name: str,
+                                          job_id: str, jobs: Optional[dict] = None,
+                                          live: bool = False,
+                                          ff_filter: str = "lanczos") -> dict:
+    """Single comparison run: the partner ML/GPU upscale vs a traditional
+    ffmpeg `scale` (Lanczos/Bicubic) at the SAME resolution + bitrate. Two
+    sequential measured passes (each with its own baseline + cooldown so they're
+    cleanly separated), then a head-to-head summary. Gated to upscale-only
+    presets — SDR→HDR presets aren't apples-to-apples for plain ffmpeg.
+    """
+    c = config()
+    pf = preflight(c)
+    if not pf["ok_transcode"]:
+        raise RuntimeError("partner transcode not configured: " + "; ".join(pf["reasons"]))
+    if input_name not in pf["inputs"]:
+        raise RuntimeError(f"unknown input: {input_name!r}")
+    if preset_name not in pf["presets"]:
+        raise RuntimeError(f"unknown preset: {preset_name!r}")
+    spec = parse_preset_spec(preset_name, c)
+    if spec.get("hdr_convert"):
+        raise RuntimeError("ffmpeg comparison supports upscale-only presets — "
+                           "this preset does an SDR→HDR conversion")
+    if ff_filter not in ("lanczos", "bicubic"):
+        ff_filter = "lanczos"
+
+    inp, out, _ = _workdir_paths(c)
+    input_path = inp / input_name
+
+    # --- pass 1: ML / partner GPU upscale ---
+    if jobs is not None:
+        jobs[job_id]["stage"] = "ml"
+    ml_output = _output_name(input_name, preset_name)
+    ml_cmd = build_docker_cmd(input_name, preset_name, ml_output, c, live=live)
+    ml_pacer = build_pacer_cmd(input_name, c) if live else None
+    ml = await _measured_pass(
+        c=c, job_id=job_id, jobs=jobs, input_name=input_name,
+        input_path=input_path, output_name=ml_output,
+        output_path=out / ml_output, cmd=ml_cmd, pacer_cmd=ml_pacer, live=live,
+        preset_key=preset_name,
+        preset_label="AI / ML enhance" + (" · Live 1×" if live else ""),
+        preset_detail=preset_name, update_stage=False, cooldown_stage="ml")
+
+    # --- pass 2: traditional ffmpeg upscale (same res + bitrate) ---
+    if jobs is not None:
+        jobs[job_id]["stage"] = "ffmpeg"
+    tgt_w, tgt_h = _resolve_target_dims(spec, ml, input_path)
+    ff_output = _ffmpeg_output_name(input_name, preset_name, ff_filter)
+    ff_cmd = build_ffmpeg_upscale_cmd(input_name, ff_output, tgt_w, tgt_h,
+                                      spec.get("bitrate_kbps"), ff_filter, c, live=live)
+    ff = await _measured_pass(
+        c=c, job_id=job_id, jobs=jobs, input_name=input_name,
+        input_path=input_path, output_name=ff_output,
+        output_path=out / ff_output, cmd=ff_cmd, pacer_cmd=None, live=live,
+        preset_key=f"ffmpeg:{ff_filter}",
+        preset_label=f"Traditional upscale (ffmpeg {ff_filter})"
+                     + (" · Live 1×" if live else ""),
+        preset_detail=f"scale={tgt_w}:{tgt_h}:flags={ff_filter}",
+        update_stage=False, cooldown_stage="ffmpeg", do_cooldown=False)
+
+    # --- terminal analysis (post-measurement; no energy impact) ---
+    # Complexity (SI/TI + frame-size) of source + both outputs, and an A↔B
+    # differential (PSNR/SSIM) so the energy gap can be read against how much
+    # the outputs actually differ. All decode-only; runs after the lock is gone.
+    if jobs is not None:
+        jobs[job_id]["stage"] = "analyse"
+    ml_ok = bool((ml["result"].get("transcode") or {}).get("success") and ml["result"].get("output_name"))
+    ff_ok = bool((ff["result"].get("transcode") or {}).get("success") and ff["result"].get("output_name"))
+    if ml_ok:
+        ml["result"]["complexity"] = probe_complexity(out / ml_output, c)
+    if ff_ok:
+        ff["result"]["complexity"] = probe_complexity(out / ff_output, c)
+    source_complexity = probe_complexity(input_path, c)
+    ab_quality = probe_ab_quality(out / ml_output, out / ff_output) if (ml_ok and ff_ok) else None
+
+    if jobs is not None:
+        jobs[job_id]["stage"] = "done"
+
+    comparison = _build_comparison(ml, ff)
+    comparison["ab_quality"] = ab_quality
+    return {
+        "mode": "enhance_compare",
+        "job_id": job_id,
+        "live": live,
+        "input_name": input_name,
+        "preset_key": preset_name,
+        "ff_filter": ff_filter,
+        "target_res": f"{tgt_w}x{tgt_h}",
+        "source_complexity": source_complexity,
+        "ml": ml,
+        "ffmpeg": ff,
+        "comparison": comparison,
         "scope": SCOPE,
     }

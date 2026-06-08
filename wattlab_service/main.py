@@ -1871,6 +1871,19 @@ function wlStageList(stages, cur) {
              + '<span style="color:' + col + '">' + lbl + '</span></div>';
     }).join('');
 }
+// Single source for the live "waiting for the idle floor" readout. Shown only
+// while the active-probe cooldown is running (power.wait_for_thermal_floor sets
+// cooldown_waited_s on the job); absent => a fixed Rest(Xs) sleep, no live line.
+// Used by the video renderProgress AND the enhance compare poll loop so the
+// wording can't drift between them.
+function wlCooldownLine(data) {
+    if (!data || data.cooldown_waited_s == null) return '';
+    var ref = data.cooldown_reference_w != null ? Number(data.cooldown_reference_w).toFixed(1) + 'W' : '?';
+    var cw  = data.cooldown_w != null ? Number(data.cooldown_w).toFixed(1) + 'W' : '?';
+    return '<div style="color:var(--warn);font-size:0.72rem;margin-top:0.4rem">'
+         + '\u23f3 Waiting for idle floor \xb7 ' + Number(data.cooldown_waited_s).toFixed(0)
+         + 's \xb7 now ' + cw + ' \xb7 target \u2264 ' + ref + '+3W</div>';
+}
 // CR-019 \u2014 widget targets default to '#status' for back-compat with the
 // main pages (/video /llm /image /rag), but accept opts.target so /demo
 // can route the same widget to its per-step containers (#video-status,
@@ -1951,6 +1964,10 @@ var WL_LLM_STAGES   = ['Baseline ({BASELINE_S}s)', 'Inference running', 'Complet
 var WL_IMAGE_STAGES = ['Baseline ({BASELINE_S}s)', 'Generating image', 'Complete'];
 var WL_RAG_STAGES   = ['Baseline poll ({BASELINE_S}s)', 'Inference running', 'Complete'];
 var WL_ENHANCE_STAGES = ['Baseline ({BASELINE_S}s)', 'Transcoding', '{COOLDOWN_LABEL}', 'Probe', 'Done'];
+// Enhance compare flow: two measured passes, each followed by an idle/cooldown
+// step. '{IDLE_LABEL}' is the toggle-aware label baked above ("Wait for Idle"
+// when wait-for-idle is on, else "Idle").
+var WL_CMP_STAGES = ['AI / ML enhance', '{IDLE_LABEL}', 'Traditional (ffmpeg)', 'Analyse', 'Done'];
 </script>"""
 
 # Bake settings-driven durations into the shared stage labels at module
@@ -1963,11 +1980,24 @@ def _bake_durations(template: str) -> str:
     # wall power returns to the idle floor (up to cooldown_idle_max_wait_s). So
     # the label must not claim a fixed "(10s)" or it reads as a fixed cooldown.
     idle_on = bool(s.get("cooldown_wait_for_idle", True))
-    rest_label     = "Rest (\u2192 idle)"     if idle_on else f"Rest ({cd}s)"
-    cooldown_label = "Cooldown (\u2192 idle)" if idle_on else f"Cooldown ({cd}s)"
+    # Single source of truth for cooldown/rest wording. `{COOLDOWN_PAREN}` is the
+    # toggle-aware parenthetical ("(\u2192 idle)" vs "(10s)") that every page \u2014
+    # including the */compare progress strips and any future page \u2014 must build
+    # its cooldown labels from, so a change here propagates everywhere instead of
+    # being re-hardcoded per page (which is how the "(10s)" label survived the
+    # wait-for-idle switch on /image + /llm/compare). Never bake a bare "{COOLDOWN_S}s"
+    # into a cooldown label \u2014 use the paren so the fixed-vs-idle decision stays here.
+    cooldown_paren = "(\u2192 idle)" if idle_on else f"({cd}s)"
+    rest_label     = "Rest (\u2192 idle)" if idle_on else f"Rest ({cd}s)"
+    # Toggle-aware short label for a progress-bar step that IS the cooldown:
+    # "Wait for Idle" (active-probe wait to the floor) vs "Idle" (fixed rest).
+    # Built from the same idle_on switch so it never drifts from the others.
+    idle_label     = "Wait for Idle" if idle_on else "Idle"
     return (template
             .replace("{REST_LABEL}", rest_label)
-            .replace("{COOLDOWN_LABEL}", cooldown_label)
+            .replace("{COOLDOWN_LABEL}", f"Cooldown {cooldown_paren}")
+            .replace("{COOLDOWN_PAREN}", cooldown_paren)
+            .replace("{IDLE_LABEL}", idle_label)
             .replace("{BASELINE_S}", str(s.get("baseline_polls", "\u2014")))
             .replace("{COOLDOWN_S}", cd)
             .replace("{LLM_REST_S}", str(s.get("llm_rest_s", "\u2014"))))
@@ -3432,19 +3462,11 @@ async def video_page(request: Request):
                      + 'VMAF \xb7 ' + (data.vmaf_done || 0) + ' of ' + data.vmaf_total
                      + ' encode' + (data.vmaf_total > 1 ? 's' : '') + ' scored</div>';
         }}
-        // Idle-wait cooldown readout. cooldown_waited_s is set ONLY by the
-        // active-probe path (power.wait_for_thermal_floor) \u2014 so when this line
-        // shows, the cooldown is genuinely waiting for the idle floor, not the
-        // fixed Rest(Xs) the static stage label implies. Absent => fixed rest.
-        let cdLine = '';
-        if (data && data.cooldown_waited_s != null && serverStage &&
-            (serverStage.indexOf('rest') !== -1 || serverStage.indexOf('cooldown') !== -1)) {{
-            const ref = data.cooldown_reference_w != null ? Number(data.cooldown_reference_w).toFixed(1) + 'W' : '?';
-            const cw  = data.cooldown_w != null ? Number(data.cooldown_w).toFixed(1) + 'W' : '?';
-            cdLine = '<div style="color:var(--warn);font-size:0.72rem;margin-top:0.4rem">'
-                   + '\u23f3 Waiting for idle floor \xb7 ' + Number(data.cooldown_waited_s).toFixed(0)
-                   + 's \xb7 now ' + cw + ' \xb7 target \u2264 ' + ref + '+3W</div>';
-        }}
+        // Idle-wait cooldown readout \u2014 shared single source (wlCooldownLine in
+        // _PROGRESS_JS). cooldown_waited_s is set ONLY by the active-probe path
+        // (power.wait_for_thermal_floor), so the line shows only during a real
+        // wait-for-idle; absent => the fixed Rest(Xs) the static label implies.
+        let cdLine = wlCooldownLine(data);
         wlRenderProgress({{
             header: 'Running measurement \u2014 do not close this tab',
             stagesHtml: wlStageList(stages, currentStage),
@@ -4371,7 +4393,7 @@ _ENHANCE_RUN_HTML = """<!DOCTYPE html>
     </div>
     <div>
       <label for="preSel">Preset (.args)</label>
-      <select id="preSel"{DISABLED}>{PRESET_OPTIONS}</select>
+      <select id="preSel" onchange="updateCompareGate()"{DISABLED}>{PRESET_OPTIONS}</select>
     </div>
     <div>
       <button id="runBtn" onclick="startRun()"{RUN_DISABLED}>Run &amp; measure</button>
@@ -4384,6 +4406,28 @@ _ENHANCE_RUN_HTML = """<!DOCTYPE html>
     Feeds the encoder at 1× (the linear/live profile) so ΔW reads as sustained per-channel
     power. Best on Live-capable presets (the FHD ones); the ×2→4K SR can't sustain 1× on
     one GPU and will report "fell behind."
+  </div>
+  <div style="border-top:1px solid var(--border-2);margin:0.25rem 0 0.75rem"></div>
+  <div class="row">
+    <div>
+      <label for="ffSel">Traditional filter (ffmpeg)</label>
+      <select id="ffSel"{DISABLED}>
+        <option value="lanczos">lanczos (detail-preserving)</option>
+        <option value="bicubic">bicubic</option>
+      </select>
+    </div>
+    <div>
+      <button class="secondary" id="cmpBtn" onclick="startCompare()"{RUN_DISABLED}>Compare vs traditional (ffmpeg)</button>
+    </div>
+  </div>
+  <div id="cmp-note" style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.75rem">
+    Runs the selected preset's AI upscale <em>and</em> a plain ffmpeg scale at the same
+    resolution &amp; bitrate, back-to-back, then compares energy &amp; file size side by side
+    with three viewers (source / AI / traditional). <strong>Always paced at Live&nbsp;1×</strong>
+    so ΔW is measured over the full clip (a batch ffmpeg pass is too short for a reliable
+    confidence flag). A final Analyse pass adds an AI↔ffmpeg PSNR/SSIM difference and SI/TI
+    complexity (source vs both outputs). Absolute quality is yours to judge &mdash; no
+    ground-truth reference.<span id="cmp-gate" style="color:var(--warn)"></span>
   </div>
   <div id="input-preview" style="display:none;margin-bottom:0.75rem">
     <div style="color:var(--text-4);font-size:0.68rem;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.3rem">Input preview</div>
@@ -4595,8 +4639,219 @@ async function selfTest() {
     btn.disabled = false;
   }
 }
+// ── Compare: AI/ML upscale vs traditional ffmpeg upscale ──────────────────
+var PRESET_COMPARABLE = {PRESET_COMPARABLE_JSON};
+var RUN_ENABLED = {RUN_ENABLED_JS};
+// WL_CMP_STAGES is baked into _PROGRESS_JS (toggle-aware idle label). Map the
+// coarse stage + fine substage onto its 5 positions. Only the FIRST pass cools
+// down (to separate it from the ffmpeg pass); the ffmpeg pass has no trailing
+// cooldown — nothing is measured after it — so there's no second idle step.
+//   0 AI/ML enhance · 1 idle · 2 Traditional (ffmpeg) · 3 Analyse · 4 Done
+function _cmpStageIdx(stage, substage) {
+  if (stage === 'done') return 4;
+  if (stage === 'analyse') return 3;
+  if (stage === 'ffmpeg') return 2;
+  return substage === 'cooldown' ? 1 : 0;   // 'ml' / starting
+}
+function updateCompareGate() {
+  var pre = document.getElementById('preSel');
+  var btn = document.getElementById('cmpBtn');
+  var gate = document.getElementById('cmp-gate');
+  if (!pre || !btn) return;
+  var ok = PRESET_COMPARABLE[pre.value] !== false;
+  btn.disabled = !(RUN_ENABLED && ok);
+  gate.textContent = (RUN_ENABLED && !ok)
+    ? ' · This preset does SDR→HDR — no apples-to-apples ffmpeg baseline, so compare is disabled for it.'
+    : '';
+}
+async function startCompare() {
+  var input = document.getElementById('inSel').value;
+  var preset = document.getElementById('preSel').value;
+  var ff = document.getElementById('ffSel').value;
+  if (!input || !preset) return;
+  document.getElementById('cmpBtn').disabled = true;
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('result-card').style.display = 'none';
+  document.getElementById('selftest-out').innerHTML = '';
+  document.querySelectorAll('video').forEach(function(v){ try { v.pause(); } catch(e) {} });
+  var form = new FormData();
+  form.append('input_name', input);
+  form.append('preset_name', preset);
+  form.append('live', 'true');   // compare always paces at 1× — see below
+  form.append('ff_filter', ff);
+  try {
+    var resp = await fetch('/enhance-run/start-compare', { method:'POST', body:form });
+    var data = await resp.json();
+    if (!resp.ok) {
+      document.getElementById('status').innerHTML =
+        '<div style="color:var(--err)">' + (data.error || 'Failed')
+        + (data.reasons ? ' — ' + data.reasons.join('; ') : '') + '</div>';
+      document.getElementById('runBtn').disabled = false;
+      updateCompareGate();
+      return;
+    }
+    pollCompare(data.job_id);
+  } catch(e) {
+    document.getElementById('status').innerHTML = '<div style="color:var(--err)">' + e + '</div>';
+    document.getElementById('runBtn').disabled = false;
+    updateCompareGate();
+  }
+}
+async function pollCompare(jobId) {
+  try {
+    var [resp, powerR] = await Promise.all([
+      fetch('/enhance-run/job/' + jobId),
+      fetch('/power').catch(function(){ return null; }),
+    ]);
+    var data = await resp.json();
+    var watts = powerR ? ((await powerR.json().catch(function(){return {};})).watts ?? null) : null;
+    if (data.status === 'done') {
+      document.getElementById('status').innerHTML = '';
+      renderCompare(data.result);
+      document.getElementById('runBtn').disabled = false;
+      updateCompareGate();
+    } else if (data.status === 'error') {
+      document.getElementById('status').innerHTML =
+        '<div style="color:var(--err)">Error: ' + data.error + '</div>';
+      document.getElementById('runBtn').disabled = false;
+      updateCompareGate();
+    } else if (data.stage === 'queued') {
+      wlRenderQueued(data.queue_position);
+      setTimeout(function(){ pollCompare(jobId); }, 3000);
+    } else {
+      var idx = _cmpStageIdx(data.stage || 'ml', data.substage || '');
+      wlRenderProgress({
+        header: 'Comparing — do not close this tab',
+        stagesHtml: wlStageList(WL_CMP_STAGES, idx),
+        watts: watts,
+        extraHtml: wlCooldownLine(data),
+      });
+      var inCooldown = (data.substage || '') === 'cooldown' && data.cooldown_waited_s != null;
+      setTimeout(function(){ pollCompare(jobId); }, inCooldown ? 1000 : 2000);
+    }
+  } catch(e) {
+    setTimeout(function(){ pollCompare(jobId); }, 5000);
+  }
+}
+function _midTrunc(s) {
+  s = s || '';
+  return s.length > 19 ? s.slice(0, 8) + '...' + s.slice(-8) : s;
+}
+function _vidCell(title, src, name) {
+  var short = _midTrunc(name);
+  var media = src
+    ? '<video controls preload="metadata" muted style="width:100%;background:#000" src="' + src + '"></video>'
+      + '<div style="margin-top:0.25rem"><a href="' + src + '" download title="' + (name || '') + '" style="color:var(--accent);font-size:0.72rem">⬇ ' + (short || 'download') + '</a></div>'
+    : '<div style="width:100%;aspect-ratio:16/9;background:#000;display:flex;align-items:center;justify-content:center;color:var(--text-4);font-size:0.72rem">no output</div>'
+      + (name ? '<div title="' + name + '" style="color:var(--text-4);font-size:0.7rem;margin-top:0.25rem">' + short + '</div>' : '');
+  return '<div style="flex:1;min-width:220px">'
+    + '<div style="color:var(--text-4);font-size:0.68rem;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.3rem">' + title + '</div>'
+    + media + '</div>';
+}
+// Resulting-file complexity comparison (SI/TI + frame-size stats from the
+// terminal probe), source vs both outputs. Renders only rows with ≥1 value.
+function _cxTable(srccx, mlcx, ffcx) {
+  if (!srccx && !mlcx && !ffcx) return '';
+  var rows = [
+    ['Spatial info (SI) mean', 'si_mean', ''],
+    ['SI max', 'si_max', ''],
+    ['Temporal info (TI) mean', 'ti_mean', ''],
+    ['TI max', 'ti_max', ''],
+    ['Mean frame size', 'mean_kb', ' KB'],
+    ['Max frame size', 'max_kb', ' KB'],
+    ['I-frame mean', 'i_mean_kb', ' KB'],
+    ['P-frame mean', 'p_mean_kb', ' KB'],
+    ['B-frame mean', 'b_mean_kb', ' KB'],
+    ['Keyframes', 'keyframes', ''],
+  ];
+  function cell(cx, key, unit) {
+    var v = cx ? cx[key] : null;
+    return '<td style="text-align:right;color:var(--text-2)">' + (v == null ? '—' : (v + (unit || ''))) + '</td>';
+  }
+  var body = rows.map(function(r) {
+    var any = [srccx, mlcx, ffcx].some(function(cx){ return cx && cx[r[1]] != null; });
+    if (!any) return '';
+    return '<tr><td style="padding:0.2rem 0;color:var(--text-3)">' + r[0] + '</td>'
+         + cell(srccx, r[1], r[2]) + cell(mlcx, r[1], r[2]) + cell(ffcx, r[1], r[2]) + '</tr>';
+  }).join('');
+  if (!body) return '';
+  function th(t){ return '<th style="text-align:right;color:var(--text-4);font-weight:normal;font-size:0.66rem">' + t + '</th>'; }
+  return '<div style="color:var(--text-4);font-size:0.66rem;letter-spacing:0.05em;text-transform:uppercase;margin:0.8rem 0 0.3rem">'
+       +   'Resulting-file complexity · terminal probe, no energy impact</div>'
+       + '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">'
+       +   '<thead><tr><th></th>' + th('Source') + th('AI') + th('ffmpeg') + '</tr></thead>'
+       +   '<tbody>' + body + '</tbody></table>'
+       + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
+       +   'SI/TI = ITU-T P.910 spatial / temporal information; higher SI ≈ more fine detail. '
+       +   'AI &gt; ffmpeg ≈ source ⇒ the AI injected detail the resize did not.</div>';
+}
+function renderCompare(meas) {
+  var card = document.getElementById('result-card');
+  var ml = meas.ml || {}, ff = meas.ffmpeg || {};
+  var mlr = ml.result || {}, ffr = ff.result || {};
+  var mle = mlr.energy || {}, ffe = ffr.energy || {};
+  var c = meas.comparison || {};
+  var inUrl = '/enhance-run/input/' + encodeURIComponent(meas.input_name);
+  var mlUrl = (mlr.output_name && (mlr.transcode || {}).success !== false)
+      ? '/enhance-run/output/' + encodeURIComponent(mlr.output_name) : null;
+  var ffUrl = (ffr.output_name && (ffr.transcode || {}).success !== false)
+      ? '/enhance-run/output/' + encodeURIComponent(ffr.output_name) : null;
+
+  function side(lbl, e, r) {
+    var conf = e.confidence || {};
+    return _row(lbl + ' energy', wlFmt(e.delta_e_wh, 4) + ' Wh · ' + wlFmt(e.delta_w, 1)
+              + ' W · ' + wlFmt(e.delta_t_s, 1) + ' s', '')
+         + _row(lbl + ' file size', (r.output_size_mb != null ? r.output_size_mb + ' MB' : '—'), '')
+         + _row(lbl + ' quality', (c.quality || 'TBD'), '')
+         + _row(lbl + ' confidence', (conf.flag || '') + ' ' + (conf.label || ''), '');
+  }
+
+  var ratioRow = (c.energy_ratio != null)
+    ? '<div class="rc-kpi"><div><span class="val">' + c.energy_ratio + '×</span><span class="lbl">AI energy ÷ ffmpeg</span></div>'
+      + (c.size_ratio != null ? '<div><span class="val">' + c.size_ratio + '×</span><span class="lbl">AI size ÷ ffmpeg</span></div>' : '')
+      + '<div><span class="val">' + (c.quality || 'TBD') + '</span><span class="lbl">Quality metric</span></div></div>'
+    : '';
+
+  var fail = '';
+  if ((mlr.transcode || {}).success === false)
+    fail += '<div style="color:var(--err);font-size:0.78rem">AI pass failed (rc ' + mlr.transcode.returncode + ')</div>';
+  if ((ffr.transcode || {}).success === false)
+    fail += '<div style="color:var(--err);font-size:0.78rem">ffmpeg pass failed (rc ' + ffr.transcode.returncode + ')</div>';
+
+  card.innerHTML =
+      '<div class="rc-header">Compare · AI vs traditional upscale' + (meas.live ? ' · Live 1×' : '')
+        + (meas.target_res ? ' · ' + meas.target_res : '') + '</div>'
+    + fail
+    + ratioRow
+    + '<div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin:0.6rem 0 0.4rem">'
+    +   _vidCell('Source', inUrl, meas.input_name)
+    +   _vidCell('AI / ML upscale', mlUrl, mlr.output_name || '')
+    +   _vidCell('ffmpeg ' + (meas.ff_filter || ''), ffUrl, ffr.output_name || '')
+    + '</div>'
+    + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.6rem">HEVC 10-bit / HDR may not play inline — use the ⬇ links if a player is blank.</div>'
+    + '<div>' + side('AI', mle, mlr) + side('ffmpeg', ffe, ffr) + '</div>'
+    + (function(){
+        var ab = c.ab_quality;
+        if (!ab) return '';
+        var psnr = ab.identical ? '∞ (identical)' : (ab.psnr_db != null ? ab.psnr_db + ' dB' : '—');
+        return '<div style="margin-top:0.5rem">'
+             + _row('AI ↔ ffmpeg PSNR', psnr, '')
+             + _row('AI ↔ ffmpeg SSIM', (ab.ssim != null ? ab.ssim : '—'), '')
+             + '</div>'
+             + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.2rem">'
+             + 'Difference between the two outputs (same resolution) — higher = more alike; not a quality ranking.</div>';
+      })()
+    + _cxTable(meas.source_complexity, mlr.complexity, ffr.complexity)
+    + '<div style="color:var(--text-4);font-size:0.74rem;margin-top:0.6rem;border-left:2px solid var(--border-2);padding-left:0.7rem">'
+    +   (c.quality_note || '') + '</div>'
+    + '<details><summary>commands</summary><pre>'
+    +   'AI:     ' + ((mlr.transcode || {}).docker_cmd || '') + '\\n\\n'
+    +   'ffmpeg: ' + ((ffr.transcode || {}).docker_cmd || '') + '</pre></details>';
+  card.style.display = 'block';
+}
 // Show the input preview for the initially-selected clip (Lab + configured).
 updateInputPreview();
+updateCompareGate();
 </script>
 </body>
 </html>"""
@@ -4621,6 +4876,7 @@ async def enhance_run_page(request: Request):
     can_run = can(audience.tier(request), ENHANCE_RUN)
     run_enabled = can_run and pf["ok_transcode"]
     st_enabled = can_run and pf["ok_selftest"]
+    comparable = {p: pixop.ffmpeg_comparable(p) for p in pf["presets"]}
     return (_ENHANCE_RUN_HTML
             .replace("{AUTH_CHIP_STYLES}", _AUTH_CHIP_STYLES)
             .replace("{AUTH_CHIP}",        _auth_chip_html(request))
@@ -4632,6 +4888,8 @@ async def enhance_run_page(request: Request):
             .replace("{ST_DISABLED}",      "" if st_enabled else " disabled")
             .replace("{INPUT_OPTIONS}",    _enhance_options_html(pf["inputs"]))
             .replace("{PRESET_OPTIONS}",   _enhance_preset_options_html(pf["presets"]))
+            .replace("{PRESET_COMPARABLE_JSON}", json.dumps(comparable))
+            .replace("{RUN_ENABLED_JS}",   "true" if run_enabled else "false")
             .replace("{PROGRESS_JS}",      _PROGRESS_JS)
             .replace("{FOOTER}",           _FOOTER))
 
@@ -4671,6 +4929,50 @@ async def enhance_run_start(request: Request,
 
     async def coro():
         await run_enhance_job(job_id, input_name, preset_name, live=is_live)
+
+    position = queue_control.enqueue(job_id, "enhance", label, coro,
+                                     request=request, page="/enhance-run")
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}
+
+
+async def run_enhance_compare_job(job_id: str, input_name: str, preset_name: str,
+                                  live: bool = False, ff_filter: str = "lanczos"):
+    try:
+        jobs[job_id].update({"status": "running", "stage": "starting"})
+        result = await pixop.run_enhance_compare_measurement(
+            input_name, preset_name, job_id, jobs, live=live, ff_filter=ff_filter)
+        save_result("enhance", job_id, result)
+        jobs[job_id].update({"status": "done", "stage": "done", "result": result})
+    except Exception as e:
+        jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+
+
+@app.post("/enhance-run/start-compare", dependencies=[Depends(requires(ENHANCE_RUN))])
+async def enhance_run_start_compare(request: Request,
+                                    input_name: str = Form(...),
+                                    preset_name: str = Form(...),
+                                    live: str = Form("false"),
+                                    ff_filter: str = Form("lanczos")):
+    pf = pixop.preflight()
+    if not pf["ok_transcode"]:
+        return JSONResponse({"error": "Partner transcode not configured",
+                             "reasons": pf["reasons"]}, status_code=409)
+    if input_name not in pf["inputs"] or preset_name not in pf["presets"]:
+        return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
+    if not pixop.ffmpeg_comparable(preset_name):
+        return JSONResponse({"error": "This preset does an SDR→HDR conversion — "
+                             "no apples-to-apples ffmpeg baseline"}, status_code=400)
+    ff = ff_filter if ff_filter in ("lanczos", "bicubic") else "lanczos"
+    is_live = str(live).lower() in ("true", "1", "on", "yes")
+    job_id = str(uuid.uuid4())[:8]
+    label = (f"Enhance compare — {preset_name} vs ffmpeg {ff}"
+             + (" · Live 1×" if is_live else ""))
+
+    async def coro():
+        await run_enhance_compare_job(job_id, input_name, preset_name,
+                                      live=is_live, ff_filter=ff)
 
     position = queue_control.enqueue(job_id, "enhance", label, coro,
                                      request=request, page="/enhance-run")
