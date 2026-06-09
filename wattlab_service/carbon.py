@@ -51,6 +51,14 @@ COMPARISON_ZONES = ["FR", "DK", "GB", "DE", "PL", "ES", "US", "CN"]
 # fallback to the static annual mean kicks in. Applied to BOTH our cache hit
 # time and the upstream source's own published timestamp (data_age_s).
 LIVE_TTL_S = 30 * 60          # 30 minutes
+# Grid-mix composition stays displayable longer than the headline intensity.
+# RTE finalises `taux_co2` with a lag, so the upstream `source_datetime`
+# routinely drifts past LIVE_TTL_S before a newer finalised record appears —
+# flipping the headline number to the static annual mean. The mix itself is
+# still a real, recent "what's on the grid" snapshot, so we keep surfacing it
+# (labelled by its true age) until this cap, even when the headline has fallen
+# back to static. Beyond this it's a genuine outage and the mix is dropped.
+MIX_TTL_S = 90 * 60           # 90 minutes
 POLL_INTERVAL_S = 5 * 60      # poll every 5 minutes
 HTTP_TIMEOUT_S = 8.0
 
@@ -386,7 +394,7 @@ def intensity(zone: str = HOME_ZONE) -> dict:
                 out["computed"] = True
             return out
     static = STATIC_INTENSITY.get(z) or STATIC_INTENSITY["WORLD"]
-    return {
+    out = {
         "g_per_kwh": static["g_per_kwh"],
         "source": "static",
         "year": static.get("year"),
@@ -394,6 +402,21 @@ def intensity(zone: str = HOME_ZONE) -> dict:
         "zone_label": static["label"],
         "provider": STATIC_SOURCE,
     }
+    # Headline number has fallen back to static, but if we still hold a
+    # recent live mix (within MIX_TTL_S), surface the grid composition with
+    # its true age. The mix is a separate "what's on the grid" view, not the
+    # basis of the static headline — so the UI labels it by age, not "live".
+    if live and live.get("mix_mw"):
+        src_dt = _parse_iso(live.get("source_datetime"))
+        if src_dt is not None:
+            mix_age = (datetime.now(timezone.utc) - src_dt).total_seconds()
+        else:
+            mix_age = time.time() - (live.get("fetched_at") or 0)
+        if 0 <= mix_age < MIX_TTL_S:
+            out["mix_mw"] = live["mix_mw"]
+            out["mix_age_s"] = int(mix_age)
+            out["mix_provider"] = live.get("provider", "live")
+    return out
 
 
 def wh_to_co2e(wh: Optional[float], zone: str = HOME_ZONE) -> Optional[dict]:

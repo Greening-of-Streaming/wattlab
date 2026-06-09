@@ -281,6 +281,15 @@ _IMAGE_FAMILIES = {
         "cpu_steps": None, "gpu_steps": 4, "gpu_batch": 15,
         "compare_steps": 4, "compare_batch": 15,
         "size_px": 512, "fp16_variant": True,
+        # UNet-only checkpoint: the repo ships bare *_unet.safetensors with no
+        # model_index.json, so AutoPipeline can't load it. Handled by a custom
+        # loader that swaps the distilled UNet into a cached full-SDXL shell
+        # (sdxl-turbo — shares SDXL's VAE + text encoders + UNet architecture),
+        # so no 6.9 GB SDXL-base-1.0 download is needed. See
+        # image_gen._load_sdxl_unet_ckpt. Lightning needs Euler trailing + cfg 0.
+        "loader": "sdxl_unet_ckpt",
+        "base_repo": "stabilityai/sdxl-turbo",
+        "unet_ckpt": "sdxl_lightning_4step_unet.safetensors",
     },
     "sana-600m": {
         "label": "Sana 600M", "repo": "Efficient-Large-Model/Sana_600M_512px_diffusers",
@@ -288,6 +297,20 @@ _IMAGE_FAMILIES = {
         "cpu_steps": None, "gpu_steps": 20, "gpu_batch": 8,
         "compare_steps": 8, "compare_batch": 8,
         "size_px": 512, "fp16_variant": False,
+    },
+    "flux-schnell": {
+        "label": "FLUX.1-schnell (NF4)", "repo": "black-forest-labs/FLUX.1-schnell",
+        "params": "~12B", "native_px": 1024, "cpu_ok": False,
+        "cpu_steps": None, "gpu_steps": 4, "gpu_batch": 2,
+        "compare_steps": 4, "compare_batch": 2,
+        "size_px": 512, "fp16_variant": False,
+        # 12B DiT loaded with bitsandbytes NF4 4-bit on the transformer + T5
+        # (~13 GB VRAM; fp16 is ~24 GB and doesn't fit 16 GB). bnb 4-bit is a
+        # CUDA gate in practice (the ROCm path is preview-state + offload-heavy),
+        # so this is cuda_only → auto-hidden by enabled_image_models() if a
+        # non-NVIDIA GPU is active. Custom loader: image_gen._load_flux_nf4.
+        "loader": "flux_nf4",
+        "cuda_only": True,
     },
 }
 
@@ -351,8 +374,33 @@ def invalidate_image_cache():
     _image_cache_t = 0.0
 
 
+def active_gpu_vendor() -> str:
+    """Active discrete-GPU vendor ('nvidia' | 'amd' | 'none'), from the CR-060
+    backend (auto-detected once at gpu.py import, re-detected on the next
+    service restart — so it tracks a physical GPU swap). Lazy import keeps the
+    catalog usable in contexts where gpu.py can't probe (e.g. some tests)."""
+    try:
+        import gpu
+        return gpu.BACKEND.vendor
+    except Exception:
+        return "none"
+
+
+def backend_allows(meta: dict) -> bool:
+    """False for a `cuda_only` model unless an NVIDIA GPU is active. This is the
+    single gate that auto-disables CUDA-only models (e.g. FLUX NF4) the moment a
+    non-NVIDIA card is in the box — swap the AMD GPU back in, restart, and the
+    model drops out of /image + every /compare panel with no settings edit."""
+    return not (meta.get("cuda_only") and active_gpu_vendor() != "nvidia")
+
+
 def enabled_image_models() -> dict:
-    return _enabled_for("image_enabled_models", available_image_models())
+    # Per-surface enable list, then drop anything the active GPU backend can't
+    # run (cuda_only on a non-NVIDIA card). The /settings catalog stays
+    # unfiltered (available_image_models) so a hidden model is still shown there
+    # with its "CUDA-only" badge, explaining why it isn't running.
+    enabled = _enabled_for("image_enabled_models", available_image_models())
+    return {k: v for k, v in enabled.items() if backend_allows(v)}
 
 
 def refresh_all():

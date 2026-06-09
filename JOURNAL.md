@@ -7,6 +7,73 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 39 — 2026-06-03
+
+CR-062 follow-up: three reported bugs in the `/image` "compare 4 models" run, plus a
+factoring audit of the whole cooldown surface (owner asked to confirm cooldown logic is
+single-sourced so future tweaks apply everywhere). Diagnosed against the actual stored
+result `results/image/2026-06-03_13a5b4c3.json` before touching code.
+
+- **"Cooldown displayed as fixed 10s" despite wait-for-idle ON — the real bug.** The
+  per-page *inline* progress-strip labels hardcoded `{COOLDOWN_S}` (image `STAGE_LABELS`
+  `main.py:~11124`; `/llm` CPU-vs-GPU strip `~4843`), which `_bake_durations` substitutes to
+  `"10"` **regardless of the toggle**. CR-062 (S38) only made the *shared* `WL_*_STAGES`
+  toggle-aware via the `{COOLDOWN_LABEL}` token — it missed these inline compare-page labels,
+  so they kept claiming a fixed "(10s)" after the switch. Fix: added a single toggle-aware
+  `{COOLDOWN_PAREN}` token to `_bake_durations` (`"(→ idle)"` vs `"(10s)"`) as the one place
+  the parenthetical is decided, and repointed both labels (and the new per-gap labels below)
+  at it. `{COOLDOWN_LABEL}` is now defined as `"Cooldown {COOLDOWN_PAREN}"` so there's one
+  decision. The "20s / 21s" the owner saw at the foot of the result was never wrong — that's
+  `wlCooldownSummary(r.cooldowns)` rendering the *real* measured idle-waits (both
+  `method=idle, settled=true`); only the strip label lied. They now agree.
+- **Only 3 of 4 models shown — NOT a render bug.** `sdxl-lightning` genuinely fails to load
+  (UNet-only checkpoint, no `model_index.json`) and is **first** in the panel, so the runner
+  caught it (`image_gen.py:469`), recorded it in `model_errors`, and continued with the 3
+  survivors — which the stored result faithfully holds. Because `floor_reference_w` is only
+  set after a *successful* run (`image_gen.py:451,483`), model #1's failure also caused the
+  first inter-model cooldown to be skipped — which is exactly why the owner saw **2**
+  cooldowns, not 3. The real defect was that `wlRenderImageCard` **silently dropped the
+  failure** (unlike `wlRenderComparePanel:2353`, which surfaces `model_errors`). Fix: render a
+  `⚠ <model>: <error>` note in the image compare card. (`sdxl-lightning` cannot run on this
+  box at all — it's the cached-but-unwired model from the S30 audit; owner to uncheck it in
+  `/settings` if they want a clean 3-up. Not auto-disabled — settings is live state.)
+- **Progress strip misaligned (nice-to-have).** `COMPARE_STAGES` carried the literal string
+  `"cooldown"` once per gap (3× for 4 models); JS `indexOf(stage)` always resolves to the
+  *first* match, so every later cooldown snapped the indicator back to the m1→m2 position —
+  compounded this run by the skipped first cooldown. Fix: unique per-gap keys
+  `cooldown_<i>` in the strip + label `"Cooldown before <model> {COOLDOWN_PAREN}"`; `pollJob`
+  maps the runner's generic `"cooldown"` stage to `cooldown_<current_model_idx>` (the idx the
+  strip key was built with). The runner's *emitted* stage string is unchanged, so every
+  substring `indexOf('cooldown')` detection path (live idle-floor display, etc.) is untouched.
+- **Factoring audit — cooldown logic is single-sourced for behaviour + wording, per-caller for
+  orchestration.** Centralized (tweak once → applies to `/video /llm /image /rag` + compare
+  pages + any future page): strategy/mechanism `power.cooldown_between_runs` +
+  `_await_cooldown_decision` (all ~14 call sites route through it; no inline `asyncio.sleep`
+  cooldown remains — the residual sleeps are poll intervals + LLM VRAM-unload settles, a
+  distinct concept); tunables in `settings.py`; wording in `_bake_durations`
+  `{COOLDOWN_PAREN}`/`{COOLDOWN_LABEL}`; result-footer in `wlCooldownSummary`; live "waiting
+  for idle" via the job-dict fields the dispatcher stamps. NOT centralized (per-workload by
+  necessity): which baseline is `reference_w`, when to cool, and how the result is stamped.
+  Noted wart: the stamped key is inconsistent — N-way compares use a `"cooldowns"` list,
+  CPU-vs-GPU "both" runs a singular `"cooldown"` dict, and the per-entry label varies
+  (`before` / `before_codec` / `before_model` / `before_mode`); the `cd` payload inside is
+  always the dispatcher's identical dict. A consumer reading result JSON must handle both shapes.
+- **Tests: +4 in `test_cooldown.py` → 432 passing.** Three pin `_bake_durations`' toggle
+  behaviour (`{COOLDOWN_PAREN}`/`{COOLDOWN_LABEL}` flip with `cooldown_wait_for_idle`); one is
+  a source guard — `test_no_page_hardcodes_a_fixed_second_cooldown_label` fails CI if any page
+  reintroduces a raw `{{COOLDOWN_S}}`, forcing future pages onto the toggle-aware token. No
+  enforcement that a future page calls the dispatcher rather than an inline sleep — that stays
+  convention (dispatcher docstring + memory note).
+- **Not committed** at session end: the `main.py` + `test_cooldown.py` edits (awaiting owner's
+  go), plus the usual uncommitted `settings.json` (live calibration state) and untracked
+  `data_exports/` + `static/dl-…` ForTania export. **Service restart required** for the label
+  fix to show (owner runs `sudo systemctl restart wattlab` — not in my sudoers).
+- **NB:** JOURNAL has no Session 38 full entry — CR-062 shipped (commit `c430217`) with only
+  its CLAUDE.md one-liner written, never a JOURNAL block. Left as-is (not reconstructing it
+  from git); flagged here so the S37→S39 gap isn't read as a lost session.
+
+---
+
 ## Session 37 — 2026-06-01
 
 Two long-standing `/demo` guided-tour bugs fixed at the root (owner: *"You've fixed both

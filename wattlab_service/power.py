@@ -41,6 +41,42 @@ async def get_power_watts() -> float:
 amdgpu_chip = gpu.AmdBackend._amdgpu_chip
 
 
+# --- Meter identity / provenance --------------------------------------------
+#
+# The physical power source today is a Tapo P110 smart plug polled at 1 Hz over
+# the LAN (full mW precision per poll). These constants describe the meter for
+# result provenance (stamped by persist alongside gpu_hardware) and for UI copy
+# — the power-measurement analogue of gpu.BACKEND.name / gpu.stamp(). Swapping
+# to a PDU/IPMI backend (CR-031 §2) updates these in one place; until then they
+# are static. A `meter_display_name` setting can override the name for display.
+METER_NAME = "Tapo P110"          # meter model shown in UI / stamped on results
+METER_KIND = "smart_plug"         # smart_plug | pdu | ipmi | synthetic
+METER_RESOLUTION_S = 1.0          # OWL polls at this cadence (CR-031: PDUs may be coarser)
+
+
+def meter_display_name() -> str:
+    """Meter name for UI copy. Settings `meter_display_name` override wins
+    (rename/prettify on a swap); otherwise the built-in METER_NAME. Mirrors
+    main._gpu_display_name(). Settings imported lazily to avoid an import cycle."""
+    try:
+        import settings as _cfg
+        return _cfg.load().get("meter_display_name") or METER_NAME
+    except Exception:
+        return METER_NAME
+
+
+def stamp() -> dict:
+    """Provenance stamp for results — the power-measurement analogue of
+    gpu.stamp(). Records which meter produced the energy figures and its
+    polling resolution, so a future PDU/IPMI swap is never silently compared
+    against Tapo runs. Stamped by persist.save_result() next to gpu_hardware."""
+    return {
+        "name": meter_display_name(),
+        "kind": METER_KIND,
+        "resolution_s": METER_RESOLUTION_S,
+    }
+
+
 def read_sensors_dict() -> dict:
     """One-shot read of telemetry: CPU Tctl (lm-sensors) + GPU temp/power
     (delegated to the resolved GPU backend — AMD via sensors amdgpu, NVIDIA

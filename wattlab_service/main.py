@@ -6,11 +6,12 @@ import html as html_lib
 import uuid
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 from fastapi import FastAPI, File, UploadFile, Form, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
-from power import get_power_watts, read_sensors_dict, CooldownCancelled
+from power import get_power_watts, read_sensors_dict, CooldownCancelled, meter_display_name
 import gpu
 import video as vid
 from video import run_video_measurement, run_both_measurement, run_all_measurement, run_codecs_single_measurement, run_video_measurement_path, run_both_measurement_path, UPLOAD_DIR, LOCK_FILE
@@ -33,7 +34,7 @@ import email_send
 import findings as findings_mod
 import version
 from capabilities import (
-    requires, can, gate,
+    requires, can, gate, CapabilityError,
     PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD, LIVE_TELEMETRY,
     VIDEO_RUN, LLM_RUN, IMAGE_RUN, RAG_RUN, CUSTOM_UPLOAD, WORKING_NAV,
     CUSTOM_PROMPT, BATCH_COMPARE, RAG_CORPUS_UPLOAD, RAG_CORPUS_DELETE_OWN, RESULTS_EXPORT_CSV,
@@ -61,6 +62,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 POSITION_PAPER_URL  = "https://555e2619-4a3d-4f25-8303-8fb567f350a1.filesusr.com/ugd/ecf0e7_a46203016e4e40c7aa638232bce16486.pdf"
 GOS_URL             = "https://greeningofstreaming.org"
 JOIN_GOS_URL        = "https://www.greeningofstreaming.org/membership"
+OWL_CONTACT_EMAIL   = "owl@greeningofstreaming.org"
 GOS_LOGO_URL        = "https://static.wixstatic.com/media/b1006e_f5e9aff607cf4133abf7089207dc3cab~mv2.png"
 GITHUB_REPO_URL     = "https://github.com/greeningofstreaming/wattlab"
 GITHUB_ISSUES_URL   = "https://github.com/greeningofstreaming/wattlab/issues"
@@ -105,9 +107,12 @@ async def _maintenance_keepalive(request: Request, call_next):
 # get an email; non-members get nothing. Visitors can't probe the member list
 # by submitting addresses one by one.
 
-def _auth_page_shell(title: str, body_html: str) -> str:
+def _auth_page_shell(title: str, body_html: str,
+                     subtitle: str = "Greening of Streaming · Member sign-in") -> str:
     """Minimal stand-alone styled page for the auth flow. Mirrors the gate
-    page so members signing in for the first time see the OWL palette."""
+    page so members signing in for the first time see the OWL palette.
+    `subtitle` overridable so the capability gate page (see
+    _capability_error_handler) can re-use the same shell with its own line."""
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -139,11 +144,65 @@ def _auth_page_shell(title: str, body_html: str) -> str:
 <body>
   <div class="wrap">
     <h1>OWL</h1>
-    <p class="sub">Greening of Streaming · Member sign-in</p>
+    <p class="sub">{subtitle}</p>
     {body_html}
   </div>
 </body>
 </html>"""
+
+
+def _gate_page_html(request: Request, exc: CapabilityError) -> str:
+    """Friendly HTML for a 403 from the capability table. The message is keyed
+    off the *required* tier (the policy), not the capability string, so adding
+    a new gated page needs no change here. See _capability_error_handler."""
+    current  = audience.tier(request)
+    required = exc.required_tier
+    contact = (
+        '<p class="body" style="font-size:0.8rem;color:var(--text-4);margin-top:1.5rem">'
+        f'Need help? Email <a href="mailto:{OWL_CONTACT_EMAIL}">{OWL_CONTACT_EMAIL}</a>.</p>'
+    )
+    if required >= audience.Tier.Lab:
+        # Lab is granted by network origin (LAN/loopback), never by sign-in —
+        # so don't offer a sign-in CTA that can't possibly help.
+        subtitle = "Greening of Streaming · Lab console"
+        body = (
+            '<p class="body">This page is part of the WattLab instrument console '
+            'and is restricted to operators on the lab network.</p>'
+            f'{contact}'
+        )
+        return _auth_page_shell("Lab access only · OWL", body, subtitle=subtitle)
+
+    # Member-tier page (the common case: /enhance-run, /benchmark, etc.).
+    nxt = request.url.path + (("?" + request.url.query) if request.url.query else "")
+    nxt_q = quote(nxt, safe="")
+    if current >= audience.Tier.Member:
+        # Signed in but still short — defensive; shouldn't normally happen.
+        lead = "Your member account doesn't have access to this page."
+        cta = ""
+    else:
+        lead = "You need to be signed in as a GoS member to view this page."
+        cta = (
+            f'<p class="body"><a href="/auth/sign-in?next={nxt_q}">'
+            'Sign in with your member email &rarr;</a></p>'
+            '<p class="body" style="font-size:0.8rem;color:var(--text-4)">'
+            f'Not a GoS member yet? <a href="{JOIN_GOS_URL}">Join GoS</a> · or '
+            '<a href="/">browse OWL anonymously</a>.</p>'
+        )
+    body = f'<p class="body">{lead}</p>{cta}{contact}'
+    return _auth_page_shell("Members only · OWL", body)
+
+
+@app.exception_handler(CapabilityError)
+async def _capability_error_handler(request: Request, exc: CapabilityError):
+    """Central presentation layer for every capability 403. Browser
+    navigations (Accept: text/html) get the styled gate page above; fetch/API
+    callers keep the JSON contract ({"detail":"requires <cap>"}) the
+    front-end JS already understands. The policy itself stays in
+    capabilities.py — this only decides how the denial is *shown*."""
+    if "text/html" in request.headers.get("accept", ""):
+        return HTMLResponse(status_code=exc.status_code,
+                            content=_gate_page_html(request, exc))
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.get("/auth/sign-in", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -507,6 +566,10 @@ def _models_section_html(s: dict, local: bool) -> str:
         "rag_enabled_models":   model_catalog.available_llm_models(),  # shared catalog
         "image_enabled_models": model_catalog.available_image_models(),
     }
+    # CUDA-only models (e.g. FLUX NF4) are shown but flagged; on a non-NVIDIA
+    # GPU they can't run, so they're rendered disabled + "unavailable" (and
+    # enabled_image_models() drops them from the runner) — see backend_allows().
+    gpu_vendor = model_catalog.active_gpu_vendor()
     labels = {
         "llm_enabled_models":   ("LLM models",   "Drives /llm and /llm/compare. Source: <code>ollama list</code>."),
         "rag_enabled_models":   ("RAG models",   "Drives /rag and /rag/compare. Same Ollama catalog as LLM; can be a different subset."),
@@ -521,24 +584,41 @@ def _models_section_html(s: dict, local: bool) -> str:
         all_on = not enabled
         rows = []
         for k, v in avail.items():
-            checked = "checked" if (all_on or k in enabled) else ""
-            disabled = "" if local else "disabled"
+            # cuda_only models can't run on a non-NVIDIA GPU: force them
+            # disabled + unchecked so the UI never implies they're active.
+            cuda_only = bool(v.get("cuda_only"))
+            blocked = cuda_only and gpu_vendor != "nvidia"
+            checked = "checked" if ((all_on or k in enabled) and not blocked) else ""
+            disabled = "disabled" if (not local or blocked) else ""
             extras = []
             if v.get("params"):
                 extras.append(v["params"])
             if v.get("size"):
                 extras.append(v["size"])
             extra_str = " · ".join(extras)
+            badge = ""
+            if cuda_only:
+                badge = (
+                    '<span style="font-size:0.62rem;font-weight:bold;letter-spacing:0.03em;'
+                    'padding:0.05rem 0.4rem;border-radius:3px;background:var(--accent-soft);'
+                    'color:var(--accent);border:1px solid var(--accent)">CUDA-only</span>'
+                )
+                if blocked:
+                    badge += (
+                        f'<span style="font-size:0.66rem;color:var(--warn);margin-left:0.4rem">'
+                        f'unavailable on {gpu_vendor.upper()} GPU</span>'
+                    )
             rows.append(
                 f'<label style="display:flex;align-items:center;gap:0.6rem;'
                 f'padding:0.35rem 0.5rem;border-bottom:1px solid var(--panel-2);'
-                f'cursor:{"pointer" if local else "default"};font-size:0.85rem">'
+                f'cursor:{"pointer" if (local and not blocked) else "default"};font-size:0.85rem;'
+                f'opacity:{"0.55" if blocked else "1"}">'
                 f'<input type="checkbox" class="model-toggle" data-surface="{surface_key}" '
                 f'data-key="{k}" {checked} {disabled} '
                 f'style="accent-color:var(--accent);margin:0">'
                 f'<span style="color:var(--text-2);flex:1">{v.get("label", k)} '
                 f'<span style="color:var(--text-5);font-size:0.75rem">'
-                f'({extra_str})</span></span>'
+                f'({extra_str})</span> {badge}</span>'
                 f'<code style="color:var(--text-4);font-size:0.72rem">{k}</code>'
                 f'</label>'
             )
@@ -1533,8 +1613,12 @@ _CARBON_JS = """
 
     // Optional: live French production mix (Eco2mix only). Sums positive
     // sources, shows top contributors by share. Hidden if mix_mw absent.
+    // Shown whenever we have a mix — even when the headline intensity has
+    // fallen back to static (RTE's taux_co2 lag flips the headline past the
+    // 30-min TTL while the mix is still recent); the header below labels it
+    // "live" only when homeLive, otherwise by its true age (mix_age_s).
     var mixHtml = '';
-    if (homeLive && homeI.mix_mw && Object.keys(homeI.mix_mw).length){
+    if (homeI.mix_mw && Object.keys(homeI.mix_mw).length){
       var mix = homeI.mix_mw;
       var labels = {nucleaire:'Nuclear', eolien:'Wind', solaire:'Solar',
                     hydraulique:'Hydro', bioenergies:'Bioenergy',
@@ -1558,12 +1642,16 @@ _CARBON_JS = """
                + '</div>';
         }).join('');
         var mixZone = homeI.zone_label || home;
-        var mixProvider = homeI.provider || 'live';
+        var mixProvider = homeLive ? (homeI.provider || 'live')
+                                   : (homeI.mix_provider || 'Eco2mix');
+        var mixHeader = homeLive
+          ? (mixZone + ' grid right now (live, via ' + mixProvider + ')')
+          : (mixZone + ' grid mix (' + fmtAge(homeI.mix_age_s) + ', via ' + mixProvider + ')');
         mixHtml =
             '<div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border-2)">'
           + '<div style="color:var(--text-5);font-size:0.65rem;letter-spacing:0.04em;'
           + 'text-transform:uppercase;margin-bottom:0.3rem">'
-          + mixZone + ' grid right now (live, via ' + mixProvider + ')</div>'
+          + mixHeader + '</div>'
           + rows
           + '</div>';
       }
@@ -1897,7 +1985,7 @@ function wlRenderProgress(opts) {
     var wHtml = w != null
         ? '<div style="font-size:2.5rem;color:var(--accent);font-family:monospace;font-weight:bold;margin:0.75rem 0 0">'
           + w.toFixed(1) + ' W</div>'
-          + '<div style="color:var(--text-3);font-size:0.72rem;letter-spacing:0.04em;margin-bottom:0.5rem">live wall power \xb7 Tapo P110</div>'
+          + '<div style="color:var(--text-3);font-size:0.72rem;letter-spacing:0.04em;margin-bottom:0.5rem">live wall power \xb7 {METER_NAME}</div>'
         : '';
     var elHtml = opts.elapsed != null
         ? '<div style="color:var(--text-4);font-size:0.78rem;margin-top:0.4rem">Elapsed: ' + wlFormatElapsed(opts.elapsed) + '</div>'
@@ -2002,7 +2090,7 @@ def _bake_durations(template: str) -> str:
             .replace("{COOLDOWN_S}", cd)
             .replace("{LLM_REST_S}", str(s.get("llm_rest_s", "\u2014"))))
 
-_PROGRESS_JS = _bake_durations(_PROGRESS_JS)
+_PROGRESS_JS = _bake_durations(_PROGRESS_JS).replace("{METER_NAME}", meter_display_name())
 
 
 # CR-034 Phase A \u2014 shared compact-result-card helpers.
@@ -2687,6 +2775,13 @@ _RESULT_JS = """<script>
         + '</div>';
       var confHtml = perModel.filter(function(m){ return m.conf && m.conf.flag; })
         .map(function(m){ return m.conf.flag + ' ' + m.label; }).join(' · ');
+      // Surface models that failed to load/run so a panel of N doesn't silently
+      // render as N-1 with no explanation (mirrors wlRenderComparePanel). E.g.
+      // SDXL-Lightning is a UNet-only checkpoint with no model_index.json.
+      var errsCM = (r.model_errors || []).map(function(f){
+        return '<div style="color:var(--err);font-size:0.72rem;font-family:monospace">⚠ '
+             + (f.model_label || f.model_key || '?') + ': ' + (f.error || 'failed to run') + '</div>';
+      }).join('');
       html += '<div class="result-card">'
             + '<p class="headline">' + (ac.finding || '') + '</p>'
             + _promptBlock(r.full_prompt, null, 'Prompt')
@@ -2699,6 +2794,7 @@ _RESULT_JS = """<script>
                                 'Image · cheapest of ' + perModel.length + ' models (' + bestM.label + ')',
                                 bestM.energy.delta_t_s, bestSavedG, subRunsCM)
                 : '')
+            + (errsCM ? '<div style="margin-top:0.6rem">' + errsCM + '</div>' : '')
             + wlCooldownSummary(r.cooldowns)
             + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
             + '</div>';
@@ -2864,7 +2960,7 @@ async def index(request: Request):
     </div>
     <div class="watts"><span data-live="watts">{watts_str} W</span></div>
     <div class="label">GoS1 live telemetry</div>
-    <div class="scope">Device layer only · Tapo P110 + lm-sensors · updates every 3s</div>
+    <div class="scope">Device layer only · {meter_display_name()} + lm-sensors · updates every 3s</div>
     <div class="temps">
         <div>
             <span class="t-val" data-live="cpu_tctl">—</span>
@@ -3160,7 +3256,7 @@ async def video_page(request: Request):
         </div>
         <div class="preset" id="preset-gpu" onclick="selectPreset('gpu')">
             <h3>H.264 GPU</h3>
-            <p class="pspec">h264_vaapi · ABR · 1080p · full pipeline</p>
+            <p class="pspec">{_gpu_enc('h264')} · ABR · 1080p · full pipeline</p>
             <details class="pdesc"><summary>details</summary>Hardware decode + encode. Full GPU pipeline — representative of live encoding.</details>
         </div>
         <div class="preset selected" id="preset-both" onclick="selectPreset('both')">
@@ -3179,7 +3275,7 @@ async def video_page(request: Request):
         </div>
         <div class="preset" id="preset-h265_gpu" onclick="selectPreset('h265_gpu')">
             <h3>H.265 GPU</h3>
-            <p class="pspec">hevc_vaapi · ABR · 1080p · full pipeline</p>
+            <p class="pspec">{_gpu_enc('h265')} · ABR · 1080p · full pipeline</p>
             <details class="pdesc"><summary>details</summary>Hardware decode + encode. Full GPU pipeline.</details>
         </div>
         <div class="preset" id="preset-h265_both" onclick="selectPreset('h265_both')">
@@ -3198,8 +3294,8 @@ async def video_page(request: Request):
         </div>
         <div class="preset" id="preset-av1_gpu" onclick="selectPreset('av1_gpu')">
             <h3>AV1 GPU</h3>
-            <p class="pspec">av1_vaapi · ABR · 1080p · full pipeline</p>
-            <details class="pdesc"><summary>details</summary>Hardware decode + AV1 encode. RDNA3 AV1 engine.</details>
+            <p class="pspec">{_gpu_enc('av1')} · ABR · 1080p · full pipeline</p>
+            <details class="pdesc"><summary>details</summary>Hardware decode + AV1 encode on the GPU's dedicated AV1 engine.</details>
         </div>
         <div class="preset" id="preset-av1_both" onclick="selectPreset('av1_both')">
             <h3>AV1 Both</h3>
@@ -5598,7 +5694,7 @@ async def llm_page(request: Request):
         const stages = isBoth ? [
             ['baseline_cpu', 'Measuring CPU baseline ({{BASELINE_S}}s)'],
             ['cpu_inference', 'CPU inference (num_gpu=0)'],
-            ['cooldown', 'Cooldown between runs ({{COOLDOWN_S}}s)'],
+            ['cooldown', 'Cooldown between runs {{COOLDOWN_PAREN}}'],
             ['baseline_gpu', 'Measuring GPU baseline ({{BASELINE_S}}s)'],
             ['gpu_inference', 'GPU inference (ROCm)'],
             ['done', 'Done'],
@@ -5868,7 +5964,7 @@ async def llm_page(request: Request):
                 <div class="conf-badge" style="margin-top:0.5rem">${{ce.confidence.flag}} ${{ce.confidence.label}}</div>
               </div>
               <div style="border:1px solid var(--border);padding:1rem">
-                <div style="color:var(--text-3);font-size:0.72rem;margin-bottom:0.75rem">GPU (ROCm · RX 7800 XT)</div>
+                <div style="color:var(--text-3);font-size:0.72rem;margin-bottom:0.75rem">GPU ({_gpu_runtime()} · {_gpu_display_name()})</div>
                 <div class="metric"><span>Tokens/sec</span>
                   <span class="val" style="color:${{winnerColor(a.speed_winner,'GPU')}}">${{gi.tokens_per_sec}}</span></div>
                 <div class="metric"><span>Duration</span><span class="val">${{gi.duration_s}}s</span></div>
@@ -6620,7 +6716,7 @@ async def llm_compare_page(request: Request):
 
     <details>
         <summary>Methodology &amp; scope</summary>
-        <p><b>What's measured (live runs):</b> Tapo P110 wall-power at 1 Hz, baseline before each model (10 polls), &Delta;W &times; &Delta;t &rarr; Wh, mWh/output_token, Traffic Light Confidence per the CR-028 CI model. Same protocol as the existing /llm endpoint.</p>
+        <p><b>What's measured (live runs):</b> {meter_display_name()} wall-power at 1 Hz, baseline before each model (10 polls), &Delta;W &times; &Delta;t &rarr; Wh, mWh/output_token, Traffic Light Confidence per the CR-028 CI model. Same protocol as the existing /llm endpoint.</p>
         <p><b>What's estimated (showcase cards):</b> Wh = wall_s &times; 25 W / 3600. The 25 W figure is a rough average power delta observed on GoS1 across Ollama 1B&ndash;20B models. Production P110 backfill of the three showcase cards is a follow-up (CR-048 phase 2).</p>
         <p><b>Why "Wh per correct answer" is the headline:</b> mWh/token rewards verbose models &mdash; a model that "thinks out loud" for 100 tokens to reach a 1-token answer looks more efficient per token than a model that answers in 1 token, even though it burned 100&times; the energy. The headline metric is the energy cost of <em>correctness</em>. mWh/token stays as a supporting column because it's the canonical inference-cost figure operators recognise.</p>
         <p><b>{panel_n}-model panel:</b> {panel_list}. All on GoS1 (Ryzen 9 7900 + RX 7800 XT, Ollama 0.20.2). Panel reflects the current <code>llm.MODELS</code> dict; the showcase tabs are frozen on the older 5-model probe and will be re-baselined when a fresh probe of the new panel runs.</p>
@@ -9157,7 +9253,7 @@ async def rag_compare_page(request: Request):
 
     <details>
         <summary>Methodology &amp; scope</summary>
-        <p><b>What's measured:</b> Tapo P110 wall-power at 1 Hz, baseline before each model (10 polls), &Delta;W &times; &Delta;t &rarr; Wh, mWh/output_token, Traffic Light Confidence per the CR-028 CI model. Same protocol as the existing /rag endpoint.</p>
+        <p><b>What's measured:</b> {meter_display_name()} wall-power at 1 Hz, baseline before each model (10 polls), &Delta;W &times; &Delta;t &rarr; Wh, mWh/output_token, Traffic Light Confidence per the CR-028 CI model. Same protocol as the existing /rag endpoint.</p>
         <p><b>Why "Wh per correct answer" is the headline:</b> mWh/token rewards verbose models &mdash; a model that "thinks out loud" looks more efficient per token than a model that answers in 1 token, even when it burned 100&times; the energy. The headline metric is the energy cost of <em>correctness</em>. mWh/token stays as a supporting column because it's the canonical operator-facing figure.</p>
         <p><b>RAG-specific wrong-answer story:</b> A model can be wrong because retrieval gave it the wrong chunk (so the answer was generated from training memory, with no anchor), or because it was right but couldn't extract. The 2026-05-26 probe found two IEA prompts where all 4 models failed because top-3 retrieval missed the right pages of the 250-page IEA report &mdash; a finding the energy data makes vivid: you can burn watts producing wrong answers from bad retrieval.</p>
         <p><b>{panel_n}-model panel:</b> {panel_list}. All on GoS1 (Ryzen 9 7900 + RX 7800 XT, Ollama 0.20.2). Panel reflects the current <code>rag.MODELS</code> dict; the BBC showcase card is frozen on the older 4-model probe and will be re-baselined when a fresh probe of the new panel runs.</p>
@@ -9839,9 +9935,9 @@ async def settings_page(request: Request):
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
       ABR target bitrate applied to both CPU and GPU presets for each codec — ensures apples-to-apples energy comparison. Custom ffmpeg commands on the video page override these.
     </div>
-    {field("h264_bitrate_kbps", s['h264_bitrate_kbps'], 500, 20000, "kbps", "H.264 target bitrate (libx264 + h264_vaapi)", step=100)}
-    {field("h265_bitrate_kbps", s['h265_bitrate_kbps'], 500, 20000, "kbps", "H.265 target bitrate (libx265 + hevc_vaapi)", step=100)}
-    {field("av1_bitrate_kbps",  s['av1_bitrate_kbps'],  500, 20000, "kbps", "AV1 target bitrate (libsvtav1 + av1_vaapi)", step=100)}
+    {field("h264_bitrate_kbps", s['h264_bitrate_kbps'], 500, 20000, "kbps", f"H.264 target bitrate (libx264 + {_gpu_enc('h264')})", step=100)}
+    {field("h265_bitrate_kbps", s['h265_bitrate_kbps'], 500, 20000, "kbps", f"H.265 target bitrate (libx265 + {_gpu_enc('h265')})", step=100)}
+    {field("av1_bitrate_kbps",  s['av1_bitrate_kbps'],  500, 20000, "kbps", f"AV1 target bitrate (libsvtav1 + {_gpu_enc('av1')})", step=100)}
 
     <div class="section">Confidence thresholds — CI model (CR-028 Phase 2)</div>
     {field("conf_positive_green",  s.get('conf_positive_green', 0.95),  0.5, 0.999, "P", "🟢 min confidence_positive Φ(z) that task draws above idle", step=0.01)}
@@ -10382,12 +10478,12 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   </p>
 
   <div class="big-metric" id="live-watts">— W</div>
-  <div class="big-label">GoS1 current power draw · Tapo P110 · device layer only</div>
+  <div class="big-label">GoS1 current power draw · {{METER_NAME}} · device layer only</div>
 
   <details>
     <summary>What's being measured?</summary>
-    <p>GoS1 is an AMD Ryzen 9 workstation with an RX 7800 XT GPU.
-    Power is sampled at 1-second intervals via a Tapo P110 smart plug
+    <p>GoS1 is an AMD Ryzen 9 workstation with an {{GPU_DISPLAY_NAME}} GPU.
+    Power is sampled at 1-second intervals via a {{METER_NAME}}
     connected to the mains supply. We measure the delta between idle
     baseline and task power — not estimated TDP or nameplate figures.</p>
     <p>Scope: device layer only. Network, CDN, and CPE are explicitly excluded.
@@ -10431,7 +10527,7 @@ _DEMO_HTML = f"""<!DOCTYPE html>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px;margin-bottom:0.75rem">
       Encoding a 4K clip (Meridian, Netflix Open Content, CC BY 4.0) to 1080p H.264 —
       once in software (libx264, CPU only) and once as a full GPU pipeline
-      (hardware decode + encode via h264_vaapi). Same source. Same quality target.
+      (hardware decode + encode via {{GPU_H264_ENC}}). Same source. Same quality target.
       P110 sampled every second throughout.
     </p>
     <details>
@@ -11610,9 +11706,16 @@ async def image_page(request: Request):
         b = f"m{i}_baseline"
         g = f"m{i}_generating"
         if i > 1:
-            compare_stages_js += ["cooldown"]
-        if i > 1:
-            compare_stages_js += [b, g]
+            # Unique per-gap cooldown key — a repeated literal 'cooldown' made
+            # the strip collapse every inter-model cooldown onto the first one
+            # (JS indexOf returns the first match), so the indicator snapped
+            # backward on each later cooldown. The runner still emits the generic
+            # 'cooldown' stage; pollJob maps it to cooldown_<idx> via
+            # current_model_idx, so the substring cooldown-detection paths are
+            # untouched. Label uses the shared toggle-aware {COOLDOWN_PAREN}.
+            cd_key = f"cooldown_{i}"
+            compare_stages_js += [cd_key, b, g]
+            compare_labels_extra[cd_key] = f"Cooldown before {v.get('label', k)} {{COOLDOWN_PAREN}}"
         compare_labels_extra[b] = f"{v.get('label', k)} — baseline ({{BASELINE_S}}s)"
         compare_labels_extra[g] = f"{v.get('label', k)} — generating (GPU batch)"
     compare_stages_js += ["done"]
@@ -11782,7 +11885,7 @@ async def image_page(request: Request):
     {_BACK}
     {busy_banner}
     <h1>Image Generation Test {_BETA_CHIP}</h1>
-    <div class="subtitle">SD-Turbo (~1B) · SDXL-Turbo (~3.5B) · 512×512 · ROCm fp16 on RX 7800 XT</div>
+    <div class="subtitle">SD-Turbo (~1B) · SDXL-Turbo (~3.5B) · 512×512 · {_gpu_runtime()} fp16 on {_gpu_display_name()}</div>
 
     {_ai_intro('image')}
 
@@ -11856,7 +11959,7 @@ const STAGE_LABELS = {{
   'generating': 'Generating image',
   'cpu_baseline': 'CPU — measuring baseline ({{BASELINE_S}}s)',
   'cpu_generating': 'CPU — generating image',
-  'cooldown': 'Cooldown between passes ({{COOLDOWN_S}}s)',
+  'cooldown': 'Cooldown between passes {{COOLDOWN_PAREN}}',
   'gpu_baseline': 'GPU — measuring baseline ({{BASELINE_S}}s)',
   'gpu_generating': 'GPU — generating images (batch)',
   'done': 'Complete',
@@ -11995,7 +12098,15 @@ async function pollJob(jobId) {{
 
   const powerR = await fetch('/power');
   const powerJ = await powerR.json().catch(() => ({{}}));
-  renderProgress(j.stage, j.result, powerJ.watts ?? null);
+  // The compare runner emits a generic 'cooldown' stage; the progress strip
+  // carries a unique cooldown_<idx> key per gap (so repeated cooldowns don't
+  // collapse onto the first). current_model_idx is the model the cooldown
+  // precedes, which is exactly the index the strip key was built with.
+  let _dispStage = j.stage;
+  if (_dispStage === 'cooldown' && j.current_model_idx) {{
+    _dispStage = 'cooldown_' + j.current_model_idx;
+  }}
+  renderProgress(_dispStage, j.result, powerJ.watts ?? null);
 
   if (j.stage === 'done' && j.result) {{
     clearInterval(pollTimer);
@@ -12069,7 +12180,7 @@ function renderImageBoth(r) {{
   // CR-032 — sub-runs across the two devices.
   const _subRuns = [
     {{label: 'CPU · Ryzen 9 7900',  e: r.cpu  && r.cpu.energy}},
-    {{label: 'GPU · RX 7800 XT',    e: r.gpu  && r.gpu.energy}}
+    {{label: 'GPU · {_gpu_display_name()}',    e: r.gpu  && r.gpu.energy}}
   ].filter(s => s.e && s.e.co2e).map(s => ({{
     label: s.label,
     grams: s.e.co2e.grams,
@@ -12090,7 +12201,7 @@ function renderImageBoth(r) {{
       ${{_imgBothVerdict}}
       <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
         ${{_imageCard('CPU · Ryzen 9 7900', r.cpu, cpuWinsEnergy)}}
-        ${{_imageCard('GPU · RX 7800 XT', r.gpu, gpuWinsEnergy)}}
+        ${{_imageCard('GPU · {_gpu_display_name()}', r.gpu, gpuWinsEnergy)}}
       </div>
       <div style="font-size:0.75rem;color:var(--text-4);margin-top:0.5rem">
         Prompt: "${{r.full_prompt}}" · modifier: <em>${{r.modifier}}</em>
@@ -12408,6 +12519,9 @@ async def demo_page(request: Request):
             .replace("{AUTH_CHIP}",          _auth_chip_html(request))
             .replace("{TIER_INDICATOR}",     _tier_indicator_html(request))
             .replace("{UPLOAD_MEMBER_MB}",   str(member_cap_mb))
+            .replace("{GPU_H264_ENC}",       _gpu_enc("h264"))
+            .replace("{GPU_DISPLAY_NAME}",   _gpu_display_name())
+            .replace("{METER_NAME}",         meter_display_name())
             .replace("{FINDINGS_PANEL}",     findings_panel_html))
 
 
@@ -12417,7 +12531,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-<title>OWL — Methodology</title>
+<title>OWL Measurement Methodology</title>
 <style>
   :root {
     --bg: #0a0a0a;
@@ -12745,7 +12859,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <a href="/" class="home-link top">&larr; Home</a>
 
-  <h1>Measurement Methodology</h1>
+  <h1>OWL Measurement Methodology</h1>
   <p class="subtitle">How OWL measures the energy cost of compute tasks &mdash; and what it doesn&rsquo;t measure.</p>
 
   <div style="margin: -18px 0 32px; font-family: var(--mono); font-size: 12px; display: flex; gap: 18px; flex-wrap: wrap;">
@@ -12769,6 +12883,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <a href="#hardware">Hardware</a>
     <a href="#tests">Test types</a>
     <a href="#limits">Limitations</a>
+    <a href="#carbon">CO&#x2082;e</a>
     <a href="#open">Open questions</a>
   </div>
 
@@ -12807,7 +12922,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
       <strong>Model unload</strong> (LLM/RAG only). Send <code>keep_alive=0</code> to Ollama and wait 3 seconds for GPU memory release. Ensures a cold start when cold-inference mode is selected.
     </li>
     <li>
-      <strong>Baseline capture.</strong> Poll the Tapo P110 smart plug at 1-second intervals for a configurable period (currently <code>{BASELINE_POLLS}</code> polls &mdash; configurable in Settings). The mean of these readings becomes W<sub>base</sub> &mdash; the server&rsquo;s idle power draw.
+      <strong>Baseline capture.</strong> Poll the {METER_NAME} at 1-second intervals for a configurable period (currently <code>{BASELINE_POLLS}</code> polls &mdash; configurable in Settings). The mean of these readings becomes W<sub>base</sub> &mdash; the server&rsquo;s idle power draw.
     </li>
     <li>
       <strong>Lock.</strong> Acquire <code>/tmp/gos-measure.lock</code> to prevent concurrent measurements from overlapping. A FIFO queue manages waiting jobs.
@@ -12852,7 +12967,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <span class="var">E<sub>image</sub></span> = <span class="var">&Delta;E</span> / <span class="var">N<sub>images</sub></span> &nbsp; [Wh/image]
   </div>
 
-  <p>All formulas use wall-power from the P110 (system-level), not component-level readings. The GPU&rsquo;s self-reported power (PPT via <code>amdgpu</code>) is captured for reference but is not used in the primary energy calculation &mdash; it covers only the GPU die, not the full system delta (CPU, RAM, drives, fans, PSU losses).</p>
+  <p>All formulas use wall-power from the P110 (system-level), not component-level readings. The GPU&rsquo;s self-reported power (its vendor sensor &mdash; <code>amdgpu</code> PPT or <code>nvidia-smi</code> power draw) is captured for reference but is not used in the primary energy calculation &mdash; it covers only the GPU die/board, not the full system delta (CPU, RAM, drives, fans, PSU losses).</p>
 
   <h2 id="confidence">Confidence Framework</h2>
 
@@ -12966,19 +13081,23 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <tr><td>GPU</td><td>{GPU_HW}</td></tr>
     <tr><td>RAM</td><td>61 GB DDR5</td></tr>
     <tr><td>Storage</td><td>500 GB NVMe SSD (OS + working set) + 4 TB NVMe SSD (test media &amp; result archive, mounted <code>/srv/data</code>)</td></tr>
-    <tr><td>Idle power</td><td>~56&ndash;58W (stable); brief drift to ~60&ndash;63W after sustained load. Measured by the May-2026 thermal-recovery probe, post second-NVMe + 5th case fan (~3&ndash;5W above the prior ~51&ndash;54W baseline)</td></tr>
-    <tr><td>Measurement</td><td>Tapo P110 smart plug, 1-second polling via local API (tapo 0.8.12)</td></tr>
-    <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code>, May 2026 &mdash; carries the upstream <code>scale_vaapi</code> surface-pool fix) &mdash; libx264, libx265, libsvtav1 (CPU); {VIDEO_GPU_ENCODERS}</td></tr>
-    <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; TinyLlama 1.1B, Mistral 7B, Gemma 3 12B (CPU + ROCm GPU); Phi-4 14B available for RAG</td></tr>
-    <tr><td>Image</td><td>PyTorch + diffusers &mdash; SD-Turbo (~1B), SDXL-Turbo (~3.5B, GPU only); CPU + ROCm GPU</td></tr>
+    <tr><td>Idle power</td><td>~79W at the wall (settled, display-blanked). The mid-2026 RTX 5080 swap raised idle ~+20W over the prior AMD 7800 XT (~57&ndash;59W) &mdash; intrinsic to the larger card, not a fault. The 5080 idle is display-state-sensitive: a blanked desktop sits at ~79W, an active (non-blanked) desktop ~101W; GoS1 blanks ~15&nbsp;min after the last input, so the like-for-like figure is ~79W</td></tr>
+    <tr><td>Measurement</td><td>{METER_NAME}, 1-second polling via local API (tapo 0.8.12)</td></tr>
+    <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code> &mdash; ships the NVENC encoders + <code>scale_cuda</code> filter) &mdash; libx264, libx265, libsvtav1 (CPU); {VIDEO_GPU_ENCODERS}</td></tr>
+    <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; ladder of TinyLlama 1.1B, Qwen3 1.7B/4B/8B, Mistral-NeMo 12B, Phi-4 14B, GPT-OSS 20B (CPU + CUDA GPU); Qwen3 4B is the canonical RAG model</td></tr>
+    <tr><td>Image</td><td>PyTorch + diffusers &mdash; SD-Turbo (~1B), SDXL-Turbo (~3.5B, GPU only); CPU + CUDA GPU</td></tr>
   </table>
+
+  <div class="callout">
+    <strong>Hardware change &mdash; GPU swap (mid-2026).</strong> GoS1&rsquo;s GPU was replaced from an AMD Radeon RX&nbsp;7800&nbsp;XT (VAAPI + ROCm) with an NVIDIA RTX&nbsp;5080 (NVENC + CUDA). OWL&rsquo;s vendor-abstraction layer auto-detected the new card with no code change, and results are stamped with the GPU they ran on. The driver was tooling reach (CUDA-only partner workloads), not energy &mdash; and the swap has a real methodology consequence worth stating plainly: <strong>idle power rose ~+20W at the wall</strong> (~57&ndash;59W &rarr; ~79W), intrinsic to the larger card. Per-encode NVENC is more efficient than VAAPI at matched bitrate (measured n=10: H.264 &minus;42%, H.265 &minus;22%, AV1 &minus;25% energy), but the higher idle floor means the swap is only <em>net</em> energy-positive for H.264-heavy, near-saturated duty cycles; for H.265 the idle penalty is never repaid by transcode alone. We therefore treat the 5080 as a <strong>capability / quality / speed upgrade, not a same-workload energy win</strong>. The frozen pre-swap AMD baseline is preserved for comparison.
+  </div>
 
   <h2 id="tests">Test Types</h2>
 
   <h3>Video transcoding</h3>
   <p>Transcode a source file (default: Netflix Meridian 4K, CC BY 4.0) to a target codec and 1080p. Measures the energy cost of the full encode pipeline &mdash; decode, colour-space conversion, scale, encode. Supports CPU vs GPU comparison: both paths are run sequentially with a cooldown between them, and results are presented side by side.</p>
-  <p>Six presets across three codecs: <strong>H.264</strong> (libx264 / h264_vaapi, 4000 kbps), <strong>H.265</strong> (libx265 / hevc_vaapi, 2000 kbps), <strong>AV1</strong> (libsvtav1 / av1_vaapi, 1500 kbps). A seventh <strong>Compare all codecs</strong> preset runs all six in sequence and produces a cross-codec energy matrix.</p>
-  <p>All presets use <strong>ABR (Average Bit Rate)</strong> rate control at a shared per-codec bitrate target, so CPU and GPU receive the identical encoding task &mdash; output file sizes match across devices as confirmation. All GPU presets use the <strong>full VAAPI pipeline</strong>: hardware decode (<code>-hwaccel vaapi</code>) + <code>scale_vaapi</code> + hardware encode, with frames GPU-resident throughout. This represents real live-encoding workflows (Harmonic, Ateme); an earlier partial pipeline (CPU decode + GPU encode) has been replaced because it was unrepresentative and bottlenecked on CPU decode overhead.</p>
+  <p>Six presets across three codecs: <strong>H.264</strong> (libx264 / {GPU_H264_ENC}, 4000 kbps), <strong>H.265</strong> (libx265 / {GPU_H265_ENC}, 2000 kbps), <strong>AV1</strong> (libsvtav1 / {GPU_AV1_ENC}, 1500 kbps). A seventh <strong>Compare all codecs</strong> preset runs all six in sequence and produces a cross-codec energy matrix. (Encoder names track the installed GPU &mdash; the live list is in the Hardware Disclosure table above.)</p>
+  <p>All presets use <strong>ABR (Average Bit Rate)</strong> rate control at a shared per-codec bitrate target, so CPU and GPU receive the identical encoding task &mdash; output file sizes match across devices as confirmation. All GPU presets use the <strong>full hardware pipeline</strong>: hardware decode (<code>-hwaccel cuda</code>) + <code>scale_cuda</code> + hardware encode, with frames GPU-resident throughout. This represents real live-encoding workflows (Harmonic, Ateme); an earlier partial pipeline (CPU decode + GPU encode) has been replaced because it was unrepresentative and bottlenecked on CPU decode overhead.</p>
   <p>The ffmpeg command used for each run is logged in the result JSON, editable from the page (signed-in GoS members and lab access), and reproduced in the result card for full transparency.</p>
   <p><strong>Perceptual quality (VMAF).</strong> Comparison runs (CPU vs GPU, or all codecs) also report <strong>VMAF</strong> &mdash; Netflix&rsquo;s perceptual quality metric (0&ndash;100, higher is better) &mdash; so the energy figures sit next to a quality figure rather than an unstated assumption that the encodes are equivalent. It is computed at the delivered 1080p, comparing each encoded output against the source downscaled to 1080p (the distorted side is cropped to strip hardware-encoder padding, never upscaled). VMAF runs <em>after</em> the measurement window closes, so its compute cost is excluded from the reported energy. It is a quality cross-check, not a primary GoS measurement.</p>
 
@@ -12989,7 +13108,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <h3>AI workloads <span style="color:var(--text-dim);font-weight:400;font-size:13px">— beta, exploratory</span></h3>
   <p>Video transcoding is OWL&rsquo;s core benchmark. Three AI workloads run alongside it on the same protocol and confidence framework, but they are explicitly <strong>beta</strong> &mdash; useful for relative comparisons, with headline numbers still being hardened (see Open Questions). In brief:</p>
   <ul style="margin: 12px 0 18px 20px; font-size: 14px; line-height: 1.7;">
-    <li><strong>LLM inference</strong> &mdash; mWh/token for TinyLlama&nbsp;1.1B / Mistral&nbsp;7B / Gemma&nbsp;3&nbsp;12B, cold or warm, CPU or GPU, with an optional batch mode. Prompts are saved in the result JSON; output streams word-by-word as live-run proof.</li>
+    <li><strong>LLM inference</strong> &mdash; mWh/token across a model ladder (TinyLlama&nbsp;1.1B, Qwen3&nbsp;1.7B/4B/8B, Mistral-NeMo&nbsp;12B, Phi-4&nbsp;14B, up to GPT-OSS&nbsp;20B), cold or warm, CPU or GPU, with an optional batch mode. Prompts are saved in the result JSON; output streams word-by-word as live-run proof.</li>
     <li><strong>Image generation</strong> &mdash; Wh/image for the SD-Turbo (~1B) and SDXL-Turbo (~3.5B) distilled diffusion models, CPU or GPU, with a Compare-Models mode that fixes prompt, seed and resolution so model size is the only variable.</li>
     <li><strong>RAG</strong> &mdash; the energy delta of retrieval: baseline (no retrieval) vs RAG with 3 context chunks vs 8, retrieved from a document corpus via ChromaDB + sentence-transformer embeddings, compared side by side.</li>
   </ul>
@@ -13004,14 +13123,18 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>Single server.</strong> All results are from one machine. Generalisability to other hardware configurations is unknown without cross-platform measurement.</span></div>
 
-  <div class="open-q"><span class="marker">&#9658;</span><span><strong>Baseline drift.</strong> The server&rsquo;s idle power occasionally drifts from ~51W to ~58W (thermal state, background processes). The per-run baseline capture mitigates this, but it introduces variance between runs taken at different times.</span></div>
+  <div class="open-q"><span class="marker">&#9658;</span><span><strong>Baseline drift.</strong> The server&rsquo;s idle power drifts with thermal state, background processes, and &mdash; since the RTX 5080 swap &mdash; GPU display power state: a blanked vs active desktop alone moves the wall figure by ~20W (~79W &rarr; ~101W). The per-run baseline capture (re-measured immediately before each task) mitigates this, but it introduces variance between runs taken at different times.</span></div>
 
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>PSU efficiency curve.</strong> Wall power includes PSU conversion losses, which are non-linear (PSUs are less efficient at low and very high loads). Two tasks that consume the same <em>internal</em> power may report different wall-power deltas depending on where they sit on the PSU efficiency curve.</span></div>
 
-  <h2>From energy to CO<sub>2</sub>e &mdash; for reference only</h2>
-  <p>OWL measures <strong>energy</strong>: watts at the wall, watt-hours per task. That is the number GoS stands behind &mdash; <em>&ldquo;if it can&rsquo;t be measured, it shouldn&rsquo;t be asserted&rdquo;</em>, and what OWL measures directly is energy. Every result <em>also</em> carries a gCO<sub>2</sub>e figure (Wh &times; grid carbon intensity), but that is explicitly a <strong>reference estimate</strong> &mdash; a way to put the energy in context against everyday activities, not a carbon-accounting claim. Carbon attribution &mdash; allocation, boundaries, double-counting &mdash; is a hard problem that GoS deliberately leaves to the bodies whose job it is. Read the energy figure as the result; the CO<sub>2</sub>e is a footnote.</p>
-  <p style="background:rgba(255,170,0,0.06);border-left:3px solid var(--warn);padding:0.65rem 0.85rem">
-    <strong style="color:var(--accent)">🟢 Direct</strong> = the energy figure (P110 polling at the wall, validated method, GoS primary measurement &mdash; this is what we cite). <strong style="color:var(--warn)">🟡 Indicative</strong> = the gCO<sub>2</sub>e figure (Wh &times; third-party grid intensity &mdash; context, not citable as GoS data). Vocabulary follows the Greening of Streaming <a href="{POSITION_PAPER_URL}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Language Lab AI position paper (Jan 2026)</a>, which proposes this 🟢/🟡/🔴 traffic-light for the entire ICT-energy-measurement landscape and rates IEA top-down energy figures as 🟡 Amber. OWL applies the same framework to its own outputs &mdash; every result-card carbon block carries the 🟡 chip; the energy headline retains the green palette.
+  <h2 id="carbon">From energy to CO<sub>2</sub>e &mdash; for reference only</h2>
+
+  <p><strong>OWL is a power meter, not a carbon calculator.</strong> The number OWL produces and stands behind is <strong>energy</strong> &mdash; watts at the wall and watt-hours per task, measured directly by the P110. Everything else on this page is about getting that energy number right. We lead with power because it is what we can measure at the wall with no modelling assumptions; carbon is one modelling layer removed.</p>
+
+  <p>Every result <em>also</em> carries a gCO<sub>2</sub>e figure, but only as a downstream convenience: we multiply the measured energy by a grid carbon-intensity factor (Wh &times; gCO<sub>2</sub>e/kWh) so the energy can be read against everyday activities. That makes it a <strong>reference estimate, never a GoS measurement.</strong> Carbon attribution &mdash; allocation, boundaries, double-counting, marginal vs average intensity &mdash; is a hard problem that GoS deliberately leaves to the bodies whose job it is. This follows the GoS principle directly: <em>&ldquo;if it can&rsquo;t be measured, it shouldn&rsquo;t be asserted&rdquo;</em> &mdash; and what OWL measures directly is energy. Read the energy figure as the result; the CO<sub>2</sub>e is a footnote.</p>
+
+  <p style="background:rgba(255,170,0,0.06);border-left:3px solid var(--warning);padding:0.65rem 0.85rem">
+    <strong style="color:var(--accent)">🟢 Direct</strong> = the energy figure (P110 polling at the wall, validated method, GoS primary measurement &mdash; this is what we cite). <strong style="color:var(--warning)">🟡 Indicative</strong> = the gCO<sub>2</sub>e figure (Wh &times; third-party grid intensity &mdash; context, not citable as GoS data). Vocabulary follows the Greening of Streaming <a href="{POSITION_PAPER_URL}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Language Lab AI position paper (Jan 2026)</a>, which proposes this 🟢/🟡/🔴 traffic-light for the entire ICT-energy-measurement landscape and rates IEA top-down energy figures as 🟡 Amber. OWL applies the same framework to its own outputs &mdash; every result-card carbon block carries the 🟡 chip; the energy headline retains the green palette.
   </p>
   <p>For what it&rsquo;s worth, the intensity used is lifecycle-basis (IPCC AR6 factors): the live French grid mix via <a href="{ECO2MIX_URL}" style="color:var(--accent);text-decoration:none">Eco2mix</a> when reachable, ElectricityMaps as a backup, and <a href="{EMBER_URL}" style="color:var(--accent);text-decoration:none">Ember</a> annual country means as the fallback (also used for the stable comparison cities). The value and which source produced it are recorded in every result JSON and CSV export (CSV header carries a leading comment marking the carbon columns indicative). A result&rsquo;s carbon dropdown also shows the same energy on a few past French grids for context. Module status &mdash; live cache, source, age, fallback &mdash; is at <a href="/carbon" style="color:var(--accent);text-decoration:none">/carbon</a>.</p>
 
@@ -13019,7 +13142,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <p>These are questions OWL has surfaced but not yet answered. They are published here in the interest of transparency.</p>
 
-  <div class="open-q"><span class="marker">?</span><span><strong>Confidence multipliers.</strong> The 5&times; / 2&times; noise multipliers for &#x1F7E2;/&#x1F7E1; are currently set by judgement. A working session with the measurement team is planned to derive statistically grounded values from repeated calibration runs across different workloads and thermal states.</span></div>
+  <div class="open-q"><span class="marker">?</span><span><strong>Confidence thresholds.</strong> The live flag is the CR-028 Phase 2 confidence interval described above; its positive-confidence cut-points (95% / 80%) and minimum poll counts are still set by judgement, and the first pass uses a 1.96 critical value with raw sample counts. A working session with the measurement team is planned to ground these &mdash; and to add the autocorrelation (effective-<em>n</em>) and Student-<em>t</em> refinements &mdash; against repeated calibration runs across workloads and thermal states. (The legacy 5&times; / 2&times; variance multipliers now apply only to pre-CI historical results.)</span></div>
 
   <div class="open-q"><span class="marker">?</span><span><strong>Transcoding profile/GOP equivalence.</strong> ABR rate control now gives CPU and GPU the same bitrate target, and output file sizes match as confirmation. GOP structure and profile level are still default-per-encoder and have not been explicitly normalised. A working session is planned to confirm apples-to-apples at that level, and to add a second benchmark family at each codec&rsquo;s natural operating point (CRF for CPU, QP for GPU).</span></div>
 
@@ -13029,7 +13152,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <div class="footer-note">
     OWL is built and maintained by <a href="{GOS_URL}" style="color:var(--accent);text-decoration:none;">Greening of Streaming</a>, a French NGO (loi 1901).<br>
-    Methodology version 0.4 &middot; last updated 2026-05-11 &middot; Feedback: bs@ctoic.net<br>
+    Methodology version 0.5 &middot; last updated 2026-06-09 &middot; Feedback: bs@ctoic.net<br>
     Source: <a href="{GITHUB_REPO_URL}" style="color:var(--accent);text-decoration:none;">github.com/greeningofstreaming/wattlab</a>
   </div>
 
@@ -13077,7 +13200,6 @@ def _recovery_chart_payload(cooldown_s):
     }
 
 
-@app.get("/methodology", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 def _gpu_display_name() -> str:
     """Card name for UI copy. Settings `gpu_display_name` (a curated string like
     'AMD Radeon RX 7800 XT, 16GB VRAM') wins if set; otherwise the auto-detected
@@ -13101,6 +13223,21 @@ def _gpu_video_encoders() -> str:
     return f"{encs} (GPU, {pipe})"
 
 
+def _gpu_enc(codec: str) -> str:
+    """GPU encoder name for `codec` (h264/h265/av1) for UI copy — vendor-
+    resolved via gpu.BACKEND so preset/settings labels track the installed
+    card and never hardcode a vendor. Safe when no discrete GPU is present."""
+    if gpu.BACKEND.vendor == "none":
+        return "GPU encode unavailable"
+    return gpu.BACKEND.ffmpeg_encoder(codec)
+
+
+def _gpu_runtime() -> str:
+    """AI-runtime label for UI copy: ROCm (AMD) / CUDA (Nvidia) / CPU."""
+    return {"amd": "ROCm", "nvidia": "CUDA"}.get(gpu.BACKEND.vendor, "CPU")
+
+
+@app.get("/methodology", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def methodology_page(request: Request):
     # Inject live settings into placeholder fields so the methodology page
     # can never silently drift from the actual configuration in settings.json.
@@ -13123,6 +13260,10 @@ async def methodology_page(request: Request):
             .replace("{VARIANCE_COOLDOWN_S}",str(s.get("variance_cooldown_s","—")))
             .replace("{GPU_HW}",             _gpu_hw_row())
             .replace("{VIDEO_GPU_ENCODERS}", _gpu_video_encoders())
+            .replace("{GPU_H264_ENC}",       _gpu_enc("h264"))
+            .replace("{GPU_H265_ENC}",       _gpu_enc("h265"))
+            .replace("{GPU_AV1_ENC}",        _gpu_enc("av1"))
+            .replace("{METER_NAME}",         meter_display_name())
             .replace("{RECOVERY_CHART_DATA}", json.dumps(recovery))
             .replace("{POSITION_PAPER_URL}",  POSITION_PAPER_URL)
             .replace("{GOS_URL}",             GOS_URL)

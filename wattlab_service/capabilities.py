@@ -98,6 +98,23 @@ _REQUIRED_TIER: dict[str, Tier] = {
 }
 
 
+class CapabilityError(HTTPException):
+    """403 raised by requires()/gate() when the resolved tier is too low.
+
+    Subclasses HTTPException so every existing consumer is unchanged — the
+    status is still 403 and `.detail` still names the capability ("requires
+    <cap>"), which tests and fetch-based front-end code rely on. The extra
+    `capability` / `required_tier` attributes let a single central exception
+    handler (main.py) render a friendly HTML gate page for browser
+    navigations instead of leaking raw JSON like {"detail":"requires …"}.
+    """
+
+    def __init__(self, capability: str):
+        super().__init__(status_code=403, detail=f"requires {capability}")
+        self.capability = capability
+        self.required_tier = _REQUIRED_TIER[capability]
+
+
 def can(audience_tier: Tier, capability: str) -> bool:
     """True if `audience_tier` is allowed to use `capability`.
 
@@ -127,7 +144,7 @@ def requires(capability: str):
 
     async def _dep(request: Request):
         if not can(resolve_tier(request), capability):
-            raise HTTPException(status_code=403, detail=f"requires {capability}")
+            raise CapabilityError(capability)
 
     return _dep
 
@@ -157,7 +174,7 @@ def gate(request: Request, *capabilities_required: str) -> None:
         if cap not in _REQUIRED_TIER:
             raise KeyError(f"undefined capability: {cap!r}")
         if not can(t, cap):
-            raise HTTPException(status_code=403, detail=f"requires {cap}")
+            raise CapabilityError(cap)
 
 
 def all_capabilities() -> list[str]:

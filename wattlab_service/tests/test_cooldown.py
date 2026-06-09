@@ -160,6 +160,51 @@ def test_dialog_not_offered_without_allow_dialog(monkeypatch, no_sleep):
     assert r["timed_out"] is True
 
 
+# ── label single-source-of-truth (every page inherits the toggle) ───────────
+#
+# The cooldown *wording* must funnel through main._bake_durations' tokens just
+# like the cooldown *execution* funnels through cooldown_between_runs above.
+# A page that hardcodes "(10s)" survives a wait-for-idle switch and lies to the
+# visitor — exactly the /image + /llm/compare bug these pin against recurring.
+
+def test_bake_cooldown_paren_says_idle_when_toggle_on(monkeypatch):
+    import main
+    _settings(monkeypatch, cooldown_wait_for_idle=True, video_cooldown_s=10,
+              baseline_polls=10, llm_rest_s=10)
+    out = main._bake_durations("X {COOLDOWN_PAREN} Y")
+    assert out == "X (→ idle) Y"
+
+
+def test_bake_cooldown_paren_says_fixed_seconds_when_toggle_off(monkeypatch):
+    import main
+    _settings(monkeypatch, cooldown_wait_for_idle=False, video_cooldown_s=42,
+              baseline_polls=10, llm_rest_s=10)
+    out = main._bake_durations("X {COOLDOWN_PAREN} Y")
+    assert out == "X (42s) Y"
+
+
+def test_bake_cooldown_label_follows_toggle(monkeypatch):
+    import main
+    _settings(monkeypatch, cooldown_wait_for_idle=True, video_cooldown_s=10,
+              baseline_polls=10, llm_rest_s=10)
+    assert main._bake_durations("{COOLDOWN_LABEL}") == "Cooldown (→ idle)"
+    _settings(monkeypatch, cooldown_wait_for_idle=False, video_cooldown_s=10,
+              baseline_polls=10, llm_rest_s=10)
+    assert main._bake_durations("{COOLDOWN_LABEL}") == "Cooldown (10s)"
+
+
+def test_no_page_hardcodes_a_fixed_second_cooldown_label():
+    """Guard for future pages: no page f-string may emit a raw `{COOLDOWN_S}`
+    token. It bakes to a bare number regardless of cooldown_wait_for_idle, which
+    is how the fixed "(10s)" label outlived the wait-for-idle switch. New
+    cooldown labels must use {COOLDOWN_PAREN} / {COOLDOWN_LABEL} instead."""
+    import main
+    src = open(main.__file__).read()
+    assert "{{COOLDOWN_S}}" not in src, (
+        "A page f-string emits {{COOLDOWN_S}} — use {{COOLDOWN_PAREN}} so the "
+        "cooldown label respects the wait-for-idle toggle.")
+
+
 # ── decision endpoint (logic, auth-independent) ─────────────────────────────
 
 def test_decision_endpoint_sets_choice(monkeypatch):

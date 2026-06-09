@@ -59,3 +59,41 @@ def test_normalize_strips_latest_only():
     # Meaningful tags retained
     assert mc._normalize_key("qwen3:1.7b")        == "qwen3:1.7b"
     assert mc._normalize_key("gpt-oss:20b")       == "gpt-oss:20b"
+
+
+# --- cuda_only backend gate (auto-disable on GPU swap) ----------------------
+
+def test_flux_family_is_cuda_only_with_loader():
+    """FLUX.1-schnell ships marked cuda_only + a custom NF4 loader so it never
+    silently appears on a non-NVIDIA box or hits AutoPipeline."""
+    flux = mc._IMAGE_FAMILIES["flux-schnell"]
+    assert flux["cuda_only"] is True
+    assert flux["loader"] == "flux_nf4"
+    assert flux["cpu_ok"] is False
+
+def test_backend_allows_blocks_cuda_only_off_nvidia(monkeypatch):
+    cuda_model = {"cuda_only": True}
+    plain_model = {}
+    monkeypatch.setattr(mc, "active_gpu_vendor", lambda: "amd")
+    assert mc.backend_allows(cuda_model) is False    # AMD can't run it
+    assert mc.backend_allows(plain_model) is True     # normal model unaffected
+    monkeypatch.setattr(mc, "active_gpu_vendor", lambda: "none")
+    assert mc.backend_allows(cuda_model) is False     # no discrete GPU either
+    monkeypatch.setattr(mc, "active_gpu_vendor", lambda: "nvidia")
+    assert mc.backend_allows(cuda_model) is True      # NVIDIA unlocks it
+
+def test_enabled_image_models_drops_cuda_only_on_amd(monkeypatch):
+    """The runner-facing list auto-drops a cuda_only model on AMD (swap-back =
+    auto-disable, no settings edit) but keeps it on NVIDIA."""
+    catalog = {
+        "sd-turbo":     {"label": "SD-Turbo"},
+        "flux-schnell": {"label": "FLUX.1-schnell (NF4)", "cuda_only": True},
+    }
+    monkeypatch.setattr(mc, "available_image_models", lambda: dict(catalog))
+    monkeypatch.setattr(mc.cfg, "load", lambda: {})   # empty enable list = all
+
+    monkeypatch.setattr(mc, "active_gpu_vendor", lambda: "amd")
+    assert set(mc.enabled_image_models()) == {"sd-turbo"}
+
+    monkeypatch.setattr(mc, "active_gpu_vendor", lambda: "nvidia")
+    assert set(mc.enabled_image_models()) == {"sd-turbo", "flux-schnell"}

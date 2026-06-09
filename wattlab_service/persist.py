@@ -7,6 +7,7 @@ from pathlib import Path
 import carbon
 import canonical
 import gpu
+import power
 import version
 
 RESULTS_DIR = Path("/home/gos/wattlab/results")
@@ -55,6 +56,10 @@ def save_result(job_type: str, job_id: str, data: dict,
     # Key is `gpu_hardware`, NOT `gpu` — the video CPU-vs-GPU "both" mode already
     # uses a top-level `gpu` key for the GPU-side measurement (video.py).
     payload["gpu_hardware"] = gpu.stamp()
+    # Stamp the power meter too (cheap-wins pass, 2026-06-09) — the analogue of
+    # gpu_hardware. A future PDU/IPMI swap (CR-031 §2) then can't be silently
+    # compared against Tapo P110 runs; records meter name + polling resolution.
+    payload["power_hardware"] = power.stamp()
     carbon.walk_and_enrich(payload)
     # CR-037 — anchor AI energy to a real video encode ("≈ N× a 120s encode").
     # AI result types only; video would just read "≈ 1×" of itself.

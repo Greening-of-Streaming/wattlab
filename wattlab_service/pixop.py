@@ -33,6 +33,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import gpu
 import settings as cfg
 from confidence import confidence
 from power import cooldown_between_runs
@@ -380,10 +381,20 @@ def build_ffmpeg_upscale_cmd(input_name: str, output_name: str,
     cmd = [ff, "-y"]
     if live:
         cmd.append("-re")
+    # HEVC GPU encode, vendor-resolved via gpu.BACKEND so the baseline tracks
+    # the installed card rather than hardcoding NVENC. -rc cbr is NVENC-specific
+    # (VAAPI takes -b:v alone), so gate it on vendor; the bitrate target is
+    # identical either way, keeping the scaling algorithm the only variable.
+    enc = gpu.BACKEND.ffmpeg_encoder("h265")
     cmd += [
         "-i", str(inp / input_name),
         "-vf", f"scale={target_w}:{target_h}:flags={flag}",
-        "-c:v", "hevc_nvenc", "-rc", "cbr", "-b:v", f"{kbps}k",
+        "-c:v", enc,
+    ]
+    if gpu.BACKEND.vendor == "nvidia":
+        cmd += ["-rc", "cbr"]
+    cmd += [
+        "-b:v", f"{kbps}k",
         "-c:a", "copy",
         "-f", "mp4", str(out / output_name),
     ]

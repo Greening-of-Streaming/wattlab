@@ -367,3 +367,53 @@ def test_every_route_declares_capability_or_is_waived():
         f"Routes missing Depends(requires(...)) and not in _ROUTE_WAIVERS:\n"
         + "\n".join(sorted(untagged))
     )
+
+
+# --- Gate-page presentation (central CapabilityError handler in main.py) -----
+#
+# The capability *policy* is unit-tested above. These pin the *presentation*:
+# a browser navigation to a gated page gets a friendly HTML gate, while a
+# fetch/API caller keeps the JSON contract the front-end JS already handles.
+# Integration-level, so they use a TestClient (unlike the rest of this file).
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+import main  # noqa: E402
+
+_gate_client = TestClient(main.app)
+_BROWSER = {"x-real-ip": "8.8.8.8", "accept": "text/html"}   # anonymous browser
+_FETCH   = {"x-real-ip": "8.8.8.8", "accept": "*/*"}         # anonymous fetch/API
+
+
+def test_member_gate_renders_friendly_html_for_browser():
+    """A browser hitting a Member-gated page (e.g. /enhance-run) gets a styled
+    gate, not raw JSON — with the contact email and a sign-in path."""
+    r = _gate_client.get("/enhance-run", headers=_BROWSER)
+    assert r.status_code == 403
+    assert "text/html" in r.headers["content-type"]
+    assert "Members only" in r.text
+    assert "owl@greeningofstreaming.org" in r.text
+    assert "/auth/sign-in" in r.text
+    # The cryptic capability string must NOT leak to the human-facing page.
+    assert "requires enhance_run" not in r.text
+
+
+def test_member_gate_keeps_json_for_fetch_callers():
+    """Same gated page via fetch (Accept: */*) keeps {"detail":"requires …"}
+    so existing front-end JS error handling is unchanged."""
+    r = _gate_client.get("/enhance-run", headers=_FETCH)
+    assert r.status_code == 403
+    assert "application/json" in r.headers["content-type"]
+    assert r.json() == {"detail": "requires enhance_run"}
+
+
+def test_lab_gate_does_not_offer_sign_in():
+    """Lab is granted by network origin, never by sign-in — the Lab gate page
+    must not dangle a sign-in CTA that cannot help. (All Lab-gated routes are
+    POST/DELETE; a browser form post still sends Accept: text/html.)"""
+    r = _gate_client.post("/variance/run", headers=_BROWSER)
+    assert r.status_code == 403
+    assert "text/html" in r.headers["content-type"]
+    assert "Lab access only" in r.text
+    assert "owl@greeningofstreaming.org" in r.text
+    assert "/auth/sign-in" not in r.text

@@ -153,6 +153,45 @@ def test_intensity_falls_back_when_source_datetime_old():
     assert out["source"] == "static"
 
 
+def test_intensity_static_still_surfaces_recent_mix():
+    """Headline past LIVE_TTL_S but mix within MIX_TTL_S → source flips to
+    static, yet the grid composition is still surfaced with its true age.
+    Mirrors RTE's taux_co2 lag: the headline goes stale while the mix is
+    still a recent 'what's on the grid' snapshot (change #1)."""
+    mix_age = carbon.LIVE_TTL_S + 5 * 60  # 35 min: past headline TTL, under MIX_TTL_S
+    old_iso = (datetime.now(timezone.utc) - timedelta(seconds=mix_age)).isoformat()
+    carbon._LIVE["FR"] = {
+        "g_per_kwh": 11.0,
+        "fetched_at": time.time(),
+        "ok": True,
+        "provider": "Eco2mix (RTE/Etalab)",
+        "source_datetime": old_iso,
+        "mix_mw": {"nucleaire": 40000, "eolien": 5000},
+    }
+    out = carbon.intensity("FR")
+    assert out["source"] == "static"           # headline fell back
+    assert out["mix_mw"] == {"nucleaire": 40000, "eolien": 5000}
+    assert abs(out["mix_age_s"] - mix_age) <= 2
+    assert out["mix_provider"] == "Eco2mix (RTE/Etalab)"
+
+
+def test_intensity_static_drops_mix_when_past_mix_ttl():
+    """Mix older than MIX_TTL_S → genuine outage, mix dropped entirely."""
+    old_iso = (datetime.now(timezone.utc)
+               - timedelta(seconds=carbon.MIX_TTL_S + 60)).isoformat()
+    carbon._LIVE["FR"] = {
+        "g_per_kwh": 11.0,
+        "fetched_at": time.time(),
+        "ok": True,
+        "provider": "Eco2mix (RTE/Etalab)",
+        "source_datetime": old_iso,
+        "mix_mw": {"nucleaire": 40000},
+    }
+    out = carbon.intensity("FR")
+    assert out["source"] == "static"
+    assert "mix_mw" not in out
+
+
 def test_intensity_ignores_failed_fetch_attempts():
     carbon._LIVE["FR"] = {"ok": False, "g_per_kwh": None}
     out = carbon.intensity("FR")

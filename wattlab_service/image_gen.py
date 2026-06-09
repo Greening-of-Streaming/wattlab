@@ -91,6 +91,71 @@ def read_sensors() -> dict:
 
 # --- Generation ---
 
+def _load_sdxl_unet_ckpt(cfg_m: dict, torch):
+    """Load a UNet-only SDXL distillation (e.g. SDXL-Lightning) by swapping its
+    distilled UNet checkpoint into a cached full-SDXL pipeline shell.
+
+    These repos ship a bare `*_unet.safetensors` with no `model_index.json`, so
+    `AutoPipelineForText2Image.from_pretrained` fails. Rather than pull the 6.9 GB
+    SDXL-base-1.0 repo, we reuse whatever full SDXL pipeline `base_repo` names
+    (sdxl-turbo is already cached and shares SDXL's VAE + text encoders + UNet
+    architecture). Requires the Euler trailing-timestep schedule + guidance 0
+    (generate_image already passes guidance_scale=0.0). CUDA only.
+
+    This is the generic hook for non-AutoPipeline model families; add a new
+    `loader` value + branch for the next one (FLUX / SD3.5 with bnb 4-bit, etc.).
+    """
+    from diffusers import (StableDiffusionXLPipeline, UNet2DConditionModel,
+                           EulerDiscreteScheduler)
+    from huggingface_hub import hf_hub_download
+    from safetensors.torch import load_file
+    base = cfg_m["base_repo"]
+    unet = UNet2DConditionModel.from_config(
+        UNet2DConditionModel.load_config(base, subfolder="unet")
+    ).to("cuda", torch.float16)
+    unet.load_state_dict(
+        load_file(hf_hub_download(cfg_m["repo"], cfg_m["unet_ckpt"]), device="cuda")
+    )
+    pipe = StableDiffusionXLPipeline.from_pretrained(
+        base, unet=unet, torch_dtype=torch.float16, variant="fp16",
+    ).to("cuda")
+    pipe.scheduler = EulerDiscreteScheduler.from_config(
+        pipe.scheduler.config, timestep_spacing="trailing")
+    return pipe
+
+
+def _load_flux_nf4(cfg_m: dict, torch):
+    """Load FLUX.1-schnell with bitsandbytes NF4 4-bit on the 12B transformer +
+    the T5-XXL text encoder (~13 GB VRAM resident vs ~24 GB fp16 — fits the
+    16 GB 5080). NF4 4-bit is the CUDA gate (model_catalog marks it cuda_only),
+    smoke-tested for sm_120 correctness on the RTX 5080 (bitsandbytes 0.49.2).
+
+    Everything stays resident on the GPU (no model-CPU-offload) so the energy
+    measurement isn't confounded by host<->device weight shuffling."""
+    from diffusers import FluxPipeline, FluxTransformer2DModel
+    from diffusers import BitsAndBytesConfig as _DiffBnb
+    from transformers import T5EncoderModel
+    from transformers import BitsAndBytesConfig as _TfBnb
+    repo = cfg_m["repo"]
+    diff_nf4 = _DiffBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.float16)
+    tf_nf4 = _TfBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16)
+    transformer = FluxTransformer2DModel.from_pretrained(
+        repo, subfolder="transformer",
+        quantization_config=diff_nf4, torch_dtype=torch.float16)
+    text_encoder_2 = T5EncoderModel.from_pretrained(
+        repo, subfolder="text_encoder_2",
+        quantization_config=tf_nf4, torch_dtype=torch.float16)
+    pipe = FluxPipeline.from_pretrained(
+        repo, transformer=transformer, text_encoder_2=text_encoder_2,
+        torch_dtype=torch.float16)
+    # The two NF4 components are already on cuda; .to() moves the fp16 VAE +
+    # CLIP encoder and is a no-op (skipped) for the quantized modules.
+    pipe = pipe.to("cuda")
+    return pipe
+
+
 def generate_image(prompt: str, seed: int = None, device: str = "cpu",
                    model_key: str = "sd-turbo",
                    steps_override: int = None,
@@ -121,7 +186,16 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
     t_start = time.time()
     pipe = None
     try:
-        if use_gpu:
+        loader = cfg_m.get("loader")
+        if loader == "sdxl_unet_ckpt":
+            # UNet-only distillation (e.g. SDXL-Lightning) — no model_index.json,
+            # so AutoPipeline can't load it. Swap the checkpoint into a cached
+            # full-SDXL shell. GPU/CUDA only (cpu_ok is False for these).
+            pipe = _load_sdxl_unet_ckpt(cfg_m, torch)
+        elif loader == "flux_nf4":
+            # 12B FLUX.1-schnell via bitsandbytes NF4 4-bit (CUDA-only).
+            pipe = _load_flux_nf4(cfg_m, torch)
+        elif use_gpu:
             kwargs = {"torch_dtype": torch.float16}
             if cfg_m.get("fp16_variant"):
                 kwargs["variant"] = "fp16"
