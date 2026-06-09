@@ -451,3 +451,32 @@ _RESULT_JS = f'<script src="/static/wl-result.js?v={_WL_ASSET_V}"></script>'
 # renderer pattern the /findings embeds use. Dispatch on `kind` (so rag→RAG
 # card) but fetch by the result_ref `type` (rag persists under results/llm/).
 _BENCH_HYDRATE_JS = f'<script src="/static/wl-bench-hydrate.js?v={_WL_ASSET_V}"></script>'
+
+
+# ── The page shell ───────────────────────────────────────────────────────────
+#
+# Phase 2b: one shell for every page. Owns the doctype, favicon, title,
+# header (auth chip + back link), and footer (design tokens, GoS logo,
+# version stamp, queue badge, shared JS bundles). A page brings only its
+# own CSS, body, optional extra <head> content, and optional scripts that
+# must load after the footer's bundles.
+def render_page(request: Request, title: str, body: str, *,
+                styles: str = "", head: str = "", tail: str = "") -> str:
+    """Render a complete page. `title` is suffixed to "OWL — ". `styles` is
+    raw page CSS (no <style> wrapper). `head` is extra head markup (meta
+    tags, early scripts). `tail` renders after the footer — for bundles the
+    page's inline JS depends on at call time (e.g. _PROGRESS_JS)."""
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+  <title>OWL — {title}</title>
+{head}    <style>
+{styles}{_HEADER_STYLES}
+    </style>
+</head>
+<body>
+{_header_html(request)}{body}
+{_FOOTER}{tail}
+</body>
+</html>"""

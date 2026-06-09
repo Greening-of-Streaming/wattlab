@@ -45,8 +45,10 @@ import benchmark
 import pixop
 
 # Phase 2 (2026-06-10): shared page chrome (design tokens, header/auth chip,
-# footer, lock badges, static-bundle script tags) lives in ui.py. Imported by
-# name so the page templates below are unchanged.
+# footer, lock badges, static-bundle script tags) lives in ui.py — new/converted
+# pages render through ui.render_page(); the rest import the pieces by name so
+# their templates are unchanged until each converts.
+import ui
 from ui import (_AUTH_CHIP_STYLES, _auth_chip_html, _HEADER_STYLES, _header_html,
                 _tier_indicator_html, _LOCK_STYLES, _lock_badge_html, _lock_class,
                 _disabled_attr, _LOGO, _BACK, _QUEUE_BADGE, _WL_ASSET_V, _UI_CFG_TAG,
@@ -10063,14 +10065,10 @@ async def queue_page(request: Request):
     # Only Lab (BENCHMARK_RUN) may cancel — gate the button so anonymous
     # viewers (QUEUE_VIEW is Anonymous-allowed) don't see a control they can't use.
     can_cancel = "true" if can(audience.tier(request), BENCHMARK_RUN) else "false"
-    return """<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>OWL — Queue</title>
-    <meta http-equiv="refresh" content="4">
-    <script>window.CAN_CANCEL=""" + can_cancel + """;</script>
-    <style>
+    return ui.render_page(request, "Queue", head=(
+        '    <meta http-equiv="refresh" content="4">\n'
+        f'    <script>window.CAN_CANCEL={can_cancel};</script>\n'
+    ), styles="""
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: monospace; background: var(--bg); color: var(--text);
                max-width: 620px; margin: 0 auto; padding: 2rem; }
@@ -10091,11 +10089,7 @@ async def queue_page(request: Request):
         .back:hover { color: var(--accent); }
         .depth { font-size: 2.5rem; color: var(--accent); font-weight: bold; }
         .depth-lbl { color: var(--text-4); font-size: 0.75rem; margin-bottom: 2rem; }
-""" + _HEADER_STYLES + """
-    </style>
-</head>
-<body>
-""" + _header_html(request) + """
+""", tail=_PROGRESS_JS, body="""
     <h1>Queue</h1>
     <div class="sub">Auto-refreshes every 4s</div>
     <div id="pause-banner"></div>
@@ -10161,9 +10155,7 @@ async function cancelBench(jid) {
 }
 load();
 </script>
-""" + _FOOTER + _PROGRESS_JS + """
-</body>
-</html>"""
+""")
 
 
 @app.get("/demo", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
