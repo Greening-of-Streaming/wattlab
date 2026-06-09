@@ -1802,13 +1802,7 @@ async def video_enhance_asset(name: str):
 # Plain string (not f-string) so JS object literals don't need escaping;
 # Python-side placeholders are explicit `{NAME}` tokens replaced once at
 # render time, same pattern /methodology and /queue-status use.
-_VIDEO_ENHANCE_HTML = """<!DOCTYPE html>
-<html>
-<head>
-  <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>OWL — Video Enhancement (placeholder)</title>
-  <style>
-    {AUTH_CHIP_STYLES}
+_VIDEO_ENHANCE_STYLES = """
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: monospace; background: var(--bg); color: var(--text);
            max-width: 780px; margin: 0 auto; padding: 2rem 1rem; }
@@ -1870,12 +1864,9 @@ _VIDEO_ENHANCE_HTML = """<!DOCTYPE html>
                    border-left: 2px solid var(--border-2);
                    padding-left: 0.9rem; margin-top: 2.5rem; }
     .footer-note a { color: var(--text-3); }
-  </style>
-</head>
-<body>
-{AUTH_CHIP}
-<a href="/" class="back">&larr; Home</a>
+"""
 
+_VIDEO_ENHANCE_HTML = """
 <h1>Video Enhancement</h1>
 <div class="subtitle">Placeholder &middot; illustrative values, not measured</div>
 
@@ -1937,7 +1928,6 @@ _VIDEO_ENHANCE_HTML = """<!DOCTYPE html>
 </div>
 
 {PROGRESS_JS}
-{FOOTER}
 
 <script>
 // Illustrative parameter table. Energy ranges chosen to sit inside the
@@ -2046,18 +2036,16 @@ function showResult(key) {
   }, 80);
 }
 </script>
-</body>
-</html>"""
+"""
 
 
 @app.get("/video-enhance", response_class=HTMLResponse,
          dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_enhance_page(request: Request):
-    return (_VIDEO_ENHANCE_HTML
-            .replace("{AUTH_CHIP_STYLES}", _AUTH_CHIP_STYLES)
-            .replace("{AUTH_CHIP}",        _auth_chip_html(request))
-            .replace("{PROGRESS_JS}",      _PROGRESS_JS)
-            .replace("{FOOTER}",           _FOOTER))
+    return (ui.render_page(request, "Video Enhancement (placeholder)",
+                           styles=_VIDEO_ENHANCE_STYLES,
+                           body=_VIDEO_ENHANCE_HTML)
+            .replace("{PROGRESS_JS}",      _PROGRESS_JS))
 
 
 # ── Hidden Lab-only "partner GPU transcode/upscale" measurement (Pixop) ──────
@@ -2083,13 +2071,7 @@ def _enhance_preset_options_html(presets: list) -> str:
     return "".join(out)
 
 
-_ENHANCE_RUN_HTML = """<!DOCTYPE html>
-<html>
-<head>
-  <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>UNDER DEVELOPMENT — Video enhancement (GoS only)</title>
-  <style>
-    {AUTH_CHIP_STYLES}
+_ENHANCE_RUN_STYLES = """
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: monospace; background: var(--bg); color: var(--text);
            max-width: 820px; margin: 0 auto; padding: 2rem 1rem; }
@@ -2145,12 +2127,9 @@ _ENHANCE_RUN_HTML = """<!DOCTYPE html>
     .footer-note { color: var(--text-4); font-size: 0.78rem; line-height: 1.6;
                    border-left: 2px solid var(--border-2); padding-left: 0.9rem;
                    margin-top: 2.5rem; }
-  </style>
-</head>
-<body>
-{AUTH_CHIP}
-<a href="/" class="back">&larr; Home</a>
+"""
 
+_ENHANCE_RUN_HTML = """
 <h1><span style="color:var(--warn)">UNDER DEVELOPMENT</span> Video enhancement <span style="color:var(--warn)">GoS ONLY</span> <span style="font-size:0.7rem;color:var(--warn)">&middot; Lab</span></h1>
 <div class="subtitle">Hidden &middot; partner GPU transcode / upscale &middot; energy measurement</div>
 
@@ -2234,7 +2213,6 @@ _ENHANCE_RUN_HTML = """<!DOCTYPE html>
 </div>
 
 {PROGRESS_JS}
-{FOOTER}
 
 <script>
 function _enhStageIdx(stage) {
@@ -2637,8 +2615,7 @@ function renderCompare(meas) {
 updateInputPreview();
 updateCompareGate();
 </script>
-</body>
-</html>"""
+"""
 
 
 def _enhance_cfg_band(pf: dict) -> str:
@@ -2661,9 +2638,9 @@ async def enhance_run_page(request: Request):
     run_enabled = can_run and pf["ok_transcode"]
     st_enabled = can_run and pf["ok_selftest"]
     comparable = {p: pixop.ffmpeg_comparable(p) for p in pf["presets"]}
-    return (_ENHANCE_RUN_HTML
-            .replace("{AUTH_CHIP_STYLES}", _AUTH_CHIP_STYLES)
-            .replace("{AUTH_CHIP}",        _auth_chip_html(request))
+    return (ui.render_page(request,
+                           "UNDER DEVELOPMENT · Video enhancement (GoS only)",
+                           styles=_ENHANCE_RUN_STYLES, body=_ENHANCE_RUN_HTML)
             .replace("{CFG_BAND}",         _enhance_cfg_band(pf))
             .replace("{LOCK_BADGE}",       _lock_badge_html(request, ENHANCE_RUN, "Members only"))
             .replace("{LOCK_CLASS}",       _lock_class(request, ENHANCE_RUN))
@@ -2674,8 +2651,7 @@ async def enhance_run_page(request: Request):
             .replace("{PRESET_OPTIONS}",   _enhance_preset_options_html(pf["presets"]))
             .replace("{PRESET_COMPARABLE_JSON}", json.dumps(comparable))
             .replace("{RUN_ENABLED_JS}",   "true" if run_enabled else "false")
-            .replace("{PROGRESS_JS}",      _PROGRESS_JS)
-            .replace("{FOOTER}",           _FOOTER))
+            .replace("{PROGRESS_JS}",      _PROGRESS_JS))
 
 
 @app.post("/enhance-run/self-test", dependencies=[Depends(requires(ENHANCE_RUN))])
@@ -7952,12 +7928,7 @@ async def settings_save(request: Request, data: dict):
 
 # --- Demo mode ---
 
-_DEMO_HTML = f"""<!DOCTYPE html>
-<html>
-<head>
-<link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-<title>OWL — Guided Tour · Greening of Streaming</title>
-<style>
+_DEMO_STYLES = f"""
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);
        color:var(--text);max-width:840px;margin:0 auto;padding:2rem}}
@@ -8079,12 +8050,9 @@ _DEMO_HTML = f"""<!DOCTYPE html>
   .cap-matrix .cap-partial{{color:var(--warn);font-size:0.78rem}}
   .cap-cta{{display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1.5rem;
             justify-content:center}}
-  {{AUTH_CHIP_STYLES}}
-</style>
-</head>
-<body>
-    {{AUTH_CHIP}}
-    {_BACK}
+"""
+
+_DEMO_HTML = f"""
 <div class="page-header">
   <div id="step-nav" class="step-nav">
     <span class="dot active" id="dot-0"></span>
@@ -9283,9 +9251,7 @@ function buildSummary() {{
     {_PROGRESS_JS}
     {_RESULT_JS}
     {_CONF_HELP_WIDGET}
-    {_FOOTER}
-</body>
-</html>"""
+"""
 
 @app.get("/image", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def image_page(request: Request):
@@ -10128,7 +10094,8 @@ async def demo_page(request: Request):
             '</div>'
             '<script>window.OWL_FINDINGS_CATALOG_ENABLED = true;</script>'
         )
-    return (_DEMO_HTML
+    return (ui.render_page(request, "Guided Tour · Greening of Streaming",
+                           styles=_DEMO_STYLES, body=_DEMO_HTML)
             .replace("{BASELINE_POLLS}",     str(s.get("baseline_polls",     "—")))
             .replace("{VIDEO_COOLDOWN_S}",   str(s.get("video_cooldown_s",   "—")))
             .replace("{CONF_GREEN_X}",       str(s.get("variance_green_x",   "—")))
@@ -10136,8 +10103,6 @@ async def demo_page(request: Request):
             .replace("{CONF_GREEN_POLLS}",   str(s.get("conf_green_polls",   "—")))
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
             .replace("{BETA_CHIP}",          _BETA_CHIP)
-            .replace("{AUTH_CHIP_STYLES}",   _AUTH_CHIP_STYLES)
-            .replace("{AUTH_CHIP}",          _auth_chip_html(request))
             .replace("{TIER_INDICATOR}",     _tier_indicator_html(request))
             .replace("{UPLOAD_MEMBER_MB}",   str(member_cap_mb))
             .replace("{GPU_H264_ENC}",       _gpu_enc("h264"))
