@@ -20,6 +20,10 @@ DEFAULTS = {
     "cooldown_idle_tolerance_w": 3.0,   # settled = reading ≤ floor + this
     "cooldown_idle_settle_polls": 3,    # consecutive in-band reads to confirm settle
     "cooldown_idle_max_wait_s": 120,    # cap before timeout → dialog / fallback
+    # Live idle-wait readout in the progress widget ("⏳ Idle wait 12s · 65.2 W
+    # → target ≤ 61.0 W") on every page that runs a cooldown. UI-only — does
+    # not affect cooldown behaviour. Reaches the browser via /ui-config.js.
+    "cooldown_show_wait_detail": True,
     # On idle-wait timeout in an ATTENDED Lab run, park the job and show the
     # Wait-again / Run-anyway / Cancel dialog. Auto-resolve to the non-interactive
     # default (one fixed fallback sleep, then proceed, settled:false) after:

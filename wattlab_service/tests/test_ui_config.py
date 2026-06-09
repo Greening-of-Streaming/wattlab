@@ -48,7 +48,7 @@ def test_ui_config_is_js_with_expected_keys():
     assert r.headers.get("cache-control") == "no-store"
     assert r.text.startswith("window.WL_CFG = ")
     for key in ("baseline_s", "cooldown_label", "rest_label", "idle_label",
-                "meter_name", "urls"):
+                "meter_name", "urls", "show_wait_detail", "idle_tolerance_w"):
         assert f'"{key}"' in r.text
 
 
@@ -81,6 +81,31 @@ def test_bundle_exists_and_has_no_leftover_tokens(name):
 @pytest.mark.parametrize("name", BUNDLES)
 def test_bundle_is_servable(name):
     assert client.get(f"/static/{name}").status_code == 200
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_cooldown_line_respects_wait_detail_toggle():
+    """wlCooldownLine is the single live idle-wait readout (rendered by
+    wlRenderProgress via opts.cooldownData on every page). It must honour the
+    cooldown_show_wait_detail setting arriving through WL_CFG, and fold the
+    target into one number (floor + tolerance) — the old two-part form
+    ("58.0W+3W") is what made the line wrap."""
+    harness = """
+    global.window = global;
+    global.document = {getElementById: () => null, querySelectorAll: () => []};
+    global.WL_CFG = {show_wait_detail: true, idle_tolerance_w: 3.0,
+                     meter_name: 'x', cooldown_label: 'c', idle_label: 'i', baseline_s: '10'};
+    """ + (STATIC_DIR / "wl-progress.js").read_text() + """
+    const data = {cooldown_waited_s: 12, cooldown_w: 65.2, cooldown_reference_w: 58.0};
+    const on = wlCooldownLine(data);
+    if (!on.includes('12s') || !on.includes('65.2')) throw new Error('missing live numbers: ' + on);
+    if (!on.includes('61.0')) throw new Error('target must fold floor+tolerance into one number: ' + on);
+    WL_CFG.show_wait_detail = false;
+    if (wlCooldownLine(data) !== '') throw new Error('toggle off must suppress the line');
+    console.log('ok');
+    """
+    r = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and "ok" in r.stdout, r.stderr
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

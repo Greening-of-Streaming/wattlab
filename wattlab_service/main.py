@@ -923,6 +923,10 @@ def _ui_cfg() -> dict:
         "cooldown_label": f"Cooldown {cooldown_paren}",
         "rest_label": "Rest (\u2192 idle)" if idle_on else f"Rest ({cd}s)",
         "idle_label": "Wait for Idle" if idle_on else "Idle",
+        # Live idle-wait readout (wlCooldownLine): lab-wide visibility toggle +
+        # the tolerance that folds into the displayed target (floor + tol).
+        "show_wait_detail": bool(s.get("cooldown_show_wait_detail", True)),
+        "idle_tolerance_w": s.get("cooldown_idle_tolerance_w", 3.0),
         "meter_name": meter_display_name(),
         # Registry/source URLs for wl-carbon.js links — constants above stay
         # the single source; the browser gets them through WL_CFG.
@@ -2718,6 +2722,7 @@ async function pollJob(jobId) {
         header: 'Measuring — do not close this tab',
         stagesHtml: wlStageList(WL_ENHANCE_STAGES, idx),
         watts: watts,
+        cooldownData: data,
       });
       var inCooldown = (data.stage || '').indexOf('cooldown') !== -1 && data.cooldown_waited_s != null;
       setTimeout(function(){ pollJob(jobId); }, inCooldown ? 1000 : 2000);
@@ -2920,7 +2925,7 @@ async function pollCompare(jobId) {
         header: 'Comparing — do not close this tab',
         stagesHtml: wlStageList(WL_CMP_STAGES, idx),
         watts: watts,
-        extraHtml: wlCooldownLine(data),
+        cooldownData: data,
       });
       var inCooldown = (data.substage || '') === 'cooldown' && data.cooldown_waited_s != null;
       setTimeout(function(){ pollCompare(jobId); }, inCooldown ? 1000 : 2000);
@@ -3790,7 +3795,7 @@ async def llm_page(request: Request):
         document.getElementById('promptText').value = defaultPrompts[selectedTask] || '';
     }}
 
-    function renderProgress(stage, watts) {{
+    function renderProgress(stage, watts, jobData) {{
         const isBoth = stage.startsWith('baseline_cpu') || stage.startsWith('cpu_') ||
                        stage.startsWith('baseline_gpu') || stage.startsWith('gpu_') ||
                        stage === 'cooldown';
@@ -3823,6 +3828,7 @@ async def llm_page(request: Request):
                 + 'padding:0.75rem;font-size:0.78rem;color:var(--text-3);line-height:1.6;'
                 + 'min-height:2rem;border-left:2px solid #00ff9933;max-height:120px;'
                 + 'overflow-y:auto;white-space:pre-wrap"></div>',
+            cooldownData: jobData,
         }});
     }}
 
@@ -3880,7 +3886,7 @@ async def llm_page(request: Request):
                 streamTimer = setTimeout(() => pollLLM(jobId), 3000);
             }} else {{
                 const stage = data.stage || 'baseline';
-                renderProgress(stage, watts);
+                renderProgress(stage, watts, data);
                 if (stage.startsWith('inference') && data.partial_response) {{
                     const box = document.getElementById('stream-preview');
                     if (box) box.textContent = data.partial_response;
@@ -4252,6 +4258,7 @@ async def llm_page(request: Request):
                         + '<div style="color:var(--text-3);font-size:0.8rem;margin-bottom:0.25rem">' + task + devBadge + '</div>',
                     watts: watts,
                     elapsed: startTime ? Date.now() - startTime : null,
+                    cooldownData: data,
                 }});
                 streamTimer = setTimeout(() => pollLLMAll(jobId), 3000);
             }}
@@ -6252,12 +6259,13 @@ async def rag_page(request: Request):
     // jobs never carry mode_index so the compare branch was dead code AND
     // its const RAG_MODE_LABELS collided with the per-mode label dict
     // injected from rag.py for renderCompareProgress. Reverted to original.
-    function renderRagProgress(stage, watts) {{
+    function renderRagProgress(stage, watts, jobData) {{
         wlRenderProgress({{
             header: 'Measuring RAG energy \u2014 do not close this tab',
             stagesHtml: wlStageList(RAG_STAGES, RAG_STAGE_IDX[stage] ?? 0),
             watts: watts,
             elapsed: ragStartTime ? Date.now() - ragStartTime : null,
+            cooldownData: jobData,
         }});
     }}
 
@@ -6286,7 +6294,7 @@ async def rag_page(request: Request):
                 if (data.stage === 'awaiting_cooldown_decision') {{
                     wlCooldownDialog(jobId, data.cooldown_decision_options);
                 }} else {{ wlCooldownDialogClose(); }}
-                renderRagProgress(data.stage || 'baseline', watts);
+                renderRagProgress(data.stage || 'baseline', watts, data);
                 ragTimer = setTimeout(() => pollRag(jobId), 2000);
             }}
         }} catch(e) {{
@@ -6412,14 +6420,19 @@ async def rag_page(request: Request):
         }}).join('');
         // CR-019/CR-050 \u2014 explicit cooldown row with live thermal-floor wait info.
         let cooldownHtml = '';
-        if (inCooldown) {{
-            const ref    = (data.cooldown_reference_w != null) ? Number(data.cooldown_reference_w).toFixed(1) + 'W' : '?';
-            const cur    = (data.cooldown_w           != null) ? Number(data.cooldown_w).toFixed(1) + 'W' : '?';
+        if (inCooldown && WL_CFG.show_wait_detail === false) {{
+            cooldownHtml = '<div style="display:flex;align-items:center;gap:0.6rem;font-size:0.82rem;margin-bottom:0.3rem">'
+                + '<span style="color:#ffaa00;width:1rem">\u23f1</span>'
+                + '<span style="color:#ffaa00">Cooldown\u2026</span></div>';
+        }} else if (inCooldown) {{
+            const tol    = isNaN(Number(WL_CFG.idle_tolerance_w)) ? 3 : Number(WL_CFG.idle_tolerance_w);
+            const tgt    = (data.cooldown_reference_w != null) ? '\u2264 ' + (Number(data.cooldown_reference_w) + tol).toFixed(1) + ' W' : '?';
+            const cur    = (data.cooldown_w           != null) ? Number(data.cooldown_w).toFixed(1) : '?';
             const waited = (data.cooldown_waited_s    != null) ? data.cooldown_waited_s + 's' : '?';
             cooldownHtml = '<div style="display:flex;align-items:center;gap:0.6rem;font-size:0.82rem;margin-bottom:0.3rem">'
                 + '<span style="color:#ffaa00;width:1rem">\u23f1</span>'
-                + '<span style="color:#ffaa00">Cooldown \u2014 waited ' + waited
-                + ' \xb7 current ' + cur + ' (target \u2264 ' + ref + ' +3W)</span></div>';
+                + '<span style="color:#ffaa00">Cooldown \u2014 ' + waited
+                + ' \xb7 ' + cur + ' W \u2192 target ' + tgt + '</span></div>';
         }}
         wlRenderProgress({{
             header: 'Comparing ' + MODES.length + ' modes \u2014 do not close this tab',
@@ -8018,6 +8031,9 @@ async def settings_page(request: Request):
     {field("cooldown_idle_settle_polls", s.get('cooldown_idle_settle_polls', 3), 1, 10, "polls", "idle-wait: consecutive in-band reads needed to confirm settle")}
     {field("cooldown_idle_max_wait_s", s.get('cooldown_idle_max_wait_s', 120), 10, 600, "s", "idle-wait: cap before timeout → dialog (Lab) or fixed fallback")}
     {field("cooldown_dialog_watchdog_s", s.get('cooldown_dialog_watchdog_s', 75), 15, 300, "s", "idle-wait timeout dialog: auto-apply the fallback if no operator answer within this")}
+    {toggle_field("cooldown_show_wait_detail", s.get('cooldown_show_wait_detail', True),
+                  "Show the live idle-wait readout (\u23f3 waited \u00b7 current W \u00b7 target) in the progress "
+                  "widget on every page during cooldowns. Display only \u2014 cooldown behaviour is unchanged.")}
 
     <div class="section">Staging</div>
     {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
@@ -8159,7 +8175,7 @@ async def settings_page(request: Request):
                             'queue_anonymous_cap','queue_member_cap',
                             'upload_size_anonymous_mb','upload_size_member_mb',
                             'bench_video_reps'];
-        const bool_fields = ['cooldown_wait_for_idle'];
+        const bool_fields = ['cooldown_wait_for_idle','cooldown_show_wait_detail'];
         const str_fields = ['members'];
         const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};
@@ -9274,6 +9290,7 @@ function pollVideo(jobId, t0) {{
         etaS:        data.eta_s,
         encodeSpeed: data.encode_speed,
         extraHtml: sideLine,
+        cooldownData: data,
       }});
       setTimeout(() => pollVideo(jobId, t0), 5000);
     }}
@@ -9338,6 +9355,7 @@ function pollLLM(jobId, t0) {{
         watts: data.watts,
         elapsed: Date.now() - t0,
         extraHtml: streamHtml,
+        cooldownData: data,
       }});
       const delay = stage.startsWith('inference') ? 500 : 3000;
       streamTimer = setTimeout(() => pollLLM(jobId, t0), delay);
@@ -9484,6 +9502,7 @@ function pollDemoRAG(jobId, t0) {{
         watts: data.watts,
         elapsed: Date.now() - t0,
         extraHtml: modeLine,
+        cooldownData: data,
       }});
       setTimeout(() => pollDemoRAG(jobId, t0), 3000);
     }}
@@ -9558,6 +9577,7 @@ async function pollDemoImage(jobId) {{
       stagesHtml: wlStageList(WL_IMAGE_STAGES, idx),
       watts: j.watts,
       elapsed: Date.now() - pollDemoImage._t0,
+      cooldownData: j,
     }});
     imageTimer = setTimeout(() => pollDemoImage(jobId), 2000);
   }} catch(e) {{
@@ -10232,6 +10252,7 @@ function renderProgress(stage, result, watts) {{
     stagesHtml: wlStageList(stageKeys.map(s => STAGE_LABELS[s] || s), stageIdx),
     watts: watts,
     elapsed: imgStartTime ? Date.now() - imgStartTime : null,
+    cooldownData: result,
   }});
 }}
 

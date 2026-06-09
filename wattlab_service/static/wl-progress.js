@@ -19,15 +19,22 @@ function wlStageList(stages, cur) {
 // Single source for the live "waiting for the idle floor" readout. Shown only
 // while the active-probe cooldown is running (power.wait_for_thermal_floor sets
 // cooldown_waited_s on the job); absent => a fixed Rest(Xs) sleep, no live line.
-// Used by the video renderProgress AND the enhance compare poll loop so the
-// wording can't drift between them.
+// Rendered by wlRenderProgress whenever the caller passes cooldownData, so
+// every poll loop gets it for free; the wording can't drift between pages.
+// Gated lab-wide by the cooldown_show_wait_detail setting (via WL_CFG).
 function wlCooldownLine(data) {
+    if (WL_CFG.show_wait_detail === false) return '';
     if (!data || data.cooldown_waited_s == null) return '';
-    var ref = data.cooldown_reference_w != null ? Number(data.cooldown_reference_w).toFixed(1) + 'W' : '?';
-    var cw  = data.cooldown_w != null ? Number(data.cooldown_w).toFixed(1) + 'W' : '?';
+    // Compact one-liner (the long form used to wrap): target = floor + the
+    // idle tolerance, folded into a single number.
+    var tol = Number(WL_CFG.idle_tolerance_w);
+    if (isNaN(tol)) tol = 3;
+    var tgt = data.cooldown_reference_w != null
+        ? '≤ ' + (Number(data.cooldown_reference_w) + tol).toFixed(1) + ' W' : '?';
+    var cw  = data.cooldown_w != null ? Number(data.cooldown_w).toFixed(1) : '?';
     return '<div style="color:var(--warn);font-size:0.72rem;margin-top:0.4rem">'
-         + '⏳ Waiting for idle floor · ' + Number(data.cooldown_waited_s).toFixed(0)
-         + 's · now ' + cw + ' · target ≤ ' + ref + '+3W</div>';
+         + '⏳ Idle wait ' + Number(data.cooldown_waited_s).toFixed(0)
+         + 's · ' + cw + ' W → target ' + tgt + '</div>';
 }
 // CR-019 — widget targets default to '#status' for back-compat with the
 // main pages (/video /llm /image /rag), but accept opts.target so /demo
@@ -83,6 +90,7 @@ function wlRenderProgress(opts) {
         + (opts.stagesHtml || '')
         + wHtml + elHtml
         + (opts.extraHtml || '')
+        + (opts.cooldownData ? wlCooldownLine(opts.cooldownData) : '')
         + '</div>';
 }
 function wlRenderQueued(pos, opts) {
