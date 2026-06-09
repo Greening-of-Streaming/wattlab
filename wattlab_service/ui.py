@@ -11,8 +11,11 @@ from fastapi import Request
 
 import audience
 import auth
+import gpu
+import settings as cfg
 import version
 from capabilities import can
+from power import meter_display_name
 
 # ── External links — single source of truth ─────────────────────────────────
 # Every externally-hosted URL the UI points at lives here, so a changed link is
@@ -483,3 +486,153 @@ def render_page(request: Request, title: str, body: str, *,
 {_FOOTER}{tail}
 </body>
 </html>"""
+
+
+# ── Shared page-copy + config helpers (moved from main.py, Phase 3) ────────
+_AI_BAND_COPY = {
+    "image": ("AI-generated frames are the <strong>personalisation axis</strong>: "
+              "per-viewer generated content breaks the cached-edge / multicast "
+              "model and pushes delivery back to expensive unicast."),
+    "llm":   ("Chat-style LLMs have <strong>limited direct use</strong> in streaming "
+              "workflows (which lean on small specialised models) — this tab measures "
+              "the expensive end of the spectrum as an upper bound, not the typical case."),
+    "rag":   ("A controlled look at a <strong>retrieval / context layer</strong> — a "
+              "meta-demo run over GoS&rsquo;s own ~100 papers, not generic Q&amp;A."),
+}
+
+
+def _ai_streaming_band(kind):
+    """One-line streaming-context framing band for an AI page (CR-037)."""
+    copy = _AI_BAND_COPY.get(kind, "")
+    return (
+        '<div style="margin-bottom:1rem;font-size:0.8rem;line-height:1.55;'
+        'color:var(--text-3);border-left:2px solid var(--accent);padding-left:0.85rem">'
+        '<span style="color:var(--text-4);font-size:0.7rem;letter-spacing:0.06em;'
+        'text-transform:uppercase">In a streaming context</span><br>' + copy
+        + ' <a href="' + POSITION_PAPER_URL + '" target="_blank" rel="noopener" '
+        'style="color:var(--accent);text-decoration:none;white-space:nowrap">'
+        'Language Lab AI paper ↗</a></div>'
+    )
+
+
+_AI_ABOUT_DETAILS = (
+    '<details style="margin-bottom:1.5rem;border-left:2px solid #222;padding-left:1rem">'
+    '<summary style="cursor:pointer;color:var(--text-3);font-size:0.82rem;'
+    'list-style:none;outline:none">ⓘ How to read AI energy in a streaming context '
+    '<span style="color:var(--text-4);font-size:0.72rem">(click to expand)</span></summary>'
+    '<div style="color:var(--text-3);font-size:0.82rem;line-height:1.6;margin-top:0.75rem">'
+    'Framing from the Greening of Streaming '
+    '<a href="' + POSITION_PAPER_URL + '" target="_blank" rel="noopener" '
+    'style="color:var(--accent);text-decoration:none">Language Lab AI position paper</a> '
+    '(Jan 2026), <em>&ldquo;Distinguishing Impact from Innovation&rdquo;</em>:'
+    '<ul style="margin:0.6rem 0 0 1.1rem;padding:0;line-height:1.7">'
+    '<li><strong>AI is neither inherently sustainable nor unsustainable</strong> — type, '
+    'size and deployment context decide net impact.</li>'
+    '<li><strong>The type of AI matters enormously</strong> — small specialised CNNs '
+    '(per-title encoding, scene classification, super-resolution) are orders of magnitude '
+    'cheaper than general-purpose LLMs and diffusion models. Streaming mostly uses the '
+    'former; these tabs measure the latter.</li>'
+    '<li><strong>Data volume &ne; energy consumption.</strong></li>'
+    '<li>OWL measures the energy AI <strong>adds</strong> — not the infrastructure energy '
+    'AI <strong>avoids</strong> through better compression, caching or routing. Both halves '
+    'are needed for net impact; OWL has the first.</li>'
+    '<li><strong>Inference cost only</strong> — no amortised training cost.</li>'
+    '<li>Watch for <strong>rebound effects</strong>: efficiency gains can be offset by '
+    'expanded use (more variations, more personalisation).</li>'
+    '</ul></div></details>'
+)
+
+
+def _ai_intro(kind):
+    """CR-037 streaming-framing band + shared 'about' expander for an AI page."""
+    return _ai_streaming_band(kind) + _AI_ABOUT_DETAILS
+
+
+def _ui_cfg() -> dict:
+    """Settings-driven UI copy, resolved per request — the single source for
+    cooldown/rest wording (toggle-aware) on both sides: served to the browser
+    as window.WL_CFG via /ui-config.js (consumed by static/wl-progress.js and
+    wl-carbon.js), and substituted into page HTML by _bake_durations().
+
+    `cooldown_paren` is the toggle-aware parenthetical ("(→ idle)" vs "(10s)")
+    every cooldown label must build from — never bake a bare "{COOLDOWN_S}s"
+    into a cooldown label; that's how the fixed "(10s)" survived the
+    wait-for-idle switch on /image + /llm/compare (S39)."""
+    s = cfg.load()
+    cd = str(s.get("video_cooldown_s", "\u2014"))
+    idle_on = bool(s.get("cooldown_wait_for_idle", True))
+    cooldown_paren = "(\u2192 idle)" if idle_on else f"({cd}s)"
+    return {
+        "baseline_s": str(s.get("baseline_polls", "\u2014")),
+        "cooldown_s": cd,
+        "llm_rest_s": str(s.get("llm_rest_s", "\u2014")),
+        "cooldown_paren": cooldown_paren,
+        "cooldown_label": f"Cooldown {cooldown_paren}",
+        "rest_label": "Rest (\u2192 idle)" if idle_on else f"Rest ({cd}s)",
+        "idle_label": "Wait for Idle" if idle_on else "Idle",
+        # Live idle-wait readout (wlCooldownLine): lab-wide visibility toggle +
+        # the tolerance that folds into the displayed target (floor + tol).
+        "show_wait_detail": bool(s.get("cooldown_show_wait_detail", True)),
+        "idle_tolerance_w": s.get("cooldown_idle_tolerance_w", 3.0),
+        "meter_name": meter_display_name(),
+        # Registry/source URLs for wl-carbon.js links — constants above stay
+        # the single source; the browser gets them through WL_CFG.
+        "urls": {
+            "eco2mix": ECO2MIX_URL,
+            "electricitymaps": ELECTRICITYMAPS_URL,
+            "position_paper": POSITION_PAPER_URL,
+            "ember": EMBER_URL,
+        },
+    }
+
+
+def _bake_durations(template: str) -> str:
+    """Substitute the _ui_cfg() wording tokens into a page-HTML template.
+    Serve-time (called inside page handlers): settings changes apply on the
+    next request — no service restart needed."""
+    c = _ui_cfg()
+    return (template
+            .replace("{REST_LABEL}", c["rest_label"])
+            .replace("{COOLDOWN_LABEL}", c["cooldown_label"])
+            .replace("{COOLDOWN_PAREN}", c["cooldown_paren"])
+            .replace("{IDLE_LABEL}", c["idle_label"])
+            .replace("{BASELINE_S}", c["baseline_s"])
+            .replace("{COOLDOWN_S}", c["cooldown_s"])
+            .replace("{LLM_REST_S}", c["llm_rest_s"]))
+
+
+def _gpu_display_name() -> str:
+    """Card name for UI copy. Settings `gpu_display_name` (a curated string like
+    'AMD Radeon RX 7800 XT, 16GB VRAM') wins if set; otherwise the auto-detected
+    name from gpu.BACKEND. A reboot alone is always correct (detection); the
+    override only exists to prettify the messy lspci string (CR-060)."""
+    return cfg.load().get("gpu_display_name") or gpu.BACKEND.name
+
+
+def _gpu_hw_row() -> str:
+    """Hardware-Disclosure GPU cell: '<name>, <ENCODE> + <RUNTIME>'."""
+    enc = {"amd": "VAAPI + ROCm", "nvidia": "NVENC + CUDA"}.get(gpu.BACKEND.vendor, "CPU only")
+    return f"{_gpu_display_name()}, {enc}"
+
+
+def _gpu_video_encoders() -> str:
+    """Hardware-Disclosure Video cell GPU-encoder list, vendor-resolved."""
+    if gpu.BACKEND.vendor == "none":
+        return "(no discrete GPU — CPU encode only)"
+    encs = ", ".join(gpu.BACKEND.ffmpeg_encoder(c) for c in ("h264", "h265", "av1"))
+    pipe = "full VAAPI pipeline" if gpu.BACKEND.vendor == "amd" else "full NVENC/CUDA pipeline"
+    return f"{encs} (GPU, {pipe})"
+
+
+def _gpu_enc(codec: str) -> str:
+    """GPU encoder name for `codec` (h264/h265/av1) for UI copy — vendor-
+    resolved via gpu.BACKEND so preset/settings labels track the installed
+    card and never hardcode a vendor. Safe when no discrete GPU is present."""
+    if gpu.BACKEND.vendor == "none":
+        return "GPU encode unavailable"
+    return gpu.BACKEND.ffmpeg_encoder(codec)
+
+
+def _gpu_runtime() -> str:
+    """AI-runtime label for UI copy: ROCm (AMD) / CUDA (Nvidia) / CPU."""
+    return {"amd": "ROCm", "nvidia": "CUDA"}.get(gpu.BACKEND.vendor, "CPU")
