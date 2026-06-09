@@ -3554,6 +3554,12 @@ async def llm_page(request: Request):
         </div>'''
         for k, v in MODELS.items()
     ])
+    # Default selection = first model in the live panel. MODELS is a live view
+    # (catalog ∩ llm_enabled_models ∩ ollama list) — never hardcode a key here:
+    # tinyllama dropped out of llm_enabled_models and the dead
+    # getElementById('model-tinyllama') killed the page's whole init block
+    # (empty prompt box, nothing selected, stale key → "Invalid model"; S41).
+    first_model = next(iter(MODELS), "")
 
     tasks_html = "".join([
         f'''<label style="display:flex;gap:0.75rem;border:1px solid var(--border-3);
@@ -3757,7 +3763,7 @@ async def llm_page(request: Request):
     const CAN_CUSTOM_PROMPT = {('true' if can_custom_prompt else 'false')};
     const CAN_BATCH_COMPARE = {('true' if can_batch_compare else 'false')};
 
-    let selectedModel = 'tinyllama';
+    let selectedModel = '{first_model}';
     let selectedTask = 'T1';
     let selectedWarm = false;
     let selectedRepeats = 1;
@@ -3767,8 +3773,11 @@ async def llm_page(request: Request):
 
     const defaultPrompts = {tasks_js};
 
-    // Select first model by default and populate prompt
-    document.getElementById('model-tinyllama').classList.add('selected');
+    // Select the first model in the panel by default. Guarded: an empty
+    // panel must not throw here — everything below this line is the page's
+    // init (prompt fill, loadPrevRuns) and dies with it.
+    const _firstModelCard = document.getElementById('model-' + selectedModel);
+    if (_firstModelCard) _firstModelCard.classList.add('selected');
     document.getElementById('promptText').value = defaultPrompts['T1'] || '';
 
     function selectModel(key) {{
@@ -5787,6 +5796,8 @@ async def rag_page(request: Request):
         </div>'''
         for k, v in rag_module.MODELS.items()
     ])
+    # Live-view panel — same rule as /llm: default = first key, never hardcode.
+    first_rmodel = next(iter(rag_module.MODELS), "")
 
     queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
@@ -6000,7 +6011,7 @@ async def rag_page(request: Request):
     const CAN_CUSTOM_PROMPT = {('true' if can_custom_prompt else 'false')};
     const CAN_BATCH_COMPARE = {('true' if can_batch_compare else 'false')};
 
-    let selectedRModel = 'tinyllama';
+    let selectedRModel = '{first_rmodel}';
     let selectedRMode = 'baseline';
     let ragTimer = null;
     let ragStartTime = null;
@@ -6018,7 +6029,7 @@ async def rag_page(request: Request):
         if (el) el.classList.add('selected');
         selectedRMode = m;
     }}
-    selectRModel('tinyllama');
+    selectRModel('{first_rmodel}');
 
     function toggleAns(id) {{
         var el = document.getElementById(id);
