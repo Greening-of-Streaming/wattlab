@@ -601,13 +601,7 @@ async def index(request: Request):
 
     watts = _power_cache["watts"]
     watts_str = f"{watts:.1f}" if watts is not None else "—"
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>OWL — GoS</title>
-    <style>
-        {_AUTH_CHIP_STYLES}
+    return ui.render_page(request, "GoS", back=False, styles=f"""
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: monospace; background: var(--bg); color: var(--text);
                display: flex; flex-direction: column; align-items: center;
@@ -655,10 +649,7 @@ async def index(request: Request):
                        border: 1px solid var(--border-2); padding: 0.3rem 0.75rem;
                        font-size: 0.75rem; }}
         .nav-util a:hover {{ color: var(--text-3); border-color: var(--text-5); }}
-    </style>
-</head>
-<body>
-    {_auth_chip_html(request)}
+""", body=f"""
     <div class="hero-mark">
         <img src="/static/owl.svg" alt="OWL">
         <div>
@@ -704,9 +695,7 @@ async def index(request: Request):
             <a href="/methodology">📐 Methodology</a>
         </div>
     </div>
-    {_FOOTER}
-</body>
-</html>"""
+""")
 
 @app.get("/power", dependencies=[Depends(requires(LIVE_TELEMETRY))])
 async def power_json():
@@ -849,12 +838,7 @@ async def video_page(request: Request):
             '</div>'
         )
 
-    return _bake_durations(f"""<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>OWL — Video Test</title>
-    <style>
+    return _bake_durations(ui.render_page(request, "Video Test", styles=f"""
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: monospace; background: var(--bg); color: var(--text);
                max-width: 780px; margin: 0 auto; padding: 2rem; }}
@@ -926,10 +910,7 @@ async def video_page(request: Request):
                   display: inline-block; margin-top: 1.5rem; }}
         a.back:hover {{ color: var(--accent); }}
         {_LOCK_STYLES}
-    </style>
-</head>
-<body>
-    {_BACK}
+""", body=f"""
     {busy_banner}
     <h1>Video Transcode Energy Test</h1>
     <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
@@ -1767,9 +1748,7 @@ async def video_page(request: Request):
     {_PROGRESS_JS}
     {_RESULT_JS}
     {_CONF_HELP_WIDGET}
-    {_FOOTER}
-</body>
-</html>""")
+"""))
 
 
 # --- CR-042 · Pixop placeholder (video enhancement demo) -------------------
@@ -3188,12 +3167,7 @@ async def llm_page(request: Request):
     import json as _json
     tasks_js = _json.dumps({k: v["prompt"] for k, v in TASKS.items()})
 
-    return _bake_durations(f"""<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>OWL — LLM Inference Test</title>
-    <style>
+    return _bake_durations(ui.render_page(request, "LLM Inference Test", styles=f"""
         * {{ box-sizing:border-box; margin:0; padding:0; }}
         body {{ font-family:monospace; background:var(--bg); color:var(--text);
                max-width:780px; margin:0 auto; padding:2rem; }}
@@ -3237,10 +3211,7 @@ async def llm_page(request: Request):
                   display:inline-block; margin-top:1.5rem; }}
         a.back:hover {{ color:var(--accent); }}
         {_LOCK_STYLES}
-    </style>
-</head>
-<body>
-    {_BACK}
+""", body=f"""
     <h1>LLM Inference Energy Test {_BETA_CHIP}</h1>
     <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
 
@@ -3922,9 +3893,7 @@ async def llm_page(request: Request):
     {_PROGRESS_JS}
     {_RESULT_JS}
     {_CONF_HELP_WIDGET}
-    {_FOOTER}
-</body>
-</html>""")
+"""))
 
 @app.post("/llm/run", dependencies=[Depends(requires(LLM_RUN))])
 async def llm_run(
@@ -4272,14 +4241,9 @@ async def llm_compare_page(request: Request):
     # in llm.py extends this without an edit here.
     size_order_js = _json.dumps([m["params"] for m in MODELS.values()])
 
-    return _bake_durations(f"""<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-    <title>OWL — LLM · Compare across models</title>
-    <script src="{CHARTJS_URL}"></script>
+    return _bake_durations(ui.render_page(request, "LLM · Compare across models", head=f"""    <script src="{CHARTJS_URL}"></script>
     <script src="/static/wl-charts.js"></script>
-    <style>
+""", styles=f"""
         *{{box-sizing:border-box;margin:0;padding:0}}
         body{{font-family:monospace;background:var(--bg);color:var(--text);
               max-width:920px;margin:0 auto;padding:2rem}}
@@ -4353,10 +4317,8 @@ async def llm_compare_page(request: Request):
         summary:hover{{color:var(--accent)}}
         details p{{margin-top:0.5rem;line-height:1.6}}
         {_LOCK_STYLES}
-    </style>
-</head>
-<body>
-    {_BACK}<a href="/llm" style="color:var(--text-3);text-decoration:none;font-size:0.82rem;
+""", body=f"""
+    <a href="/llm" style="color:var(--text-3);text-decoration:none;font-size:0.82rem;
         margin-left:0.75rem;margin-bottom:1.5rem;display:inline-block;
         vertical-align:middle;position:relative;top:-2px;transition:color 0.2s"
         onmouseover="this.style.color='#00ff99'" onmouseout="this.style.color='#777'">&larr; /llm</a>
@@ -4789,9 +4751,7 @@ async def llm_compare_page(request: Request):
     const _resumeJob = new URLSearchParams(location.search).get('job');
     if (_resumeJob) {{ var _rb = document.getElementById('runBtn'); if (_rb) _rb.disabled = true; pollCompare(_resumeJob); }}
     </script>
-    {_FOOTER}
-</body>
-</html>""")
+"""))
 
 
 # CR-019 — every job-status response carries the live wall-power reading
@@ -5412,12 +5372,7 @@ async def rag_page(request: Request):
                    f'yours will be added and run automatically.</div>') \
         if queue_depth > 0 else ""
 
-    return _bake_durations(f"""<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>OWL — RAG Energy Test</title>
-    <style>
+    return _bake_durations(ui.render_page(request, "RAG Energy Test", styles=f"""
         * {{ box-sizing:border-box; margin:0; padding:0; }}
         body {{ font-family:monospace; background:var(--bg); color:var(--text);
                max-width:780px; margin:0 auto; padding:2rem; }}
@@ -5467,10 +5422,7 @@ async def rag_page(request: Request):
                       display:flex; align-items:center; justify-content:space-between; gap:1rem; }}
         .index-dot {{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }}
         {_LOCK_STYLES}
-    </style>
-</head>
-<body>
-    {_BACK}
+""", body=f"""
     {busy_banner}
     <h1>RAG Energy Test {_BETA_CHIP}</h1>
     <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
@@ -6218,9 +6170,7 @@ async def rag_page(request: Request):
     {_PROGRESS_JS}
     {_RESULT_JS}
     {_CONF_HELP_WIDGET}
-    {_FOOTER}
-</body>
-</html>""")
+"""))
 
 
 @app.get("/rag/index-status", dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -6781,14 +6731,9 @@ async def rag_compare_page(request: Request):
     panel_list  = " &middot; ".join(f"{m['label']} ({m['params']})" for m in rag_module.MODELS.values())
     size_order_js = _json.dumps([m["params"] for m in rag_module.MODELS.values()])
 
-    return _bake_durations(f"""<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-    <title>OWL — RAG · Compare across models</title>
-    <script src="{CHARTJS_URL}"></script>
+    return _bake_durations(ui.render_page(request, "RAG · Compare across models", head=f"""    <script src="{CHARTJS_URL}"></script>
     <script src="/static/wl-charts.js"></script>
-    <style>
+""", styles=f"""
         *{{box-sizing:border-box;margin:0;padding:0}}
         body{{font-family:monospace;background:var(--bg);color:var(--text);
               max-width:920px;margin:0 auto;padding:2rem}}
@@ -6865,10 +6810,8 @@ async def rag_compare_page(request: Request):
                       background:var(--panel-2);font-size:0.78rem;color:var(--text-3);line-height:1.5}}
         .upload-note b{{color:var(--text-2)}}
         {_LOCK_STYLES}
-    </style>
-</head>
-<body>
-    {_BACK}<a href="/rag" style="color:var(--text-3);text-decoration:none;font-size:0.82rem;
+""", body=f"""
+    <a href="/rag" style="color:var(--text-3);text-decoration:none;font-size:0.82rem;
         margin-left:0.75rem;margin-bottom:1.5rem;display:inline-block;
         vertical-align:middle;position:relative;top:-2px;transition:color 0.2s"
         onmouseover="this.style.color='#00ff99'" onmouseout="this.style.color='#777'">&larr; /rag</a>
@@ -7308,9 +7251,7 @@ async def rag_compare_page(request: Request):
     const _resumeJob = new URLSearchParams(location.search).get('job');
     if (_resumeJob) {{ var _rb = document.getElementById('runBtn'); if (_rb) _rb.disabled = true; pollCompare(_resumeJob); }}
     </script>
-    {_FOOTER}
-</body>
-</html>""")
+"""))
 
 
 # --- Results: list, JSON download, CSV download ---
@@ -7582,13 +7523,7 @@ async def settings_page(request: Request):
     chart_js = ('<script src="' + CHARTJS_URL + '"></script>'
                 '<script src="/static/wl-charts.js"></script>'
                 if local else '')
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>OWL — Settings</title>
-    {chart_js}
-    <style>
+    return ui.render_page(request, "Settings", head=f"    {chart_js}\n", styles=f"""
         * {{ box-sizing:border-box; margin:0; padding:0; }}
         body {{ font-family:monospace; background:var(--bg); color:var(--text);
                max-width:600px; margin:0 auto; padding:2rem; }}
@@ -7607,10 +7542,7 @@ async def settings_page(request: Request):
         details.calib-details[open] > summary::before {{ content:"▾ "; color:var(--text-4); }}
         details.calib-details .panel {{ background:var(--panel-2); border:1px solid var(--border-3);
             padding:0.75rem; margin-top:0.5rem; }}
-    </style>
-</head>
-<body>
-    {_BACK}
+""", body=f"""
     <h1>Settings</h1>
     <div class="subtitle">{subtitle}</div>
     {notice}
@@ -8003,9 +7935,7 @@ async def settings_page(request: Request):
         _tdDetails.addEventListener('toggle', function() {{ if (_tdDetails.open) loadTestData(); }});
     }}
     </script>
-    {_FOOTER}
-</body>
-</html>"""
+""")
 
 
 @app.post("/settings", dependencies=[Depends(requires(SETTINGS_WRITE))])
@@ -9541,12 +9471,7 @@ async def image_page(request: Request):
                 </div>"""
         prev_html += "</div>"
 
-    return _bake_durations(f"""<!DOCTYPE html>
-<html>
-<head>
-    <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
-  <title>OWL — Image Generation Test</title>
-    <style>
+    return _bake_durations(ui.render_page(request, "Image Generation Test", styles=f"""
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: monospace; background: var(--bg); color: var(--text);
                max-width: 780px; margin: 0 auto; padding: 2rem; }}
@@ -9589,10 +9514,7 @@ async def image_page(request: Request):
         .back {{ color: var(--text-3); font-size: 0.8rem; margin-bottom: 1.5rem; display: block; }}
         .back:hover {{ color: var(--accent); }}
         {_LOCK_STYLES}
-    </style>
-</head>
-<body>
-    {_BACK}
+""", body=f"""
     {busy_banner}
     <h1>Image Generation Test {_BETA_CHIP}</h1>
     <div class="subtitle">SD-Turbo (~1B) · SDXL-Turbo (~3.5B) · 512×512 · {_gpu_runtime()} fp16 on {_gpu_display_name()}</div>
@@ -10002,9 +9924,7 @@ if (_resumeJob) {{ document.getElementById('run-btn').disabled = true; pollTimer
     {_PROGRESS_JS}
     {_RESULT_JS}
     {_CONF_HELP_WIDGET}
-    {_FOOTER}
-</body>
-</html>""")
+"""))
 
 
 @app.post("/image/start", dependencies=[Depends(requires(IMAGE_RUN))])

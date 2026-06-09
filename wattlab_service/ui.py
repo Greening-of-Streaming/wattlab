@@ -461,11 +461,14 @@ _BENCH_HYDRATE_JS = f'<script src="/static/wl-bench-hydrate.js?v={_WL_ASSET_V}">
 # own CSS, body, optional extra <head> content, and optional scripts that
 # must load after the footer's bundles.
 def render_page(request: Request, title: str, body: str, *,
-                styles: str = "", head: str = "", tail: str = "") -> str:
+                styles: str = "", head: str = "", tail: str = "",
+                back: bool = True) -> str:
     """Render a complete page. `title` is suffixed to "OWL — ". `styles` is
     raw page CSS (no <style> wrapper). `head` is extra head markup (meta
     tags, early scripts). `tail` renders after the footer — for bundles the
-    page's inline JS depends on at call time (e.g. _PROGRESS_JS)."""
+    page's inline JS depends on at call time (e.g. _PROGRESS_JS).
+    `back=False` drops the ← Home link (the home page itself)."""
+    header = _auth_chip_html(request) + (_BACK if back else "")
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -476,7 +479,7 @@ def render_page(request: Request, title: str, body: str, *,
     </style>
 </head>
 <body>
-{_header_html(request)}{body}
+{header}{body}
 {_FOOTER}{tail}
 </body>
 </html>"""
