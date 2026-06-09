@@ -7,6 +7,70 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 41 — 2026-06-10
+
+Architecture review + start of the 2026-06 refactor (Phases 0–1 of 4). Owner asked for a
+critical evaluation of four observations from an external architecture review before any
+code moved; full verdicts + the phased plan live in `docs/architecture_review_2026-06.md`
+(the deliverable), with a 1–2 page orientation doc at `ARCHITECTURE.md`.
+
+**Review verdicts (measured, not vibes):** main.py = 13,276 lines (60% of the service),
+112/191 commits since March touch it, and it *doubled* in the five weeks since the 2026-05-01
+access-spine audit — gravity-well TRUE. Blast radius diagnosis AGREED but sharpened: the
+bottleneck is the presentation layer (untyped result shapes consumed by string-assembled
+renderers — the S37/S38/S39 regressions all lived there). `features/` tree = right direction,
+wrong first move (would relocate the mud, and the string-assembly mechanism is exactly what
+breaks when code moves — see S38). Rendering extraction FIRST — which was already the
+2026-05-01 audit's own post-CR-001 recommendation, never executed. Owner constraint folded
+in: containerisation + P110→PDU power backends is a mid-term priority — verified the metering
+surface is already one module (`power.get_power_watts()` is the only read path), so the
+PowerBackend protocol (mirroring `gpu.BACKEND`) is an independent parallel track; Phase 1's
+kill-import-time-baking is itself a container prerequisite (runtime-injectable config).
+
+**Phase 0:** CR-063 branch merged to main (fast-forward); previously-untracked deliberate
+files committed (DEMO_GUIDE, data_exports/, ForTania static CSV); `VERSION` → 0.8.7 and an
+annotated **v0.8.7 pre-refactor checkpoint tag** pushed to GitHub as the rollback anchor
+(505 tests passing at the tag). Stale `main.py.bak` / `*.session15*` clutter deleted.
+
+**Phase 1 — front-end extraction (the S37/38/39 regression class, structurally removed):**
+- The five shared JS bundles left their Python strings for real files:
+  `static/wl-live.js` (0.7K), `wl-carbon.js` (56K), `wl-progress.js` (6.7K),
+  `wl-result.js` (44K), `wl-bench-hydrate.js` (1K). Extraction was AST-based
+  (byte-exact values out of main.py, no retyping). The module constants
+  (`_CARBON_JS` etc.) now hold `<script src="/static/wl-*.js?v={sha}">` tags, so
+  all ~20 inclusion sites were untouched.
+- **Import-time baking is gone.** New `_ui_cfg()` resolves the settings-driven copy
+  (toggle-aware cooldown labels, baseline polls, meter name, registry URLs) per request;
+  it feeds both `_bake_durations()` (page HTML, serve-time as before) and a new
+  `/ui-config.js` route serving `window.WL_CFG` (`Cache-Control: no-store`).
+  `wl-progress.js` builds `WL_*_STAGES` from `WL_CFG` in the browser; `wl-carbon.js`
+  reads the source URLs from `WL_CFG.urls`. Consequence: cooldown-label / meter copy
+  changes now apply on the next request — the "restart needed for the label fix"
+  constraint (S38, S39) is structurally dead.
+- main.py: 13,276 → **11,356 lines** (−1,920).
+- Tests 505 → **555**: new `tests/test_ui_config.py` (settings flip visible in the next
+  /ui-config.js response without reload; no leftover `{TOKEN}`/`__TOKEN__` in bundles;
+  every referenced bundle exists + serves; **`node --check` syntax-gates every static/*.js**
+  — the check the in-string era never had). `test_js_bundling.py` reworked to assert over a
+  page's *effective* JS corpus (HTML + referenced bundles), same ReferenceError class
+  guarded. `test_external_links.py` repointed at wl-carbon.js + WL_CFG.urls.
+- Deployment check: live nginx already serves `/static/` directly from disk (CR-011 work),
+  **exempt from `limit_conn 3`** — so the new parallel bundle fetches can't 429 like the
+  S33 findings embeds did. The repo's `infra/wattlab.nginx.conf` had drifted from live
+  (missing the maintenance + static-from-disk + certbot blocks) — synced from
+  `/etc/nginx/sites-available/wattlab`.
+- One extraction bug caught by the new guards themselves: the script wrote the unconverted
+  carbon JS (URL `__TOKEN__`s intact); `test_external_links` + the token guard flagged it,
+  fixed in place. The guards earn their keep on day one.
+
+**Service restart needed** for pages to ship the new `<script src>` tags (old process still
+serves the inline-JS HTML; no broken intermediate state either way).
+
+NB: S40 (2026-06-08, CR-063 `/enhance-run` Pixop integration, 505 tests) shipped without a
+full journal entry — see git log `CR-063` and CHANGE_REQUESTS_CLOSED.md.
+
+---
+
 ## Session 39 — 2026-06-03
 
 CR-062 follow-up: three reported bugs in the `/image` "compare 4 models" run, plus a
