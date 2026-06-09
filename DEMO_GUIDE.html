@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OWL — 15-Minute Demo Guide</title>
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 9pt/1.32 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #111; -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  h1 { font-size: 15pt; margin: 0 0 1mm; color: #0a7a52; }
+  .frame { font-size: 8.5pt; margin: 0 0 2mm; padding: 1.5mm 2mm;
+           background: #f1faf6; border-left: 3px solid #0a7a52; }
+  .frame em { color: #0a5c3e; }
+  h2 { font-size: 9.5pt; margin: 0 0 0.8mm; color: #0a7a52;
+       border-bottom: 1px solid #cfe8dd; padding-bottom: 0.4mm; }
+  ul { margin: 0.4mm 0 0; padding-left: 4mm; }
+  li { margin: 0.2mm 0; }
+  .hook { color: #0a5c3e; font-style: italic; }
+  .cols { column-count: 2; column-gap: 6mm; }
+  .seg { break-inside: avoid; margin-bottom: 2mm; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin: 0 0 2mm; }
+  th, td { border: 1px solid #cfe8dd; padding: 0.6mm 1.4mm; text-align: left; }
+  th { background: #eef7f2; }
+  td.t { white-space: nowrap; color: #0a5c3e; font-weight: 600; }
+  .rails { background: #fff7f0; border-left: 3px solid #d98a3a; padding: 1.5mm 2mm; font-size: 8.5pt; }
+  .rails h2 { color: #b5651d; border-color: #f0d9c0; }
+  code { background: #eef7f2; padding: 0 0.6mm; border-radius: 2px; font-size: 8pt; }
+</style>
+</head>
+<body>
+
+<h1>OWL — 15-Minute Demo Guide 🦉</h1>
+<div class="frame">
+  <strong>Say once, up front:</strong> <em>"Not eco-warriors — we just dislike waste. If it can't be measured, it shouldn't be asserted."</em>
+  &nbsp;Audience: CTOs / operators / infra. OWL = a <strong>bench</strong> measuring real device-layer energy of streaming &amp; AI.
+</div>
+
+<table>
+  <tr><th>#</th><th>Segment</th><th>Time</th><th>Where to click</th></tr>
+  <tr><td class="t">1</td><td>Open &amp; framing</td><td class="t">1m</td><td>Home / <code>/demo</code></td></tr>
+  <tr><td class="t">2</td><td>The measurement spine</td><td class="t">2m</td><td>any result + confidence popover</td></tr>
+  <tr><td class="t">3</td><td>Video codec compare</td><td class="t">3m</td><td><code>/video</code> → Compare codecs</td></tr>
+  <tr><td class="t">4</td><td>AI tethered to streaming</td><td class="t">3m</td><td><code>/llm/compare</code> + <code>/image/compare</code></td></tr>
+  <tr><td class="t">5</td><td>Findings = body of evidence</td><td class="t">2m</td><td><code>/findings</code></td></tr>
+  <tr><td class="t">6</td><td>Partner integration</td><td class="t">2m</td><td><code>/enhance-run</code></td></tr>
+  <tr><td class="t">7</td><td>Field ↔ Bench (REM flash)</td><td class="t">1m</td><td>REM UI screenshot</td></tr>
+  <tr><td class="t">8</td><td>Close</td><td class="t">1m</td><td>—</td></tr>
+</table>
+
+<div class="cols">
+
+  <div class="seg">
+    <h2>1 · Open (1m)</h2>
+    <ul>
+      <li>GoS = neutral, technically credible French NGO</li>
+      <li>OWL measures <strong>real watts</strong>, not models / estimates</li>
+      <li>Scope honesty: <strong>device layer only</strong> — network / CDN / datacenter excluded</li>
+    </ul>
+  </div>
+
+  <div class="seg">
+    <h2>2 · Measurement spine (2m)</h2>
+    <ul>
+      <li>Smart plug (full mW) + CPU/GPU thermal sensors</li>
+      <li>Protocol: baseline → locked task → poll → ΔW, ΔE</li>
+      <li><strong>Traffic Light Confidence</strong> — every claim 🟢/🟡/🔴</li>
+      <li class="hook">"the number comes with its own uncertainty"</li>
+    </ul>
+  </div>
+
+  <div class="seg">
+    <h2>3 · Video codec compare (3m) — the meat</h2>
+    <ul>
+      <li>Same clip, multiple codecs / encoders head-to-head</li>
+      <li>Energy <strong>and</strong> quality (VMAF) side by side</li>
+      <li>⭐ <strong>AV1 hardware vs software</strong> at same bitrate — energy↔quality tradeoff, measured</li>
+      <li class="hook">"hw encode saves energy — but does it cost quality? Now we can answer."</li>
+    </ul>
+  </div>
+
+  <div class="seg">
+    <h2>4 · AI tethered to streaming (3m)</h2>
+    <ul>
+      <li>AI = the new load on the same infrastructure</li>
+      <li><code>/llm/compare</code> — tiny → 20B, energy per token, CPU vs GPU</li>
+      <li><code>/image/compare</code> — N models side by side, first-run cost</li>
+      <li class="hook">"same rigor, applied to the AI now sharing the pipe"</li>
+    </ul>
+  </div>
+
+  <div class="seg">
+    <h2>5 · Findings catalog (2m)</h2>
+    <ul>
+      <li><code>/findings</code> — a <strong>growing evidence base</strong>, not one-off demos</li>
+      <li>Each finding cites a real stored measurement on disk</li>
+      <li class="hook">"reproducible, sourced, no hand-waving"</li>
+    </ul>
+  </div>
+
+  <div class="seg">
+    <h2>6 · Partner integration (2m) — don't name vendor</h2>
+    <ul>
+      <li><code>/enhance-run</code> — a commercial enhancement / transcode partner in OWL's harness</li>
+      <li>Their product runs; OWL measures its energy honestly, same protocol</li>
+      <li class="hook">"vendors can prove efficiency claims on neutral ground"</li>
+    </ul>
+  </div>
+
+  <div class="seg">
+    <h2>7 · Field ↔ Bench (1m) — REM flash</h2>
+    <ul>
+      <li><em>REM context:</em> GoS's sibling — real meters on real sites reporting continuously, where OWL's bench findings get checked against the wild</li>
+      <li>OWL = <strong>controlled bench</strong>; REM = <strong>fleet in the field</strong></li>
+      <li class="hook">"bench tells you why, field tells you what's actually happening"</li>
+    </ul>
+  </div>
+
+  <div class="seg">
+    <h2>8 · Close (1m)</h2>
+    <ul>
+      <li>OWL turns "streaming is wasteful" from assertion → <strong>measurement</strong></li>
+      <li>Open, reproducible, vendor-neutral</li>
+      <li>Ask: members, partners, contributors</li>
+    </ul>
+  </div>
+
+</div>
+
+<div class="rails">
+  <h2>Safety rails</h2>
+  <ul>
+    <li><strong>Don't</strong> name the partner (use "enhancement partner")</li>
+    <li><strong>Don't</strong> over-claim n — several findings are n=1, flagged as such; let the rigor be the story</li>
+    <li>"How accurate?" → point to the confidence flag, not a hand-wave</li>
+    <li>Keep carbon minimal — <strong>energy (W/Wh)</strong> is what GoS stands behind; CO₂e is reference-only</li>
+  </ul>
+</div>
+
+</body>
+</html>
