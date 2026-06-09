@@ -168,6 +168,7 @@ Earlier sessions (S1–S25) live in `JOURNAL.md`; recent arc below.
 
 ### Deferred / open (active items only — completed ones removed; see CHANGE_REQUESTS_CLOSED.md / JOURNAL.md for history)
 - **Transcoding apples-to-apples (GOP / profile)** — see **CR-029** sub-item 2 (Tania-led); VMAF (CR-044) now makes the gap measurable (see AV1 hw-vs-sw Key Finding).
+- **VMAF-stage progress bar on `/video`** (owner note, 2026-06-10) — show the CR-035 progress bar during the VMAF stage like the encode stage has. Render side already works (the widget in `wl-progress.js` draws whenever the job carries `progress_pct`); the work is server-side only: have the libvmaf ffmpeg pass in `video.py` stream `-progress` frame counts into the job dict like the encode pass does (and clear/relabel `progress_pct` between stages so the encode's 100% doesn't linger into VMAF).
 - **Benchmark 2** — codec-natural rate control (CRF/QP). Folded into **CR-045** as its V1 ("Constant quality (per-codec)").
 - **Dockerize OWL** — see **CR-031** sub-section 3 (containerisation, two-stage plan: FastAPI+VAAPI, then ROCm).
 - **Guided Tour Findings step** — currently echoes session run; redesign to aggregate across all stored results to surface body-of-evidence learnings (see Key Findings).
