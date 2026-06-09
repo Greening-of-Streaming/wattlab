@@ -40,3 +40,11 @@ TRAINING_REM_5MIN.md
 # Result CSVs downloaded into the working tree (named wattlab_<type>_<id>.csv
 # by the /download.csv route). Generated artifacts, not source.
 wattlab_*.csv
+
+# OCI container-image export (the Pixop image is `skopeo copy`'d / saved into
+# the tree as an OCI layout — blobs/ alone is ~5GB). Build artifact, never
+# source; keep it out so a stray `git add -A` can't try to commit gigabytes.
+blobs/
+oci-layout
+index.json
+manifest.json
