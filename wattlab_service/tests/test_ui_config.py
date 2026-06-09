@@ -45,7 +45,7 @@ def test_ui_config_is_js_with_expected_keys():
     r = client.get("/ui-config.js")
     assert r.status_code == 200
     assert "javascript" in r.headers["content-type"]
-    assert r.headers.get("cache-control") == "no-store"
+    assert r.headers.get("cache-control") == "private, max-age=5"
     assert r.text.startswith("window.WL_CFG = ")
     for key in ("baseline_s", "cooldown_label", "rest_label", "idle_label",
                 "meter_name", "urls", "show_wait_detail", "idle_tolerance_w"):

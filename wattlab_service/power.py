@@ -178,6 +178,15 @@ class CooldownCancelled(Exception):
 # fixed-vs-idle strategy is decided in exactly one place and is tunable from
 # /settings. Variance calibration calls with respect_toggle=False so it always
 # keeps its fixed protocol regardless of the toggle.
+def _clear_live_cooldown_fields(jobs, job_id):
+    """Drop the live idle-wait readout fields once a cooldown concludes, so
+    wlCooldownLine (rendered by wlRenderProgress on every page) self-expires
+    instead of showing a stale 'Idle wait Ns' through later stages."""
+    if jobs is not None and job_id is not None and job_id in jobs:
+        for k in ("cooldown_waited_s", "cooldown_w"):
+            jobs[job_id].pop(k, None)
+
+
 async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
                                 stage="cooldown", jobs=None, job_id=None,
                                 respect_toggle=True, allow_dialog=False) -> dict:
@@ -236,6 +245,7 @@ async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
         )
         total_waited += cd["waited_s"]
         if cd["settled"]:
+            _clear_live_cooldown_fields(jobs, job_id)
             return {"method": "idle", "waited_s": round(total_waited, 2),
                     "settled": True, "final_w": cd["final_w"], "timed_out": False}
 
@@ -263,6 +273,7 @@ async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
             raise CooldownCancelled()
         if decision == "run":
             # Operator chose to proceed NOW — no extra sleep.
+            _clear_live_cooldown_fields(jobs, job_id)
             return {"method": "idle", "waited_s": round(total_waited, 2),
                     "settled": False, "final_w": cd["final_w"], "timed_out": True}
         # 'fallback' — non-interactive default or watchdog expiry: one fixed
@@ -272,6 +283,7 @@ async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
             jobs[job_id]["cooldown_fixed_s"] = fixed_seconds
         await asyncio.sleep(fixed_seconds)
         total_waited += fixed_seconds
+        _clear_live_cooldown_fields(jobs, job_id)
         return {"method": "idle+fallback", "waited_s": round(total_waited, 2),
                 "settled": False, "final_w": cd["final_w"], "timed_out": True}
 

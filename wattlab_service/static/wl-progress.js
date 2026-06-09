@@ -1,5 +1,12 @@
 // Extracted from main.py (Phase 1, 2026-06-10) — see ARCHITECTURE.md.
 // Requires window.WL_CFG (loaded via /ui-config.js before this file).
+// Defensive fallback: if that fetch failed (e.g. a proxy 429), degrade to
+// generic wording instead of throwing and killing every poll loop below.
+window.WL_CFG = window.WL_CFG || {baseline_s: '\u2014', cooldown_s: '\u2014',
+  cooldown_label: 'Cooldown', cooldown_paren: '', rest_label: 'Rest',
+  idle_label: 'Idle', llm_rest_s: '\u2014', meter_name: 'power meter',
+  show_wait_detail: true, idle_tolerance_w: 3, urls: {}};
+var WL_CFG = window.WL_CFG;
 function wlFmt(v, dec) { if (v === null || v === undefined) return '—'; return Number(v).toFixed(dec ?? 2); }
 function wlFormatElapsed(ms) {
     const s = Math.floor(ms / 1000);

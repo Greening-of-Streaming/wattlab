@@ -577,8 +577,14 @@ async def ui_config_js():
     """window.WL_CFG for the static JS bundles — resolved per request so
     settings/meter changes reach the browser without a service restart."""
     body = "window.WL_CFG = " + json.dumps(_ui_cfg()) + ";"
+    # max-age=5 (not no-store): pages include this tag up to twice (_PROGRESS_JS
+    # + _CARBON_JS) and poll loops re-render around it — a short private cache
+    # collapses those into one fetch per page-load window, which matters under
+    # nginx's per-IP connection cap (S41: first-ever 429 on the homepage).
+    # 5 s staleness on settings copy is fine; the old failure mode was a full
+    # service restart.
     return Response(body, media_type="application/javascript",
-                    headers={"Cache-Control": "no-store"})
+                    headers={"Cache-Control": "private, max-age=5"})
 
 # --- Home ---
 
@@ -3690,6 +3696,8 @@ async def llm_page(request: Request):
                 <div class="conf-badge" style="margin-top:0.5rem">${{ge.confidence.flag}} ${{ge.confidence.label}}</div>
               </div>
             </div>
+            <div class="section-title">CPU response preview</div>
+            <div class="response-box">${{ci.response}}</div>
             <div class="section-title">GPU response preview</div>
             <div class="response-box">${{gi.response}}</div>
             ${{wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG, _subRuns)}}
@@ -5219,7 +5227,7 @@ def _benchmark_rows_html(runs: list) -> str:
 
 @app.get("/benchmark", response_class=HTMLResponse,
          dependencies=[Depends(requires(BENCHMARK_VIEW))])
-async def benchmark_list_page():
+async def benchmark_list_page(request: Request):
     runs = list_results("benchmark", limit=50, visitor_key=None)
     body = (
         '<div class="finding-wrap">'
@@ -5230,27 +5238,27 @@ async def benchmark_list_page():
         f'{_benchmark_rows_html(runs)}'
         '</div>'
     )
-    return HTMLResponse(
-        '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<title>Benchmark runs — OWL</title>'
-        f'{_BASE_STYLES}'
-        '<style>'
-        '.finding-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
-        '.finding-row{display:block;border:1px solid var(--border);padding:0.6rem 0.8rem;margin:0.5rem 0;text-decoration:none;background:var(--panel)}'
-        '.finding-row:hover{border-color:var(--accent)}'
-        '.finding-row-top{display:flex;gap:0.5rem;align-items:baseline}'
-        '.finding-row-dot{font-size:0.8rem}'
-        '.finding-row-headline{color:var(--text);font-family:monospace;font-size:0.85rem;flex:1}'
-        '.finding-row-date{color:var(--text-5);font-family:monospace;font-size:0.72rem}'
-        '.finding-row-claim{color:var(--text-3);font-family:monospace;font-size:0.75rem;margin-top:0.3rem}'
-        '</style></head><body style="background:var(--bg)">' + body + '</body></html>'
-    )
+    # S41 owner request: standard chrome (header back-link + footer) on the
+    # benchmark pages — previously the chrome-less findings-style shell.
+    return HTMLResponse(ui.render_page(
+        request, "Benchmark runs", body,
+        head='    <meta name="viewport" content="width=device-width,initial-scale=1">\n',
+        styles=(
+            'body{background:var(--bg);color:var(--text)}'
+            '.finding-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
+            '.finding-row{display:block;border:1px solid var(--border);padding:0.6rem 0.8rem;margin:0.5rem 0;text-decoration:none;background:var(--panel)}'
+            '.finding-row:hover{border-color:var(--accent)}'
+            '.finding-row-top{display:flex;gap:0.5rem;align-items:baseline}'
+            '.finding-row-dot{font-size:0.8rem}'
+            '.finding-row-headline{color:var(--text);font-family:monospace;font-size:0.85rem;flex:1}'
+            '.finding-row-date{color:var(--text-5);font-family:monospace;font-size:0.72rem}'
+            '.finding-row-claim{color:var(--text-3);font-family:monospace;font-size:0.75rem;margin-top:0.3rem}'
+        )))
 
 
 @app.get("/benchmark/{bid}", response_class=HTMLResponse,
          dependencies=[Depends(requires(BENCHMARK_VIEW))])
-async def benchmark_detail_page(bid: str):
+async def benchmark_detail_page(bid: str, request: Request):
     m = load_result("benchmark", bid, visitor_key=None)
     if not m:
         return HTMLResponse('<p style="font-family:monospace">Benchmark run not found. '
@@ -5289,16 +5297,14 @@ async def benchmark_detail_page(bid: str):
         + "".join(steps_html)
         + '</div>'
     )
-    return HTMLResponse(
-        '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f'<title>Benchmark {html_lib.escape(bid)} — OWL</title>'
-        f'{_BASE_STYLES}'
-        '<style>.bench-wrap{max-width:900px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}</style>'
-        '</head><body style="background:var(--bg)">' + body
-        + _CARBON_JS + _RESULT_JS + _BENCH_HYDRATE_JS
-        + '</body></html>'
-    )
+    # Footer already ships _CARBON_JS; the result-card + hydrate bundles ride
+    # in tail so the embeds keep working.
+    return HTMLResponse(ui.render_page(
+        request, f"Benchmark {html_lib.escape(bid)}", body,
+        head='    <meta name="viewport" content="width=device-width,initial-scale=1">\n',
+        styles=('body{background:var(--bg);color:var(--text)}'
+                '.bench-wrap{max-width:900px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'),
+        tail=_RESULT_JS + _BENCH_HYDRATE_JS))
 
 
 @app.get("/benchmark/{bid}/result/{job_type}/{job_id}.json",
