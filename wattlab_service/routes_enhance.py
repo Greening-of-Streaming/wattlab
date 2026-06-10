@@ -1141,10 +1141,11 @@ loadPrevRuns();
 
 
 def _enhance_cfg_band(pf: dict) -> str:
+    # Configured = quiet (owner request, 2026-06-10 — the green staging band
+    # was noise once the page worked). The band only appears when something
+    # is missing, where it's load-bearing: it explains why Run is disabled.
     if pf["ok_transcode"]:
-        return ('<div class="cfg-band ok">&#10003; Configured &middot; '
-                f'{len(pf["inputs"])} input(s), {len(pf["presets"])} preset(s) staged &middot; '
-                f'image <code>{html_lib.escape(pf["image_tag"])}</code> present.</div>')
+        return ""
     items = "".join(f"<li>{html_lib.escape(r)}</li>" for r in pf["reasons"])
     selftest = ("Self-test is available." if pf["ok_selftest"]
                 else "Self-test needs the docker image.")
