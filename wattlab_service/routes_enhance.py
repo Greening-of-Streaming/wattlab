@@ -401,6 +401,12 @@ _ENHANCE_RUN_STYLES = """
           color: var(--text-3); max-height: 320px; overflow: auto; }
     .result-card { display: none; border: 1px solid var(--accent); padding: 1rem 1.15rem;
                    margin-bottom: 1.25rem; background: rgba(0,255,153,0.025); }
+    /* 1× video sizing (owner request, 2026-06-10): render at native pixel size,
+       capped at the container — so an SD output shows SMALLER than a 4K input
+       instead of both stretching to full column width. The JS size note states
+       native res + actual displayed scale (the honest answer on small screens). */
+    .wl-1x { display: block; width: auto; height: auto; max-width: 100%;
+             background: #000; }
     .rc-header { color: var(--accent); font-size: 0.7rem; letter-spacing: 0.08em;
                  text-transform: uppercase; margin-bottom: 0.6rem; }
     .rc-kpi { display: flex; gap: 1.6rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
@@ -511,7 +517,7 @@ _ENHANCE_RUN_HTML = """
 
 <div id="input-preview" style="display:none;margin-bottom:1.25rem">
   <div style="color:var(--text-4);font-size:0.68rem;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.3rem">Input preview</div>
-  <video id="inVid" controls preload="metadata" muted style="width:100%;max-height:320px;background:#000"></video>
+  <video id="inVid" class="wl-1x" controls preload="metadata" muted style="max-height:320px"></video>
 </div>
 
 <div style="margin-bottom:1.25rem">
@@ -538,6 +544,28 @@ function _enhStageIdx(stage) {
   var m = {baseline:0, transcoding:1, probe:2, done:3};
   return m[stage] != null ? m[stage] : 0;
 }
+// 1× sizing note: videos with .wl-1x render at native size (capped at the
+// container); this appends "WxH native · displayed at N%" under each, so a
+// scaled-to-fit 4K input on a small screen says so instead of lying by layout.
+function _wireNativeVids(root) {
+  (root || document).querySelectorAll('video.wl-1x').forEach(function(v) {
+    var note = v._wlSizeNote;
+    if (!note) {
+      note = document.createElement('div');
+      note.style.cssText = 'color:var(--text-4);font-size:0.68rem;margin-top:0.2rem';
+      v.insertAdjacentElement('afterend', note);
+      v._wlSizeNote = note;
+      v.addEventListener('loadedmetadata', function(){ _updSizeNote(v, note); });
+    }
+    if (v.readyState >= 1) _updSizeNote(v, note);
+  });
+}
+function _updSizeNote(v, note) {
+  if (!v.videoWidth) return;
+  var scale = v.clientWidth ? Math.round(v.clientWidth / v.videoWidth * 100) : 100;
+  note.textContent = v.videoWidth + '×' + v.videoHeight + ' native · displayed at '
+                   + (scale >= 99 && scale <= 101 ? '1×' : scale + '%');
+}
 function updateInputPreview() {
   var sel = document.getElementById('inSel');
   var wrap = document.getElementById('input-preview');
@@ -545,6 +573,7 @@ function updateInputPreview() {
   if (!sel || !sel.value) { wrap.style.display = 'none'; return; }
   vid.src = '/enhance-run/input/' + encodeURIComponent(sel.value);
   wrap.style.display = 'block';
+  _wireNativeVids(wrap);
 }
 async function startRun() {
   var input = document.getElementById('inSel').value;
@@ -620,6 +649,7 @@ function renderResult(meas) {
   var card = document.getElementById('result-card');
   card.innerHTML = renderResultHtml(meas);
   card.style.display = 'block';
+  _wireNativeVids(card);
 }
 function renderResultHtml(meas) {
   var r = meas.result || {};
@@ -648,7 +678,7 @@ function renderResultHtml(meas) {
       +   '<a href="' + url + '" download style="color:var(--accent)">⬇ Download output</a>'
       +   '<span style="color:var(--text-4);font-size:0.72rem">' + r.output_name + '</span>'
       + '</div>'
-      + '<video controls preload="metadata" style="width:100%;background:#000" src="' + url + '"></video>'
+      + '<video controls preload="metadata" class="wl-1x" src="' + url + '"></video>'
       + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
       +   'HEVC 10-bit / HDR may not play inline in every browser — use Download if the player is blank.'
       + '</div></div>';
@@ -885,7 +915,7 @@ function _midTrunc(s) {
 function _vidCell(title, src, name) {
   var short = _midTrunc(name);
   var media = src
-    ? '<video controls preload="metadata" muted style="width:100%;background:#000" src="' + src + '"></video>'
+    ? '<video controls preload="metadata" muted class="wl-1x" src="' + src + '"></video>'
       + '<div style="margin-top:0.25rem"><a href="' + src + '" download title="' + (name || '') + '" style="color:var(--accent);font-size:0.72rem">⬇ ' + (short || 'download') + '</a></div>'
     : '<div style="width:100%;aspect-ratio:16/9;background:#000;display:flex;align-items:center;justify-content:center;color:var(--text-4);font-size:0.72rem">no output</div>'
       + (name ? '<div title="' + name + '" style="color:var(--text-4);font-size:0.7rem;margin-top:0.25rem">' + short + '</div>' : '');
@@ -953,6 +983,7 @@ function renderCompare(meas) {
   var card = document.getElementById('result-card');
   card.innerHTML = renderCompareHtml(meas);
   card.style.display = 'block';
+  _wireNativeVids(card);
 }
 function renderCompareHtml(meas) {
   var ml = meas.ml || {}, ff = meas.ffmpeg || {};
@@ -1094,6 +1125,7 @@ async function expandPrev(jobId) {
     var j = await resp.json();
     el.innerHTML = (j.mode === 'enhance_compare') ? renderCompareHtml(j) : renderResultHtml(j);
     el.dataset.loaded = '1';
+    _wireNativeVids(el);
   } catch(e) {
     el.innerHTML = '<div style="color:var(--err);padding:0.5rem">Failed to load: ' + (e.message || e) + '</div>';
     el.dataset.expanded = '0';

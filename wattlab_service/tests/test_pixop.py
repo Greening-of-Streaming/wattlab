@@ -1047,6 +1047,7 @@ def test_enhance_page_has_cr064_controls():
     assert "prev-runs" in r.text              # previous-runs section present
     assert "viewing environment" in r.text    # HDR footnote
     assert "upFile" in r.text                 # upload control
+    assert "wl-1x" in r.text                  # 1× native video sizing
 
 
 # --- persist: summarisers + CSV --------------------------------------------------
