@@ -301,3 +301,24 @@ def test_visitor_key_member_uses_email_lowercased(monkeypatch):
     monkeypatch.setattr(_auth, "member_email_from_request", lambda r: "Foo@Bar.COM")
     req = _stub_request()
     assert queue_control.visitor_key(req) == "m:foo@bar.com"
+
+
+# --- empty_pending (CR-064 — /queue-status "Empty queue") ---------------------
+
+def test_empty_pending_drains_and_marks_cancelled():
+    queue_control.enqueue("j1", "video", "a", _noop_coro())
+    queue_control.enqueue("j2", "enhance", "b", _noop_coro())
+    drained = queue_control.empty_pending()
+    assert sorted(drained) == ["j1", "j2"]
+    assert queue_control.pending_queue == []
+    for jid in ("j1", "j2"):
+        assert queue_control._jobs[jid]["status"] == "error"
+        assert "Cancelled" in queue_control._jobs[jid]["error"]
+
+
+def test_empty_pending_leaves_running_job_alone():
+    queue_control.current_job_id = "running"
+    queue_control._jobs["running"] = {"status": "running"}
+    assert queue_control.empty_pending() == []
+    assert queue_control._jobs["running"]["status"] == "running"
+    assert queue_control.depth() == 1

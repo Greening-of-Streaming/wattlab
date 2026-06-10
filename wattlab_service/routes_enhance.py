@@ -1297,16 +1297,27 @@ def _resolve_run_preset(preset_name: str, output_format: str, sr_target: str):
     return None, JSONResponse({"error": "No preset selected"}, status_code=400)
 
 
+def _was_cancelled(job_id: str) -> bool:
+    return bool(jobs.get(job_id, {}).get("cancel_requested"))
+
+
 async def run_enhance_job(job_id: str, input_name: str, preset_name: str,
                           live: bool = False, cleanup_input: bool = False):
     try:
         jobs[job_id].update({"status": "running", "stage": "starting"})
         result = await pixop.run_enhance_measurement(input_name, preset_name, job_id,
                                                      jobs, live=live)
+        if _was_cancelled(job_id):
+            # docker-killed mid-transcode: the harness concluded through its
+            # failed-transcode path — don't persist a half-run as a result.
+            jobs[job_id].update({"status": "error", "stage": "error",
+                                 "error": "Cancelled from /queue-status"})
+            return
         save_result("enhance", job_id, result)
         jobs[job_id].update({"status": "done", "stage": "done", "result": result})
     except Exception as e:
-        jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+        msg = "Cancelled from /queue-status" if _was_cancelled(job_id) else str(e)
+        jobs[job_id] = {"status": "error", "stage": "error", "error": msg}
     finally:
         if cleanup_input:
             _cleanup_upload(input_name)
@@ -1356,10 +1367,15 @@ async def run_enhance_compare_job(job_id: str, input_name: str, preset_name: str
         jobs[job_id].update({"status": "running", "stage": "starting"})
         result = await pixop.run_enhance_compare_measurement(
             input_name, preset_name, job_id, jobs, live=live, ff_filter=ff_filter)
+        if _was_cancelled(job_id):
+            jobs[job_id].update({"status": "error", "stage": "error",
+                                 "error": "Cancelled from /queue-status"})
+            return
         save_result("enhance", job_id, result)
         jobs[job_id].update({"status": "done", "stage": "done", "result": result})
     except Exception as e:
-        jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+        msg = "Cancelled from /queue-status" if _was_cancelled(job_id) else str(e)
+        jobs[job_id] = {"status": "error", "stage": "error", "error": msg}
     finally:
         if cleanup_input:
             _cleanup_upload(input_name)

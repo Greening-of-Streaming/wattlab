@@ -484,7 +484,8 @@ def build_pacer_cmd(input_name: str, c: Optional[dict] = None) -> list[str]:
 
 
 def build_docker_cmd(input_name: str, preset_name: str, output_name: str,
-                     c: Optional[dict] = None, live: bool = False) -> list[str]:
+                     c: Optional[dict] = None, live: bool = False,
+                     job_id: Optional[str] = None) -> list[str]:
     """The verified container contract (from Jon's run_pixop_nvencc.sh):
       - the license is MOUNTED in at /opt/pixop/license.jwt:ro (not baked, not env),
       - the host workdir is a single mount at /mnt/host (so input/output/presets
@@ -507,6 +508,11 @@ def build_docker_cmd(input_name: str, preset_name: str, output_name: str,
         "-v", f"{base}:/mnt/host",
         "--init",
     ]
+    if job_id:
+        # CR-064 — predictable per-job name so the /queue-status cancel can
+        # `docker kill owl_enhance_<job>` surgically (container metadata only;
+        # energy-imperceptible).
+        cmd += ["--name", f"owl_enhance_{job_id}"]
     if live:
         cmd.append("-i")          # keep stdin open for the piped TS
     cmd += [
@@ -1084,6 +1090,11 @@ async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
     baseline = await measure_baseline(polls=c["baseline_polls"])
     LOCK_FILE.write_text(job_id)
     try:
+        # CR-064 cancel: requested during baseline (nothing to docker-kill
+        # yet) → abort before launching the container. The finally below
+        # releases lock + focus in order.
+        if jobs is not None and jobs.get(job_id, {}).get("cancel_requested"):
+            raise RuntimeError("cancelled before transcode start")
         _stage("transcoding")
         stop_event = asyncio.Event()
         poll_task = asyncio.create_task(poll_during_task(stop_event))
@@ -1204,7 +1215,8 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
 
     inp, out, pre = _workdir_paths(c)
     output_name = _output_name(input_name, preset_name)
-    cmd = build_docker_cmd(input_name, preset_name, output_name, c, live=live)
+    cmd = build_docker_cmd(input_name, preset_name, output_name, c, live=live,
+                           job_id=job_id)
     pacer_cmd = build_pacer_cmd(input_name, c) if live else None
 
     # do_cooldown=False — same rule as the compare's last pass and video's
@@ -1315,7 +1327,8 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
     if jobs is not None:
         jobs[job_id]["stage"] = "ml"
     ml_output = _output_name(input_name, preset_name)
-    ml_cmd = build_docker_cmd(input_name, preset_name, ml_output, c, live=live)
+    ml_cmd = build_docker_cmd(input_name, preset_name, ml_output, c, live=live,
+                              job_id=job_id)
     ml_pacer = build_pacer_cmd(input_name, c) if live else None
     ml = await _measured_pass(
         c=c, job_id=job_id, jobs=jobs, input_name=input_name,

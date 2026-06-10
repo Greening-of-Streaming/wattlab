@@ -178,6 +178,23 @@ def cancel_pending(job_id: str) -> bool:
     return False
 
 
+def empty_pending() -> list[str]:
+    """Drain every not-yet-started job (CR-064 — the /queue-status "Empty
+    queue" button). The RUNNING job is untouched (that's cancel-current's
+    job, workload-permitting). Each drained job is marked cancelled so its
+    page poll concludes instead of spinning. Returns the drained ids."""
+    drained = []
+    while pending_queue:
+        e = pending_queue.pop()
+        drained.append(e["job_id"])
+        if _jobs and e["job_id"] in _jobs:
+            _jobs[e["job_id"]].update({
+                "status": "error", "stage": "error",
+                "error": "Cancelled — queue emptied from /queue-status",
+            })
+    return drained
+
+
 def paused() -> bool:
     """True if the external pause flag file exists."""
     return Path(PAUSE_FLAG).exists()

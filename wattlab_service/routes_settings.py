@@ -118,8 +118,14 @@ def _models_section_html(s: dict, local: bool) -> str:
         if local else ' Display-only — sign in as Lab to edit.'
     )
 
+    # Default-collapsed (owner, 2026-06-10 nav pass): the toggle matrix is
+    # bulky and rarely touched — getElementById still reaches checkboxes
+    # inside a closed <details>, so the save flow is unaffected.
     return (
-        f'<div class="section">Models (CR-050)</div>'
+        f'<div class="section" id="s-models">Models (CR-050)</div>'
+        f'<details><summary style="cursor:pointer;color:var(--text-3);'
+        f'font-size:0.8rem;margin-bottom:0.5rem">Model enable/disable matrix '
+        f'(LLM &middot; RAG &middot; Image) &mdash; expand</summary>'
         f'<div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">'
         f'Auto-discovered from <code>ollama list</code> and the HuggingFace cache (60 s TTL).'
         f' To add a new LLM: <code>ollama pull &lt;name&gt;</code> on the server.'
@@ -129,6 +135,7 @@ def _models_section_html(s: dict, local: bool) -> str:
         f'{panel("llm_enabled_models")}'
         f'{panel("rag_enabled_models")}'
         f'{panel("image_enabled_models")}'
+        f'</details>'
     )
 
 # CR-037 — tether the AI pages to streaming. Each AI page gets a one-line
@@ -319,7 +326,13 @@ async def settings_page(request: Request):
         .subtitle {{ color:var(--text-3); font-size:0.8rem; margin-bottom:2rem; }}
         .section {{ color:var(--text-4); font-size:0.72rem; text-transform:uppercase;
                     letter-spacing:0.05em; margin:1.5rem 0 0.75rem;
-                    padding-bottom:0.4rem; border-bottom:1px solid var(--panel); }}
+                    padding-bottom:0.4rem; border-bottom:1px solid var(--panel);
+                    scroll-margin-top:3rem; }}
+        .toc-bar {{ position:sticky; top:0; background:var(--bg); z-index:5;
+                    padding:0.5rem 0; border-bottom:1px solid var(--panel);
+                    font-size:0.74rem; line-height:1.9; }}
+        .toc-bar a {{ color:var(--text-3); text-decoration:none; }}
+        .toc-bar a:hover {{ color:var(--accent); }}
         input[type=number]:focus {{ border-color:var(--accent); outline:none; }}
         details.calib-details > summary {{ cursor:pointer; color:var(--accent);
             font-size:0.82rem; padding:0.5rem 0; list-style:none;
@@ -335,11 +348,24 @@ async def settings_page(request: Request):
     <div class="subtitle">{subtitle}</div>
     {notice}
 
-    <div class="section">Measurement</div>
+    <div class="toc-bar">
+      <a href="#s-measurement">Measurement</a> &middot;
+      <a href="#s-cooldown">Cooldown</a> &middot;
+      <a href="#s-staging">Staging</a> &middot;
+      <a href="#s-encoding">Encoding</a> &middot;
+      <a href="#s-confidence">Confidence</a> &middot;
+      <a href="#s-variance">Variance</a> &middot;
+      <a href="#s-benchmark">Benchmark</a> &middot;
+      {('<a href="#s-members">Members</a> &middot;' if local else '')}
+      <a href="#s-tiers">Tier limits</a> &middot;
+      <a href="#s-models">Models</a>
+    </div>
+
+    <div class="section" id="s-measurement">Measurement</div>
     {field("baseline_polls",    s['baseline_polls'],    5,  60,  "× 1s",   "baseline window duration")}
     {field("llm_unload_settle_s", s['llm_unload_settle_s'], 1, 30, "s",   "wait after model unload before baseline")}
 
-    <div class="section">Cooldown between passes</div>
+    <div class="section" id="s-cooldown">Cooldown between passes</div>
     {toggle_field("cooldown_wait_for_idle", s.get('cooldown_wait_for_idle', True),
                   "ON: wait for wall power to settle back to the idle floor before each next pass "
                   "(active-probe, the /rag /llm compare technique). OFF: use the fixed rest periods below. "
@@ -354,10 +380,10 @@ async def settings_page(request: Request):
                   "Show the live idle-wait readout (\u23f3 waited \u00b7 current W \u00b7 target) in the progress "
                   "widget on every page during cooldowns. Display only \u2014 cooldown behaviour is unchanged.")}
 
-    <div class="section">Staging</div>
+    <div class="section" id="s-staging">Staging</div>
     {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
 
-    <div class="section">Encoding targets</div>
+    <div class="section" id="s-encoding">Encoding targets</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
       ABR target bitrate applied to both CPU and GPU presets for each codec — ensures apples-to-apples energy comparison. Custom ffmpeg commands on the video page override these.
     </div>
@@ -365,7 +391,7 @@ async def settings_page(request: Request):
     {field("h265_bitrate_kbps", s['h265_bitrate_kbps'], 500, 20000, "kbps", f"H.265 target bitrate (libx265 + {_gpu_enc('h265')})", step=100)}
     {field("av1_bitrate_kbps",  s['av1_bitrate_kbps'],  500, 20000, "kbps", f"AV1 target bitrate (libsvtav1 + {_gpu_enc('av1')})", step=100)}
 
-    <div class="section">Confidence thresholds — CI model (CR-028 Phase 2)</div>
+    <div class="section" id="s-confidence">Confidence thresholds — CI model (CR-028 Phase 2)</div>
     {field("conf_positive_green",  s.get('conf_positive_green', 0.95),  0.5, 0.999, "P", "🟢 min confidence_positive Φ(z) that task draws above idle", step=0.01)}
     {field("conf_positive_yellow", s.get('conf_positive_yellow', 0.80), 0.5, 0.999, "P", "🟡 min confidence_positive", step=0.01)}
     {field("conf_green_polls", s['conf_green_polls'],  1, 100, "polls", "🟢 minimum task polls (both models)")}
@@ -379,7 +405,7 @@ async def settings_page(request: Request):
     {field("variance_green_x", s['variance_green_x'], 1, 20,  "× noise", "🟢 (legacy) ΔW must exceed this multiple of noise floor", step=0.5)}
     {field("variance_yellow_x",s['variance_yellow_x'],1, 10,  "× noise", "🟡 (legacy) ΔW must exceed this multiple of noise floor", step=0.5)}
 
-    <div class="section">Variance calibration</div>
+    <div class="section" id="s-variance">Variance calibration</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
       Runs H.264 CPU then H.265 GPU on Meridian N times, sampling raw P110 readings throughout.
       Writes <strong>Variance Idle %</strong> (the idle noise floor) and <strong>Variance Idle Drift %</strong>
@@ -414,7 +440,7 @@ async def settings_page(request: Request):
       </div>
     </details>''') if local else ''}
 
-    <div class="section">Overnight benchmark</div>
+    <div class="section" id="s-benchmark">Overnight benchmark</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.5rem">
       Full-pipeline benchmark (CR-061): variance calibration &rarr; video all-codecs &times; reps &times; sources &rarr; LLM/RAG/image compare panels.
       Runs as <strong>one queue job that blocks other runs</strong>; follow it on <a href="/queue-status" style="color:var(--accent)">/queue-status</a>, view results at <a href="/benchmark" style="color:var(--accent)">/benchmark</a>.
@@ -435,15 +461,16 @@ async def settings_page(request: Request):
       </div>
     </details>''') if local else ''}
 
-    {(f'''<div class="section">Members</div>
-    <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
-      Magic-link allowlist (<code>data/members.json</code>) — one email per line.
+    {(f'''<div class="section" id="s-members">Members</div>
+    <details><summary style="cursor:pointer;color:var(--text-3);font-size:0.8rem;margin-bottom:0.5rem">Magic-link allowlist ({len(auth.list_members())} email(s)) &mdash; expand to edit</summary>
+    <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin:0.5rem 0 0.75rem">
+      <code>data/members.json</code> — one email per line.
       Lowercased, stripped, deduped and sorted on save. Reloaded into the running service
-      automatically; no restart needed. <span style="color:var(--text-3)">{len(auth.list_members())} email(s)</span>
+      automatically; no restart needed.
     </div>
-    {textarea_field("members", chr(10).join(auth.list_members()), "", rows=12)}''') if local else ''}
+    {textarea_field("members", chr(10).join(auth.list_members()), "", rows=12)}</details>''') if local else ''}
 
-    <div class="section">Tier limits</div>
+    <div class="section" id="s-tiers">Tier limits</div>
     <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin-bottom:0.75rem">
       CR-001 part D — concurrent-job caps and upload-size caps per audience
       tier. Anonymous keyed by IP, Member by email, Lab uncapped.

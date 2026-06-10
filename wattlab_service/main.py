@@ -13,6 +13,7 @@ through the main-level aliases kept at the bottom of the assembly block.
 """
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request, Depends
@@ -330,6 +331,48 @@ async def queue_status_endpoint():
     return queue_control.snapshot()
 
 
+# --- CR-064 — Lab queue controls (cancel-current / empty), on /queue-status.
+# Cancel-current is workload-aware and HONEST about its limits: enhance runs
+# die via `docker kill` on the per-job container name (the run concludes
+# through its normal failed-transcode plumbing — lock/focus released in
+# order); benchmark uses its existing cooperative flag (stops after the
+# current step). Everything else is refused with a 409 — an asyncio cancel
+# would orphan the encoder subprocess AND release the measurement lock,
+# contaminating the next baseline, so we don't fake it.
+
+@app.post("/queue/empty", dependencies=[Depends(requires(SETTINGS_WRITE))])
+async def queue_empty():
+    drained = queue_control.empty_pending()
+    return {"ok": True, "drained": len(drained), "job_ids": drained}
+
+
+@app.post("/queue/cancel-current", dependencies=[Depends(requires(SETTINGS_WRITE))])
+async def queue_cancel_current():
+    jid = queue_control.current_job_id
+    if not jid:
+        return JSONResponse({"ok": False, "error": "Nothing is running"},
+                            status_code=409)
+    j = jobs.get(jid) or {}
+    jtype = j.get("type")
+    if jtype == "enhance":
+        j["cancel_requested"] = True   # covers the pre-container phases too
+        loop = asyncio.get_event_loop()
+        r = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["docker", "kill", f"owl_enhance_{jid}"],
+            capture_output=True, text=True, timeout=20))
+        method = "docker_kill" if r.returncode == 0 else "flag"
+        return {"ok": True, "job_id": jid, "method": method}
+    if jtype == "benchmark":
+        j["cancel_requested"] = True
+        return {"ok": True, "job_id": jid, "method": "cooperative",
+                "note": "stops after the current step"}
+    return JSONResponse(
+        {"ok": False, "error": f"'{jtype}' runs can't be cancelled mid-run — "
+         "they're bounded by their own timeouts. (Killing the coroutine would "
+         "orphan the running tool and contaminate the next baseline.)"},
+        status_code=409)
+
+
 @app.get("/queue-status", response_class=HTMLResponse, dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_page(request: Request):
     # Only Lab (BENCHMARK_RUN) may cancel — gate the button so anonymous
@@ -398,13 +441,19 @@ async function load() {
                 resumeLink(q.running.type, q.running.job_id, q.running.resume_page) +
                 '<div class="label">' + (q.running.label || q.running.job_id) + '</div>' +
                 '<div class="stage">stage: ' + (q.running.stage || '…') + '</div>';
-        if (q.running.type === 'benchmark' && window.CAN_CANCEL) {
-            runHtml += '<button data-bid="' + q.running.job_id + '" onclick="cancelBench(this.dataset.bid)" ' +
+        if (window.CAN_CANCEL) {
+            // CR-064 — workload-aware: enhance = docker kill, benchmark =
+            // cooperative (after current step); others are refused server-side
+            // with the reason, surfaced verbatim below.
+            const note = q.running.type === 'benchmark' ? 'takes effect after the current step'
+                       : q.running.type === 'enhance' ? 'kills the partner container; run lands as cancelled'
+                       : 'this workload may not be cancellable — the server will say';
+            runHtml += '<button onclick="cancelCurrent()" ' +
                 'style="margin-top:0.5rem;background:transparent;color:var(--err);' +
                 'border:1px solid var(--err);padding:0.3rem 0.9rem;cursor:pointer;' +
-                'font-family:monospace;font-size:0.78rem">■ Cancel benchmark</button>' +
-                '<div style="color:var(--text-5);font-size:0.7rem;margin-top:0.3rem">' +
-                'cancel takes effect after the current step</div>';
+                'font-family:monospace;font-size:0.78rem">■ Cancel current run</button>' +
+                '<div style="color:var(--text-5);font-size:0.7rem;margin-top:0.3rem">' + note + '</div>' +
+                '<div id="cancel-note" style="color:var(--warn);font-size:0.74rem;margin-top:0.3rem"></div>';
         }
         html += runHtml + '</div>';
     }
@@ -415,12 +464,30 @@ async function load() {
                 '<div class="label">' + j.label + '</div>' +
                 '<div class="stage">waiting</div></div>';
     });
+    if (window.CAN_CANCEL && (q.pending || []).length) {
+        html += '<button onclick="emptyQueue()" ' +
+            'style="margin-top:0.5rem;background:transparent;color:var(--warn);' +
+            'border:1px solid var(--warn);padding:0.3rem 0.9rem;cursor:pointer;' +
+            'font-family:monospace;font-size:0.78rem">⌫ Empty queue (' + q.pending.length + ' waiting)</button>';
+    }
     el.innerHTML = html;
 }
-async function cancelBench(jid) {
-    if (!confirm('Cancel the running benchmark? It stops after the current step finishes.')) return;
-    const form = new FormData(); form.append('job_id', jid);
-    try { await fetch('/benchmark/cancel', {method:'POST', body: form}); } catch(e) {}
+async function cancelCurrent() {
+    if (!confirm('Cancel the currently running job?')) return;
+    try {
+        const r = await fetch('/queue/cancel-current', {method:'POST'});
+        const d = await r.json();
+        if (!d.ok) {
+            const n = document.getElementById('cancel-note');
+            if (n) n.textContent = d.error || 'Cancel refused';
+            return;
+        }
+    } catch(e) {}
+    load();
+}
+async function emptyQueue() {
+    if (!confirm('Remove ALL waiting jobs from the queue? The running job is not affected.')) return;
+    try { await fetch('/queue/empty', {method:'POST'}); } catch(e) {}
     load();
 }
 load();
