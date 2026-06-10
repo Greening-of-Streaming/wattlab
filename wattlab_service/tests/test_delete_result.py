@@ -12,6 +12,7 @@ import json
 
 import persist
 import main
+import routes_results
 
 
 def test_delete_result_removes_json(tmp_path, monkeypatch):
@@ -38,7 +39,7 @@ def test_delete_result_no_dir_returns_false(tmp_path, monkeypatch):
 def test_endpoint_deletes(tmp_path, monkeypatch):
     monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
     # main imported delete_result by name — point it at the patched persist fn
-    monkeypatch.setattr(main, "delete_result", persist.delete_result)
+    monkeypatch.setattr(routes_results, "delete_result", persist.delete_result)
     d = tmp_path / "image"
     d.mkdir()
     (d / "2026-06-02_img99.json").write_text("{}")
@@ -48,7 +49,7 @@ def test_endpoint_deletes(tmp_path, monkeypatch):
 
 def test_endpoint_not_found(tmp_path, monkeypatch):
     monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
-    monkeypatch.setattr(main, "delete_result", persist.delete_result)
+    monkeypatch.setattr(routes_results, "delete_result", persist.delete_result)
     (tmp_path / "image").mkdir()
     resp = asyncio.run(main.results_delete("image", "ghost"))
     assert getattr(resp, "status_code", None) == 404

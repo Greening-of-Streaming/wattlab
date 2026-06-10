@@ -73,6 +73,7 @@ import routes_image
 import routes_llm
 import routes_video
 import routes_settings
+import routes_results
 import routes_rag
 from routes_findings import _findings_catalog_rows_html, _FINDINGS_CATALOG_CSS
 app.include_router(routes_enhance.router)
@@ -82,6 +83,9 @@ app.include_router(routes_image.router)
 app.include_router(routes_llm.router)
 app.include_router(routes_video.router)
 app.include_router(routes_settings.router)
+app.include_router(routes_results.router)
+# tests call this handler directly (test_delete_result)
+results_delete = routes_results.results_delete
 app.include_router(routes_rag.router)
 # benchmark.py drives compare jobs through these main-level names — keep them
 # pointing at the feature modules (measurement modules stay byte-identical).
@@ -512,132 +516,6 @@ async def cooldown_decision(job_id: str, decision: str = Form(...)):
 @app.get("/queue", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_status_endpoint():
     return queue_control.snapshot()
-
-
-# --- Results: list, JSON download, CSV download ---
-
-@app.get("/results/{job_type}/list", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def results_list(job_type: str, request: Request, limit: int = 10):
-    if job_type not in ("video", "llm", "image"):
-        return JSONResponse({"error": "Invalid type"}, status_code=400)
-    # CR-026: own-jobs scope for non-Lab. Lab passes None → unfiltered.
-    return list_results(job_type, limit=max(1, min(limit, 200)),
-                        visitor_key=queue_control.visitor_key(request))
-
-
-@app.delete("/results/{job_type}/{job_id}", dependencies=[Depends(requires(SETTINGS_WRITE))])
-async def results_delete(job_type: str, job_id: str):
-    """Lab-only — delete a stored result JSON (dev cleanup of test runs). Gated
-    on SETTINGS_WRITE (Lab tier). CSV is generated on the fly, so the JSON is the
-    only artifact to remove."""
-    if job_type not in ("video", "llm", "image"):
-        return JSONResponse({"ok": False, "error": "Invalid type"}, status_code=400)
-    if delete_result(job_type, job_id):
-        return {"ok": True, "deleted": job_id}
-    return JSONResponse({"ok": False, "error": "Not found"}, status_code=404)
-
-
-# CR-026 carve-out for /demo's "show last result" panel.
-#
-# /demo's guided tour pre-loads the most recent persisted result for each
-# workload so visitors land on a populated card rather than an empty page.
-# CR-026's visitor scoping correctly hides cross-visitor jobs from
-# Anonymous, but for /demo specifically we want the latest result to be
-# visible regardless of who ran it — that's the whole point of the
-# pre-loaded panel. This endpoint is the deliberate exception to the
-# CR-026 default: returns the FULL latest result for the requested type
-# (and optional task filter), unfiltered by visitor.
-#
-# Privacy note: the rendered /demo cards use energy figures, model
-# labels, generated text, and produced images — all already meant to
-# be illustrative. If a future Member workflow ever runs anything
-# personally identifying, revisit the model (curated demo-pinned
-# results, redacted shape, or a `is_demo` flag).
-@app.get("/demo/last/{job_type}", dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def demo_last_result(job_type: str, task_eq: str | None = None):
-    """Latest persisted result for /demo's prev-runs panels, unfiltered
-    by visitor (deliberate CR-026 carve-out for the demo surface).
-
-    `job_type='llm'` defaults to *plain* LLM runs — RAG records that
-    persist under results/llm/ (mode='rag', 'rag_compare') are excluded
-    unless the caller passes `task_eq='RAG …'`. This is what makes
-    /demo's LLM step show an actual LLM result instead of accidentally
-    rendering a RAG compare in the wrong widget shape.
-    """
-    if job_type not in ("video", "llm", "image"):
-        return JSONResponse({"error": "Invalid type"}, status_code=400)
-    runs = list_results(job_type, limit=20, visitor_key=None)
-    if task_eq:
-        runs = [r for r in runs if r.get("task") == task_eq]
-    elif job_type == "llm":
-        # Plain-LLM default: only a genuine single inference. Compare/RAG
-        # records (mode=compare_models, rag_compare_models, rag, rag_compare,
-        # both, batch, all, …) persist under results/llm/ too but carry a
-        # different card shape. Pre-loading one into /demo's single-run widget
-        # rendered a "format not recognised" card and (pre-fix) trapped the
-        # tour, since the single-run renderer bailed before revealing Next.
-        # Filter on `mode` (more reliable than the `task` text — compare
-        # records have task=None, so the old "RAG" prefix test let them pass).
-        runs = [r for r in runs if r.get("mode", "single") == "single"]
-    elif job_type == "image":
-        # Same reasoning: the image step's single-run card only handles a
-        # single cpu/gpu generation, not an N-way compare_models record.
-        runs = [r for r in runs if r.get("mode", "cpu") in ("cpu", "gpu")]
-    if not runs:
-        return JSONResponse({"error": "no result"}, status_code=404)
-    full = load_result(job_type, runs[0]["job_id"], visitor_key=None)
-    if full is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    return full
-
-
-@app.get("/results/{job_type}/{job_id}/download.json", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def results_download_json(job_type: str, job_id: str, request: Request):
-    if job_type not in ("video", "llm", "image"):
-        return JSONResponse({"error": "Invalid type"}, status_code=400)
-    data = load_result(job_type, job_id, visitor_key=queue_control.visitor_key(request))
-    if not data:
-        return JSONResponse({"error": "Not found"}, status_code=404)
-    content = json.dumps(data, indent=2)
-    return StreamingResponse(
-        io.BytesIO(content.encode()),
-        media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename=wattlab_{job_type}_{job_id}.json"},
-    )
-
-@app.get("/results/{job_type}/{job_id}/download.csv", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def results_download_csv(job_type: str, job_id: str, request: Request):
-    if job_type not in ("video", "llm", "image"):
-        return JSONResponse({"error": "Invalid type"}, status_code=400)
-    data = load_result(job_type, job_id, visitor_key=queue_control.visitor_key(request))
-    if not data:
-        return JSONResponse({"error": "Not found"}, status_code=404)
-    content = to_csv(job_type, data)
-    return StreamingResponse(
-        io.BytesIO(content.encode()),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=wattlab_{job_type}_{job_id}.csv"},
-    )
-
-
-@app.get("/results/{job_type}/{job_id}/reproduce.zip", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def results_reproduce_zip(job_type: str, job_id: str, request: Request):
-    # CR-040 — video-only V1 (AI results are far less reproducible across GPU
-    # driver / ROCm / cuDNN versions than a video encode is).
-    if job_type != "video":
-        return JSONResponse({"error": "Reproduce bundles are video-only in V1"}, status_code=400)
-    data = load_result(job_type, job_id, visitor_key=queue_control.visitor_key(request))
-    if not data:
-        return JSONResponse({"error": "Not found"}, status_code=404)
-    import reproduce
-    blob = reproduce.build_bundle(job_type, job_id, data, cfg.load().get("variance_pct"))
-    if blob is None:
-        return JSONResponse({"error": "No reproducible encode in this result"}, status_code=422)
-    return StreamingResponse(
-        io.BytesIO(blob),
-        media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename=owl_reproduce_{job_id}.zip"},
-    )
 
 
 # --- Demo mode ---
