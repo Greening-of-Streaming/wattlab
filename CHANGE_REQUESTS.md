@@ -886,6 +886,8 @@ No new UI surface; the backend chip on a result card (if surfaced at all) is a s
 6. NR-quality footnote gains "subject to further refinement pending validation" (call note). Quality metric itself shipped pre-CR (`8b561ea`, CompressedVQA-HDR).
 7. **Past runs** (owner add, 2026-06-10): enhance results become first-class — `persist._SUMMARISERS` entries for `enhance`/`enhance_compare` (kills the `unrecognised_mode` gap), `/results/enhance/*` list/JSON/CSV/delete endpoints, a "Previous runs" section on the page (own-jobs scoped), and the exact expanded `preset_args` + `preset_origin` + `input_stream` stamped on every result.
 8. **Complexity table collapsed** (owner add): the SI/TI "Resulting-file complexity" block renders inside a default-collapsed `<details>` marked "under discussion" — deep-analysis readers opt in.
+9. **4:2:0 by default** (owner decision 2026-06-10, supersedes the call's item-6 "default 4:2:2"): the generator substitutes `--output-csp yuv420` — outputs become HEVC Main10 (browser-decodable) instead of Rext 4:2:2. Jon's template files untouched on disk.
+10. **Advanced args editor** (owner add): default-collapsed "Encoder command — advanced" `<details>` with the selected combo's NVEncC args in a textarea; edits run via a per-job `presets/custom/custom_<job>.args` file and stamp `preset_origin: custom` (can't masquerade as a standard combo). Docker plumbing (mounts/GPU/license) stays fixed and non-editable. The ffmpeg comparison derives res/bitrate/pix_fmt from the actual args, so edited runs stay apples-to-apples automatically.
 
 ### Open questions (all on Jon)
 

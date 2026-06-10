@@ -388,6 +388,9 @@ _ENHANCE_RUN_STYLES = """
             text-transform: uppercase; }
     select { background: var(--bg); color: var(--text); border: 1px solid var(--border-3);
              font-family: monospace; padding: 0.45rem 0.5rem; min-width: 230px; }
+    textarea { background: var(--bg); color: var(--text-2); border: 1px solid var(--border-3);
+               font-family: monospace; font-size: 0.74rem; line-height: 1.5;
+               padding: 0.5rem; width: 100%; min-height: 180px; resize: vertical; }
     button { background: var(--accent); color: #061a10; border: none; font-family: monospace;
              font-weight: bold; padding: 0.55rem 1.1rem; cursor: pointer; font-size: 0.85rem; }
     button.secondary { background: transparent; color: var(--text-2);
@@ -481,6 +484,17 @@ _ENHANCE_RUN_HTML = """
     results may not display correctly on all displays. Bitrate is coupled to the target
     resolution (CBR): SD&nbsp;5 &middot; HD&nbsp;20 &middot; 4K&nbsp;35&nbsp;Mbps &mdash; not user-selectable.
   </div>
+  <details style="margin-bottom:0.85rem">
+    <summary style="cursor:pointer;color:var(--text-4);font-size:0.72rem">Encoder command &mdash; advanced</summary>
+    <div style="color:var(--text-4);font-size:0.7rem;margin:0.4rem 0">
+      The encoder flags the selected combination passes to the partner encoder. Edit
+      before running to override &mdash; the run is then stamped
+      <code>preset_origin: custom</code> so it can't be mistaken for a standard combo.
+      Changing format/resolution reloads this box (edits are discarded). The container
+      plumbing (mounts, GPU, license) is fixed and not editable.
+    </div>
+    <textarea id="argsBox" spellcheck="false"{DISABLED}></textarea>
+  </details>
   <label style="display:flex;align-items:center;gap:0.45rem;color:var(--text-2);font-size:0.8rem;margin-bottom:0.5rem;cursor:pointer">
     <input type="checkbox" id="liveTog"{RUN_DISABLED}> Serve as Live — pace input at 1× realtime
   </label>
@@ -591,6 +605,8 @@ async function startRun() {
   form.append('input_name', input);
   form.append('output_format', _selFmt());
   form.append('sr_target', document.getElementById('srSel').value);
+  var custom = _customArgs();
+  if (custom) form.append('custom_args', custom);
   form.append('live', document.getElementById('liveTog').checked ? 'true' : 'false');
   try {
     var resp = await fetch('/enhance-run/start', { method:'POST', body:form });
@@ -778,9 +794,20 @@ function combosChanged() {
          + ' Mbps CBR · preset ' + combo.preset)
       : 'This combination is not available yet.';
   }
+  var box = document.getElementById('argsBox');
+  if (box) box.value = combo ? (combo.args || '') : '';
   var runBtn = document.getElementById('runBtn');
   if (runBtn) runBtn.disabled = !(RUN_ENABLED && combo);
   updateCompareGate();
+}
+// Power-user override (CR-064): non-empty only when the box differs from the
+// selected combo's generated args.
+function _customArgs() {
+  var combo = _selCombo();
+  var box = document.getElementById('argsBox');
+  if (!combo || !box) return '';
+  var edited = (box.value || '').trim();
+  return (edited && edited !== (combo.args || '').trim()) ? box.value : '';
 }
 async function uploadClip() {
   var f = document.getElementById('upFile').files[0];
@@ -852,6 +879,8 @@ async function startCompare() {
   form.append('input_name', input);
   form.append('output_format', _selFmt());
   form.append('sr_target', document.getElementById('srSel').value);
+  var custom = _customArgs();
+  if (custom) form.append('custom_args', custom);
   form.append('live', 'true');   // compare always paces at 1× — see below
   form.append('ff_filter', ff);
   try {
@@ -1231,6 +1260,7 @@ async def enhance_run_start(request: Request,
                             preset_name: str = Form(""),
                             output_format: str = Form(""),
                             sr_target: str = Form(""),
+                            custom_args: str = Form(""),
                             live: str = Form("false")):
     pf = pixop.preflight()
     if not pf["ok_transcode"]:
@@ -1239,12 +1269,16 @@ async def enhance_run_start(request: Request,
     preset, err = _resolve_run_preset(preset_name, output_format, sr_target)
     if err is not None:
         return err
+    job_id = str(uuid.uuid4())[:8]
+    if custom_args.strip():
+        # Power-user override (CR-064): persist the edited args body as this
+        # run's own preset file — stamps preset_origin "custom".
+        preset = pixop.write_custom_preset(custom_args, job_id)
     if input_name not in pf["inputs"] or not pixop._preset_known(preset, pf):
         return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
     is_live = str(live).lower() in ("true", "1", "on", "yes")
     cleanup = (input_name.startswith("upload_")
                and audience.tier(request) != audience.Tier.Lab)
-    job_id = str(uuid.uuid4())[:8]
     label = f"Enhance — {preset}" + (" · Live 1×" if is_live else "")
 
     async def coro():
@@ -1280,6 +1314,7 @@ async def enhance_run_start_compare(request: Request,
                                     preset_name: str = Form(""),
                                     output_format: str = Form(""),
                                     sr_target: str = Form(""),
+                                    custom_args: str = Form(""),
                                     live: str = Form("false"),
                                     ff_filter: str = Form("lanczos")):
     pf = pixop.preflight()
@@ -1289,6 +1324,9 @@ async def enhance_run_start_compare(request: Request,
     preset, err = _resolve_run_preset(preset_name, output_format, sr_target)
     if err is not None:
         return err
+    job_id = str(uuid.uuid4())[:8]
+    if custom_args.strip():
+        preset = pixop.write_custom_preset(custom_args, job_id)
     if input_name not in pf["inputs"] or not pixop._preset_known(preset, pf):
         return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
     if not pixop.ffmpeg_comparable(preset):
@@ -1298,7 +1336,6 @@ async def enhance_run_start_compare(request: Request,
     is_live = str(live).lower() in ("true", "1", "on", "yes")
     cleanup = (input_name.startswith("upload_")
                and audience.tier(request) != audience.Tier.Lab)
-    job_id = str(uuid.uuid4())[:8]
     label = (f"Enhance compare — {preset} vs ffmpeg {ff}"
              + (" · Live 1×" if is_live else ""))
 

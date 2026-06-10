@@ -847,16 +847,19 @@ def test_generate_presets_full_matrix(tmp_path):
     assert "--cbr 35000" in text
     assert "--transfer bt709" in text          # untouched template line
     assert "sdr_to_hdr=off" in text
+    # 4:2:0 by default (owner decision 2026-06-10) — Main10, browser-decodable.
+    assert "--output-csp yuv420" in text
+    assert "yuv422" not in text
     hdr_sd = (tmp_path / "presets" / combos["hdr_sd"]["preset"]).read_text()
     assert "--output-res 854x480" in hdr_sd
     assert "--cbr 5000" in hdr_sd
     assert "--transfer smpte2084" in hdr_sd
-    # Metadata for the UI.
-    assert combos["hdr_hd"] == {
-        "preset": "generated/owl_hdr_hd_20mbps.args", "format": "HDR",
-        "target": "HD", "res": "1920x1080", "mbps": 20,
-        "template": "tpl_hdr.args",
-    }
+    # Metadata for the UI (args = raw file text for the advanced editor).
+    hd = combos["hdr_hd"]
+    assert hd["preset"] == "generated/owl_hdr_hd_20mbps.args"
+    assert (hd["format"], hd["target"], hd["res"], hd["mbps"]) == ("HDR", "HD", "1920x1080", 20)
+    assert hd["template"] == "tpl_hdr.args"
+    assert hd["args"] == (tmp_path / "presets" / hd["preset"]).read_text()
     # Idempotent — second call leaves identical content.
     before = f.read_text()
     pixop.generate_presets(c)
@@ -896,7 +899,7 @@ def test_generated_preset_spec_and_compare_gate(tmp_path, monkeypatch):
     assert spec["width"] == 1920 and spec["height"] == 1080
     assert spec["bitrate_kbps"] == 20000
     assert spec["hdr_convert"] is True
-    assert spec["output_csp"] == "yuv422" and spec["output_depth"] == 10
+    assert spec["output_csp"] == "yuv420" and spec["output_depth"] == 10
     # HDR combos have no apples-to-apples ffmpeg baseline; SDR combos do.
     assert pixop.ffmpeg_comparable(combos["hdr_hd"]["preset"], c) is False
     assert pixop.ffmpeg_comparable(combos["sdr_hd"]["preset"], c) is True
@@ -1112,3 +1115,51 @@ def test_results_list_accepts_enhance():
     r = client.get("/results/enhance/list", headers=LAB)
     assert r.status_code == 200
     assert isinstance(r.json(), list)
+
+
+# --- CR-064: advanced args editor (custom presets) ---------------------------
+
+def test_write_custom_preset_and_origin(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    name = pixop.write_custom_preset("-c hevc\n--cbr 1234", "abcd1234")
+    assert name == "custom/custom_abcd1234.args"
+    assert (tmp_path / "presets" / name).read_text() == "-c hevc\n--cbr 1234\n"
+    assert pixop.preset_origin(name) == "custom"
+
+
+def test_preset_known_custom_strict(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    pf = {"presets": [], "combos": {}}
+    name = pixop.write_custom_preset("-c hevc", "j1")
+    assert pixop._preset_known(name, pf, _cfg(tmp_path)) is True
+    # Nonexistent custom file, and traversal-shaped names, are rejected.
+    assert pixop._preset_known("custom/custom_nope.args", pf, _cfg(tmp_path)) is False
+    assert pixop._preset_known("custom/../p.args", pf, _cfg(tmp_path)) is False
+    assert pixop._preset_known("custom/custom_../x.args", pf, _cfg(tmp_path)) is False
+
+
+def test_start_route_custom_args_writes_preset(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    _stage(tmp_path, preset=True, inp=True, license=True)
+    _stage_templates(tmp_path)
+    monkeypatch.setattr(pixop, "_image_present", lambda c: True)
+    # Stub the queue (its jobs dict only exists after app startup) — the
+    # route's custom-args file write happens BEFORE enqueue, which is what
+    # this test pins.
+    monkeypatch.setattr(routes_enhance.queue_control, "enqueue",
+                        lambda job_id, t, l, coro, request=None, page=None: 1)
+
+    r = client.post("/enhance-run/start",
+                    data={"input_name": "clip.mov", "output_format": "sdr",
+                          "sr_target": "hd", "custom_args": "-c hevc\n--cbr 9999"},
+                    headers=LAB)
+    assert r.status_code == 200
+    job_id = r.json()["job_id"]
+    custom = tmp_path / "presets" / "custom" / f"custom_{job_id}.args"
+    assert custom.read_text() == "-c hevc\n--cbr 9999\n"
+
+
+def test_enhance_page_has_args_editor():
+    r = client.get("/enhance-run", headers=LAB)
+    assert "Encoder command" in r.text
+    assert "argsBox" in r.text

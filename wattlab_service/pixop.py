@@ -227,6 +227,7 @@ _SR_TARGETS = {  # key → (label, "WxH", CBR kbps)
 }
 _OUTPUT_FORMATS = ("sdr", "hdr")
 _GENERATED_DIR = "generated"
+_CUSTOM_DIR = "custom"   # power-user-edited args bodies, one file per run
 
 # Known-bad combos, excluded from generation until Jon's input-agnostic HDR
 # template lands. 2026-06-10 bisect (1080p SDR input, GoS promo):
@@ -242,13 +243,36 @@ def _combo_preset_name(fmt: str, target: str, kbps: int) -> str:
 
 
 def preset_origin(preset_name: str) -> str:
-    return "generated" if str(preset_name).startswith(f"{_GENERATED_DIR}/") else "staged"
+    name = str(preset_name)
+    if name.startswith(f"{_CUSTOM_DIR}/"):
+        return "custom"
+    return "generated" if name.startswith(f"{_GENERATED_DIR}/") else "staged"
+
+
+def write_custom_preset(args_text: str, job_id: str,
+                        c: Optional[dict] = None) -> str:
+    """Persist a power-user-edited args body (CR-064 advanced editor) as
+    presets/custom/custom_<job>.args and return its preset name. One file per
+    run, kept on disk — together with the result's `preset_args` stamp it
+    makes a custom run reproducible."""
+    c = c or config()
+    _, _, pre = _workdir_paths(c)
+    name = f"{_CUSTOM_DIR}/custom_{job_id}.args"
+    path = pre / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(args_text if args_text.endswith("\n") else args_text + "\n")
+    return name
 
 
 def _generate_preset_text(template_path: Path, res: str, kbps: int) -> str:
-    """Template body with only the `--output-res` / `--cbr` lines replaced —
-    everything else (incl. Jon's comments) byte-identical, so a diff against
-    the template shows exactly the two substitutions."""
+    """Template body with only the `--output-res` / `--cbr` / `--output-csp`
+    lines replaced — everything else (incl. Jon's comments) byte-identical,
+    so a diff against the template shows exactly the substitutions.
+
+    `--output-csp yuv420` (owner decision 2026-06-10, supersedes the call's
+    4:2:2 default): 10-bit 4:2:0 = HEVC Main10, the standard distribution
+    format — broadly browser-decodable, unlike the templates' Rext 4:2:2.
+    Power users can flip it back per-run via the advanced args editor."""
     out = []
     for raw in template_path.read_text().splitlines():
         s = raw.strip()
@@ -256,6 +280,8 @@ def _generate_preset_text(template_path: Path, res: str, kbps: int) -> str:
             out.append(f"--output-res {res}")
         elif s.startswith("--cbr"):
             out.append(f"--cbr {kbps}")
+        elif s.startswith("--output-csp"):
+            out.append("--output-csp yuv420")
         else:
             out.append(raw)
     return "\n".join(out) + "\n"
@@ -290,6 +316,9 @@ def generate_presets(c: Optional[dict] = None) -> dict:
                     "res": res,
                     "mbps": kbps // 1000,
                     "template": c[f"template_{fmt}"],
+                    # Raw file text (comments included) — pre-fills the
+                    # advanced args editor on the page.
+                    "args": text,
                 }
             except Exception:
                 continue
@@ -972,12 +1001,24 @@ def build_realtime(content_s: Optional[float], source_fps: Optional[float],
 
 # --- Measured run -----------------------------------------------------------
 
-def _preset_known(preset_name: str, pf: dict) -> bool:
-    """A runnable preset is either a staged .args file or one of the CR-064
-    generated combo presets (which live under presets/generated/)."""
+_CUSTOM_NAME_RE = re.compile(r"custom/custom_[A-Za-z0-9-]+\.args\Z")
+
+
+def _preset_known(preset_name: str, pf: dict,
+                  c: Optional[dict] = None) -> bool:
+    """A runnable preset is a staged .args file, one of the CR-064 generated
+    combo presets, or a server-written custom args body. The custom branch is
+    a strict-name + file-exists check (the name is server-generated; the
+    regex forecloses traversal via a user-supplied preset_name)."""
     if preset_name in pf["presets"]:
         return True
-    return preset_name in {v["preset"] for v in (pf.get("combos") or {}).values()}
+    if preset_name in {v["preset"] for v in (pf.get("combos") or {}).values()}:
+        return True
+    if _CUSTOM_NAME_RE.fullmatch(str(preset_name)):
+        c = c or config()
+        _, _, pre = _workdir_paths(c)
+        return (pre / preset_name).is_file()
+    return False
 
 
 def _preset_args_soft(path) -> Optional[list]:
