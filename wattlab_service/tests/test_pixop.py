@@ -32,6 +32,9 @@ def _cfg(tmp_path) -> dict:
         "cooldown_s": 1,
         "docker_timeout_s": 60,
         "baseline_polls": 2,
+        "vqa_enabled": True,
+        "vqa_dir": str(tmp_path / "vqa-eval"),   # nonexistent → probe fail-softs
+        "vqa_timeout_s": 60,
     }
 
 
@@ -210,6 +213,8 @@ def test_preflight_fully_configured(tmp_path, monkeypatch):
     assert pf["ok_transcode"] is True
     assert pf["presets"] == ["p.args"]
     assert pf["inputs"] == ["clip.mov"]
+    # missing VQA sandbox is informational only — never a blocking reason
+    assert pf["vqa_ok"] is False
     assert pf["reasons"] == []
 
 
@@ -260,6 +265,10 @@ def test_run_enhance_measurement_shape(tmp_path, monkeypatch):
                                         "live": False, "stdout_tail": "", "stderr_tail": "",
                                         "encode_stats": {"frames": 705, "fps": 51.9}})
     monkeypatch.setattr(pixop, "_probe_input", lambda p: (30.0, 24.0))
+    monkeypatch.setattr(pixop, "probe_vqa_nr",
+                        lambda p, c=None: {"score": 9.5, "model": "CompressedVQA-HDR (NR)"})
+    # stage the output so the VQA gate (transcode.success + output exists) passes
+    (tmp_path / "output" / "clip__p.mp4").write_text("y")
 
     jobs = {"j1": {}}
     res = asyncio.run(
@@ -275,6 +284,10 @@ def test_run_enhance_measurement_shape(tmp_path, monkeypatch):
     # Realtime / Live verdict rides along on the result.
     assert res["result"]["realtime"]["verdict"] == "live"
     assert res["result"]["realtime"]["rtf_steady"] == 2.16
+    # NR VQA on input + output (nullable fields, mocked here)
+    assert res["result"]["source_vqa"]["score"] == 9.5
+    assert res["result"]["vqa"]["score"] == 9.5
+    assert jobs["j1"]["stage"] == "done"
     assert res["scope"].startswith("Device layer only")
     # Lock released.
     assert not (tmp_path / "lock").exists()
@@ -584,6 +597,86 @@ def test_probe_ab_quality_identical_is_json_safe(monkeypatch):
     assert out == {"psnr_db": None, "identical": True, "ssim": 1.0}
 
 
+# --- No-reference VQA (CompressedVQA-HDR) ------------------------------------
+
+def test_parse_vqa_score():
+    # Warning noise before the score line is the normal case.
+    assert pixop._parse_vqa_score(
+        "UserWarning: blah\nQuality score: 9.7559\n") == 9.76
+    assert pixop._parse_vqa_score("Quality score: 7.9") == 7.9
+    assert pixop._parse_vqa_score("no score here") is None
+    assert pixop._parse_vqa_score("") is None
+    assert pixop._parse_vqa_score(None) is None
+
+
+def test_probe_vqa_nr_missing_sandbox_fail_soft(tmp_path, monkeypatch):
+    # Empty vqa_dir → None, and no subprocess is ever spawned.
+    spawned = []
+    monkeypatch.setattr(pixop.subprocess, "run",
+                        lambda *a, **k: spawned.append(a))
+    assert pixop.probe_vqa_nr(tmp_path / "x.mp4", _cfg(tmp_path)) is None
+    assert spawned == []
+
+
+def test_probe_vqa_nr_disabled(tmp_path):
+    c = _cfg(tmp_path)
+    c["vqa_enabled"] = False
+    assert pixop.probe_vqa_nr(tmp_path / "x.mp4", c) is None
+
+
+def _stage_vqa_sandbox(c) -> Path:
+    """Fake the sandbox tree so _vqa_paths resolves; returns the NR dir."""
+    root = Path(c["vqa_dir"])
+    (root / "venv" / "bin").mkdir(parents=True)
+    (root / "venv" / "bin" / "python").write_text("")
+    nr = root / "CompressedVQA-HDR" / "NR"
+    (nr / "ckpts").mkdir(parents=True)
+    (nr / "VQA_NR.py").write_text("")
+    (nr / "ckpts" / "NR_HDR_VQA.pth").write_text("")
+    (nr / "ckpts" / "NR_HDR_VQA.npy").write_text("")
+    return nr
+
+
+def test_probe_vqa_nr_invocation_contract(tmp_path, monkeypatch):
+    # Verified contract: run from cwd=NR dir (relative ckpt paths + cwd import).
+    c = _cfg(tmp_path)
+    nr = _stage_vqa_sandbox(c)
+    clip = tmp_path / "clip.mp4"
+    clip.write_text("x")
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["cwd"] = cmd, kw.get("cwd")
+        class R:
+            stdout = "some warning\nQuality score: 9.7559\n"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    out = pixop.probe_vqa_nr(clip, c)
+    assert out["score"] == 9.76
+    assert out["model"] == "CompressedVQA-HDR (NR)"
+    assert seen["cwd"] == str(nr)
+    assert seen["cmd"][0] == str(Path(c["vqa_dir"]) / "venv" / "bin" / "python")
+    assert "--distorted" in seen["cmd"] and str(clip) in seen["cmd"]
+
+
+def test_probe_vqa_nr_parse_failure_fail_soft(tmp_path, monkeypatch):
+    c = _cfg(tmp_path)
+    _stage_vqa_sandbox(c)
+    clip = tmp_path / "clip.mp4"
+    clip.write_text("x")
+
+    def fake_run(cmd, **kw):
+        class R:
+            stdout = "Traceback (most recent call last): boom"
+            stderr = "boom"
+        return R()
+
+    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    assert pixop.probe_vqa_nr(clip, c) is None
+
+
 # --- run_enhance_compare_measurement (harness mocked) -----------------------
 
 def _mock_harness(monkeypatch, tmp_path, *, out_w=1920, out_h=1080):
@@ -617,6 +710,8 @@ def _mock_harness(monkeypatch, tmp_path, *, out_w=1920, out_h=1080):
                         lambda p, c=None: {"si_mean": 50.0, "frames": 10, "keyframes": 1})
     monkeypatch.setattr(pixop, "probe_ab_quality",
                         lambda a, b: {"psnr_db": 38.5, "ssim": 0.97})
+    monkeypatch.setattr(pixop, "probe_vqa_nr",
+                        lambda p, c=None: {"score": 9.5, "model": "CompressedVQA-HDR (NR)"})
     monkeypatch.setattr(pixop, "run_transcode_subprocess",
                         lambda cmd, t, pacer_cmd=None: {"success": True, "returncode": 0,
                                         "duration_s": 20.0, "docker_cmd": " ".join(cmd),
@@ -652,6 +747,10 @@ def test_run_enhance_compare_shape(tmp_path, monkeypatch):
     assert res["source_complexity"]["si_mean"] == 50.0
     # A↔B differential quality on the comparison
     assert res["comparison"]["ab_quality"] == {"psnr_db": 38.5, "ssim": 0.97}
+    # NR VQA scores on source + both outputs (all nullable in the envelope)
+    assert res["source_vqa"]["score"] == 9.5
+    assert res["ml"]["result"]["vqa"]["score"] == 9.5
+    assert res["ffmpeg"]["result"]["vqa"]["score"] == 9.5
 
 
 def test_run_enhance_compare_rejects_hdr_preset(tmp_path, monkeypatch):

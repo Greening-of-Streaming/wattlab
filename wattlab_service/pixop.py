@@ -64,6 +64,9 @@ def config() -> dict:
         "cooldown_s":    s.get("pixop_cooldown_s", 60),
         "docker_timeout_s": s.get("pixop_docker_timeout_s", 1800),
         "baseline_polls":   s.get("baseline_polls", 10),
+        "vqa_enabled":   s.get("vqa_enabled", True),
+        "vqa_dir":       os.environ.get("OWL_VQA_DIR", s.get("vqa_dir", "/srv/data/owl/vqa-eval")),
+        "vqa_timeout_s": s.get("vqa_timeout_s", 600),
     }
 
 
@@ -244,6 +247,9 @@ def preflight(c: Optional[dict] = None) -> dict:
         "inputs": inputs,
         "ok_selftest": image_present,
         "ok_transcode": bool(image_present and workdir_ok and license_present and presets and inputs),
+        # Informational only — a missing VQA sandbox must never block runs
+        # (the score just goes absent), so this is NOT a reason and gates nothing.
+        "vqa_ok": bool(c["vqa_enabled"] and _vqa_paths(c)),
         "reasons": reasons,
     }
 
@@ -587,6 +593,77 @@ def probe_ab_quality(path_a, path_b) -> Optional[dict]:
     return out or None
 
 
+# --- No-reference VQA (CompressedVQA-HDR) ------------------------------------
+# Credit: CompressedVQA-HDR — Sun et al., arXiv:2507.11900, Apache 2.0. A
+# learned NR model (HDR10 + SDR capable) scoring each file INDEPENDENTLY — the
+# within-run relative indicator for enhancement runs, which have no ground-truth
+# reference (VMAF N/A). Runs as a TERMINAL pass via subprocess to the sandboxed
+# venv at vqa_dir (never loaded into the service process: VRAM released on exit,
+# crash-isolated, vendor-portable — the script itself does cuda-if-available,
+# which ROCm also satisfies). Fail-soft everywhere: no sandbox → no score.
+
+_VQA_SCORE_RE = re.compile(r"Quality score:\s*(-?[\d.]+)")
+_VQA_MODEL_LABEL = "CompressedVQA-HDR (NR)"
+
+
+def _parse_vqa_score(text) -> Optional[float]:
+    """Pull the score from VQA_NR.py stdout (warning noise may precede it)."""
+    m = _VQA_SCORE_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        return round(float(m.group(1)), 2)
+    except ValueError:
+        return None
+
+
+def _vqa_paths(c: dict) -> Optional[tuple[Path, Path]]:
+    """(venv_python, NR_dir) if the sandbox is complete, else None. The NR dir
+    must be the cwd of the run (VQA_NR.py imports NR_model from cwd; ckpt paths
+    are relative)."""
+    root = Path(c["vqa_dir"])
+    venv_python = root / "venv" / "bin" / "python"
+    nr_dir = root / "CompressedVQA-HDR" / "NR"
+    needed = [venv_python, nr_dir / "VQA_NR.py",
+              nr_dir / "ckpts" / "NR_HDR_VQA.pth",
+              nr_dir / "ckpts" / "NR_HDR_VQA.npy"]
+    if all(p.exists() for p in needed):
+        return venv_python, nr_dir
+    return None
+
+
+def probe_vqa_nr(path, c: Optional[dict] = None) -> Optional[dict]:
+    """NR quality score for one clip, or None (disabled / sandbox missing /
+    file missing / timeout / parse failure — the run must never fail on this)."""
+    c = c or config()
+    if not c.get("vqa_enabled"):
+        return None
+    paths = _vqa_paths(c)
+    if paths is None or not Path(path).exists():
+        return None
+    venv_python, nr_dir = paths
+    t0 = time.time()
+    try:
+        r = subprocess.run(
+            [str(venv_python), "VQA_NR.py", "--distorted", str(path),
+             "--model_path", "ckpts/NR_HDR_VQA.pth",
+             "--profile_path", "ckpts/NR_HDR_VQA.npy"],
+            cwd=str(nr_dir), capture_output=True, text=True,
+            timeout=c["vqa_timeout_s"])
+        score = _parse_vqa_score(r.stdout)
+        if score is None:
+            # Sandbox drift (unpatched VQA_NR.py, missing HF cache, …) shows up
+            # here — log the tail so it's diagnosable, but stay fail-soft.
+            print(f"WARN: vqa score parse failed for {path}: "
+                  f"{(r.stderr or r.stdout or '')[-500:]}")
+            return None
+        return {"score": score, "model": _VQA_MODEL_LABEL,
+                "duration_s": round(time.time() - t0, 1)}
+    except Exception as e:
+        print(f"WARN: vqa probe failed for {path}: {e}")
+        return None
+
+
 # NVEncC prints a summary line like
 #   "encoded 705 frames, 51.91 fps, 18067.47 kbps, 63.27 MB"
 # when the encode completes. That fps is the steady-state throughput (excludes
@@ -881,7 +958,7 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
     cmd = build_docker_cmd(input_name, preset_name, output_name, c, live=live)
     pacer_cmd = build_pacer_cmd(input_name, c) if live else None
 
-    return await _measured_pass(
+    res = await _measured_pass(
         c=c, job_id=job_id, jobs=jobs, input_name=input_name,
         input_path=inp / input_name, output_name=output_name,
         output_path=out / output_name, cmd=cmd, pacer_cmd=pacer_cmd, live=live,
@@ -889,6 +966,20 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         preset_label=("Partner GPU transcode / upscale"
                       + (" · Live (1× paced)" if live else "")),
         preset_detail=preset_name, update_stage=True)
+
+    # NR quality (CompressedVQA-HDR) on input + output — terminal, post-lock,
+    # fail-soft (fields nullable). Reuses the existing "probe" stage index.
+    if jobs is not None:
+        jobs[job_id]["stage"] = "probe"
+        jobs[job_id]["substage"] = "vqa"
+    res["result"]["source_vqa"] = probe_vqa_nr(inp / input_name, c)
+    output_path = out / output_name
+    tc_ok = bool((res["result"].get("transcode") or {}).get("success")
+                 and output_path.exists())
+    res["result"]["vqa"] = probe_vqa_nr(output_path, c) if tc_ok else None
+    if jobs is not None:
+        jobs[job_id]["stage"] = "done"
+    return res
 
 
 # --- Compare: ML / partner upscale vs traditional ffmpeg upscale ------------
@@ -1008,6 +1099,14 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
     source_complexity = probe_complexity(input_path, c)
     ab_quality = probe_ab_quality(out / ml_output, out / ff_output) if (ml_ok and ff_ok) else None
 
+    # NR quality (CompressedVQA-HDR) — scores source + both outputs
+    # independently. Terminal like the probes above; all fields nullable.
+    if jobs is not None:
+        jobs[job_id]["substage"] = "vqa"
+    source_vqa = probe_vqa_nr(input_path, c)
+    ml["result"]["vqa"] = probe_vqa_nr(out / ml_output, c) if ml_ok else None
+    ff["result"]["vqa"] = probe_vqa_nr(out / ff_output, c) if ff_ok else None
+
     if jobs is not None:
         jobs[job_id]["stage"] = "done"
 
@@ -1022,6 +1121,7 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
         "ff_filter": ff_filter,
         "target_res": f"{tgt_w}x{tgt_h}",
         "source_complexity": source_complexity,
+        "source_vqa": source_vqa,
         "ml": ml,
         "ffmpeg": ff,
         "comparison": comparison,

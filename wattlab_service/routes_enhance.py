@@ -650,6 +650,7 @@ function renderResult(meas) {
     +   '<div><span class="val">' + (conf.flag || '') + ' ' + (conf.label || '') + '</span><span class="lbl">Confidence</span></div>'
     + '</div>'
     + (streamRows ? '<div style="margin-top:0.5rem">' + streamRows + '</div>' : '')
+    + _vqaRows(r.source_vqa, r.vqa, null)
     + outHtml
     + (window.wlCarbonStrip ? wlCarbonStrip(e.delta_e_wh,
           (r.preset_label || 'Partner GPU transcode'), e.delta_t_s,
@@ -787,6 +788,20 @@ function _vidCell(title, src, name) {
     + '<div style="color:var(--text-4);font-size:0.68rem;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.3rem">' + title + '</div>'
     + media + '</div>';
 }
+// No-reference quality (CompressedVQA-HDR) — nullable per-file scores from the
+// terminal probe. Renders only rows whose score exists; shared by both cards.
+var _VQA_NOTE = '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
+  + 'No-reference score from CompressedVQA-HDR (Sun et al., arXiv:2507.11900, Apache 2.0) '
+  + '— a learned opinion of perceptual quality; higher = better. Use it to compare files '
+  + 'within this run, not as an absolute quality claim.</div>';
+function _vqaRows(srcv, mlv, ffv) {
+  var rows = '';
+  if (srcv && srcv.score != null) rows += _row('NR quality — source', srcv.score, '');
+  if (mlv && mlv.score != null)   rows += _row('NR quality — AI output', mlv.score, '');
+  if (ffv && ffv.score != null)   rows += _row('NR quality — ffmpeg output', ffv.score, '');
+  if (!rows) return '';
+  return '<div style="margin-top:0.5rem">' + rows + '</div>' + _VQA_NOTE;
+}
 // Resulting-file complexity comparison (SI/TI + frame-size stats from the
 // terminal probe), source vs both outputs. Renders only rows with ≥1 value.
 function _cxTable(srccx, mlcx, ffcx) {
@@ -841,7 +856,7 @@ function renderCompare(meas) {
     return _row(lbl + ' energy', wlFmt(e.delta_e_wh, 4) + ' Wh · ' + wlFmt(e.delta_w, 1)
               + ' W · ' + wlFmt(e.delta_t_s, 1) + ' s', '')
          + _row(lbl + ' file size', (r.output_size_mb != null ? r.output_size_mb + ' MB' : '—'), '')
-         + _row(lbl + ' quality', (c.quality || 'TBD'), '')
+         + _row(lbl + ' quality', (r.vqa && r.vqa.score != null) ? r.vqa.score + ' (NR)' : (c.quality || 'TBD'), '')
          + _row(lbl + ' confidence', (conf.flag || '') + ' ' + (conf.label || ''), '');
   }
 
@@ -880,6 +895,7 @@ function renderCompare(meas) {
              + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.2rem">'
              + 'Difference between the two outputs (same resolution) — higher = more alike; not a quality ranking.</div>';
       })()
+    + _vqaRows(meas.source_vqa, mlr.vqa, ffr.vqa)
     + _cxTable(meas.source_complexity, mlr.complexity, ffr.complexity)
     + '<div style="color:var(--text-4);font-size:0.74rem;margin-top:0.6rem;border-left:2px solid var(--border-2);padding-left:0.7rem">'
     +   (c.quality_note || '') + '</div>'

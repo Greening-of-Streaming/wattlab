@@ -67,6 +67,21 @@ Every result JSON under `results/{type}/{date}_{job_id}.json` carries:
 Self-describing manifest: `steps[{kind, status, result_ref{type, job_id}}]`.
 Summariser: `_sum_benchmark`. Views: `routes_benchmark` + `wl-bench-hydrate.js`.
 
+### `enhance` (writer: `pixop.run_enhance_*`, orchestration: `routes_enhance`)
+
+| mode | shape | summariser | JS renderer |
+|---|---|---|---|
+| `enhance` | `result{energy{}, transcode{}, stream{}, realtime{}, vqa?, source_vqa?}` | **none — stamps `unrecognised_mode`** (pre-existing gap, CR candidate) | `renderResult` (inline in routes_enhance.py) |
+| `enhance_compare` | `ml{result{…, vqa?}}, ffmpeg{result{…, vqa?}}, source_vqa?, source_complexity, comparison{ab_quality}` | same gap | `renderCompare` (inline in routes_enhance.py) |
+
+`vqa` / `source_vqa` are **nullable** NR quality stamps (CompressedVQA-HDR —
+Sun et al., arXiv:2507.11900, Apache 2.0): `{score, model, duration_s}` from
+`pixop.probe_vqa_nr`, a terminal post-lock pass shelling out to the sandbox at
+`vqa_dir` (`/srv/data/owl/vqa-eval`). Fail-soft: a missing sandbox / timeout /
+parse failure just omits the score — never blocks the run (`preflight().vqa_ok`
+is informational only). `comparison.quality` stays `"TBD"`: the NR score is a
+learned within-run indicator, not a ground-truth verdict.
+
 ## Consumers (the blast-radius list)
 
 A mode/shape change fans out to, in order of how quickly the break is noticed:

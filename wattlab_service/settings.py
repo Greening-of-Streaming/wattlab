@@ -100,6 +100,14 @@ DEFAULTS = {
     "pixop_presets": [],                     # [] = auto-list *.args in presets/
     "pixop_cooldown_s": 60,
     "pixop_docker_timeout_s": 1800,
+    # No-reference VQA for /enhance-run (CompressedVQA-HDR — Sun et al.,
+    # arXiv:2507.11900, Apache 2.0). Runs as a TERMINAL pass via subprocess to
+    # a sandboxed venv (NOT the service env), so its GPU draw never enters a
+    # reported energy figure and the model never loads into uvicorn. Fail-soft:
+    # a missing sandbox just omits the score.
+    "vqa_enabled": True,
+    "vqa_dir": "/srv/data/owl/vqa-eval",  # sandbox root: CompressedVQA-HDR/ + venv/
+    "vqa_timeout_s": 600,                 # per-file cap (~14 s observed on the 5080)
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
     # CR-015 — auto-lower the maintenance flag after this many minutes of
