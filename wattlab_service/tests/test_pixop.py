@@ -1163,3 +1163,63 @@ def test_enhance_page_has_args_editor():
     r = client.get("/enhance-run", headers=LAB)
     assert "Encoder command" in r.text
     assert "argsBox" in r.text
+
+
+# --- CR-064: keep-after-run checkbox + Lab delete of uploads ------------------
+
+def test_upload_keep_flag_encodes_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "probe_input_stream", lambda p: {"duration_s": 10.0})
+    r = client.post("/enhance-run/upload", data={"keep": "true"},
+                    files={"file": ("c.mp4", b"x" * 16, "video/mp4")}, headers=LAB)
+    assert r.status_code == 200
+    assert r.json()["name"].startswith("upload_keep_")
+    r2 = client.post("/enhance-run/upload", data={"keep": "false"},
+                     files={"file": ("c.mp4", b"x" * 16, "video/mp4")}, headers=LAB)
+    assert r2.json()["name"].startswith("upload_")
+    assert not r2.json()["name"].startswith("upload_keep_")
+
+
+def test_upload_is_ephemeral_rule():
+    assert routes_enhance._upload_is_ephemeral("upload_ab12_clip.mp4") is True
+    assert routes_enhance._upload_is_ephemeral("upload_keep_ab12_clip.mp4") is False
+    assert routes_enhance._upload_is_ephemeral("meridian_hd_p3pq_clip_30s.mov") is False
+
+
+def test_input_delete_lab_only_and_uploads_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    (tmp_path / "input").mkdir(parents=True, exist_ok=True)
+    up = tmp_path / "input" / "upload_keep_aa_clip.mp4"
+    up.write_text("x")
+    staged = tmp_path / "input" / "clip.mov"
+    staged.write_text("x")
+    # Anonymous: gated out entirely (SETTINGS_WRITE).
+    r = client.delete("/enhance-run/input/upload_keep_aa_clip.mp4", headers=ANON)
+    assert r.status_code == 403
+    # Staged clips are protected.
+    r = client.delete("/enhance-run/input/clip.mov", headers=LAB)
+    assert r.status_code == 400
+    assert staged.exists()
+    # Traversal-shaped names rejected.
+    r = client.delete("/enhance-run/input/..%2Fupload_x.mp4", headers=LAB)
+    assert r.status_code in (400, 404)
+    # Uploaded clip deletes.
+    r = client.delete("/enhance-run/input/upload_keep_aa_clip.mp4", headers=LAB)
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert not up.exists()
+    # Already gone → 404.
+    r = client.delete("/enhance-run/input/upload_keep_aa_clip.mp4", headers=LAB)
+    assert r.status_code == 404
+
+
+def test_page_keep_checkbox_and_delete_button_by_tier(monkeypatch):
+    r = client.get("/enhance-run", headers=LAB)
+    assert 'id="keepTog" checked' in r.text     # Lab default: keep
+    assert 'id="delBtn"' in r.text              # Lab sees the ✕
+    monkeypatch.setattr(audience, "tier", lambda req: audience.Tier.Member)
+    r = client.get("/enhance-run", headers=LAB)
+    assert 'id="keepTog" checked' not in r.text  # Member default: ephemeral
+    assert "keepTog" in r.text
+    # The ✕ BUTTON is absent for Members (the JS that references delBtn is
+    # static and null-guarded, so check the element, not the string).
+    assert 'id="delBtn"' not in r.text

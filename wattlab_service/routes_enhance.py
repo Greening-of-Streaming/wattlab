@@ -22,7 +22,7 @@ import pixop
 import queue_control
 import settings as cfg
 import ui
-from capabilities import requires, can, ENHANCE_RUN, PUBLIC_PAGE
+from capabilities import requires, can, ENHANCE_RUN, PUBLIC_PAGE, SETTINGS_WRITE
 from persist import save_result
 from runtime import jobs, job_status as _job_status
 from ui import _PROGRESS_JS, _lock_badge_html, _lock_class
@@ -355,8 +355,10 @@ def _enhance_upload_limits_html() -> str:
     mb = int(s.get("enhance_upload_max_mb", 1024))
     dur = int(s.get("enhance_upload_max_duration_s", 60))
     return (f"Upload limits &mdash; Members: file &le;{mb} MB, clip &le;{dur}s "
-            "&middot; Lab (LAN): uncapped. Uploaded clips are removed after the "
-            "run for Members; outputs are kept with the result.")
+            "&middot; Lab (LAN): uncapped. Un-kept uploads are removed after "
+            "their run (outputs stay with the result); &ldquo;Keep on GoS1&rdquo; "
+            "leaves the clip in the Input menu for future runs &mdash; visible "
+            "to everyone with page access.")
 
 
 _ENHANCE_RUN_STYLES = """
@@ -448,7 +450,9 @@ _ENHANCE_RUN_HTML = """
   <div class="row">
     <div>
       <label for="inSel">Input clip</label>
-      <select id="inSel" onchange="updateInputPreview()"{DISABLED}>{INPUT_OPTIONS}</select>
+      <div style="display:flex;gap:0.4rem;align-items:center">
+        <select id="inSel" onchange="updateInputPreview()"{DISABLED}>{INPUT_OPTIONS}</select>{DEL_BTN}
+      </div>
     </div>
     <div>
       <label for="upFile">Or upload a clip</label>
@@ -459,6 +463,9 @@ _ENHANCE_RUN_HTML = """
       </div>
     </div>
   </div>
+  <label style="display:flex;align-items:center;gap:0.45rem;color:var(--text-2);font-size:0.78rem;text-transform:none;margin-bottom:0.35rem;cursor:pointer">
+    <input type="checkbox" id="keepTog"{KEEP_CHECKED}{DISABLED}> Keep on GoS1 after run
+  </label>
   <div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.85rem">{UPLOAD_LIMITS}</div>
   <div class="row">
     <div>
@@ -585,10 +592,34 @@ function updateInputPreview() {
   var sel = document.getElementById('inSel');
   var wrap = document.getElementById('input-preview');
   var vid = document.getElementById('inVid');
+  // Lab-only ✕: deletable = uploaded clips only (staged clips protected).
+  var del = document.getElementById('delBtn');
+  if (del) del.style.display = (sel && sel.value && sel.value.indexOf('upload_') === 0) ? '' : 'none';
   if (!sel || !sel.value) { wrap.style.display = 'none'; return; }
   vid.src = '/enhance-run/input/' + encodeURIComponent(sel.value);
   wrap.style.display = 'block';
   _wireNativeVids(wrap);
+}
+async function deleteInput() {
+  var sel = document.getElementById('inSel');
+  var name = sel && sel.value;
+  if (!name || name.indexOf('upload_') !== 0) return;
+  if (!confirm('Delete uploaded clip "' + name + '" from GoS1?')) return;
+  try {
+    var resp = await fetch('/enhance-run/input/' + encodeURIComponent(name), { method:'DELETE' });
+    var d = await resp.json();
+    if (!d.ok) {
+      document.getElementById('status').innerHTML =
+        '<div style="color:var(--err)">' + (d.error || 'Delete failed') + '</div>';
+      return;
+    }
+    sel.querySelector('option[value="' + name + '"]').remove();
+    updateInputPreview();
+    document.getElementById('status').innerHTML =
+      '<div style="color:var(--text-3);font-size:0.82rem">Deleted ' + name + '</div>';
+  } catch(e) {
+    document.getElementById('status').innerHTML = '<div style="color:var(--err)">' + e + '</div>';
+  }
 }
 async function startRun() {
   var input = document.getElementById('inSel').value;
@@ -818,6 +849,8 @@ async function uploadClip() {
     '<div style="color:var(--warn);font-size:0.82rem">Uploading ' + f.name + '…</div>';
   var form = new FormData();
   form.append('file', f);
+  var keep = document.getElementById('keepTog');
+  form.append('keep', keep && keep.checked ? 'true' : 'false');
   try {
     var resp = await fetch('/enhance-run/upload', { method:'POST', body:form });
     var d = await resp.json();
@@ -1187,9 +1220,16 @@ def _enhance_cfg_band(pf: dict) -> str:
          dependencies=[Depends(requires(ENHANCE_RUN))])
 async def enhance_run_page(request: Request):
     pf = pixop.preflight()
-    can_run = can(audience.tier(request), ENHANCE_RUN)
+    tier = audience.tier(request)
+    can_run = can(tier, ENHANCE_RUN)
+    is_lab = can(tier, SETTINGS_WRITE)
     run_enabled = can_run and pf["ok_transcode"]
     st_enabled = can_run and pf["ok_selftest"]
+    # Lab-only ✕ next to the input menu (uploaded clips only); JS hides it
+    # whenever the selected input isn't an upload.
+    del_btn = ('<button class="secondary" id="delBtn" onclick="deleteInput()" '
+               'style="display:none;padding:0.45rem 0.6rem" '
+               'title="Delete uploaded clip (Lab)">&#10005;</button>') if is_lab else ""
     return (ui.render_page(request,
                            "UNDER DEVELOPMENT · Video enhancement (GoS only)",
                            styles=_ENHANCE_RUN_STYLES, body=_ENHANCE_RUN_HTML)
@@ -1200,6 +1240,8 @@ async def enhance_run_page(request: Request):
             .replace("{RUN_DISABLED}",     "" if run_enabled else " disabled")
             .replace("{ST_DISABLED}",      "" if st_enabled else " disabled")
             .replace("{INPUT_OPTIONS}",    _enhance_options_html(pf["inputs"]))
+            .replace("{DEL_BTN}",          del_btn)
+            .replace("{KEEP_CHECKED}",     " checked" if is_lab else "")
             .replace("{SR_OPTIONS}",       _enhance_sr_options_html())
             .replace("{UPLOAD_LIMITS}",    _enhance_upload_limits_html())
             .replace("{COMBOS_JSON}",      json.dumps(pf["combos"]))
@@ -1213,9 +1255,19 @@ async def enhance_self_test():
     return await loop.run_in_executor(None, pixop.self_test)
 
 
+def _upload_is_ephemeral(input_name: str) -> bool:
+    """Cleanup rule (CR-064, owner-amended 2026-06-10): retention is the
+    UPLOADER's choice via the "Keep on GoS1 after run" checkbox, encoded in
+    the stored name — `upload_keep_*` persists, plain `upload_*` is removed
+    after its run. Name-based so it survives restarts with no side-state;
+    staged (non-upload) clips are never cleaned."""
+    return (input_name.startswith("upload_")
+            and not input_name.startswith("upload_keep_"))
+
+
 def _cleanup_upload(input_name: str) -> None:
-    """Remove a Member-uploaded input clip after its run (CR-064 retention:
-    inputs dropped, outputs + result JSON kept). Fail-soft."""
+    """Remove an un-kept uploaded input clip after its run (CR-064 retention:
+    input dropped, outputs + result JSON kept). Fail-soft."""
     try:
         inp, _, _ = pixop._workdir_paths(pixop.config())
         (inp / input_name).unlink(missing_ok=True)
@@ -1277,8 +1329,7 @@ async def enhance_run_start(request: Request,
     if input_name not in pf["inputs"] or not pixop._preset_known(preset, pf):
         return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
     is_live = str(live).lower() in ("true", "1", "on", "yes")
-    cleanup = (input_name.startswith("upload_")
-               and audience.tier(request) != audience.Tier.Lab)
+    cleanup = _upload_is_ephemeral(input_name)
     label = f"Enhance — {preset}" + (" · Live 1×" if is_live else "")
 
     async def coro():
@@ -1334,8 +1385,7 @@ async def enhance_run_start_compare(request: Request,
                              "no apples-to-apples ffmpeg baseline"}, status_code=400)
     ff = ff_filter if ff_filter in ("lanczos", "bicubic") else "lanczos"
     is_live = str(live).lower() in ("true", "1", "on", "yes")
-    cleanup = (input_name.startswith("upload_")
-               and audience.tier(request) != audience.Tier.Lab)
+    cleanup = _upload_is_ephemeral(input_name)
     label = (f"Enhance compare — {preset} vs ffmpeg {ff}"
              + (" · Live 1×" if is_live else ""))
 
@@ -1355,7 +1405,8 @@ _UPLOAD_EXTS = {".mov", ".mp4", ".mkv", ".m4v", ".y4m", ".webm"}  # = pixop.list
 
 
 @router.post("/enhance-run/upload", dependencies=[Depends(requires(ENHANCE_RUN))])
-async def enhance_upload(request: Request, file: UploadFile = File(...)):
+async def enhance_upload(request: Request, file: UploadFile = File(...),
+                         keep: str = Form("")):
     """CR-064 — upload a clip into the enhance input dir. Member caps: file
     size (enhance_upload_max_mb) + clip duration (enhance_upload_max_duration_s,
     ffprobe-enforced); Lab is uncapped. The same probe's stream facts are
@@ -1386,7 +1437,10 @@ async def enhance_upload(request: Request, file: UploadFile = File(...)):
                             status_code=413)
 
     safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(orig).stem)[:48] or "clip"
-    name = f"upload_{uuid.uuid4().hex[:8]}_{safe_stem}{ext}"
+    # Retention choice encoded in the name — see _upload_is_ephemeral.
+    prefix = ("upload_keep_" if str(keep).lower() in ("true", "1", "on", "yes")
+              else "upload_")
+    name = f"{prefix}{uuid.uuid4().hex[:8]}_{safe_stem}{ext}"
     inp, _, _ = pixop._workdir_paths(pixop.config())
     inp.mkdir(parents=True, exist_ok=True)
     path = inp / name
@@ -1404,6 +1458,23 @@ async def enhance_upload(request: Request, file: UploadFile = File(...)):
             return JSONResponse({"error": f"Clip is {dur:.0f}s — Member limit is {max_dur}s"},
                                 status_code=413)
     return {"name": name, "duration_s": dur, "input_stream": stream}
+
+
+@router.delete("/enhance-run/input/{name}",
+               dependencies=[Depends(requires(SETTINGS_WRITE))])
+async def enhance_input_delete(name: str):
+    """Lab-only — delete an UPLOADED input clip from the menu. Restricted to
+    `upload_*` names so the curated staged clips (Meridian, BBB) can't be
+    removed by a stray click; basename-only, no traversal."""
+    if Path(name).name != name or not name.startswith("upload_"):
+        return JSONResponse({"ok": False, "error": "Only uploaded clips can be "
+                             "deleted here"}, status_code=400)
+    inp, _, _ = pixop._workdir_paths(pixop.config())
+    path = inp / name
+    if not path.is_file():
+        return JSONResponse({"ok": False, "error": "Not found"}, status_code=404)
+    path.unlink(missing_ok=True)
+    return {"ok": True, "deleted": name}
 
 
 @router.get("/enhance-run/job/{job_id}", dependencies=[Depends(requires(ENHANCE_RUN))])
