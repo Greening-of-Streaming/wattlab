@@ -1131,6 +1131,10 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
     cmd = build_docker_cmd(input_name, preset_name, output_name, c, live=live)
     pacer_cmd = build_pacer_cmd(input_name, c) if live else None
 
+    # do_cooldown=False — same rule as the compare's last pass and video's
+    # all-codecs loop: no trailing cooldown after the LAST measured pass,
+    # since nothing is measured after it (probe + VQA are terminal/decode-only;
+    # the next job protects itself via its own baseline / wait-for-idle).
     res = await _measured_pass(
         c=c, job_id=job_id, jobs=jobs, input_name=input_name,
         input_path=inp / input_name, output_name=output_name,
@@ -1138,7 +1142,7 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         preset_key=preset_name,
         preset_label=("Partner GPU transcode / upscale"
                       + (" · Live (1× paced)" if live else "")),
-        preset_detail=preset_name, update_stage=True)
+        preset_detail=preset_name, update_stage=True, do_cooldown=False)
 
     # NR quality (CompressedVQA-HDR) on input + output — terminal, post-lock,
     # fail-soft (fields nullable). Reuses the existing "probe" stage index.

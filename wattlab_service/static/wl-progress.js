@@ -123,7 +123,9 @@ var WL_VIDEO_STAGES = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Encoding', WL_C
 var WL_LLM_STAGES   = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Inference running', 'Complete'];
 var WL_IMAGE_STAGES = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Generating image', 'Complete'];
 var WL_RAG_STAGES   = ['Baseline poll (' + WL_CFG.baseline_s + 's)', 'Inference running', 'Complete'];
-var WL_ENHANCE_STAGES = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Transcoding', WL_CFG.cooldown_label, 'Probe', 'Done'];
+// No cooldown step: a single enhance run's measured pass is its LAST pass, so
+// it skips the trailing cooldown (same rule as the compare's ffmpeg pass).
+var WL_ENHANCE_STAGES = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Transcoding', 'Probe', 'Done'];
 // Enhance compare flow: two measured passes, each followed by an idle/cooldown
 // step. WL_CFG.idle_label is the toggle-aware label baked above ("Wait for Idle"
 // when wait-for-idle is on, else "Idle").

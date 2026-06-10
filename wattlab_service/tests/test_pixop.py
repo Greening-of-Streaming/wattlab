@@ -280,6 +280,10 @@ def test_run_enhance_measurement_shape(tmp_path, monkeypatch):
         pixop.run_enhance_measurement("clip.mov", "p.args", "j1", jobs))
 
     assert res["mode"] == "enhance"
+    # Single run = LAST measured pass → no trailing cooldown (probe/VQA are
+    # terminal; the next job protects itself). Same rule as compare's ffmpeg
+    # pass and video's all-codecs loop.
+    assert res["cooldown"] is None
     e = res["result"]["energy"]
     assert e["delta_w"] == 81.0          # 131 mean − 50 base
     assert e["delta_e_wh"] is not None

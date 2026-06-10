@@ -504,19 +504,23 @@ _ENHANCE_RUN_HTML = """
     complexity (source vs both outputs). Absolute quality is yours to judge &mdash; no
     ground-truth reference.<span id="cmp-gate" style="color:var(--warn)"></span>
   </div>
-  <div id="input-preview" style="display:none;margin-bottom:0.75rem">
-    <div style="color:var(--text-4);font-size:0.68rem;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.3rem">Input preview</div>
-    <video id="inVid" controls preload="metadata" muted style="width:100%;max-height:320px;background:#000"></video>
-  </div>
-  <button class="secondary" id="stBtn" onclick="selfTest()"{ST_DISABLED}>Run self-test (--check-device)</button>
-  <div style="color:var(--text-4);font-size:0.72rem;margin-top:0.5rem">
-    Self-test proves docker + GPU + image plumbing without measuring energy.
-  </div>
 </div>
 
 <div id="status"></div>
 <div id="result-card" class="result-card"></div>
-<div id="selftest-out"></div>
+
+<div id="input-preview" style="display:none;margin-bottom:1.25rem">
+  <div style="color:var(--text-4);font-size:0.68rem;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.3rem">Input preview</div>
+  <video id="inVid" controls preload="metadata" muted style="width:100%;max-height:320px;background:#000"></video>
+</div>
+
+<div style="margin-bottom:1.25rem">
+  <button class="secondary" id="stBtn" onclick="selfTest()"{ST_DISABLED}>Run self-test (--check-device)</button>
+  <div style="color:var(--text-4);font-size:0.72rem;margin-top:0.5rem">
+    Self-test proves docker + GPU + image plumbing without measuring energy.
+  </div>
+  <div id="selftest-out" style="margin-top:0.5rem"></div>
+</div>
 
 <div id="prev-runs" style="margin-top:2rem;border-top:1px solid var(--border-2);padding-top:1.25rem"></div>
 
@@ -531,7 +535,7 @@ _ENHANCE_RUN_HTML = """
 
 <script>
 function _enhStageIdx(stage) {
-  var m = {baseline:0, transcoding:1, cooldown:2, probe:3, done:4};
+  var m = {baseline:0, transcoding:1, probe:2, done:3};
   return m[stage] != null ? m[stage] : 0;
 }
 function updateInputPreview() {
@@ -602,8 +606,7 @@ async function pollJob(jobId) {
         watts: watts,
         cooldownData: data,
       });
-      var inCooldown = (data.stage || '').indexOf('cooldown') !== -1 && data.cooldown_waited_s != null;
-      setTimeout(function(){ pollJob(jobId); }, inCooldown ? 1000 : 2000);
+      setTimeout(function(){ pollJob(jobId); }, 2000);
     }
   } catch(e) {
     setTimeout(function(){ pollJob(jobId); }, 5000);
