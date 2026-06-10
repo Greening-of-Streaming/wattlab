@@ -452,6 +452,8 @@ async def settings_page(request: Request):
     {field("queue_member_cap",         s['queue_member_cap'],         1, 20,   "jobs",  "concurrent jobs per Member email")}
     {field("upload_size_anonymous_mb", s['upload_size_anonymous_mb'], 10, 1024, "MB",    "Anonymous /video/upload byte cap")}
     {field("upload_size_member_mb",    s['upload_size_member_mb'],    100, 4096, "MB",   "Member /video/upload byte cap")}
+    {field("enhance_upload_max_mb",    s.get('enhance_upload_max_mb', 1024), 10, 4096, "MB", "Member /enhance-run upload byte cap (Lab uncapped)")}
+    {field("enhance_upload_max_duration_s", s.get('enhance_upload_max_duration_s', 60), 10, 3600, "s", "Member /enhance-run clip-duration cap — runs are 1×-paced, so duration ≈ processing time (Lab uncapped)")}
 
     {_models_section_html(s, local)}
 
@@ -493,6 +495,7 @@ async def settings_page(request: Request):
                             'variance_runs','variance_cooldown_s',
                             'queue_anonymous_cap','queue_member_cap',
                             'upload_size_anonymous_mb','upload_size_member_mb',
+                            'enhance_upload_max_mb','enhance_upload_max_duration_s',
                             'bench_video_reps'];
         const bool_fields = ['cooldown_wait_for_idle','cooldown_show_wait_detail'];
         const str_fields = ['members'];

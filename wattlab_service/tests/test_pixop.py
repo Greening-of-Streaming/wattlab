@@ -1223,3 +1223,10 @@ def test_page_keep_checkbox_and_delete_button_by_tier(monkeypatch):
     # The ✕ BUTTON is absent for Members (the JS that references delBtn is
     # static and null-guarded, so check the element, not the string).
     assert 'id="delBtn"' not in r.text
+
+
+def test_settings_page_exposes_enhance_upload_caps():
+    r = client.get("/settings", headers=LAB)
+    assert r.status_code == 200
+    assert 'id="enhance_upload_max_mb"' in r.text
+    assert 'id="enhance_upload_max_duration_s"' in r.text
