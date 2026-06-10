@@ -232,156 +232,233 @@ def _co2e_fields(energy: dict) -> dict:
     }
 
 
+# ── Result-summary dispatch (Phase 4 of the 2026-06 refactor) ───────────────
+# One summariser per (job_type, mode). docs/result_envelope.md is the
+# catalogue of every mode and its consumers — register a new mode THERE and
+# HERE (and in the wlRender* card for its type). An unregistered mode still
+# summarises through the single-run shape so listings don't break, but the
+# summary carries "unrecognised_mode": <mode> — loud in /results lists and
+# trivially greppable — instead of being silently mis-summarised (the
+# S37-class failure).
+
+
+def _sum_benchmark(summary: dict, data: dict) -> dict:
+    # CR-061 — benchmark-run manifest. Self-describing: summarise from the
+    # steps list, tolerant of whatever measures a stored run contains.
+    steps = data.get("steps", [])
+    summary["benchmark_run_id"] = data.get("benchmark_run_id")
+    summary["status"] = data.get("status")
+    summary["started_at"] = data.get("started_at")
+    summary["finished_at"] = data.get("finished_at")
+    summary["total_steps"] = data.get("total_steps", len(steps))
+    summary["n_done"] = sum(1 for s in steps if s.get("status") == "done")
+    summary["n_error"] = sum(1 for s in steps if s.get("status") == "error")
+    return summary
+
+
+# --- image ---
+
+def _sum_image_single(summary: dict, data: dict) -> dict:
+    e = data.get("energy", {})
+    gen = data.get("generation", {})
+    summary["delta_e_wh"] = e.get("delta_e_wh")
+    summary["delta_t_s"] = gen.get("total_s")
+    summary["confidence"] = e.get("confidence", {})
+    summary["b64_png"] = gen.get("b64_png", "")
+    return summary
+
+
+def _sum_image_both(summary: dict, data: dict) -> dict:
+    for side in ("cpu", "gpu"):
+        s = data.get(side, {})
+        e = s.get("energy", {})
+        gen = s.get("generation", {})
+        summary[side] = {
+            "delta_e_wh": e.get("delta_e_wh"),
+            "delta_t_s": gen.get("total_s"),
+            "confidence": e.get("confidence", {}),
+            "b64_png": gen.get("b64_png", ""),
+        }
+    return summary
+
+
+def _sum_image_compare_models(summary: dict, data: dict) -> dict:
+    def _model_summary(s):
+        e = s.get("energy", {})
+        gen = s.get("generation", {})
+        return {
+            "model_key": s.get("model_key"),
+            "model_label": gen.get("model_label"),
+            "size_px": gen.get("size"),
+            "wh_per_image": e.get("wh_per_image"),
+            "delta_e_wh": e.get("delta_e_wh"),
+            "delta_t_s": gen.get("gen_s_per_image"),
+            "confidence": e.get("confidence", {}),
+            "b64_png": gen.get("b64_png", ""),
+        }
+    # Legacy small/large aliases (pre-2026-05-27 records have only these).
+    for side in ("small", "large"):
+        summary[side] = _model_summary(data.get(side, {}))
+    # N-way schema: carry the full per-model list so the renderer can
+    # show every model (not just the first two). Without this, summaries
+    # dropped to small/large and a 3-model run rendered only 2 cards.
+    summary["models"] = [_model_summary(m) for m in data.get("models", [])]
+    return summary
+
+
+# --- video ---
+
+def _sum_video_both(summary: dict, data: dict) -> dict:
+    cpu_r = data.get("cpu", {})
+    gpu_r = data.get("gpu", {})
+    cpu_e = cpu_r.get("energy", {})
+    gpu_e = gpu_r.get("energy", {})
+    summary["cpu_preset"] = cpu_r.get("preset_label")
+    summary["gpu_preset"] = gpu_r.get("preset_label")
+    summary["cpu_delta_e_wh"] = cpu_e.get("delta_e_wh")
+    summary["gpu_delta_e_wh"] = gpu_e.get("delta_e_wh")
+    summary["cpu_duration_s"] = cpu_e.get("delta_t_s")
+    summary["gpu_duration_s"] = gpu_e.get("delta_t_s")
+    summary["cpu_confidence"] = cpu_e.get("confidence", {}).get("flag")
+    summary["gpu_confidence"] = gpu_e.get("confidence", {}).get("flag")
+    return summary
+
+
+def _sum_video_codecs(summary: dict, data: dict) -> dict:
+    a = data.get("analysis", {})
+    best = a.get("most_efficient")
+    summary["most_efficient"] = best["label"] if best else None
+    summary["best_delta_e_wh"] = best["delta_e_wh"] if best else None
+    fastest = a.get("fastest")
+    summary["fastest"] = fastest["label"] if fastest else None
+    # flag if all green
+    codecs = data.get("codecs", {})
+    flags = [data["codecs"][c][s]["energy"].get("confidence", {}).get("flag")
+             for c in codecs for s in ("cpu", "gpu")
+             if c in codecs and s in codecs[c]]
+    summary["all_green"] = all(f == "🟢" for f in flags if f)
+    return summary
+
+
+def _sum_video_single(summary: dict, data: dict) -> dict:
+    result = data.get("result", {})
+    e = result.get("energy", {})
+    summary["preset"] = result.get("preset_label")
+    summary["delta_e_wh"] = e.get("delta_e_wh")
+    summary["duration_s"] = e.get("delta_t_s")
+    summary["confidence"] = e.get("confidence", {}).get("flag")
+    return summary
+
+
+# --- llm family (rag persists under results/llm/) ---
+
+def _llm_tail(summary: dict, e: dict, i: dict) -> dict:
+    summary["mwh_per_token"] = e.get("mwh_per_token")
+    summary["tokens_per_sec"] = i.get("tokens_per_sec")
+    summary["confidence"] = e.get("confidence", {}).get("flag")
+    return summary
+
+
+def _sum_llm_rag(summary: dict, data: dict) -> dict:
+    summary["task"] = f"RAG/{data.get('rag_mode', 'baseline')}"
+    return _llm_tail(summary, data.get("energy", {}), data.get("inference", {}))
+
+
+def _sum_llm_rag_compare(summary: dict, data: dict) -> dict:
+    summary["task"] = "RAG compare (3 modes)"
+    rl = data.get("results", {}).get("rag_large", {})
+    return _llm_tail(summary, rl.get("energy", {}), rl.get("inference", {}))
+
+
+def _sum_llm_all(summary: dict, data: dict) -> dict:
+    summary["task"] = "T1+T2+T3"
+    t3 = data.get("tasks", {}).get("T3", {})
+    return _llm_tail(summary, t3.get("energy", {}), t3.get("inference", {}))
+
+
+def _sum_llm_all_both(summary: dict, data: dict) -> dict:
+    summary["task"] = "T1+T2+T3 · CPU vs GPU"
+    t3 = data.get("gpu", {}).get("T3", {})
+    return _llm_tail(summary, t3.get("energy", {}), t3.get("inference", {}))
+
+
+def _sum_llm_both(summary: dict, data: dict) -> dict:
+    summary["task"] = data.get("task_label")
+    gpu = data.get("gpu", {})
+    return _llm_tail(summary, gpu.get("energy", {}), gpu.get("inference", {}))
+
+
+def _sum_llm_batch(summary: dict, data: dict) -> dict:
+    summary["task"] = data.get("task_label")
+    agg = data.get("aggregate", {})
+    runs = data.get("runs", [])
+    summary["mwh_per_token"] = agg.get("mwh_per_token_mean")
+    summary["tokens_per_sec"] = agg.get("tokens_per_sec_mean")
+    try:
+        summary["confidence"] = runs[-1]["energy"]["confidence"]["flag"]
+    except (IndexError, KeyError):
+        summary["confidence"] = None
+    return summary
+
+
+def _sum_llm_single(summary: dict, data: dict) -> dict:
+    summary["task"] = data.get("task_label")
+    return _llm_tail(summary, data.get("energy", {}), data.get("inference", {}))
+
+
+# mode → summariser, per job_type. The single-run summariser doubles as the
+# fallback for each family (matching the pre-dispatch else-branches, so
+# legacy records keep their exact summaries).
+_SUMMARISERS = {
+    "image": {
+        "cpu": _sum_image_single, "gpu": _sum_image_single,
+        "both": _sum_image_both,
+        "compare_models": _sum_image_compare_models,
+    },
+    "video": {
+        "single": _sum_video_single, "?": _sum_video_single,
+        "both": _sum_video_both,
+        "all_codecs": _sum_video_codecs,
+        "codecs_cpu": _sum_video_codecs, "codecs_gpu": _sum_video_codecs,
+    },
+    "llm": {
+        "single": _sum_llm_single,
+        "rag": _sum_llm_rag,
+        "rag_compare": _sum_llm_rag_compare,
+        "all": _sum_llm_all,
+        "all_both": _sum_llm_all_both,
+        "both": _sum_llm_both,
+        "batch": _sum_llm_batch,
+        # compare-across-models records carry no top-level energy block;
+        # the single-style summary (Nones) matches pre-dispatch behaviour.
+        "compare_models": _sum_llm_single,
+        "rag_compare_models": _sum_llm_single,
+    },
+}
+
+_MODE_DEFAULTS = {"image": "cpu", "video": "?", "llm": "single"}
+_FALLBACKS = {"image": _sum_image_single, "video": _sum_video_single,
+              "llm": _sum_llm_single}
+
+
 def _summarise(job_type: str, data: dict) -> dict:
     summary = {"job_id": data.get("job_id"), "saved_at": data.get("saved_at")}
     if job_type == "benchmark":
-        # CR-061 — benchmark-run manifest. Self-describing: summarise from the
-        # steps list, tolerant of whatever measures a stored run contains.
-        steps = data.get("steps", [])
-        summary["benchmark_run_id"] = data.get("benchmark_run_id")
-        summary["status"] = data.get("status")
-        summary["started_at"] = data.get("started_at")
-        summary["finished_at"] = data.get("finished_at")
-        summary["total_steps"] = data.get("total_steps", len(steps))
-        summary["n_done"] = sum(1 for s in steps if s.get("status") == "done")
-        summary["n_error"] = sum(1 for s in steps if s.get("status") == "error")
-        return summary
-    if job_type == "image":
-        mode = data.get("mode", "cpu")
-        summary["mode"] = mode
+        return _sum_benchmark(summary, data)
+    family = job_type if job_type in _SUMMARISERS else "llm"
+    mode = data.get("mode", _MODE_DEFAULTS[family])
+    summary["mode"] = mode
+    if family == "image":
         summary["full_prompt"] = data.get("full_prompt", data.get("prompt", ""))
         summary["model_label"] = data.get("model_label")
-        if mode == "both":
-            for side in ("cpu", "gpu"):
-                s = data.get(side, {})
-                e = s.get("energy", {})
-                gen = s.get("generation", {})
-                summary[side] = {
-                    "delta_e_wh": e.get("delta_e_wh"),
-                    "delta_t_s": gen.get("total_s"),
-                    "confidence": e.get("confidence", {}),
-                    "b64_png": gen.get("b64_png", ""),
-                }
-        elif mode == "compare_models":
-            def _model_summary(s):
-                e = s.get("energy", {})
-                gen = s.get("generation", {})
-                return {
-                    "model_key": s.get("model_key"),
-                    "model_label": gen.get("model_label"),
-                    "size_px": gen.get("size"),
-                    "wh_per_image": e.get("wh_per_image"),
-                    "delta_e_wh": e.get("delta_e_wh"),
-                    "delta_t_s": gen.get("gen_s_per_image"),
-                    "confidence": e.get("confidence", {}),
-                    "b64_png": gen.get("b64_png", ""),
-                }
-            # Legacy small/large aliases (pre-2026-05-27 records have only these).
-            for side in ("small", "large"):
-                summary[side] = _model_summary(data.get(side, {}))
-            # N-way schema: carry the full per-model list so the renderer can
-            # show every model (not just the first two). Without this, summaries
-            # dropped to small/large and a 3-model run rendered only 2 cards.
-            summary["models"] = [_model_summary(m) for m in data.get("models", [])]
-        else:
-            e = data.get("energy", {})
-            gen = data.get("generation", {})
-            summary["delta_e_wh"] = e.get("delta_e_wh")
-            summary["delta_t_s"] = gen.get("total_s")
-            summary["confidence"] = e.get("confidence", {})
-            summary["b64_png"] = gen.get("b64_png", "")
-        return summary
-    elif job_type == "video":
-        mode = data.get("mode", "?")
-        summary["mode"] = mode
-        if mode == "both":
-            cpu_r = data.get("cpu", {})
-            gpu_r = data.get("gpu", {})
-            cpu_e = cpu_r.get("energy", {})
-            gpu_e = gpu_r.get("energy", {})
-            summary["cpu_preset"] = cpu_r.get("preset_label")
-            summary["gpu_preset"] = gpu_r.get("preset_label")
-            summary["cpu_delta_e_wh"] = cpu_e.get("delta_e_wh")
-            summary["gpu_delta_e_wh"] = gpu_e.get("delta_e_wh")
-            summary["cpu_duration_s"] = cpu_e.get("delta_t_s")
-            summary["gpu_duration_s"] = gpu_e.get("delta_t_s")
-            summary["cpu_confidence"] = cpu_e.get("confidence", {}).get("flag")
-            summary["gpu_confidence"] = gpu_e.get("confidence", {}).get("flag")
-        elif mode in ("all_codecs", "codecs_cpu", "codecs_gpu"):
-            a = data.get("analysis", {})
-            best = a.get("most_efficient")
-            summary["most_efficient"] = best["label"] if best else None
-            summary["best_delta_e_wh"] = best["delta_e_wh"] if best else None
-            fastest = a.get("fastest")
-            summary["fastest"] = fastest["label"] if fastest else None
-            # flag if all green
-            codecs = data.get("codecs", {})
-            flags = [data["codecs"][c][s]["energy"].get("confidence", {}).get("flag")
-                     for c in codecs for s in ("cpu", "gpu")
-                     if c in codecs and s in codecs[c]]
-            summary["all_green"] = all(f == "🟢" for f in flags if f)
-        else:
-            result = data.get("result", {})
-            e = result.get("energy", {})
-            summary["preset"] = result.get("preset_label")
-            summary["delta_e_wh"] = e.get("delta_e_wh")
-            summary["duration_s"] = e.get("delta_t_s")
-            summary["confidence"] = e.get("confidence", {}).get("flag")
-    else:  # llm (including rag)
-        mode = data.get("mode", "single")
-        summary["mode"] = mode
+    elif family == "llm":
         summary["model"] = data.get("model_label")
-        if mode == "rag":
-            summary["task"] = f"RAG/{data.get('rag_mode', 'baseline')}"
-            e = data.get("energy", {})
-            i = data.get("inference", {})
-            summary["mwh_per_token"] = e.get("mwh_per_token")
-            summary["tokens_per_sec"] = i.get("tokens_per_sec")
-            summary["confidence"] = e.get("confidence", {}).get("flag")
-            return summary
-        elif mode == "rag_compare":
-            summary["task"] = "RAG compare (3 modes)"
-            rl = data.get("results", {}).get("rag_large", {})
-            e = rl.get("energy", {})
-            i = rl.get("inference", {})
-            summary["mwh_per_token"] = e.get("mwh_per_token")
-            summary["tokens_per_sec"] = i.get("tokens_per_sec")
-            summary["confidence"] = e.get("confidence", {}).get("flag")
-            return summary
-        elif mode == "all":
-            summary["task"] = "T1+T2+T3"
-            t3 = data.get("tasks", {}).get("T3", {})
-            e = t3.get("energy", {})
-            i = t3.get("inference", {})
-        elif mode == "all_both":
-            summary["task"] = "T1+T2+T3 · CPU vs GPU"
-            t3 = data.get("gpu", {}).get("T3", {})
-            e = t3.get("energy", {})
-            i = t3.get("inference", {})
-        elif mode == "both":
-            summary["task"] = data.get("task_label")
-            gpu = data.get("gpu", {})
-            e = gpu.get("energy", {})
-            i = gpu.get("inference", {})
-        elif mode == "batch":
-            summary["task"] = data.get("task_label")
-            agg = data.get("aggregate", {})
-            runs = data.get("runs", [])
-            summary["mwh_per_token"] = agg.get("mwh_per_token_mean")
-            summary["tokens_per_sec"] = agg.get("tokens_per_sec_mean")
-            try:
-                summary["confidence"] = runs[-1]["energy"]["confidence"]["flag"]
-            except (IndexError, KeyError):
-                summary["confidence"] = None
-            return summary
-        else:  # single
-            summary["task"] = data.get("task_label")
-            e = data.get("energy", {})
-            i = data.get("inference", {})
-        summary["mwh_per_token"] = e.get("mwh_per_token")
-        summary["tokens_per_sec"] = i.get("tokens_per_sec")
-        summary["confidence"] = e.get("confidence", {}).get("flag")
-    return summary
+    handler = _SUMMARISERS[family].get(mode)
+    if handler is None:
+        # Loud contract (docs/result_envelope.md): a mode nobody registered.
+        summary["unrecognised_mode"] = mode
+        handler = _FALLBACKS[family]
+    return handler(summary, data)
 
 
 def _image_rows(data: dict) -> list:

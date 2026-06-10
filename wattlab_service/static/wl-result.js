@@ -103,6 +103,15 @@
          + '</div>';
   };
 
+  // Loud-ish soft-fail (Phase 4 contract, docs/result_envelope.md): when a
+  // record reaches a card renderer that can't make sense of it, say WHICH
+  // mode it carried — a generic note hides mode→renderer mismatches.
+  function _wlBadRecord(kind, r){
+    var m = (r && r.mode) ? ' (mode: ' + r.mode + ')' : '';
+    return '<p class="progress-note" style="color:var(--text-3)">'
+         + kind + ' result format not recognised' + m + ' — run a new measurement.</p>';
+  }
+
   // ─── Video ───────────────────────────────────────────────────────────────
   // Single-device codec sweep card (modes codecs_cpu / codecs_gpu). One shared
   // helper used by BOTH the /video fresh-run renderResult and the prev-row /
@@ -318,7 +327,7 @@
     } else {
       var res = r.result || r;
       var e = res.energy;
-      if (!e) return html + '<p style="color:var(--text-3)">Result format not recognised.</p>';
+      if (!e) return html + _wlBadRecord('Video', r);
       var savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
       html += '<div class="result-card">'
             + '<p class="headline">' + (res.preset_label || 'Video') + ': '
@@ -441,7 +450,7 @@
         inf = { tokens_per_sec: r.summary.tokens_per_sec_mean,
                 output_tokens: '—', response: '' };
       }
-      if (!e) return html + '<p class="progress-note" style="color:var(--text-3)">Result format not recognised — run a new measurement.</p>';
+      if (!e) return html + _wlBadRecord('LLM', r);
       // Use JS-side escape pair for U+1F321 (thermometer) so the Python
       // source stays ASCII-safe; raw emoji round-trips as a Python
       // surrogate pair which can't UTF-8-encode in the response.
@@ -742,7 +751,7 @@
     } else {
       var e = r.energy;
       var gen = r.generation;
-      if (!e) return html + '<p class="progress-note" style="color:var(--text-3)">Result format not recognised — run a new measurement.</p>';
+      if (!e) return html + _wlBadRecord('Image', r);
       var wh = e.wh_per_image || e.delta_e_wh;
       var savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
       var imgHtml = gen && gen.b64_png

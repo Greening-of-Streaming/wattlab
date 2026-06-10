@@ -253,8 +253,13 @@ var WL_CFG = window.WL_CFG;
   // (r.cooldowns = [{method, waited_s, settled, timed_out}, …]). Generic across
   // llm / rag / image / video compares. Returns '' when absent (old results).
   // Lives in _CARBON_JS so it's available on every page wlCarbonStrip is.
+  // Stamp-key variants (docs/result_envelope.md): the measurement modules'
+  // CPU-vs-GPU paths stamp a single dict under "cooldown" — accept that
+  // shape too, so callers can pass r.cooldowns || r.cooldown.
   window.wlCooldownSummary = function(cooldowns){
-    if (!cooldowns || !cooldowns.length) return '';
+    if (!cooldowns) return '';
+    if (!Array.isArray(cooldowns)) cooldowns = [cooldowns];
+    if (!cooldowns.length) return '';
     var parts = cooldowns.map(function(c){
       var s = (c && c.waited_s != null) ? Number(c.waited_s).toFixed(0) + 's' : '?';
       var m = (c && c.method === 'fixed') ? 'fixed' : (c && c.settled ? 'idle' : 'idle\u2192fallback');
