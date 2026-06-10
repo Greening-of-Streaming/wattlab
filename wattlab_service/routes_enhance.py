@@ -600,6 +600,19 @@ function updateInputPreview() {
   wrap.style.display = 'block';
   _wireNativeVids(wrap);
 }
+// After a run, an un-kept upload has been removed server-side — mirror that
+// in the menu/preview so the page never offers a file that no longer exists
+// (pressing play on a vanished src collapses the player to 300×150).
+function _dropEphemeralInput(meas) {
+  var name = (meas && (meas.input_name || (meas.result || {}).input_name)) || '';
+  if (name.indexOf('upload_') !== 0 || name.indexOf('upload_keep_') === 0) return;
+  var sel = document.getElementById('inSel');
+  var opt = sel && sel.querySelector('option[value="' + name + '"]');
+  if (opt) {
+    opt.remove();
+    updateInputPreview();
+  }
+}
 async function deleteInput() {
   var sel = document.getElementById('inSel');
   var name = sel && sel.value;
@@ -668,6 +681,7 @@ async function pollJob(jobId) {
       renderResult(data.result);
       document.getElementById('runBtn').disabled = false;
       loadPrevRuns();
+      _dropEphemeralInput(data.result);
     } else if (data.status === 'error') {
       document.getElementById('status').innerHTML =
         '<div style="color:var(--err)">Error: ' + data.error + '</div>';
@@ -948,6 +962,7 @@ async function pollCompare(jobId) {
       document.getElementById('runBtn').disabled = false;
       updateCompareGate();
       loadPrevRuns();
+      _dropEphemeralInput(data.result);
     } else if (data.status === 'error') {
       document.getElementById('status').innerHTML =
         '<div style="color:var(--err)">Error: ' + data.error + '</div>';
