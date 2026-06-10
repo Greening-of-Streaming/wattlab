@@ -108,6 +108,15 @@ DEFAULTS = {
     "vqa_enabled": True,
     "vqa_dir": "/srv/data/owl/vqa-eval",  # sandbox root: CompressedVQA-HDR/ + venv/
     "vqa_timeout_s": 600,                 # per-file cap (~14 s observed on the 5080)
+    # CR-064 — /enhance-run revamp (June-10 call). Member upload caps (Lab
+    # uncapped); "60 s" = clip DURATION (runs are 1×-paced, so duration ≈
+    # processing time). Colour templates feed the generated 2×3 combo matrix
+    # (output format × SD/HD/4K) — swap for Jon's input-agnostic templates
+    # when they arrive.
+    "enhance_upload_max_mb": 1024,
+    "enhance_upload_max_duration_s": 60,
+    "enhance_template_sdr": "nvencc_fhd_709_20mbps.args",
+    "enhance_template_hdr": "nvencc_fhd_pq_20mbps.args",
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
     # CR-015 — auto-lower the maintenance flag after this many minutes of

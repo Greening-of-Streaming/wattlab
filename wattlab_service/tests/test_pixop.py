@@ -14,7 +14,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import audience
+import persist
 import pixop
+import routes_enhance
 import main
 
 client = TestClient(main.app)
@@ -35,6 +38,8 @@ def _cfg(tmp_path) -> dict:
         "vqa_enabled": True,
         "vqa_dir": str(tmp_path / "vqa-eval"),   # nonexistent → probe fail-softs
         "vqa_timeout_s": 60,
+        "template_sdr": "tpl_sdr.args",          # CR-064 — stage via _stage_templates
+        "template_hdr": "tpl_hdr.args",
     }
 
 
@@ -780,3 +785,322 @@ def test_start_compare_route_409_when_not_configured(monkeypatch):
     r = client.post("/enhance-run/start-compare",
                     data={"input_name": "x", "preset_name": "y"}, headers=LAB)
     assert r.status_code == 409
+
+
+# ═══ CR-064 — /enhance-run revamp ════════════════════════════════════════════
+
+_TPL_SDR = """# General
+--avsw
+-c hevc
+--gop-len 60
+--vpp-resize pixop-live
+--vpp-pixop-live dnn_scaling=on,sdr_to_hdr=off,input_mat=bt709
+--output-res 1920x1080
+--output-depth 10
+--colormatrix bt709
+--transfer bt709
+--output-csp yuv422
+--cbr 20000
+--audio-copy
+"""
+
+_TPL_HDR = """# General
+--avsw
+-c hevc
+--gop-len 60
+--vpp-resize pixop-live
+--vpp-pixop-live dnn_scaling=on,sdr_to_hdr=on,input_mat=bt709
+--output-res 1920x1080
+--output-depth 10
+--colormatrix bt2020nc
+--transfer smpte2084
+--output-csp yuv422
+--cbr 20000
+--audio-copy
+"""
+
+
+def _stage_templates(tmp_path):
+    pre = tmp_path / "presets"
+    pre.mkdir(parents=True, exist_ok=True)
+    (pre / "tpl_sdr.args").write_text(_TPL_SDR)
+    (pre / "tpl_hdr.args").write_text(_TPL_HDR)
+
+
+# --- generated preset matrix --------------------------------------------------
+
+def test_generate_presets_full_matrix(tmp_path):
+    c = _cfg(tmp_path)
+    _stage_templates(tmp_path)
+    combos = pixop.generate_presets(c)
+    assert set(combos) == {"sdr_sd", "sdr_hd", "sdr_4k", "hdr_sd", "hdr_hd", "hdr_4k"}
+    # Substitution: ONLY --output-res and --cbr change; template lines survive.
+    f = tmp_path / "presets" / combos["sdr_4k"]["preset"]
+    text = f.read_text()
+    assert "--output-res 3840x2160" in text
+    assert "--cbr 35000" in text
+    assert "--transfer bt709" in text          # untouched template line
+    assert "sdr_to_hdr=off" in text
+    hdr_sd = (tmp_path / "presets" / combos["hdr_sd"]["preset"]).read_text()
+    assert "--output-res 854x480" in hdr_sd
+    assert "--cbr 5000" in hdr_sd
+    assert "--transfer smpte2084" in hdr_sd
+    # Metadata for the UI.
+    assert combos["hdr_hd"] == {
+        "preset": "generated/owl_hdr_hd_20mbps.args", "format": "HDR",
+        "target": "HD", "res": "1920x1080", "mbps": 20,
+        "template": "tpl_hdr.args",
+    }
+    # Idempotent — second call leaves identical content.
+    before = f.read_text()
+    pixop.generate_presets(c)
+    assert f.read_text() == before
+
+
+def test_generate_presets_missing_template_drops_format(tmp_path):
+    c = _cfg(tmp_path)
+    pre = tmp_path / "presets"
+    pre.mkdir(parents=True, exist_ok=True)
+    (pre / "tpl_sdr.args").write_text(_TPL_SDR)   # no HDR template staged
+    combos = pixop.generate_presets(c)
+    assert set(combos) == {"sdr_sd", "sdr_hd", "sdr_4k"}
+
+
+def test_resolve_combo(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    _stage_templates(tmp_path)
+    combo = pixop.resolve_combo("hdr", "4k")
+    assert combo["preset"] == "generated/owl_hdr_4k_35mbps.args"
+    assert pixop.resolve_combo("sdr", "8k") is None
+    assert pixop.resolve_combo("dolby", "hd") is None
+
+
+def test_preset_origin():
+    assert pixop.preset_origin("generated/owl_sdr_hd_20mbps.args") == "generated"
+    assert pixop.preset_origin("nvencc_fhd_709_20mbps.args") == "staged"
+
+
+def test_generated_preset_spec_and_compare_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    _stage_templates(tmp_path)
+    c = _cfg(tmp_path)
+    combos = pixop.generate_presets(c)
+    spec = pixop.parse_preset_spec(combos["hdr_4k"]["preset"], c)
+    assert spec["width"] == 3840 and spec["height"] == 2160
+    assert spec["bitrate_kbps"] == 35000
+    assert spec["hdr_convert"] is True
+    assert spec["output_csp"] == "yuv422" and spec["output_depth"] == 10
+    # HDR combos have no apples-to-apples ffmpeg baseline; SDR combos do.
+    assert pixop.ffmpeg_comparable(combos["hdr_hd"]["preset"], c) is False
+    assert pixop.ffmpeg_comparable(combos["sdr_hd"]["preset"], c) is True
+
+
+def test_preflight_includes_combos(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "_image_present", lambda c: True)
+    _stage(tmp_path, preset=True, inp=True, license=True)
+    _stage_templates(tmp_path)
+    pf = pixop.preflight()
+    assert len(pf["combos"]) == 6
+    assert pixop._preset_known("generated/owl_sdr_hd_20mbps.args", pf)
+    assert pixop._preset_known("p.args", pf)
+    assert not pixop._preset_known("evil.args", pf)
+
+
+# --- ffmpeg baseline format match (4:2:2 10-bit) -------------------------------
+
+def test_ffmpeg_pix_fmt_mapping(monkeypatch):
+    class _Nv:
+        vendor = "nvidia"
+    class _Amd:
+        vendor = "amd"
+    monkeypatch.setattr(pixop.gpu, "BACKEND", _Nv())
+    assert pixop._ffmpeg_pix_fmt({"output_csp": "yuv422", "output_depth": 10}) == "p210le"
+    assert pixop._ffmpeg_pix_fmt({"output_csp": "yuv420", "output_depth": 10}) == "p010le"
+    assert pixop._ffmpeg_pix_fmt({"output_csp": None, "output_depth": None}) is None
+    monkeypatch.setattr(pixop.gpu, "BACKEND", _Amd())
+    assert pixop._ffmpeg_pix_fmt({"output_csp": "yuv422", "output_depth": 10}) is None
+
+
+def test_build_ffmpeg_upscale_cmd_pix_fmt(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    cmd = pixop.build_ffmpeg_upscale_cmd("in.mov", "out.mp4", 1920, 1080,
+                                         20000, "lanczos", _cfg(tmp_path),
+                                         pix_fmt="p210le")
+    i = cmd.index("-pix_fmt")
+    assert cmd[i + 1] == "p210le"
+    cmd2 = pixop.build_ffmpeg_upscale_cmd("in.mov", "out.mp4", 1920, 1080,
+                                          20000, "lanczos", _cfg(tmp_path))
+    assert "-pix_fmt" not in cmd2
+
+
+# --- upload route ---------------------------------------------------------------
+
+def test_upload_forbidden_for_anonymous():
+    r = client.post("/enhance-run/upload",
+                    files={"file": ("c.mp4", b"x", "video/mp4")}, headers=ANON)
+    assert r.status_code == 403
+
+
+def test_upload_lab_uncapped(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "probe_input_stream",
+                        lambda p: {"duration_s": 120.0, "width": 1920, "height": 1080,
+                                   "color_transfer": "bt709", "hdr": False})
+    r = client.post("/enhance-run/upload",
+                    files={"file": ("My Clip (1).mp4", b"\x00" * 64, "video/mp4")},
+                    headers=LAB)
+    assert r.status_code == 200
+    d = r.json()
+    assert d["name"].startswith("upload_") and d["name"].endswith(".mp4")
+    assert d["duration_s"] == 120.0           # Lab: no duration cap applied
+    assert (tmp_path / "input" / d["name"]).exists()
+    assert d["input_stream"]["hdr"] is False
+
+
+def test_upload_member_duration_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(audience, "tier", lambda r: audience.Tier.Member)
+    monkeypatch.setattr(pixop, "probe_input_stream", lambda p: {"duration_s": 90.0})
+    r = client.post("/enhance-run/upload",
+                    files={"file": ("c.mp4", b"x" * 32, "video/mp4")}, headers=LAB)
+    assert r.status_code == 413
+    assert "60s" in r.json()["error"]
+    assert not list((tmp_path / "input").glob("upload_*"))   # rejected file removed
+
+
+def test_upload_member_size_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(audience, "tier", lambda r: audience.Tier.Member)
+    monkeypatch.setattr(routes_enhance.cfg, "load",
+                        lambda: {"enhance_upload_max_mb": 0,
+                                 "enhance_upload_max_duration_s": 60})
+    r = client.post("/enhance-run/upload",
+                    files={"file": ("c.mp4", b"x" * 1024, "video/mp4")}, headers=LAB)
+    assert r.status_code == 413
+    assert "MB" in r.json()["error"]
+
+
+def test_upload_member_unprobeable_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(audience, "tier", lambda r: audience.Tier.Member)
+    monkeypatch.setattr(pixop, "probe_input_stream", lambda p: None)
+    r = client.post("/enhance-run/upload",
+                    files={"file": ("c.mp4", b"not a video", "video/mp4")}, headers=LAB)
+    assert r.status_code == 400
+
+
+def test_upload_bad_extension(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    r = client.post("/enhance-run/upload",
+                    files={"file": ("evil.txt", b"x", "text/plain")}, headers=LAB)
+    assert r.status_code == 400
+
+
+def test_cleanup_upload(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    (tmp_path / "input").mkdir(parents=True, exist_ok=True)
+    f = tmp_path / "input" / "upload_abc_clip.mp4"
+    f.write_text("x")
+    routes_enhance._cleanup_upload("upload_abc_clip.mp4")
+    assert not f.exists()
+
+
+# --- start routes: combo resolution -------------------------------------------
+
+def test_start_route_rejects_unknown_combo(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "preflight",
+                        lambda c=None: {"ok_transcode": True, "inputs": ["clip.mov"],
+                                        "presets": [], "combos": {}, "reasons": []})
+    _stage_templates(tmp_path)
+    r = client.post("/enhance-run/start",
+                    data={"input_name": "clip.mov", "output_format": "sdr",
+                          "sr_target": "8k"}, headers=LAB)
+    assert r.status_code == 400
+    assert "not available" in r.json()["error"]
+
+
+def test_start_route_requires_some_preset(monkeypatch):
+    monkeypatch.setattr(pixop, "preflight",
+                        lambda c=None: {"ok_transcode": True, "inputs": ["clip.mov"],
+                                        "presets": [], "combos": {}, "reasons": []})
+    r = client.post("/enhance-run/start",
+                    data={"input_name": "clip.mov"}, headers=LAB)
+    assert r.status_code == 400
+    assert "No preset" in r.json()["error"]
+
+
+# --- page: new controls ---------------------------------------------------------
+
+def test_enhance_page_has_cr064_controls():
+    r = client.get("/enhance-run", headers=LAB)
+    assert r.status_code == 200
+    assert "Super Resolution" in r.text
+    assert 'name="outFmt"' in r.text
+    assert "srSel" in r.text
+    assert "preSel" not in r.text             # raw preset select is gone
+    assert "prev-runs" in r.text              # previous-runs section present
+    assert "viewing environment" in r.text    # HDR footnote
+    assert "upFile" in r.text                 # upload control
+
+
+# --- persist: summarisers + CSV --------------------------------------------------
+
+def test_summarise_enhance_single():
+    rec = {"job_id": "j1", "saved_at": "2026-06-10T20:00:00", "mode": "enhance",
+           "result": {"preset_key": "generated/owl_sdr_hd_20mbps.args",
+                      "preset_label": "Partner GPU transcode / upscale",
+                      "input_name": "clip.mov", "live": True,
+                      "energy": {"delta_e_wh": 1.23, "delta_t_s": 31.0,
+                                 "confidence": {"flag": "🟢", "label": "Repeatable"}},
+                      "vqa": {"score": 8.61}}}
+    s = persist._summarise("enhance", rec)
+    assert "unrecognised_mode" not in s
+    assert s["mode"] == "enhance"
+    assert s["delta_e_wh"] == 1.23
+    assert s["confidence"] == "🟢"
+    assert s["vqa_score"] == 8.61
+    assert s["preset_key"] == "generated/owl_sdr_hd_20mbps.args"
+
+
+def test_summarise_enhance_compare():
+    rec = {"job_id": "j2", "saved_at": "t", "mode": "enhance_compare",
+           "preset_key": "generated/owl_sdr_hd_20mbps.args",
+           "input_name": "clip.mov", "ff_filter": "lanczos",
+           "target_res": "1920x1080",
+           "comparison": {"ml_delta_e_wh": 2.0, "ff_delta_e_wh": 1.0,
+                          "energy_ratio": 2.0},
+           "ml": {"result": {"energy": {"confidence": {"flag": "🟢"}},
+                             "vqa": {"score": 9.1}}},
+           "ffmpeg": {"result": {"energy": {"confidence": {"flag": "🟡"}},
+                                 "vqa": {"score": 8.7}}}}
+    s = persist._summarise("enhance", rec)
+    assert "unrecognised_mode" not in s
+    assert s["energy_ratio"] == 2.0
+    assert s["ml_confidence"] == "🟢" and s["ff_confidence"] == "🟡"
+    assert s["ml_vqa_score"] == 9.1 and s["ff_vqa_score"] == 8.7
+
+
+def test_enhance_csv_two_rows_for_compare():
+    rec = {"job_id": "j2", "saved_at": "t", "mode": "enhance_compare",
+           "input_name": "clip.mov",
+           "ml": {"result": {"preset_key": "p", "preset_origin": "generated",
+                             "live": True, "output_size_mb": 10.0,
+                             "stream": {"width": 1920, "height": 1080},
+                             "energy": {"delta_e_wh": 2.0, "confidence": {"flag": "🟢"}},
+                             "transcode": {"docker_cmd": "docker run …"}}},
+           "ffmpeg": {"result": {"preset_key": "ffmpeg:lanczos",
+                                 "energy": {"delta_e_wh": 1.0,
+                                            "confidence": {"flag": "🟡"}}}}}
+    csv_text = persist.to_csv("enhance", rec)
+    lines = [l for l in csv_text.splitlines() if l and not l.startswith("#")]
+    assert len(lines) == 3                    # header + ai + ffmpeg
+    assert lines[1].split(",")[3] == "ai"
+    assert lines[2].split(",")[3] == "ffmpeg"
+
+
+def test_results_list_accepts_enhance():
+    r = client.get("/results/enhance/list", headers=LAB)
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)

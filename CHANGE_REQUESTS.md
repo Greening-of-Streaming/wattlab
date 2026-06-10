@@ -867,6 +867,39 @@ No new UI surface; the backend chip on a result card (if surfaced at all) is a s
 
 ---
 
+## CR-064 · /enhance-run revamp — upload, format/resolution controls, generated presets
+
+**Status:** logged 2026-06-10, implementation started same day.
+**Triggered by:** June 10 call with Jon (Pixop) + Tania. Jon is decision-maker; HDR stays (over Tania's objection to drop it).
+
+### Problem
+
+`/enhance-run` exposes raw `.args` preset files and fixed staged clips. The call agreed a user-facing flow: upload or pick a clip, choose output format (SDR/HDR) + Super Resolution target (SD/HD/4K), bitrate auto-coupled — preset selected silently. Only 3 hand-written presets exist; the 2×3 combo matrix needs 6, generated rather than hand-authored.
+
+### Agreed direction
+
+1. **No input probe driving the UI** (Jon's simplification): six static combos work on any input — pixop-live auto-downscales when the target is below source. Probe results (w/h/duration/colour-transfer) are stamped on the result JSON as provenance only.
+2. **Preset generation:** two colour templates (SDR-out / HDR-out) × `--output-res` (854×480 / 1920×1080 / 3840×2160) × `--cbr` (5000 / 20000 / 35000 — CBR, never user-chosen) → `presets/generated/*.args`. Interim templates derived from Jon's `fhd_709` / `fhd_pq` files (correct for SDR input); swap in his blessed input-agnostic templates when they arrive. Generated presets stamp `preset_origin: generated`.
+3. **UI:** Output Format radio (SDR default; HDR + viewing-environment footnote) + "Super Resolution" dropdown (SD / HD default / 4K), bitrate read-only. Flow: select/upload → format → resolution → Run. `<details>` keeps full generated args for transparency. Page label stays "Video Enhancement".
+4. **Upload:** Member 1 GB + clip duration ≤ 60 s (ffprobe-enforced; reading of the call's "60 s processing time" — runs are 1×-paced so duration ≈ processing time); Lab uncapped; limits shown pre-upload; Anonymous already excluded by the page gate. Member upload inputs deleted after the run (outputs kept).
+5. **ffmpeg comparison side** matched to preset output (4:2:2 10-bit HEVC, `p210le` verified in ffmpeg-master's hevc_nvenc) to stay apples-to-apples.
+6. NR-quality footnote gains "subject to further refinement pending validation" (call note). Quality metric itself shipped pre-CR (`8b561ea`, CompressedVQA-HDR).
+7. **Past runs** (owner add, 2026-06-10): enhance results become first-class — `persist._SUMMARISERS` entries for `enhance`/`enhance_compare` (kills the `unrecognised_mode` gap), `/results/enhance/*` list/JSON/CSV/delete endpoints, a "Previous runs" section on the page (own-jobs scoped), and the exact expanded `preset_args` + `preset_origin` + `input_stream` stamped on every result.
+8. **Complexity table collapsed** (owner add): the SI/TI "Resulting-file complexity" block renders inside a default-collapsed `<details>` marked "under discussion" — deep-analysis readers opt in.
+
+### Open questions (all on Jon)
+
+- Input-agnostic **HDR-out** colour template: auto-detect `input_mat`? does `sdr_to_hdr=on` no-op on PQ input? (Current `fhd_pq` flags would inverse-tone-map already-HDR content.)
+- Blessed **HDR→SDR** tone-map flags for the SDR-out template on HDR input (no `hdr_to_sdr` visible in `--vpp-pixop-live` options).
+- `dnn_scaling` behaviour at ~×4.5 (480p → 4K).
+- Tania: statistical-significance thresholds for confidence badges (global `confidence.py` follow-up, not this CR).
+
+### Lab look & feel constraint
+
+Two compact controls replace the preset `<select>`; no new cards. Limits line is one muted sentence. Follow-up review with Jon/Tania planned before the page sheds its "UNDER DEVELOPMENT" banner.
+
+---
+
 ## Caught during the session but **not** new CRs
 
 For the record, several items came up that don't warrant new CR entries:

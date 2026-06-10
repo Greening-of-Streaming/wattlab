@@ -71,8 +71,8 @@ Summariser: `_sum_benchmark`. Views: `routes_benchmark` + `wl-bench-hydrate.js`.
 
 | mode | shape | summariser | JS renderer |
 |---|---|---|---|
-| `enhance` | `result{energy{}, transcode{}, stream{}, realtime{}, vqa?, source_vqa?}` | **none — stamps `unrecognised_mode`** (pre-existing gap, CR candidate) | `renderResult` (inline in routes_enhance.py) |
-| `enhance_compare` | `ml{result{…, vqa?}}, ffmpeg{result{…, vqa?}}, source_vqa?, source_complexity, comparison{ab_quality}` | same gap | `renderCompare` (inline in routes_enhance.py) |
+| `enhance` | `result{energy{}, transcode{}, stream{}, realtime{}, vqa?, source_vqa?, preset_args?, preset_origin, input_stream?}` | `_sum_enhance_single` (CR-064) | `renderResultHtml` (inline in routes_enhance.py; also the prev-runs expand) |
+| `enhance_compare` | `ml{result{…, vqa?, preset_args?, preset_origin}}, ffmpeg{result{…, vqa?}}, source_vqa?, input_stream?, source_complexity, comparison{ab_quality}` | `_sum_enhance_compare` (CR-064) | `renderCompareHtml` (ditto) |
 
 `vqa` / `source_vqa` are **nullable** NR quality stamps (CompressedVQA-HDR —
 Sun et al., arXiv:2507.11900, Apache 2.0): `{score, model, duration_s}` from
@@ -81,6 +81,16 @@ Sun et al., arXiv:2507.11900, Apache 2.0): `{score, model, duration_s}` from
 parse failure just omits the score — never blocks the run (`preflight().vqa_ok`
 is informational only). `comparison.quality` stays `"TBD"`: the NR score is a
 learned within-run indicator, not a ground-truth verdict.
+
+CR-064 provenance fields (all nullable, never drive behaviour):
+`preset_args` = the exact expanded token list; `preset_origin` =
+`generated | staged` (generated = the 2×3 combo matrix under
+`presets/generated/`, derived from the colour templates); `input_stream` =
+ffprobe facts about the source (codec/res/pix_fmt/colour-transfer/`hdr`).
+Enhance results browse like every other type: `/results/enhance/list` +
+`download.json` / `download.csv` (`persist._enhance_rows`, one CSV row per
+measured pass), rendered by the page's own prev-runs section — the
+`wl-result.js` `wlExpandPrevRow` registry does NOT know `enhance`.
 
 ## Consumers (the blast-radius list)
 

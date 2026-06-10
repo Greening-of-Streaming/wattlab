@@ -67,6 +67,11 @@ def config() -> dict:
         "vqa_enabled":   s.get("vqa_enabled", True),
         "vqa_dir":       os.environ.get("OWL_VQA_DIR", s.get("vqa_dir", "/srv/data/owl/vqa-eval")),
         "vqa_timeout_s": s.get("vqa_timeout_s", 600),
+        # CR-064 — colour templates the generated combo matrix derives from.
+        # Interim: Jon's staged FHD presets (correct for SDR input); swap for
+        # his blessed input-agnostic templates when they arrive.
+        "template_sdr":  s.get("enhance_template_sdr", "nvencc_fhd_709_20mbps.args"),
+        "template_hdr":  s.get("enhance_template_hdr", "nvencc_fhd_pq_20mbps.args"),
     }
 
 
@@ -149,7 +154,8 @@ def parse_preset_spec(preset_name: str, c: Optional[dict] = None) -> dict:
     c = c or config()
     _, _, pre = _workdir_paths(c)
     spec = {"width": None, "height": None, "scale_factor": None,
-            "bitrate_kbps": None, "hdr_convert": False, "stays_sdr": False}
+            "bitrate_kbps": None, "hdr_convert": False, "stays_sdr": False,
+            "output_csp": None, "output_depth": None}
     try:
         args = " ".join(read_preset_args(pre / preset_name))
     except Exception:
@@ -176,6 +182,14 @@ def parse_preset_spec(preset_name: str, c: Optional[dict] = None) -> dict:
         spec["hdr_convert"] = True
     elif "transfer bt709" in args:
         spec["stays_sdr"] = True
+    # CR-064 — output chroma subsampling + bit depth, so the ffmpeg baseline
+    # can match the preset's actual output format (apples-to-apples).
+    mc = re.search(r"--output-csp\s+(\S+)", args)
+    if mc:
+        spec["output_csp"] = mc.group(1)
+    md = re.search(r"--output-depth\s+(\d+)", args)
+    if md:
+        spec["output_depth"] = int(md.group(1))
     return spec
 
 
@@ -195,6 +209,91 @@ def list_inputs(c: Optional[dict] = None) -> list[str]:
                       if p.is_file() and p.suffix.lower() in exts)
     except Exception:
         return []
+
+
+# --- CR-064: generated preset matrix (Output Format × Super Resolution) -----
+# Six combos (sdr|hdr × sd|hd|4k) generated from two Jon-authored colour
+# templates by substituting ONLY `--output-res` and `--cbr` — OWL never
+# authors encoder flags. Bitrate is COUPLED to the target (June-10 call),
+# never user-chosen. Written under presets/generated/ so every file-based
+# mechanism (read_preset_args / describe_preset / parse_preset_spec /
+# preset_key provenance) works unchanged; list_presets' non-recursive glob
+# keeps them out of the raw staged-preset listing.
+
+_SR_TARGETS = {  # key → (label, "WxH", CBR kbps)
+    "sd": ("SD", "854x480", 5000),
+    "hd": ("HD", "1920x1080", 20000),
+    "4k": ("4K", "3840x2160", 35000),
+}
+_OUTPUT_FORMATS = ("sdr", "hdr")
+_GENERATED_DIR = "generated"
+
+
+def _combo_preset_name(fmt: str, target: str, kbps: int) -> str:
+    return f"{_GENERATED_DIR}/owl_{fmt}_{target}_{kbps // 1000}mbps.args"
+
+
+def preset_origin(preset_name: str) -> str:
+    return "generated" if str(preset_name).startswith(f"{_GENERATED_DIR}/") else "staged"
+
+
+def _generate_preset_text(template_path: Path, res: str, kbps: int) -> str:
+    """Template body with only the `--output-res` / `--cbr` lines replaced —
+    everything else (incl. Jon's comments) byte-identical, so a diff against
+    the template shows exactly the two substitutions."""
+    out = []
+    for raw in template_path.read_text().splitlines():
+        s = raw.strip()
+        if s.startswith("--output-res"):
+            out.append(f"--output-res {res}")
+        elif s.startswith("--cbr"):
+            out.append(f"--cbr {kbps}")
+        else:
+            out.append(raw)
+    return "\n".join(out) + "\n"
+
+
+def generate_presets(c: Optional[dict] = None) -> dict:
+    """(Re)generate the combo matrix into presets/generated/. Returns
+    {"<fmt>_<target>": {preset, format, target, res, mbps, template}} for every
+    combo whose colour template exists. Write-if-changed (no mtime churn);
+    fail-soft per format — a missing template just drops that format's combos."""
+    c = c or config()
+    _, _, pre = _workdir_paths(c)
+    combos: dict = {}
+    for fmt in _OUTPUT_FORMATS:
+        tpl = pre / c[f"template_{fmt}"]
+        if not tpl.is_file():
+            continue
+        for tkey, (tlabel, res, kbps) in _SR_TARGETS.items():
+            name = _combo_preset_name(fmt, tkey, kbps)
+            try:
+                text = _generate_preset_text(tpl, res, kbps)
+                path = pre / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists() or path.read_text() != text:
+                    path.write_text(text)
+                combos[f"{fmt}_{tkey}"] = {
+                    "preset": name,
+                    "format": fmt.upper(),
+                    "target": tlabel,
+                    "res": res,
+                    "mbps": kbps // 1000,
+                    "template": c[f"template_{fmt}"],
+                }
+            except Exception:
+                continue
+    return combos
+
+
+def resolve_combo(output_format: str, sr_target: str,
+                  c: Optional[dict] = None) -> Optional[dict]:
+    """Combo dict for a (format, target) pair, or None if not generatable."""
+    fmt = str(output_format).lower()
+    tgt = str(sr_target).lower()
+    if fmt not in _OUTPUT_FORMATS or tgt not in _SR_TARGETS:
+        return None
+    return generate_presets(c).get(f"{fmt}_{tgt}")
 
 
 # --- Preflight --------------------------------------------------------------
@@ -225,6 +324,7 @@ def preflight(c: Optional[dict] = None) -> dict:
     license_present = Path(c["license_path"]).exists()
     presets = list_presets(c)
     inputs = list_inputs(c)
+    combos = generate_presets(c)  # CR-064 — format×resolution matrix
 
     reasons = []
     if not image_present:
@@ -245,6 +345,7 @@ def preflight(c: Optional[dict] = None) -> dict:
         "license_present": license_present,
         "presets": presets,
         "inputs": inputs,
+        "combos": combos,
         "ok_selftest": image_present,
         "ok_transcode": bool(image_present and workdir_ok and license_present and presets and inputs),
         # Informational only — a missing VQA sandbox must never block runs
@@ -360,6 +461,26 @@ def build_docker_cmd(input_name: str, preset_name: str, output_name: str,
 
 _DEFAULT_FF_BITRATE_KBPS = 10000   # fallback when a preset carries no --cbr
 
+# CR-064 — (output_csp, output_depth) → NVENC input pixel format, so the ffmpeg
+# baseline encodes at the SAME chroma subsampling + bit depth as the partner
+# preset (4:2:2 10-bit needs the Blackwell NVENC; verified present in
+# ffmpeg-master's hevc_nvenc). Unmapped combos fall back to the encoder
+# default — the result card's probed pix_fmt shows the truth either way.
+_NVENC_PIX_FMT = {
+    ("yuv422", 10): "p210le",
+    ("yuv420", 10): "p010le",
+    ("yuv422", 8):  "nv16",
+    ("yuv444", 10): "yuv444p10msble",
+}
+
+
+def _ffmpeg_pix_fmt(spec: dict) -> Optional[str]:
+    """NVENC pixel format matching the preset's output, or None (encoder
+    default). Nvidia-only — other vendors keep their default path."""
+    if gpu.BACKEND.vendor != "nvidia":
+        return None
+    return _NVENC_PIX_FMT.get((spec.get("output_csp"), spec.get("output_depth")))
+
 
 def _ffmpeg_output_name(input_name: str, preset_name: str, ff_filter: str) -> str:
     return f"{Path(input_name).stem}__{Path(preset_name).stem}__ff-{ff_filter}.mp4"
@@ -368,7 +489,8 @@ def _ffmpeg_output_name(input_name: str, preset_name: str, ff_filter: str) -> st
 def build_ffmpeg_upscale_cmd(input_name: str, output_name: str,
                              target_w: int, target_h: int,
                              bitrate_kbps: Optional[int], ff_filter: str,
-                             c: Optional[dict] = None, live: bool = False) -> list[str]:
+                             c: Optional[dict] = None, live: bool = False,
+                             pix_fmt: Optional[str] = None) -> list[str]:
     """A traditional (non-ML) upscale baseline: ffmpeg's `scale` filter at the
     SAME target resolution + bitrate as the partner preset, encoded with HEVC
     (NVENC) so the ONLY variable vs the AI pass is the scaling algorithm
@@ -397,6 +519,9 @@ def build_ffmpeg_upscale_cmd(input_name: str, output_name: str,
         "-vf", f"scale={target_w}:{target_h}:flags={flag}",
         "-c:v", enc,
     ]
+    if pix_fmt:
+        # CR-064 — match the partner preset's chroma/depth (see _ffmpeg_pix_fmt)
+        cmd += ["-pix_fmt", pix_fmt]
     if gpu.BACKEND.vendor == "nvidia":
         cmd += ["-rc", "cbr"]
     cmd += [
@@ -734,6 +859,38 @@ def run_transcode_subprocess(cmd: list[str], timeout_s: int,
 
 # --- Realtime / Live feasibility --------------------------------------------
 
+def probe_input_stream(path) -> Optional[dict]:
+    """Input provenance (CR-064): codec / resolution / pix_fmt / colour
+    transfer / duration of the source clip. Stamped on every result so "what
+    actually went in" is recorded — it NEVER drives the UI (the six combos
+    work on any input by design, the June-10 call). Terminal, fail-soft."""
+    try:
+        r = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries",
+             "stream=codec_name,width,height,pix_fmt,color_transfer",
+             "-show_entries", "format=duration", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=15)
+        j = json.loads(r.stdout)
+        s = (j.get("streams") or [{}])[0]
+        if not s:
+            return None
+        dur = (j.get("format") or {}).get("duration")
+        transfer = s.get("color_transfer")
+        return {
+            "codec": s.get("codec_name"),
+            "width": s.get("width"),
+            "height": s.get("height"),
+            "pix_fmt": s.get("pix_fmt"),
+            "color_transfer": transfer,
+            "duration_s": round(float(dur), 2) if dur else None,
+            # PQ / HLG transfers = HDR; None when ffprobe doesn't say.
+            "hdr": (transfer in ("smpte2084", "arib-std-b67")) if transfer else None,
+        }
+    except Exception:
+        return None
+
+
 def _probe_input(path) -> tuple[Optional[float], Optional[float]]:
     """(duration_s, source_fps) of an input clip, or (None, None). fps from the
     stream's r_frame_rate; reuses video._probe_duration for the duration."""
@@ -804,6 +961,22 @@ def build_realtime(content_s: Optional[float], source_fps: Optional[float],
 
 
 # --- Measured run -----------------------------------------------------------
+
+def _preset_known(preset_name: str, pf: dict) -> bool:
+    """A runnable preset is either a staged .args file or one of the CR-064
+    generated combo presets (which live under presets/generated/)."""
+    if preset_name in pf["presets"]:
+        return True
+    return preset_name in {v["preset"] for v in (pf.get("combos") or {}).values()}
+
+
+def _preset_args_soft(path) -> Optional[list]:
+    """read_preset_args, fail-soft — provenance stamping must never kill a run."""
+    try:
+        return read_preset_args(path)
+    except Exception:
+        return None
+
 
 async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
                          input_name: str, input_path, output_name: str,
@@ -950,10 +1123,10 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         raise RuntimeError("partner transcode not configured: " + "; ".join(pf["reasons"]))
     if input_name not in pf["inputs"]:
         raise RuntimeError(f"unknown input: {input_name!r}")
-    if preset_name not in pf["presets"]:
+    if not _preset_known(preset_name, pf):
         raise RuntimeError(f"unknown preset: {preset_name!r}")
 
-    inp, out, _ = _workdir_paths(c)
+    inp, out, pre = _workdir_paths(c)
     output_name = _output_name(input_name, preset_name)
     cmd = build_docker_cmd(input_name, preset_name, output_name, c, live=live)
     pacer_cmd = build_pacer_cmd(input_name, c) if live else None
@@ -977,6 +1150,11 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
     tc_ok = bool((res["result"].get("transcode") or {}).get("success")
                  and output_path.exists())
     res["result"]["vqa"] = probe_vqa_nr(output_path, c) if tc_ok else None
+    # CR-064 provenance — the exact args used + where the preset came from +
+    # what the input actually was (never drives behaviour; record-keeping).
+    res["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
+    res["result"]["preset_origin"] = preset_origin(preset_name)
+    res["result"]["input_stream"] = probe_input_stream(inp / input_name)
     if jobs is not None:
         jobs[job_id]["stage"] = "done"
     return res
@@ -1041,7 +1219,7 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
         raise RuntimeError("partner transcode not configured: " + "; ".join(pf["reasons"]))
     if input_name not in pf["inputs"]:
         raise RuntimeError(f"unknown input: {input_name!r}")
-    if preset_name not in pf["presets"]:
+    if not _preset_known(preset_name, pf):
         raise RuntimeError(f"unknown preset: {preset_name!r}")
     spec = parse_preset_spec(preset_name, c)
     if spec.get("hdr_convert"):
@@ -1050,7 +1228,7 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
     if ff_filter not in ("lanczos", "bicubic"):
         ff_filter = "lanczos"
 
-    inp, out, _ = _workdir_paths(c)
+    inp, out, pre = _workdir_paths(c)
     input_path = inp / input_name
 
     # --- pass 1: ML / partner GPU upscale ---
@@ -1073,7 +1251,8 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
     tgt_w, tgt_h = _resolve_target_dims(spec, ml, input_path)
     ff_output = _ffmpeg_output_name(input_name, preset_name, ff_filter)
     ff_cmd = build_ffmpeg_upscale_cmd(input_name, ff_output, tgt_w, tgt_h,
-                                      spec.get("bitrate_kbps"), ff_filter, c, live=live)
+                                      spec.get("bitrate_kbps"), ff_filter, c, live=live,
+                                      pix_fmt=_ffmpeg_pix_fmt(spec))
     ff = await _measured_pass(
         c=c, job_id=job_id, jobs=jobs, input_name=input_name,
         input_path=input_path, output_name=ff_output,
@@ -1107,6 +1286,13 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
     ml["result"]["vqa"] = probe_vqa_nr(out / ml_output, c) if ml_ok else None
     ff["result"]["vqa"] = probe_vqa_nr(out / ff_output, c) if ff_ok else None
 
+    # CR-064 provenance — exact AI-side args + preset origin + what the input
+    # actually was. The ffmpeg side's full command is already in its
+    # transcode.docker_cmd.
+    ml["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
+    ml["result"]["preset_origin"] = preset_origin(preset_name)
+    input_stream = probe_input_stream(input_path)
+
     if jobs is not None:
         jobs[job_id]["stage"] = "done"
 
@@ -1122,6 +1308,7 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
         "target_res": f"{tgt_w}x{tgt_h}",
         "source_complexity": source_complexity,
         "source_vqa": source_vqa,
+        "input_stream": input_stream,
         "ml": ml,
         "ffmpeg": ff,
         "comparison": comparison,

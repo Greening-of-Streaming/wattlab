@@ -673,7 +673,7 @@ async def settings_page(request: Request):
     async function loadTestData() {{
         const panel = document.getElementById('testdata-panel');
         if (!panel) return;
-        const types = [['llm', 'LLM / RAG'], ['image', 'Image'], ['video', 'Video']];
+        const types = [['llm', 'LLM / RAG'], ['image', 'Image'], ['video', 'Video'], ['enhance', 'Enhance']];
         let html = '';
         for (const pair of types) {{
             const t = pair[0], lbl = pair[1];

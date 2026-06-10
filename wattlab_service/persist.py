@@ -171,6 +171,15 @@ def to_csv(job_type: str, data: dict) -> str:
             "poll_count", "confidence", "cpu_base", "cpu_end",
         ]
         rows = _image_rows(data)
+    elif job_type == "enhance":
+        fieldnames = [
+            "job_id", "saved_at", "mode", "side", "preset_key", "preset_origin",
+            "input_name", "live", "output_res", "output_size_mb", "vqa_score",
+            "w_base", "w_task", "delta_w", "delta_e_wh",
+            "co2e_g", "co2e_intensity_g_per_kwh", "co2e_source", "co2e_zone",
+            "poll_count", "confidence", "command",
+        ]
+        rows = _enhance_rows(data)
     elif job_type == "video":
         fieldnames = [
             "job_id", "saved_at", "mode", "preset", "duration_s",
@@ -306,6 +315,39 @@ def _sum_image_compare_models(summary: dict, data: dict) -> dict:
     return summary
 
 
+# --- enhance (CR-064 — partner GPU transcode/upscale, writer pixop.py) ---
+
+def _sum_enhance_single(summary: dict, data: dict) -> dict:
+    r = data.get("result", {})
+    e = r.get("energy", {})
+    summary["preset_key"] = r.get("preset_key")
+    summary["preset_label"] = r.get("preset_label")
+    summary["input_name"] = r.get("input_name")
+    summary["live"] = r.get("live")
+    summary["delta_e_wh"] = e.get("delta_e_wh")
+    summary["delta_t_s"] = e.get("delta_t_s")
+    summary["confidence"] = e.get("confidence", {}).get("flag")
+    summary["vqa_score"] = (r.get("vqa") or {}).get("score")
+    return summary
+
+
+def _sum_enhance_compare(summary: dict, data: dict) -> dict:
+    c = data.get("comparison", {})
+    summary["preset_key"] = data.get("preset_key")
+    summary["input_name"] = data.get("input_name")
+    summary["ff_filter"] = data.get("ff_filter")
+    summary["target_res"] = data.get("target_res")
+    summary["ml_delta_e_wh"] = c.get("ml_delta_e_wh")
+    summary["ff_delta_e_wh"] = c.get("ff_delta_e_wh")
+    summary["energy_ratio"] = c.get("energy_ratio")
+    for side, key in (("ml", "ml_confidence"), ("ffmpeg", "ff_confidence")):
+        e = (data.get(side, {}).get("result") or {}).get("energy") or {}
+        summary[key] = e.get("confidence", {}).get("flag")
+    summary["ml_vqa_score"] = ((data.get("ml", {}).get("result") or {}).get("vqa") or {}).get("score")
+    summary["ff_vqa_score"] = ((data.get("ffmpeg", {}).get("result") or {}).get("vqa") or {}).get("score")
+    return summary
+
+
 # --- video ---
 
 def _sum_video_both(summary: dict, data: dict) -> dict:
@@ -421,6 +463,10 @@ _SUMMARISERS = {
         "all_codecs": _sum_video_codecs,
         "codecs_cpu": _sum_video_codecs, "codecs_gpu": _sum_video_codecs,
     },
+    "enhance": {
+        "enhance": _sum_enhance_single,
+        "enhance_compare": _sum_enhance_compare,
+    },
     "llm": {
         "single": _sum_llm_single,
         "rag": _sum_llm_rag,
@@ -436,9 +482,10 @@ _SUMMARISERS = {
     },
 }
 
-_MODE_DEFAULTS = {"image": "cpu", "video": "?", "llm": "single"}
+_MODE_DEFAULTS = {"image": "cpu", "video": "?", "llm": "single",
+                  "enhance": "enhance"}
 _FALLBACKS = {"image": _sum_image_single, "video": _sum_video_single,
-              "llm": _sum_llm_single}
+              "llm": _sum_llm_single, "enhance": _sum_enhance_single}
 
 
 def _summarise(job_type: str, data: dict) -> dict:
@@ -459,6 +506,40 @@ def _summarise(job_type: str, data: dict) -> dict:
         summary["unrecognised_mode"] = mode
         handler = _FALLBACKS[family]
     return handler(summary, data)
+
+
+def _enhance_rows(data: dict) -> list:
+    """CR-064 — one row per measured pass (single = 1, compare = 2)."""
+    def _row(r: dict, side: str) -> dict:
+        e = r.get("energy", {})
+        s = r.get("stream") or {}
+        res = (f"{s.get('width')}x{s.get('height')}"
+               if s.get("width") and s.get("height") else None)
+        return {
+            "job_id": data.get("job_id"),
+            "saved_at": data.get("saved_at"),
+            "mode": data.get("mode"),
+            "side": side,
+            "preset_key": r.get("preset_key"),
+            "preset_origin": r.get("preset_origin"),
+            "input_name": r.get("input_name") or data.get("input_name"),
+            "live": r.get("live"),
+            "output_res": res,
+            "output_size_mb": r.get("output_size_mb"),
+            "vqa_score": (r.get("vqa") or {}).get("score"),
+            "w_base": e.get("w_base"),
+            "w_task": e.get("w_task"),
+            "delta_w": e.get("delta_w"),
+            "delta_e_wh": e.get("delta_e_wh"),
+            **_co2e_fields(e),
+            "poll_count": e.get("poll_count"),
+            "confidence": e.get("confidence", {}).get("flag"),
+            "command": (r.get("transcode") or {}).get("docker_cmd"),
+        }
+    if data.get("mode") == "enhance_compare":
+        return [_row(data.get("ml", {}).get("result") or {}, "ai"),
+                _row(data.get("ffmpeg", {}).get("result") or {}, "ffmpeg")]
+    return [_row(data.get("result") or {}, "ai")]
 
 
 def _image_rows(data: dict) -> list:

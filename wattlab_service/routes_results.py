@@ -24,7 +24,7 @@ router = APIRouter()
 
 @router.get("/results/{job_type}/list", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def results_list(job_type: str, request: Request, limit: int = 10):
-    if job_type not in ("video", "llm", "image"):
+    if job_type not in ("video", "llm", "image", "enhance"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
     # CR-026: own-jobs scope for non-Lab. Lab passes None → unfiltered.
     return list_results(job_type, limit=max(1, min(limit, 200)),
@@ -36,7 +36,7 @@ async def results_delete(job_type: str, job_id: str):
     """Lab-only — delete a stored result JSON (dev cleanup of test runs). Gated
     on SETTINGS_WRITE (Lab tier). CSV is generated on the fly, so the JSON is the
     only artifact to remove."""
-    if job_type not in ("video", "llm", "image"):
+    if job_type not in ("video", "llm", "image", "enhance"):
         return JSONResponse({"ok": False, "error": "Invalid type"}, status_code=400)
     if delete_result(job_type, job_id):
         return {"ok": True, "deleted": job_id}
@@ -99,7 +99,7 @@ async def demo_last_result(job_type: str, task_eq: str | None = None):
 
 @router.get("/results/{job_type}/{job_id}/download.json", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def results_download_json(job_type: str, job_id: str, request: Request):
-    if job_type not in ("video", "llm", "image"):
+    if job_type not in ("video", "llm", "image", "enhance"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
     data = load_result(job_type, job_id, visitor_key=queue_control.visitor_key(request))
     if not data:
@@ -113,7 +113,7 @@ async def results_download_json(job_type: str, job_id: str, request: Request):
 
 @router.get("/results/{job_type}/{job_id}/download.csv", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def results_download_csv(job_type: str, job_id: str, request: Request):
-    if job_type not in ("video", "llm", "image"):
+    if job_type not in ("video", "llm", "image", "enhance"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
     data = load_result(job_type, job_id, visitor_key=queue_control.visitor_key(request))
     if not data:

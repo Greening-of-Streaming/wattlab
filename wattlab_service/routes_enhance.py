@@ -10,15 +10,17 @@ chrome from ui.py — never import main.
 import asyncio
 import html as html_lib
 import json
+import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import audience
 import pixop
 import queue_control
+import settings as cfg
 import ui
 from capabilities import requires, can, ENHANCE_RUN, PUBLIC_PAGE
 from persist import save_result
@@ -337,15 +339,24 @@ def _enhance_options_html(items: list) -> str:
                    for x in items)
 
 
-def _enhance_preset_options_html(presets: list) -> str:
-    """Preset <option>s with a plain-language description (derived from the
-    actual preset flags) in brackets after the filename."""
+def _enhance_sr_options_html() -> str:
+    """Super Resolution <option>s from the CR-064 target ladder — label shows
+    the coupled (non-selectable) bitrate. HD is the call's agreed default."""
     out = []
-    for p in presets:
-        desc = pixop.describe_preset(p)
-        label = f"{p}  ({desc})" if desc else p
-        out.append(f'<option value="{html_lib.escape(p)}">{html_lib.escape(label)}</option>')
+    for tkey, (tlabel, res, kbps) in pixop._SR_TARGETS.items():
+        sel = " selected" if tkey == "hd" else ""
+        label = f"{tlabel} · {res.replace('x', '×')} · {kbps // 1000} Mbps CBR"
+        out.append(f'<option value="{tkey}"{sel}>{html_lib.escape(label)}</option>')
     return "".join(out)
+
+
+def _enhance_upload_limits_html() -> str:
+    s = cfg.load()
+    mb = int(s.get("enhance_upload_max_mb", 1024))
+    dur = int(s.get("enhance_upload_max_duration_s", 60))
+    return (f"Upload limits &mdash; Members: file &le;{mb} MB, clip &le;{dur}s "
+            "&middot; Lab (LAN): uncapped. Uploaded clips are removed after the "
+            "run for Members; outputs are kept with the result.")
 
 
 _ENHANCE_RUN_STYLES = """
@@ -431,20 +442,45 @@ _ENHANCE_RUN_HTML = """
       <select id="inSel" onchange="updateInputPreview()"{DISABLED}>{INPUT_OPTIONS}</select>
     </div>
     <div>
-      <label for="preSel">Preset (.args)</label>
-      <select id="preSel" onchange="updateCompareGate()"{DISABLED}>{PRESET_OPTIONS}</select>
+      <label for="upFile">Or upload a clip</label>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <input type="file" id="upFile" accept=".mov,.mp4,.mkv,.m4v,.y4m,.webm,video/*"
+               style="color:var(--text-3);font-size:0.74rem;max-width:240px"{DISABLED}>
+        <button class="secondary" id="upBtn" onclick="uploadClip()"{RUN_DISABLED}>Upload</button>
+      </div>
+    </div>
+  </div>
+  <div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.85rem">{UPLOAD_LIMITS}</div>
+  <div class="row">
+    <div>
+      <label>Output format</label>
+      <div style="display:flex;gap:1.1rem;align-items:center;padding:0.5rem 0">
+        <label style="text-transform:none;font-size:0.82rem;color:var(--text-2);display:flex;gap:0.35rem;align-items:center;cursor:pointer">
+          <input type="radio" name="outFmt" value="sdr" checked onchange="combosChanged()"{DISABLED}> SDR</label>
+        <label style="text-transform:none;font-size:0.82rem;color:var(--text-2);display:flex;gap:0.35rem;align-items:center;cursor:pointer">
+          <input type="radio" name="outFmt" value="hdr" onchange="combosChanged()"{DISABLED}> HDR*</label>
+      </div>
+    </div>
+    <div>
+      <label for="srSel">Super Resolution &mdash; target</label>
+      <select id="srSel" onchange="combosChanged()"{DISABLED}>{SR_OPTIONS}</select>
     </div>
     <div>
       <button id="runBtn" onclick="startRun()"{RUN_DISABLED}>Run &amp; measure</button>
     </div>
+  </div>
+  <div id="combo-line" style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.4rem"></div>
+  <div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.85rem">
+    *HDR appearance depends on your viewing environment and screen capabilities &mdash;
+    results may not display correctly on all displays. Bitrate is coupled to the target
+    resolution (CBR): SD&nbsp;5 &middot; HD&nbsp;20 &middot; 4K&nbsp;35&nbsp;Mbps &mdash; not user-selectable.
   </div>
   <label style="display:flex;align-items:center;gap:0.45rem;color:var(--text-2);font-size:0.8rem;margin-bottom:0.5rem;cursor:pointer">
     <input type="checkbox" id="liveTog"{RUN_DISABLED}> Serve as Live — pace input at 1× realtime
   </label>
   <div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.75rem">
     Feeds the encoder at 1× (the linear/live profile) so ΔW reads as sustained per-channel
-    power. Best on Live-capable presets (the FHD ones); the ×2→4K SR can't sustain 1× on
-    one GPU and will report "fell behind."
+    power. Higher SR targets may not sustain 1× on one GPU and will report "fell behind."
   </div>
   <div style="border-top:1px solid var(--border-2);margin:0.25rem 0 0.75rem"></div>
   <div class="row">
@@ -482,6 +518,8 @@ _ENHANCE_RUN_HTML = """
 <div id="result-card" class="result-card"></div>
 <div id="selftest-out"></div>
 
+<div id="prev-runs" style="margin-top:2rem;border-top:1px solid var(--border-2);padding-top:1.25rem"></div>
+
 <div class="footer-note">
   A partner GPU transcode is measured with the same protocol as every other OWL
   workload &mdash; see <a href="/methodology">/methodology</a>. Energy is the
@@ -506,8 +544,8 @@ function updateInputPreview() {
 }
 async function startRun() {
   var input = document.getElementById('inSel').value;
-  var preset = document.getElementById('preSel').value;
-  if (!input || !preset) return;
+  var combo = _selCombo();
+  if (!input || !combo) return;
   document.getElementById('runBtn').disabled = true;
   document.getElementById('result-card').style.display = 'none';
   document.getElementById('selftest-out').innerHTML = '';
@@ -517,7 +555,8 @@ async function startRun() {
   document.querySelectorAll('video').forEach(function(v){ try { v.pause(); } catch(e) {} });
   var form = new FormData();
   form.append('input_name', input);
-  form.append('preset_name', preset);
+  form.append('output_format', _selFmt());
+  form.append('sr_target', document.getElementById('srSel').value);
   form.append('live', document.getElementById('liveTog').checked ? 'true' : 'false');
   try {
     var resp = await fetch('/enhance-run/start', { method:'POST', body:form });
@@ -547,6 +586,7 @@ async function pollJob(jobId) {
       document.getElementById('status').innerHTML = '';
       renderResult(data.result);
       document.getElementById('runBtn').disabled = false;
+      loadPrevRuns();
     } else if (data.status === 'error') {
       document.getElementById('status').innerHTML =
         '<div style="color:var(--err)">Error: ' + data.error + '</div>';
@@ -574,12 +614,16 @@ function _row(label, val, unit) {
        + val + (unit ? ' ' + unit : '') + '</span></div>';
 }
 function renderResult(meas) {
+  var card = document.getElementById('result-card');
+  card.innerHTML = renderResultHtml(meas);
+  card.style.display = 'block';
+}
+function renderResultHtml(meas) {
   var r = meas.result || {};
   var e = r.energy || {};
   var t = r.transcode || {};
   var s = r.stream || {};
   var conf = e.confidence || {};
-  var card = document.getElementById('result-card');
   var streamRows = '';
   if (s && s.codec) {
     streamRows += _row('Output', (s.width||'?') + '×' + (s.height||'?') + ' · ' + s.codec
@@ -639,8 +683,7 @@ function renderResult(meas) {
                  : '<div style="margin-bottom:0.5rem"></div>');
     }
   }
-  card.innerHTML =
-      '<div class="rc-header">Result · ' + (r.preset_label || 'Partner GPU transcode') + '</div>'
+  return '<div class="rc-header">Result · ' + (r.preset_label || 'Partner GPU transcode') + '</div>'
     + failHtml
     + rtHtml
     + '<div class="rc-kpi">'
@@ -656,8 +699,8 @@ function renderResult(meas) {
           (r.preset_label || 'Partner GPU transcode'), e.delta_t_s,
           (e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)) : '')
     + '<details><summary>preset · ' + (r.preset_detail || '') + '</summary>'
-    +   '<pre>' + (t.docker_cmd || '') + '</pre></details>';
-  card.style.display = 'block';
+    +   '<pre>' + ((r.preset_args && r.preset_args.length) ? r.preset_args.join(' ') + '\\n\\n' : '')
+    +   (t.docker_cmd || '') + '</pre></details>';
 }
 async function selfTest() {
   var btn = document.getElementById('stBtn');
@@ -679,9 +722,66 @@ async function selfTest() {
     btn.disabled = false;
   }
 }
-// ── Compare: AI/ML upscale vs traditional ffmpeg upscale ──────────────────
-var PRESET_COMPARABLE = {PRESET_COMPARABLE_JSON};
+// ── CR-064: Output Format × Super Resolution → generated preset ───────────
+// The six combos work on ANY input by design (no probe drives the UI — the
+// June-10 call); bitrate is coupled to the target, never user-chosen.
+var COMBOS = {COMBOS_JSON};
 var RUN_ENABLED = {RUN_ENABLED_JS};
+function _selFmt() {
+  var r = document.querySelector('input[name="outFmt"]:checked');
+  return r ? r.value : 'sdr';
+}
+function _selCombo() {
+  var sr = document.getElementById('srSel');
+  return COMBOS[_selFmt() + '_' + (sr ? sr.value : 'hd')] || null;
+}
+function combosChanged() {
+  var combo = _selCombo();
+  var line = document.getElementById('combo-line');
+  if (line) {
+    line.textContent = combo
+      ? ('Target ' + combo.res.replace('x', '×') + ' · ' + combo.mbps
+         + ' Mbps CBR · preset ' + combo.preset)
+      : 'This combination is not available yet (missing colour template).';
+  }
+  var runBtn = document.getElementById('runBtn');
+  if (runBtn) runBtn.disabled = !(RUN_ENABLED && combo);
+  updateCompareGate();
+}
+async function uploadClip() {
+  var f = document.getElementById('upFile').files[0];
+  if (!f) return;
+  var btn = document.getElementById('upBtn');
+  btn.disabled = true;
+  document.getElementById('status').innerHTML =
+    '<div style="color:var(--warn);font-size:0.82rem">Uploading ' + f.name + '…</div>';
+  var form = new FormData();
+  form.append('file', f);
+  try {
+    var resp = await fetch('/enhance-run/upload', { method:'POST', body:form });
+    var d = await resp.json();
+    if (!resp.ok) {
+      document.getElementById('status').innerHTML =
+        '<div style="color:var(--err)">' + (d.error || 'Upload failed') + '</div>';
+      return;
+    }
+    var sel = document.getElementById('inSel');
+    var opt = document.createElement('option');
+    opt.value = d.name;
+    opt.textContent = d.name;
+    sel.appendChild(opt);
+    sel.value = d.name;
+    updateInputPreview();
+    document.getElementById('status').innerHTML =
+      '<div style="color:var(--accent);font-size:0.82rem">Uploaded ' + d.name
+      + (d.duration_s != null ? ' · ' + d.duration_s + 's' : '') + '</div>';
+  } catch(e) {
+    document.getElementById('status').innerHTML = '<div style="color:var(--err)">' + e + '</div>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+// ── Compare: AI/ML upscale vs traditional ffmpeg upscale ──────────────────
 // WL_CMP_STAGES is baked into _PROGRESS_JS (toggle-aware idle label). Map the
 // coarse stage + fine substage onto its 5 positions. Only the FIRST pass cools
 // down (to separate it from the ffmpeg pass); the ffmpeg pass has no trailing
@@ -694,21 +794,21 @@ function _cmpStageIdx(stage, substage) {
   return substage === 'cooldown' ? 1 : 0;   // 'ml' / starting
 }
 function updateCompareGate() {
-  var pre = document.getElementById('preSel');
   var btn = document.getElementById('cmpBtn');
   var gate = document.getElementById('cmp-gate');
-  if (!pre || !btn) return;
-  var ok = PRESET_COMPARABLE[pre.value] !== false;
-  btn.disabled = !(RUN_ENABLED && ok);
-  gate.textContent = (RUN_ENABLED && !ok)
-    ? ' · This preset does SDR→HDR — no apples-to-apples ffmpeg baseline, so compare is disabled for it.'
+  if (!btn) return;
+  var combo = _selCombo();
+  var hdr = _selFmt() === 'hdr';
+  btn.disabled = !(RUN_ENABLED && combo && !hdr);
+  gate.textContent = (RUN_ENABLED && hdr)
+    ? ' · HDR output has no apples-to-apples ffmpeg baseline, so compare is disabled for it.'
     : '';
 }
 async function startCompare() {
   var input = document.getElementById('inSel').value;
-  var preset = document.getElementById('preSel').value;
+  var combo = _selCombo();
   var ff = document.getElementById('ffSel').value;
-  if (!input || !preset) return;
+  if (!input || !combo) return;
   document.getElementById('cmpBtn').disabled = true;
   document.getElementById('runBtn').disabled = true;
   document.getElementById('result-card').style.display = 'none';
@@ -716,7 +816,8 @@ async function startCompare() {
   document.querySelectorAll('video').forEach(function(v){ try { v.pause(); } catch(e) {} });
   var form = new FormData();
   form.append('input_name', input);
-  form.append('preset_name', preset);
+  form.append('output_format', _selFmt());
+  form.append('sr_target', document.getElementById('srSel').value);
   form.append('live', 'true');   // compare always paces at 1× — see below
   form.append('ff_filter', ff);
   try {
@@ -750,6 +851,7 @@ async function pollCompare(jobId) {
       renderCompare(data.result);
       document.getElementById('runBtn').disabled = false;
       updateCompareGate();
+      loadPrevRuns();
     } else if (data.status === 'error') {
       document.getElementById('status').innerHTML =
         '<div style="color:var(--err)">Error: ' + data.error + '</div>';
@@ -793,7 +895,8 @@ function _vidCell(title, src, name) {
 var _VQA_NOTE = '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
   + 'No-reference score from CompressedVQA-HDR (Sun et al., arXiv:2507.11900, Apache 2.0) '
   + '— a learned opinion of perceptual quality; higher = better. Use it to compare files '
-  + 'within this run, not as an absolute quality claim.</div>';
+  + 'within this run, not as an absolute quality claim. Quality metrics are subject to '
+  + 'further refinement pending validation.</div>';
 function _vqaRows(srcv, mlv, ffv) {
   var rows = '';
   if (srcv && srcv.score != null) rows += _row('NR quality — source', srcv.score, '');
@@ -830,17 +933,25 @@ function _cxTable(srccx, mlcx, ffcx) {
   }).join('');
   if (!body) return '';
   function th(t){ return '<th style="text-align:right;color:var(--text-4);font-weight:normal;font-size:0.66rem">' + t + '</th>'; }
-  return '<div style="color:var(--text-4);font-size:0.66rem;letter-spacing:0.05em;text-transform:uppercase;margin:0.8rem 0 0.3rem">'
-       +   'Resulting-file complexity · terminal probe, no energy impact</div>'
-       + '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">'
+  // Collapsed by default (owner request, 2026-06-10): this block is still
+  // under discussion — deep-analysis readers opt in, everyone else skips it.
+  return '<details style="margin-top:0.8rem">'
+       + '<summary style="cursor:pointer;color:var(--text-4);font-size:0.66rem;letter-spacing:0.05em;text-transform:uppercase">'
+       +   'Resulting-file complexity · terminal probe, no energy impact · under discussion</summary>'
+       + '<table style="width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:0.4rem">'
        +   '<thead><tr><th></th>' + th('Source') + th('AI') + th('ffmpeg') + '</tr></thead>'
        +   '<tbody>' + body + '</tbody></table>'
        + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
        +   'SI/TI = ITU-T P.910 spatial / temporal information; higher SI ≈ more fine detail. '
-       +   'AI &gt; ffmpeg ≈ source ⇒ the AI injected detail the resize did not.</div>';
+       +   'AI &gt; ffmpeg ≈ source ⇒ the AI injected detail the resize did not.</div>'
+       + '</details>';
 }
 function renderCompare(meas) {
   var card = document.getElementById('result-card');
+  card.innerHTML = renderCompareHtml(meas);
+  card.style.display = 'block';
+}
+function renderCompareHtml(meas) {
   var ml = meas.ml || {}, ff = meas.ffmpeg || {};
   var mlr = ml.result || {}, ffr = ff.result || {};
   var mle = mlr.energy || {}, ffe = ffr.energy || {};
@@ -872,8 +983,7 @@ function renderCompare(meas) {
   if ((ffr.transcode || {}).success === false)
     fail += '<div style="color:var(--err);font-size:0.78rem">ffmpeg pass failed (rc ' + ffr.transcode.returncode + ')</div>';
 
-  card.innerHTML =
-      '<div class="rc-header">Compare · AI vs traditional upscale' + (meas.live ? ' · Live 1×' : '')
+  return '<div class="rc-header">Compare · AI vs traditional upscale' + (meas.live ? ' · Live 1×' : '')
         + (meas.target_res ? ' · ' + meas.target_res : '') + '</div>'
     + fail
     + ratioRow
@@ -900,13 +1010,97 @@ function renderCompare(meas) {
     + '<div style="color:var(--text-4);font-size:0.74rem;margin-top:0.6rem;border-left:2px solid var(--border-2);padding-left:0.7rem">'
     +   (c.quality_note || '') + '</div>'
     + '<details><summary>commands</summary><pre>'
+    +   ((mlr.preset_args && mlr.preset_args.length) ? 'preset: ' + mlr.preset_args.join(' ') + '\\n\\n' : '')
     +   'AI:     ' + ((mlr.transcode || {}).docker_cmd || '') + '\\n\\n'
     +   'ffmpeg: ' + ((ffr.transcode || {}).docker_cmd || '') + '</pre></details>';
-  card.style.display = 'block';
+}
+// ── Previous runs (CR-064) — persisted enhance results, own-jobs scoped ────
+async function loadPrevRuns() {
+  try {
+    var resp = await fetch('/results/enhance/list');
+    var runs = await resp.json();
+    renderPrevRuns(Array.isArray(runs) ? runs : []);
+  } catch(e) {}
+}
+function renderPrevRuns(runs) {
+  var el = document.getElementById('prev-runs');
+  if (!el) return;
+  if (!runs.length) {
+    el.innerHTML = '<div style="color:var(--text-5);font-size:0.8rem">No previous runs.</div>';
+    return;
+  }
+  var rows = runs.map(function(r) {
+    var date = r.saved_at ? r.saved_at.slice(0,16).replace('T',' ') : '—';
+    var what, summary;
+    if (r.mode === 'enhance_compare') {
+      what = (r.preset_key || '') + ' vs ffmpeg ' + (r.ff_filter || '')
+           + (r.input_name ? ' · ' + r.input_name : '');
+      summary = 'AI ' + (r.ml_delta_e_wh != null ? r.ml_delta_e_wh : '—') + ' Wh '
+              + (r.ml_confidence || '')
+              + ' · ffmpeg ' + (r.ff_delta_e_wh != null ? r.ff_delta_e_wh : '—') + ' Wh '
+              + (r.ff_confidence || '')
+              + (r.energy_ratio != null ? ' · ' + r.energy_ratio + '×' : '');
+    } else {
+      what = (r.preset_key || r.preset_label || '')
+           + (r.input_name ? ' · ' + r.input_name : '');
+      summary = (r.delta_e_wh != null ? r.delta_e_wh : '—') + ' Wh '
+              + (r.confidence || '')
+              + (r.vqa_score != null ? ' · NR ' + r.vqa_score : '');
+    }
+    var base = '/results/enhance/' + r.job_id;
+    return '<div style="border-bottom:1px solid var(--border-2);padding:0.6rem 0">'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+      +   '<span style="color:var(--text);font-size:0.82rem">' + date + '</span>'
+      +   '<span style="color:var(--text-3);font-size:0.75rem">' + r.job_id + '</span>'
+      + '</div>'
+      + '<div style="color:var(--text-3);font-size:0.75rem;margin:0.1rem 0">' + what + '</div>'
+      + '<div style="color:var(--accent);font-size:0.8rem;margin:0.2rem 0">' + summary + '</div>'
+      + '<div style="display:flex;gap:0.75rem;margin-top:0.3rem;align-items:center">'
+      +   '<a href="javascript:void(0)" onclick="expandPrev(\\'' + r.job_id + '\\')" '
+      +     'style="color:var(--text-3);font-size:0.75rem;text-decoration:none;cursor:pointer">'
+      +     '<span id="chev-' + r.job_id + '">▸</span> Show full result</a>'
+      +   '<a href="' + base + '/download.json" download '
+      +     'style="color:var(--text-5);font-size:0.75rem;text-decoration:none">↓ JSON</a>'
+      +   '<a href="' + base + '/download.csv" download '
+      +     'style="color:var(--text-5);font-size:0.75rem;text-decoration:none">↓ CSV</a>'
+      + '</div>'
+      + '<div id="expand-' + r.job_id + '" style="display:none;margin-top:0.6rem"></div>'
+      + '</div>';
+  }).join('');
+  el.innerHTML = '<div style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;'
+    + 'letter-spacing:0.05em;margin-bottom:0.75rem">Previous runs</div>' + rows;
+}
+async function expandPrev(jobId) {
+  var el = document.getElementById('expand-' + jobId);
+  var chev = document.getElementById('chev-' + jobId);
+  if (!el) return;
+  if (el.dataset.expanded === '1') {
+    el.style.display = 'none';
+    el.dataset.expanded = '0';
+    if (chev) chev.textContent = '▸';
+    return;
+  }
+  el.style.display = 'block';
+  el.dataset.expanded = '1';
+  if (chev) chev.textContent = '▾';
+  if (el.dataset.loaded === '1') return;
+  el.innerHTML = '<div style="color:var(--text-4);font-size:0.78rem;padding:0.5rem">Loading full result…</div>';
+  try {
+    var resp = await fetch('/results/enhance/' + jobId + '/download.json');
+    if (!resp.ok) throw new Error(resp.status);
+    var j = await resp.json();
+    el.innerHTML = (j.mode === 'enhance_compare') ? renderCompareHtml(j) : renderResultHtml(j);
+    el.dataset.loaded = '1';
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--err);padding:0.5rem">Failed to load: ' + (e.message || e) + '</div>';
+    el.dataset.expanded = '0';
+    if (chev) chev.textContent = '▸';
+  }
 }
 // Show the input preview for the initially-selected clip (Lab + configured).
 updateInputPreview();
-updateCompareGate();
+combosChanged();
+loadPrevRuns();
 </script>
 """
 
@@ -930,7 +1124,6 @@ async def enhance_run_page(request: Request):
     can_run = can(audience.tier(request), ENHANCE_RUN)
     run_enabled = can_run and pf["ok_transcode"]
     st_enabled = can_run and pf["ok_selftest"]
-    comparable = {p: pixop.ffmpeg_comparable(p) for p in pf["presets"]}
     return (ui.render_page(request,
                            "UNDER DEVELOPMENT · Video enhancement (GoS only)",
                            styles=_ENHANCE_RUN_STYLES, body=_ENHANCE_RUN_HTML)
@@ -941,8 +1134,9 @@ async def enhance_run_page(request: Request):
             .replace("{RUN_DISABLED}",     "" if run_enabled else " disabled")
             .replace("{ST_DISABLED}",      "" if st_enabled else " disabled")
             .replace("{INPUT_OPTIONS}",    _enhance_options_html(pf["inputs"]))
-            .replace("{PRESET_OPTIONS}",   _enhance_preset_options_html(pf["presets"]))
-            .replace("{PRESET_COMPARABLE_JSON}", json.dumps(comparable))
+            .replace("{SR_OPTIONS}",       _enhance_sr_options_html())
+            .replace("{UPLOAD_LIMITS}",    _enhance_upload_limits_html())
+            .replace("{COMBOS_JSON}",      json.dumps(pf["combos"]))
             .replace("{RUN_ENABLED_JS}",   "true" if run_enabled else "false")
             .replace("{PROGRESS_JS}",      _PROGRESS_JS))
 
@@ -953,8 +1147,34 @@ async def enhance_self_test():
     return await loop.run_in_executor(None, pixop.self_test)
 
 
+def _cleanup_upload(input_name: str) -> None:
+    """Remove a Member-uploaded input clip after its run (CR-064 retention:
+    inputs dropped, outputs + result JSON kept). Fail-soft."""
+    try:
+        inp, _, _ = pixop._workdir_paths(pixop.config())
+        (inp / input_name).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _resolve_run_preset(preset_name: str, output_format: str, sr_target: str):
+    """CR-064 — a run is requested either as (output_format, sr_target), which
+    resolves to a generated combo preset, or as a raw preset_name (Lab /
+    backward-compat). Returns (preset, error_response)."""
+    if output_format and sr_target:
+        combo = pixop.resolve_combo(output_format, sr_target)
+        if combo is None:
+            return None, JSONResponse(
+                {"error": "That format/resolution combination is not available "
+                          "(missing colour template)"}, status_code=400)
+        return combo["preset"], None
+    if preset_name:
+        return preset_name, None
+    return None, JSONResponse({"error": "No preset selected"}, status_code=400)
+
+
 async def run_enhance_job(job_id: str, input_name: str, preset_name: str,
-                          live: bool = False):
+                          live: bool = False, cleanup_input: bool = False):
     try:
         jobs[job_id].update({"status": "running", "stage": "starting"})
         result = await pixop.run_enhance_measurement(input_name, preset_name, job_id,
@@ -963,25 +1183,36 @@ async def run_enhance_job(job_id: str, input_name: str, preset_name: str,
         jobs[job_id].update({"status": "done", "stage": "done", "result": result})
     except Exception as e:
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+    finally:
+        if cleanup_input:
+            _cleanup_upload(input_name)
 
 
 @router.post("/enhance-run/start", dependencies=[Depends(requires(ENHANCE_RUN))])
 async def enhance_run_start(request: Request,
                             input_name: str = Form(...),
-                            preset_name: str = Form(...),
+                            preset_name: str = Form(""),
+                            output_format: str = Form(""),
+                            sr_target: str = Form(""),
                             live: str = Form("false")):
     pf = pixop.preflight()
     if not pf["ok_transcode"]:
         return JSONResponse({"error": "Partner transcode not configured",
                              "reasons": pf["reasons"]}, status_code=409)
-    if input_name not in pf["inputs"] or preset_name not in pf["presets"]:
+    preset, err = _resolve_run_preset(preset_name, output_format, sr_target)
+    if err is not None:
+        return err
+    if input_name not in pf["inputs"] or not pixop._preset_known(preset, pf):
         return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
     is_live = str(live).lower() in ("true", "1", "on", "yes")
+    cleanup = (input_name.startswith("upload_")
+               and audience.tier(request) != audience.Tier.Lab)
     job_id = str(uuid.uuid4())[:8]
-    label = f"Enhance — {preset_name}" + (" · Live 1×" if is_live else "")
+    label = f"Enhance — {preset}" + (" · Live 1×" if is_live else "")
 
     async def coro():
-        await run_enhance_job(job_id, input_name, preset_name, live=is_live)
+        await run_enhance_job(job_id, input_name, preset, live=is_live,
+                              cleanup_input=cleanup)
 
     position = queue_control.enqueue(job_id, "enhance", label, coro,
                                      request=request, page="/enhance-run")
@@ -991,7 +1222,8 @@ async def enhance_run_start(request: Request,
 
 
 async def run_enhance_compare_job(job_id: str, input_name: str, preset_name: str,
-                                  live: bool = False, ff_filter: str = "lanczos"):
+                                  live: bool = False, ff_filter: str = "lanczos",
+                                  cleanup_input: bool = False):
     try:
         jobs[job_id].update({"status": "running", "stage": "starting"})
         result = await pixop.run_enhance_compare_measurement(
@@ -1000,38 +1232,104 @@ async def run_enhance_compare_job(job_id: str, input_name: str, preset_name: str
         jobs[job_id].update({"status": "done", "stage": "done", "result": result})
     except Exception as e:
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+    finally:
+        if cleanup_input:
+            _cleanup_upload(input_name)
 
 
 @router.post("/enhance-run/start-compare", dependencies=[Depends(requires(ENHANCE_RUN))])
 async def enhance_run_start_compare(request: Request,
                                     input_name: str = Form(...),
-                                    preset_name: str = Form(...),
+                                    preset_name: str = Form(""),
+                                    output_format: str = Form(""),
+                                    sr_target: str = Form(""),
                                     live: str = Form("false"),
                                     ff_filter: str = Form("lanczos")):
     pf = pixop.preflight()
     if not pf["ok_transcode"]:
         return JSONResponse({"error": "Partner transcode not configured",
                              "reasons": pf["reasons"]}, status_code=409)
-    if input_name not in pf["inputs"] or preset_name not in pf["presets"]:
+    preset, err = _resolve_run_preset(preset_name, output_format, sr_target)
+    if err is not None:
+        return err
+    if input_name not in pf["inputs"] or not pixop._preset_known(preset, pf):
         return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
-    if not pixop.ffmpeg_comparable(preset_name):
+    if not pixop.ffmpeg_comparable(preset):
         return JSONResponse({"error": "This preset does an SDR→HDR conversion — "
                              "no apples-to-apples ffmpeg baseline"}, status_code=400)
     ff = ff_filter if ff_filter in ("lanczos", "bicubic") else "lanczos"
     is_live = str(live).lower() in ("true", "1", "on", "yes")
+    cleanup = (input_name.startswith("upload_")
+               and audience.tier(request) != audience.Tier.Lab)
     job_id = str(uuid.uuid4())[:8]
-    label = (f"Enhance compare — {preset_name} vs ffmpeg {ff}"
+    label = (f"Enhance compare — {preset} vs ffmpeg {ff}"
              + (" · Live 1×" if is_live else ""))
 
     async def coro():
-        await run_enhance_compare_job(job_id, input_name, preset_name,
-                                      live=is_live, ff_filter=ff)
+        await run_enhance_compare_job(job_id, input_name, preset,
+                                      live=is_live, ff_filter=ff,
+                                      cleanup_input=cleanup)
 
     position = queue_control.enqueue(job_id, "enhance", label, coro,
                                      request=request, page="/enhance-run")
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
+
+
+_UPLOAD_EXTS = {".mov", ".mp4", ".mkv", ".m4v", ".y4m", ".webm"}  # = pixop.list_inputs
+
+
+@router.post("/enhance-run/upload", dependencies=[Depends(requires(ENHANCE_RUN))])
+async def enhance_upload(request: Request, file: UploadFile = File(...)):
+    """CR-064 — upload a clip into the enhance input dir. Member caps: file
+    size (enhance_upload_max_mb) + clip duration (enhance_upload_max_duration_s,
+    ffprobe-enforced); Lab is uncapped. The same probe's stream facts are
+    returned (and stamped on results as input_stream provenance) — they never
+    drive the UI."""
+    s = cfg.load()
+    is_lab = audience.tier(request) == audience.Tier.Lab
+    max_mb = int(s.get("enhance_upload_max_mb", 1024))
+    max_dur = int(s.get("enhance_upload_max_duration_s", 60))
+
+    orig = Path(file.filename or "clip").name
+    ext = Path(orig).suffix.lower()
+    if ext not in _UPLOAD_EXTS:
+        return JSONResponse(
+            {"error": f"Unsupported container '{ext or '(none)'}' — use one of: "
+                      + ", ".join(sorted(_UPLOAD_EXTS))}, status_code=400)
+
+    # Size cap: cheap content-length pre-check, then authoritative re-check on
+    # the read bytes (mirrors /video/upload).
+    max_bytes = max_mb * 1024 * 1024
+    cl = request.headers.get("content-length")
+    if not is_lab and cl and int(cl) > max_bytes + 8192:
+        return JSONResponse({"error": f"File exceeds the {max_mb} MB Member limit"},
+                            status_code=413)
+    blob = await file.read()
+    if not is_lab and len(blob) > max_bytes:
+        return JSONResponse({"error": f"File exceeds the {max_mb} MB Member limit"},
+                            status_code=413)
+
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(orig).stem)[:48] or "clip"
+    name = f"upload_{uuid.uuid4().hex[:8]}_{safe_stem}{ext}"
+    inp, _, _ = pixop._workdir_paths(pixop.config())
+    inp.mkdir(parents=True, exist_ok=True)
+    path = inp / name
+    path.write_bytes(blob)
+
+    stream = pixop.probe_input_stream(path)
+    dur = (stream or {}).get("duration_s")
+    if not is_lab:
+        if dur is None:
+            path.unlink(missing_ok=True)
+            return JSONResponse({"error": "Could not probe the clip — is it a valid video?"},
+                                status_code=400)
+        if dur > max_dur:
+            path.unlink(missing_ok=True)
+            return JSONResponse({"error": f"Clip is {dur:.0f}s — Member limit is {max_dur}s"},
+                                status_code=413)
+    return {"name": name, "duration_s": dur, "input_stream": stream}
 
 
 @router.get("/enhance-run/job/{job_id}", dependencies=[Depends(requires(ENHANCE_RUN))])
