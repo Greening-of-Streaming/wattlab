@@ -11,6 +11,7 @@ from pathlib import Path
 
 import main
 import persist
+import routes_video
 import video
 
 
@@ -76,8 +77,8 @@ def test_run_job_routes_codecs_cpu(monkeypatch):
         captured["side"] = side
         return {"mode": f"codecs_{side}", "codecs": {}, "analysis": {}}
 
-    monkeypatch.setattr(main, "run_codecs_single_measurement", _fake)
-    monkeypatch.setattr(main, "save_result", lambda *a, **k: None)
+    monkeypatch.setattr(routes_video, "run_codecs_single_measurement", _fake)
+    monkeypatch.setattr(routes_video, "save_result", lambda *a, **k: None)
     jid = "vjob01"
     main.jobs[jid] = {}
     asyncio.run(main.run_job(jid, Path("/tmp/x.mp4"), "codecs_cpu", delete_after=False))
@@ -93,8 +94,8 @@ def test_run_job_routes_codecs_gpu(monkeypatch):
         captured["side"] = side
         return {"mode": f"codecs_{side}", "codecs": {}, "analysis": {}}
 
-    monkeypatch.setattr(main, "run_codecs_single_measurement", _fake)
-    monkeypatch.setattr(main, "save_result", lambda *a, **k: None)
+    monkeypatch.setattr(routes_video, "run_codecs_single_measurement", _fake)
+    monkeypatch.setattr(routes_video, "save_result", lambda *a, **k: None)
     jid = "vjob02"
     main.jobs[jid] = {}
     asyncio.run(main.run_job(jid, Path("/tmp/x.mp4"), "codecs_gpu", delete_after=False))
