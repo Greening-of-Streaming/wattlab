@@ -7,6 +7,54 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 42 — 2026-06-10/11 (overnight, autonomous)
+
+Refactor **Phases 2–4 complete** — the code restructuring the 2026-06 review planned is
+done. Owner went to bed with the goal "complete the code restructuring"; tests were green
+(560 → 566) after every one of ~20 incremental commits, and the measurement modules are
+byte-identical throughout (energy-imperceptibility rule — no re-baselining needed).
+
+**Phase 2 — page-shell unification.** Every standard page now renders through
+`ui.render_page()` (one shell owning doctype, title, auth chip + back link, footer, design
+tokens, bundle tags; `back=False` for home, `head=` for chart.js pages). Pages that stay
+chrome-less are now an explicit, documented list: `/findings` + single-finding pages (S41
+decision), `/methodology` (bespoke topbar + own design tokens — converting it would
+visually regress a polished page), the auth/gate family (one deliberate mini-shell,
+`_auth_page_shell` — no telemetry chrome on a sign-in page), and the video-enhance asset
+404 mini-page.
+
+**Phase 3 — per-feature route modules.** `main.py` went 10,976 → ~430 lines and now holds
+*only* app assembly: middleware, the CapabilityError gate handler, startup, home,
+`/live` `/power` `/carbon`, `/ui-config.js`, `/queue`(+`-status`), cooldown-decision.
+Twelve flat `routes_*.py` APIRouter modules (enhance, benchmark, findings, image, llm,
+rag, video, settings, results, demo, methodology, auth) each own their routes, page
+template, and `run_*_job` orchestration. New `runtime.py` owns the `jobs` dict + live
+telemetry cache + pollers, so feature modules never import main; `ui.py` gained the
+serve-time wording config (`_ui_cfg`/`_bake_durations`), the CR-037 AI bands, the CR-060
+GPU copy helpers, and `_model_date_line`. `main.py` keeps one commented compat-alias block
+(benchmark.py reaches `run_job`/`run_llm_compare_models_job`/`run_rag_compare_models_job`;
+tests reach templates + handlers). Testing gotcha worth remembering: monkeypatch the
+`routes_*` module that *binds* a name, not main — `test_codecs_split`/`test_delete_result`
+updated accordingly. Second gotcha: Python ≥3.12.4 counts TEST-NET `203.0.113.x` as
+`is_private` → Lab tier; probe Anonymous with a genuinely public IP (8.8.8.8).
+
+**Phase 4 — result-render contract.** `docs/result_envelope.md` is the new single
+catalogue of every `job_type × mode`, its shape, its summariser, its JS renderer, and the
+ordered consumer (blast-radius) list. `persist._summarise` is now a per-family
+`mode → summariser` dispatch (`_SUMMARISERS`), differential-tested against all 274 stored
+results on disk — zero summary diffs. Unregistered modes still summarise (listings never
+break) but stamp `"unrecognised_mode"`; the `wlRender*Card` soft-fails now echo the
+offending mode (`_wlBadRecord`). `wlCooldownSummary` accepts both cooldown stamp shapes
+(`cooldowns` list + the measurement modules' legacy singular `cooldown` dict). New
+`test_result_envelope.py` machine-checks that every writer mode is registered. Deferred,
+documented: a formal `JobRecord` shape (fix when next touched) and cooldown writer
+unification (the singular writers live inside measurement modules — out of bounds here).
+
+ARCHITECTURE.md rewritten to describe the current (post-refactor) state. Rollback anchor
+remains tag `v0.8.7`. **Service restart needed** to run the new module layout.
+
+---
+
 ## Session 41 — 2026-06-10
 
 Architecture review + start of the 2026-06 refactor (Phases 0–1 of 4). Owner asked for a

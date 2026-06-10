@@ -1,83 +1,97 @@
 # OWL — Architecture
 
-One- to two-page orientation for humans and AI agents. **Current state + target state.**
-Deeper context: `docs/architecture_review_2026-06.md` (the active refactor plan),
-`AUDIT_BRIEF.md` / `AUDIT_RESPONSE.md` (2026-05 access-spine audit), `WATTLAB_SPEC.md` (product).
+One- to two-page orientation for humans and AI agents. **Current state (post
+2026-06 refactor, Phases 0–4 complete).**
+Deeper context: `docs/architecture_review_2026-06.md` (the refactor plan, now
+executed), `docs/result_envelope.md` (the result-shape contract),
+`AUDIT_BRIEF.md` / `AUDIT_RESPONSE.md` (2026-05 access-spine audit),
+`WATTLAB_SPEC.md` (product).
 
 ## What OWL is
 
-A FastAPI service on GoS1 that runs streaming/AI workloads (video transcode, LLM inference,
-image generation, RAG) while measuring wall power (Tapo P110) and thermals, and publishes
-per-run energy results with statistical confidence. Single process, single worker, one
-job at a time (measurement integrity demands exclusive hardware access).
+A FastAPI service on GoS1 that runs streaming/AI workloads (video transcode,
+LLM inference, image generation, RAG) while measuring wall power (Tapo P110)
+and thermals, and publishes per-run energy results with statistical
+confidence. Single process, single worker, one job at a time (measurement
+integrity demands exclusive hardware access).
 
 ## Module map (`wattlab_service/`)
 
 | Layer | Modules | Notes |
 |---|---|---|
-| **App / routes / UI** | `main.py` (~13k lines) | Routing, all HTML/JS/CSS templates, page handlers, job orchestration (`run_*_job`), queue worker. **The refactor target** — shrinking toward app assembly only. |
-| **Access spine** | `audience.py`, `capabilities.py`, `queue_control.py` | `audience.tier(request)` → Anonymous/Member/Lab. `capabilities._REQUIRED_TIER` **is** the security policy; routes declare capabilities via `Depends(requires(CAP))`, never tiers. `queue_control` is the single enqueue path (capability + lock + caps). |
-| **Auth** | `auth.py`, `email_send.py` | CR-001 magic-link sign-in (allowlist `data/members.json`), Gmail SMTP. |
-| **Measurement** | `video.py`, `llm.py`, `image_gen.py`, `rag.py`, `pixop.py`, `benchmark.py` | One per workload. Byte-stable during refactors (energy-imperceptibility rule: pure-software moves don't confound measurements, but these files changing would force re-verification). |
-| **Instrumentation** | `power.py`, `gpu.py` | `power.get_power_watts()` is the **only** wall-power read path; `power.stamp()`/`meter_display_name()` carry meter identity; `power.cooldown_between_runs` is the only inter-run cooldown path. GPU telemetry + encoder/runtime naming go through `gpu.BACKEND` (vendor abstraction, CR-060 — survived the AMD→Nvidia swap with zero call-site edits). The planned PDU/meter swap mirrors this pattern as `power.BACKEND` (CR-031 §2). |
-| **Analysis** | `confidence.py`, `carbon.py`, `canonical.py`, `curated.py` | Shared CI/traffic-light model; CO₂e context (reference-only — GoS stands behind energy, not carbon). |
-| **Storage** | `persist.py`, `settings.py`, `sources.py`, `model_catalog.py`, `corpus_manifest.py`, `findings.py`, `reproduce.py` | Flat-file JSON under `results/` (symlink → `/srv/data/owl/`). `settings.json` is **live state** — never include it in feature commits. `model_catalog` makes LLM `MODELS` dicts live views — never edit them as literals. |
-| **Meta** | `version.py` | Build stamp resolved at process start; `-local` suffix = dirty tree at launch. |
+| **App assembly** | `main.py` (~430 lines) | FastAPI app, middleware, capability-gate exception handler, startup (queue worker + pollers), home page, `/live` `/power` `/carbon`, `/ui-config.js`, `/queue`(+`-status`), cooldown-decision. Nothing feature-shaped lives here. |
+| **Feature routes** | `routes_video.py`, `routes_llm.py`, `routes_rag.py`, `routes_image.py`, `routes_enhance.py`, `routes_benchmark.py`, `routes_findings.py`, `routes_results.py`, `routes_settings.py`, `routes_demo.py`, `routes_methodology.py`, `routes_auth.py` | One flat module per feature, each an `APIRouter`: its routes + page template + `run_*_job` orchestration. **Never import `main`.** `main.py` keeps a commented alias block (benchmark.py + tests reach `run_job`, `run_llm_compare_models_job`, … through it). |
+| **Shared runtime** | `runtime.py` | The `jobs` dict (mutated in place, never reassigned), the live power/sensors cache + pollers, `job_status()`. |
+| **Page chrome + UI copy** | `ui.py` | `render_page()` (the single page shell: doctype, title, auth chip + back link, footer, design tokens, bundle tags), lock badges, external-URL registry, serve-time wording config (`_ui_cfg`/`_bake_durations`), CR-037 AI framing bands, CR-060 GPU UI-copy helpers, `_model_date_line`. |
+| **Static JS bundles** | `static/wl-*.js` | Real files (lintable, cacheable, `?v=<sha>`): `wl-live`, `wl-carbon`, `wl-progress`, `wl-result`, `wl-bench-hydrate`, `wl-charts`. Settings/meter copy reaches them per request via `/ui-config.js` → `window.WL_CFG` — **no import-time baking, no restart-coupled copy.** |
+| **Access spine** | `audience.py`, `capabilities.py`, `queue_control.py` | `audience.tier(request)` → Anonymous/Member/Lab. `capabilities._REQUIRED_TIER` **is** the security policy; routes declare capabilities via `Depends(requires(CAP))`, never tiers. `queue_control` is the single enqueue path + worker. |
+| **Auth** | `auth.py`, `email_send.py` (+ `routes_auth.py`) | CR-001 magic-link sign-in (allowlist `data/members.json`), Gmail SMTP. |
+| **Measurement** | `video.py`, `llm.py`, `image_gen.py`, `rag.py`, `pixop.py`, `benchmark.py` | One per workload. Byte-stable through the whole refactor (energy-imperceptibility rule). |
+| **Instrumentation** | `power.py`, `gpu.py` | `power.get_power_watts()` is the **only** wall-power read path; `power.cooldown_between_runs` the only inter-run cooldown path. GPU telemetry + naming via `gpu.BACKEND` (CR-060). The planned PDU/meter swap mirrors this as `power.BACKEND` (CR-031 §2). |
+| **Analysis** | `confidence.py`, `carbon.py`, `canonical.py`, `curated.py` | Shared CI/traffic-light model; CO₂e context (reference-only). |
+| **Storage** | `persist.py`, `settings.py`, `sources.py`, `model_catalog.py`, `corpus_manifest.py`, `findings.py`, `reproduce.py` | Flat-file JSON under `results/`. `persist._SUMMARISERS` is the mode→summariser dispatch (see result envelope). `settings.json` is **live state** — never include it in feature commits. LLM `MODELS` dicts are live views — never edit as literals. |
+| **Meta** | `version.py` | Build stamp at process start; `-local` suffix = dirty tree at launch. |
 
-Static assets: `wattlab_service/static/` (`wl-charts.js` is the precedent for real JS files).
-Tests: `wattlab_service/tests/` (pytest; TestClient runs as **Lab tier** — anonymous/member
-scoping bugs don't surface there; reason about tiers explicitly).
+Tests: `wattlab_service/tests/` (pytest; TestClient runs as **Lab tier** —
+reason about Anonymous/Member explicitly. Note: Python ≥3.12.4 counts
+TEST-NET ranges like 203.0.113.x as `is_private` → Lab; probe tiers with a
+genuinely public IP like 8.8.8.8).
 
 ## Request flow
 
 ```
-request → maintenance middleware → route handler
+request → maintenance middleware → route handler (routes_<feature>.py)
             └ Depends(requires(CAPABILITY)) → audience.tier() → 403 gate page if below tier
-          page GET  → handler builds HTML from module-level template constants (f-string/.replace)
-          job POST  → queue_control.enqueue(run_*_job, page=…) → jobs[job_id] dict
-                       → queue worker (main.py) runs one job at a time
+          page GET  → handler builds body, ui.render_page() adds the shell
+                      (chrome-less exceptions: /findings, /methodology, auth/gate, asset-404)
+          job POST  → queue_control.enqueue(run_*_job, page=…) → runtime.jobs[job_id]
+                       → queue worker (queue_control) runs one job at a time
 ```
 
 ## Job / measurement flow
 
 ```
-run_*_job (main.py)                      ← orchestration: stages, cooldowns, jobs[] updates
+run_*_job (routes_<feature>.py)          ← orchestration: stages, cooldowns, jobs[] updates
   └ measurement module (video.py, …)     ← focus mode → baseline (10×1s) → task → polls
       └ power.get_power_watts() @1s + power.read_sensors_dict()
   └ confidence.confidence(...)           ← 🟢/🟡/🔴 per-run CI flag
   └ carbon enrichment (reference-only)
-  └ persist.save(...) → results/{type}/{date}_{job_id}.json   (stamps version, gpu_hardware,
-                                                               power_hardware, raw samples)
-front-end polls /…/job/{id} → stage strip (WL_*_STAGES) → result card (wlRender* JS)
+  └ persist.save(...) → results/{type}/{date}_{job_id}.json
+front-end polls /…/job/{id} → stage strip → result card (wlRender* in wl-result.js)
 ```
 
-Inter-run cooldowns: **only** via `power.cooldown_between_runs` (fixed vs wait-for-idle
-toggle); wording via `_bake_durations` tokens; footer via `wlCooldownSummary`. All three
-are single-sourced and test-guarded — keep them that way.
+Inter-run cooldowns: **only** via `power.cooldown_between_runs` (fixed vs
+wait-for-idle toggle); wording via `ui._bake_durations` tokens / `WL_CFG`;
+footer via `wlCooldownSummary` (accepts both stamp shapes — see envelope doc).
+All single-sourced and test-guarded — keep them that way.
 
-## Known weaknesses (accepted, being addressed — see the review doc)
+## The result-shape contract (Phase 4)
 
-1. `main.py` holds 60% of the code; ~half of it is HTML/JS/CSS inside Python strings.
-2. JS in strings → no lint; shared constants (`_RESULT_JS`, `_CARBON_JS`) couple all pages.
-3. Template tokens baked at **import time** → copy/settings changes need a service restart.
-4. No result-shape schema: each mode (`single`, `all_codecs`, `compare_models`, …) is known
-   only to its consumers (renderers, `persist._summarise`, CSV rows, demo pre-load).
-5. `jobs` dict is free-form; status/stage are unvalidated strings.
-6. Flat-file persistence won't scale past the next growth spurt (CR-031 §1 decision pending —
-   don't extend `persist.py` before it's made).
+`docs/result_envelope.md` catalogues every `job_type × mode`, its shape, and
+its consumers. **Adding a mode = registering it in `persist._SUMMARISERS`,
+the type's `wlRender*Card`, and that doc.** Unregistered modes are loud:
+`"unrecognised_mode"` on summaries, `_wlBadRecord()` on cards.
 
-## Target state (2026-06 refactor, phased — `docs/architecture_review_2026-06.md`)
+## Known weaknesses (accepted)
 
-- **Phase 1:** big JS constants → `static/*.js`; import-time baking → per-request `window.WL_CFG`.
-- **Phase 2:** one `ui.py` `render_page()` page shell (today: 19 hand-rolled DOCTYPE shells).
-- **Phase 3:** one flat route module per feature (`APIRouter`), one feature per session
-  (enhance-run → benchmark → findings → image → rag → llm → video); `main.py` < 1,500 lines
-  (app assembly, middleware, queue worker, home).
-- **Phase 4:** documented result envelope + `mode → renderer` dispatch; small `JobRecord`.
-- **Parallel:** `power.BACKEND` protocol (CR-031 §2) when a PDU candidate is concrete.
-- **Non-goals:** no template engine, no DB inside this refactor, no edits to measurement
-  modules, no deep `features/` tree, no big-bang commits.
+1. `jobs` dict is free-form; status/stage are unvalidated strings (formal
+   `JobRecord` = remaining Phase-4 item, fix when next touched).
+2. Cooldown stamp-key variants on disk (`cooldowns` list vs `cooldown` dict) —
+   renderer tolerates both; unify writers next time measurement modules are
+   edited for a measurement reason.
+3. Flat-file persistence won't scale past the next growth spurt (CR-031 §1
+   decision pending — don't extend `persist.py` before it's made).
+4. Only a minority of test files exercise routes via TestClient, all as Lab.
 
-**Conventions to hold:** policy lives in `capabilities.py` (docs mirror it, never fork it);
-truth in code over docs; every phase lands with tests green + the `AUDIT_RESPONSE.md` smoke
-checklist; rollback anchor: tag `v0.8.7`.
+## Still open (separate tracks)
+
+- **PowerBackend protocol (CR-031 §2)** — `power.BACKEND` mirroring
+  `gpu.BACKEND`; schedule when a PDU candidate is concrete.
+- **Containerisation (CR-031 §3)** — the host couplings are now visible in
+  one place each: focus-mode sudoers (measurement modules), `sensors -j`
+  (power.py), `/tmp/gos-measure.lock`, `settings.json` + `results/` volumes.
+
+**Conventions to hold:** policy lives in `capabilities.py` (docs mirror it,
+never fork it); truth in code over docs; tests green at every merge;
+measurement modules byte-identical unless the change *is* a measurement
+change; rollback anchor: tag `v0.8.7` (pre-refactor).
