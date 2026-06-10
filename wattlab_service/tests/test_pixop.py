@@ -837,7 +837,9 @@ def test_generate_presets_full_matrix(tmp_path):
     c = _cfg(tmp_path)
     _stage_templates(tmp_path)
     combos = pixop.generate_presets(c)
-    assert set(combos) == {"sdr_sd", "sdr_hd", "sdr_4k", "hdr_sd", "hdr_hd", "hdr_4k"}
+    # hdr_4k is excluded: sdr_to_hdr=on aborts pixop-live at a 4K target
+    # (2026-06-10 bisect) — pending Jon's input-agnostic HDR template.
+    assert set(combos) == {"sdr_sd", "sdr_hd", "sdr_4k", "hdr_sd", "hdr_hd"}
     # Substitution: ONLY --output-res and --cbr change; template lines survive.
     f = tmp_path / "presets" / combos["sdr_4k"]["preset"]
     text = f.read_text()
@@ -873,8 +875,9 @@ def test_generate_presets_missing_template_drops_format(tmp_path):
 def test_resolve_combo(tmp_path, monkeypatch):
     monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
     _stage_templates(tmp_path)
-    combo = pixop.resolve_combo("hdr", "4k")
-    assert combo["preset"] == "generated/owl_hdr_4k_35mbps.args"
+    combo = pixop.resolve_combo("hdr", "hd")
+    assert combo["preset"] == "generated/owl_hdr_hd_20mbps.args"
+    assert pixop.resolve_combo("hdr", "4k") is None    # excluded (known-bad)
     assert pixop.resolve_combo("sdr", "8k") is None
     assert pixop.resolve_combo("dolby", "hd") is None
 
@@ -889,9 +892,9 @@ def test_generated_preset_spec_and_compare_gate(tmp_path, monkeypatch):
     _stage_templates(tmp_path)
     c = _cfg(tmp_path)
     combos = pixop.generate_presets(c)
-    spec = pixop.parse_preset_spec(combos["hdr_4k"]["preset"], c)
-    assert spec["width"] == 3840 and spec["height"] == 2160
-    assert spec["bitrate_kbps"] == 35000
+    spec = pixop.parse_preset_spec(combos["hdr_hd"]["preset"], c)
+    assert spec["width"] == 1920 and spec["height"] == 1080
+    assert spec["bitrate_kbps"] == 20000
     assert spec["hdr_convert"] is True
     assert spec["output_csp"] == "yuv422" and spec["output_depth"] == 10
     # HDR combos have no apples-to-apples ffmpeg baseline; SDR combos do.
@@ -905,7 +908,7 @@ def test_preflight_includes_combos(tmp_path, monkeypatch):
     _stage(tmp_path, preset=True, inp=True, license=True)
     _stage_templates(tmp_path)
     pf = pixop.preflight()
-    assert len(pf["combos"]) == 6
+    assert len(pf["combos"]) == 5     # 6 minus the excluded hdr_4k
     assert pixop._preset_known("generated/owl_sdr_hd_20mbps.args", pf)
     assert pixop._preset_known("p.args", pf)
     assert not pixop._preset_known("evil.args", pf)

@@ -776,7 +776,7 @@ function combosChanged() {
     line.textContent = combo
       ? ('Target ' + combo.res.replace('x', '×') + ' · ' + combo.mbps
          + ' Mbps CBR · preset ' + combo.preset)
-      : 'This combination is not available yet (missing colour template).';
+      : 'This combination is not available yet.';
   }
   var runBtn = document.getElementById('runBtn');
   if (runBtn) runBtn.disabled = !(RUN_ENABLED && combo);

@@ -228,6 +228,14 @@ _SR_TARGETS = {  # key → (label, "WxH", CBR kbps)
 _OUTPUT_FORMATS = ("sdr", "hdr")
 _GENERATED_DIR = "generated"
 
+# Known-bad combos, excluded from generation until Jon's input-agnostic HDR
+# template lands. 2026-06-10 bisect (1080p SDR input, GoS promo):
+# `sdr_to_hdr=on` aborts pixop-live (rc 134, std::runtime_error immediately
+# after the ×2 AOTI model loads) ONLY at a 4K target — SDR→4K, HDR→SD and
+# HDR→HD all pass. An excluded combo simply doesn't generate, so the UI shows
+# it as "not available yet" and Run disables. CR-064 open question #1.
+_COMBO_EXCLUSIONS = {"hdr_4k"}
+
 
 def _combo_preset_name(fmt: str, target: str, kbps: int) -> str:
     return f"{_GENERATED_DIR}/owl_{fmt}_{target}_{kbps // 1000}mbps.args"
@@ -266,6 +274,8 @@ def generate_presets(c: Optional[dict] = None) -> dict:
         if not tpl.is_file():
             continue
         for tkey, (tlabel, res, kbps) in _SR_TARGETS.items():
+            if f"{fmt}_{tkey}" in _COMBO_EXCLUSIONS:
+                continue
             name = _combo_preset_name(fmt, tkey, kbps)
             try:
                 text = _generate_preset_text(tpl, res, kbps)

@@ -889,9 +889,9 @@ No new UI surface; the backend chip on a result card (if surfaced at all) is a s
 
 ### Open questions (all on Jon)
 
-- Input-agnostic **HDR-out** colour template: auto-detect `input_mat`? does `sdr_to_hdr=on` no-op on PQ input? (Current `fhd_pq` flags would inverse-tone-map already-HDR content.)
-- Blessed **HDR→SDR** tone-map flags for the SDR-out template on HDR input (no `hdr_to_sdr` visible in `--vpp-pixop-live` options).
-- `dnn_scaling` behaviour at ~×4.5 (480p → 4K).
+- Input-agnostic **HDR-out** colour template: auto-detect `input_mat`? does `sdr_to_hdr=on` no-op on PQ input? (Current `fhd_pq` flags would inverse-tone-map already-HDR content.) **Now with hard evidence (2026-06-10 bisect, 1080p SDR input):** `sdr_to_hdr=on` **aborts pixop-live at a 4K target** — rc 134, `std::runtime_error` immediately after the ×2 AOTI model loads (`sm120_x2_rs1p0_1920_1080.so`) — while SDR→4K, HDR→SD and HDR→HD all pass on the same input. `hdr_4k` is excluded from the generated matrix (`pixop._COMBO_EXCLUSIONS`) until Jon supplies a 4K-capable HDR template; re-enable by removing the exclusion.
+- Blessed **HDR→SDR** tone-map flags for the SDR-out template on HDR input (no `hdr_to_sdr` visible in `--vpp-pixop-live` options). Observed: PQ Meridian through the SDR template (`input_mat=bt709`) runs but the colour treatment is unvalidated.
+- `dnn_scaling` behaviour at ~×4.5 (480p → 4K). (×2.25, 480p→HD, confirmed working 2026-06-10.)
 - Tania: statistical-significance thresholds for confidence badges (global `confidence.py` follow-up, not this CR).
 
 ### Lab look & feel constraint
