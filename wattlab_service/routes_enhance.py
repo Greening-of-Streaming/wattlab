@@ -498,15 +498,16 @@ _ENHANCE_RUN_HTML = """
       </select>
     </div>
     <div>
-      <button class="secondary" id="cmpBtn" onclick="startCompare()"{RUN_DISABLED}>Compare vs traditional (ffmpeg)</button>
+      <button class="secondary" id="cmpBtn" onclick="startCompare()"{RUN_DISABLED}>Compare vs ffmpeg (always 1&times; speed)</button>
     </div>
   </div>
   <div id="cmp-note" style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.75rem">
     Runs the selected preset's AI upscale <em>and</em> a plain ffmpeg scale at the same
     resolution &amp; bitrate, back-to-back, then compares energy &amp; file size side by side
-    with three viewers (source / AI / traditional). <strong>Always paced at Live&nbsp;1×</strong>
-    so ΔW is measured over the full clip (a batch ffmpeg pass is too short for a reliable
-    confidence flag). A final Analyse pass adds an AI↔ffmpeg PSNR/SSIM difference and SI/TI
+    with three viewers (source / AI / traditional). <strong>Always paced at 1× realtime
+    regardless of the Serve-as-Live checkbox</strong> &mdash; so the comparison takes about
+    2&times; the clip's duration, but ΔW is measured over the full clip (a batch ffmpeg
+    pass finishes in seconds, too short for a reliable confidence flag). A final Analyse pass adds an AI↔ffmpeg PSNR/SSIM difference and SI/TI
     complexity (source vs both outputs). Absolute quality is yours to judge &mdash; no
     ground-truth reference.<span id="cmp-gate" style="color:var(--warn)"></span>
   </div>
