@@ -40,6 +40,7 @@ def _cfg(tmp_path) -> dict:
         "vqa_timeout_s": 60,
         "template_sdr": "tpl_sdr.args",          # CR-064 — stage via _stage_templates
         "template_hdr": "tpl_hdr.args",
+        "upload_ttl_h": 12,
     }
 
 
@@ -1007,13 +1008,40 @@ def test_upload_bad_extension(tmp_path, monkeypatch):
     assert r.status_code == 400
 
 
-def test_cleanup_upload(tmp_path, monkeypatch):
+def test_cleanup_upload_touches_not_deletes(tmp_path, monkeypatch):
+    # Owner amendment 2026-06-10: job end must NOT delete the input (the
+    # result card compares source vs outputs) — it touches the mtime so the
+    # TTL sweep counts from the run.
     monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
     (tmp_path / "input").mkdir(parents=True, exist_ok=True)
     f = tmp_path / "input" / "upload_abc_clip.mp4"
     f.write_text("x")
+    import os
+    os.utime(f, (1_000_000, 1_000_000))   # ancient mtime
     routes_enhance._cleanup_upload("upload_abc_clip.mp4")
-    assert not f.exists()
+    assert f.exists()
+    assert f.stat().st_mtime > 1_000_000  # clock restarted at run end
+
+
+def test_sweep_ephemeral_uploads(tmp_path):
+    import os
+    import time as _t
+    c = _cfg(tmp_path)
+    (tmp_path / "input").mkdir(parents=True, exist_ok=True)
+    old = _t.time() - 13 * 3600           # past the 12h TTL
+    expired = tmp_path / "input" / "upload_old_clip.mp4"
+    kept = tmp_path / "input" / "upload_keep_old_clip.mp4"
+    fresh = tmp_path / "input" / "upload_new_clip.mp4"
+    staged = tmp_path / "input" / "clip.mov"
+    for f in (expired, kept, fresh, staged):
+        f.write_text("x")
+    os.utime(expired, (old, old))
+    os.utime(kept, (old, old))
+    os.utime(staged, (old, old))
+    swept = pixop.sweep_ephemeral_uploads(c)
+    assert swept == ["upload_old_clip.mp4"]
+    assert not expired.exists()
+    assert kept.exists() and fresh.exists() and staged.exists()
 
 
 # --- start routes: combo resolution -------------------------------------------
@@ -1230,3 +1258,4 @@ def test_settings_page_exposes_enhance_upload_caps():
     assert r.status_code == 200
     assert 'id="enhance_upload_max_mb"' in r.text
     assert 'id="enhance_upload_max_duration_s"' in r.text
+    assert 'id="enhance_upload_ttl_h"' in r.text

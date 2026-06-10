@@ -454,6 +454,7 @@ async def settings_page(request: Request):
     {field("upload_size_member_mb",    s['upload_size_member_mb'],    100, 4096, "MB",   "Member /video/upload byte cap")}
     {field("enhance_upload_max_mb",    s.get('enhance_upload_max_mb', 1024), 10, 4096, "MB", "Member /enhance-run upload byte cap (Lab uncapped)")}
     {field("enhance_upload_max_duration_s", s.get('enhance_upload_max_duration_s', 60), 10, 3600, "s", "Member /enhance-run clip-duration cap — runs are 1×-paced, so duration ≈ processing time (Lab uncapped)")}
+    {field("enhance_upload_ttl_h", s.get('enhance_upload_ttl_h', 12), 1, 168, "h", "un-kept /enhance-run uploads are swept this long after their run (keeps the source comparable on the result card)")}
 
     {_models_section_html(s, local)}
 
@@ -496,6 +497,7 @@ async def settings_page(request: Request):
                             'queue_anonymous_cap','queue_member_cap',
                             'upload_size_anonymous_mb','upload_size_member_mb',
                             'enhance_upload_max_mb','enhance_upload_max_duration_s',
+                            'enhance_upload_ttl_h',
                             'bench_video_reps'];
         const bool_fields = ['cooldown_wait_for_idle','cooldown_show_wait_detail'];
         const str_fields = ['members'];

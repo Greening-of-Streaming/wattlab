@@ -72,6 +72,7 @@ def config() -> dict:
         # his blessed input-agnostic templates when they arrive.
         "template_sdr":  s.get("enhance_template_sdr", "nvencc_fhd_709_20mbps.args"),
         "template_hdr":  s.get("enhance_template_hdr", "nvencc_fhd_pq_20mbps.args"),
+        "upload_ttl_h":  s.get("enhance_upload_ttl_h", 12),
     }
 
 
@@ -197,6 +198,29 @@ def ffmpeg_comparable(preset_name: str, c: Optional[dict] = None) -> bool:
     """True if a preset is a fair target for a plain-ffmpeg upscale baseline —
     i.e. it does NOT do an SDR→HDR conversion. Upscale-only presets qualify."""
     return not parse_preset_spec(preset_name, c).get("hdr_convert")
+
+
+def sweep_ephemeral_uploads(c: Optional[dict] = None) -> list[str]:
+    """Delete un-kept uploads (`upload_*`, not `upload_keep_*`) older than
+    `upload_ttl_h`. Their mtime is touched at run end, so the TTL counts from
+    the run (or the upload, if never run) — the result card's source viewer
+    keeps working all session, and deletion happens afterwards (CR-064,
+    owner-amended 2026-06-10). Called from preflight; fail-soft; returns the
+    swept names (for tests/logs)."""
+    c = c or config()
+    inp, _, _ = _workdir_paths(c)
+    cutoff = time.time() - float(c.get("upload_ttl_h", 12)) * 3600
+    swept = []
+    try:
+        for p in inp.iterdir():
+            if (p.is_file() and p.name.startswith("upload_")
+                    and not p.name.startswith("upload_keep_")
+                    and p.stat().st_mtime < cutoff):
+                p.unlink(missing_ok=True)
+                swept.append(p.name)
+    except Exception:
+        pass
+    return swept
 
 
 def list_inputs(c: Optional[dict] = None) -> list[str]:
@@ -355,6 +379,7 @@ def preflight(c: Optional[dict] = None) -> dict:
     """
     c = c or config()
     ensure_workdir(c)
+    sweep_ephemeral_uploads(c)
     inp, out, pre = _workdir_paths(c)
 
     image_present = _image_present(c)

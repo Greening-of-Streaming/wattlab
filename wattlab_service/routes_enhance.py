@@ -354,11 +354,12 @@ def _enhance_upload_limits_html() -> str:
     s = cfg.load()
     mb = int(s.get("enhance_upload_max_mb", 1024))
     dur = int(s.get("enhance_upload_max_duration_s", 60))
+    ttl = int(s.get("enhance_upload_ttl_h", 12))
     return (f"Upload limits &mdash; Members: file &le;{mb} MB, clip &le;{dur}s "
-            "&middot; Lab (LAN): uncapped. Un-kept uploads are removed after "
-            "their run (outputs stay with the result); &ldquo;Keep on GoS1&rdquo; "
-            "leaves the clip in the Input menu for future runs &mdash; visible "
-            "to everyone with page access.")
+            f"&middot; Lab (LAN): uncapped. Un-kept uploads are removed ~{ttl}h "
+            "after their run (so the source stays comparable on the result card; "
+            "outputs stay with the result); &ldquo;Keep on GoS1&rdquo; keeps the "
+            "clip indefinitely &mdash; visible to everyone with page access.")
 
 
 _ENHANCE_RUN_STYLES = """
@@ -600,19 +601,6 @@ function updateInputPreview() {
   wrap.style.display = 'block';
   _wireNativeVids(wrap);
 }
-// After a run, an un-kept upload has been removed server-side — mirror that
-// in the menu/preview so the page never offers a file that no longer exists
-// (pressing play on a vanished src collapses the player to 300×150).
-function _dropEphemeralInput(meas) {
-  var name = (meas && (meas.input_name || (meas.result || {}).input_name)) || '';
-  if (name.indexOf('upload_') !== 0 || name.indexOf('upload_keep_') === 0) return;
-  var sel = document.getElementById('inSel');
-  var opt = sel && sel.querySelector('option[value="' + name + '"]');
-  if (opt) {
-    opt.remove();
-    updateInputPreview();
-  }
-}
 async function deleteInput() {
   var sel = document.getElementById('inSel');
   var name = sel && sel.value;
@@ -681,7 +669,6 @@ async function pollJob(jobId) {
       renderResult(data.result);
       document.getElementById('runBtn').disabled = false;
       loadPrevRuns();
-      _dropEphemeralInput(data.result);
     } else if (data.status === 'error') {
       document.getElementById('status').innerHTML =
         '<div style="color:var(--err)">Error: ' + data.error + '</div>';
@@ -962,7 +949,6 @@ async function pollCompare(jobId) {
       document.getElementById('runBtn').disabled = false;
       updateCompareGate();
       loadPrevRuns();
-      _dropEphemeralInput(data.result);
     } else if (data.status === 'error') {
       document.getElementById('status').innerHTML =
         '<div style="color:var(--err)">Error: ' + data.error + '</div>';
@@ -1281,11 +1267,16 @@ def _upload_is_ephemeral(input_name: str) -> bool:
 
 
 def _cleanup_upload(input_name: str) -> None:
-    """Remove an un-kept uploaded input clip after its run (CR-064 retention:
-    input dropped, outputs + result JSON kept). Fail-soft."""
+    """Mark an un-kept upload's run as finished by touching its mtime — the
+    actual deletion is pixop.sweep_ephemeral_uploads, `enhance_upload_ttl_h`
+    hours later. Deleting at job end broke the result card's source-vs-output
+    comparison (owner, 2026-06-10); touching restarts the TTL clock from the
+    run instead of the upload. Fail-soft."""
     try:
         inp, _, _ = pixop._workdir_paths(pixop.config())
-        (inp / input_name).unlink(missing_ok=True)
+        path = inp / input_name
+        if path.is_file():
+            path.touch()
     except Exception:
         pass
 

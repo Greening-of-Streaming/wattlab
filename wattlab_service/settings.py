@@ -115,6 +115,10 @@ DEFAULTS = {
     # when they arrive.
     "enhance_upload_max_mb": 1024,
     "enhance_upload_max_duration_s": 60,
+    # Un-kept uploads are swept this many hours after their run (mtime is
+    # touched at job end), so the result card's source-vs-output comparison
+    # keeps working all session — deletion happens "afterwards", not at done.
+    "enhance_upload_ttl_h": 12,
     "enhance_template_sdr": "nvencc_fhd_709_20mbps.args",
     "enhance_template_hdr": "nvencc_fhd_pq_20mbps.args",
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
