@@ -134,6 +134,12 @@ async def _capability_error_handler(request: Request, exc: CapabilityError):
 
 @app.on_event("startup")
 async def startup():
+    # Stale-lock recovery: every measurement runs inside this (single-worker)
+    # process, so a lock file existing at startup can only be a leftover from
+    # a kill mid-job (e.g. a service restart that hit systemd's stop timeout —
+    # twice on 2026-06-10). Without this, self-test and lock-respecting paths
+    # stay wedged until someone removes it by hand.
+    LOCK_FILE.unlink(missing_ok=True)
     queue_control.start(jobs, LOCK_FILE)
     asyncio.create_task(runtime.power_poller())
     asyncio.create_task(runtime.sensors_poller())
