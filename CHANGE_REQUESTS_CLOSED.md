@@ -4,7 +4,7 @@ Archive of fully-shipped CRs. Active work lives in `CHANGE_REQUESTS.md`.
 
 Each entry preserves the original problem statement and agreed direction; the **Status** line records when it landed and which commit closed it. Where a CR's headline scope shipped but a follow-up step was deferred, the Status line names the residual item — promote to a new active CR if/when it becomes urgent.
 
-Ordered by CR number.
+Ordered by closing date (entries are appended as CRs close, so CR numbers are not sequential).
 
 ---
 
@@ -1778,6 +1778,30 @@ The probe already writes per-run CSVs under `results/diagnostics/recovery_<ts>{,
 
 ---
 
+## CR-052 · Model date lines on `/llm` and `/rag` selectors
+
+**Status:** ✅ shipped 2026-05-27 in commit `aac6c89` (*"CR-052: model release + training-cutoff dates on /llm and /rag selectors"*). **Back-filled 2026-06-11** — this CR shipped without an entry in either tracking file; reconstructed from the commit, so briefer than a full record.
+
+Model selector cards on `/llm` and `/rag` gained a date line (model release + training cutoff) so visitors can see how current each model in the panel is. Serve-time rendering lives in `ui._model_date_line` post-S42.
+
+---
+
+## CR-053 · 4th RAG mode (`rag_blended`)
+
+**Status:** ✅ shipped 2026-05-27 in commit `078d754` (*"CR-053: 4th RAG mode (rag_blended) + compare-progress cooldown UX fix"*). **Back-filled 2026-06-11** — shipped without an entry in either tracking file; reconstructed from the commit, so briefer than a full record.
+
+Added a fourth mode (`rag_blended`) to the `/rag` compare set alongside the existing three; same commit also fixed a compare-progress cooldown UX issue.
+
+---
+
+## CR-061 · In-app benchmark orchestrator
+
+**Status:** ✅ shipped in two parts — S34 commit `88a2696` (*"CR-061 in-app benchmark + CR-029 §2 encode normalization + fixes"*, 2026-05-28) and S36 commit `ea085f9` (*"CR-061 — Member-tier benchmark view (BENCHMARK_VIEW + scoped result endpoint)"*, 2026-05-30). **Back-filled 2026-06-11** — shipped without an entry in either tracking file; reconstructed from the commits + JOURNAL one-liners, so briefer than a full record.
+
+`benchmark.py` + `results/benchmark/`: a multi-step orchestrated run (variance → video → llm → rag → image) executed in-app, built for the CR-060 pre/post-GPU-swap A/B suite (AMD baseline `e29ccef7`, post-swap `f56dfa77`). S36 added the Member-tier benchmark view (`BENCHMARK_VIEW` capability + scoped result endpoint) and the `/benchmark` nav link. Routes now live in `routes_benchmark.py` (S42 refactor); `benchmark.py` itself stayed byte-identical through the refactor.
+
+---
+
 ## CR-062 · S38 omnibus — unified cooldown/wait-for-idle + compare-flow & Lab-tooling fixes
 
 **Status:** ✅ shipped 2026-06-02 (S38) on `feature/cr-062-cooldown-and-lab-ux`. Umbrella CR retro-created to record a multi-theme session (agreed: one umbrella rather than splitting). 391 → 427 tests passing (the lone `test_encode_norm` failure is pre-existing and unrelated). **Known issue deferred** (see end). settings.json deliberately held out of the commit (live calibration state).
@@ -1847,5 +1871,28 @@ Moved the cooldown dialog helpers + `wlCooldownSummary` into `_CARBON_JS` (bundl
 - **VMAF / quality grading** — VMAF is wrong for super-resolution (no native ground-truth reference; HDR-VMAF is itself fraught). To be worked out with Tania (grade input vs output some sound way).
 - **CO₂e strip** — present but needs adjusting; energy (W/Wh) is the figure GoS stands behind, CO₂e is reference-only.
 - **Pre-run auto-disable of the Live toggle** for known-`file` content — NOT built (no reliable pre-run verdict cache); the run honestly reports `live_behind` instead.
+
+---
+
+## CR-060 · GPU-backend abstraction (AMD VAAPI/ROCm ↔ Nvidia NVENC/CUDA)
+
+**Status:** ✅ closed 2026-06-11. Abstraction shipped S35 in commit `4e927af` (*"S35: CR-060 GPU-backend abstraction (pre-swap) + AMD baseline frozen"*, 2026-05-29); swap executed + validated S36 — `79de71a` (auto-detect GPU display name, swap-back / dual-card safe) + `262d5d8` (*"S36: RTX 5080 A/B — VMAF correction + n=10 NVENC-vs-VAAPI comparison + idle/load crossover"*, 2026-05-30). The keep-open condition — *"until the 5080 is in and a re-run confirms NVENC"* — was met 2026-05-29 (RTX 5080 first light; `gpu.BACKEND` auto-resolved to Nvidia with zero code edits, exactly as designed). **Residuals:** (a) sampling-semantics open question — nvidia-smi `power.draw` is instantaneous vs AMD's `power1_average`; document / consider an averaging window for parity (noted in CLAUDE.md Thermal Sensors); (b) the entry's old claim that "~13 RX 7800 XT/ROCm strings remain in main.py" is **obsolete — zero remain**: the label pass shipped (live-UI GPU copy routes through `gpu.BACKEND` helpers — `_gpu_enc`/`_gpu_display_name`/`_gpu_runtime`), guarded by `test_gpu_ui_factorisation`.
+**Triggered by:** Pixop conversion (CUDA-only) → planned RX 7800 XT → RTX 5080 swap. Full hardware/strategy context in memory `gpu-swap-nvidia-initiative` + board lazy-consensus email 2026-05-28.
+
+### What shipped (S35 — abstraction, pre-swap)
+
+New `wattlab_service/gpu.py` — `AmdBackend` / `NvidiaBackend` / `NoGpuBackend`, resolved **once at import** into `gpu.BACKEND` (so a card swap + reboot is picked up with zero code edits). Each backend supplies: GPU sensor read (`{gpu_junction, gpu_ppt_w}`), ffmpeg GPU encode pieces (hwaccel args / scale filter / encoder / codec norm args), torch env setup, device label, and a provenance `stamp()`. Refactored consumers: `power.read_sensors_dict` (GPU half → backend; `amdgpu_chip` kept as a back-compat alias), `video.py` (3 GPU presets → `_gpu_cmd()`), `image_gen.py` (env + label), `persist.save_result` (stamps `gpu_hardware`). AMD path proven by a **byte-identical-command test** — no ΔWh re-baseline (pure software abstraction = energy-imperceptible per owner). Auto-detect (nvidia-smi → sensors amdgpu → none) chosen over the originally-locked explicit config, per owner's *"swapping a new GPU just requires a reboot"*; `OWL_GPU_VENDOR` env override + the per-result `gpu_hardware` stamp preserve the explicit-config intent. 339 → 385 tests; new `tests/test_gpu_backend.py`. **AMD pre-swap baseline frozen** in `docs/gpu_swap_amd_baseline.md` (overnight benchmark `e29ccef7`, n=10 × 6 presets × 2 sources).
+
+### What shipped (S36 — swap, validation)
+
+RTX 5080 installed; `gpu.BACKEND` auto-resolved to Nvidia with **zero code edits**. Post-swap n=10 benchmark `f56dfa77`: NVENC beats VAAPI on energy (H.264 −42%, H.265 −22%, AV1 −25%) and equals-or-beats quality in 5/6 cells (NVENC AV1 +4.3 VMAF on animation). Vendor-neutral wall idle ~57–59 W → ~79 W (+20 W) → idle↔load crossover reframes the swap as a capability/quality/speed upgrade, not a same-workload energy win. AMD baseline VMAF correction folded into `262d5d8`.
+
+### Problem (original statement)
+
+Every GPU-touching path in OWL assumed AMD: `video.py` hardcoded VAAPI encoders/filters/device in the `PRESETS` lambdas; `power.py` read AMD lm-sensors keys (`amdgpu_chip()`, `junction`, `PPT`); `image_gen.py` set the ROCm `HSA_OVERRIDE_GFX_VERSION` env + hardcoded "RX 7800 XT, ROCm" labels. To swap in an Nvidia card — and keep AMD runnable as a future GoS2 reference — the codebase had to run on **both**, selectable by config. Because GoS1 is one box with a single P110, an in-place swap makes the card the only variable, so an identical benchmark suite before/after yields the AMD-vs-Nvidia energy comparison for free. `llm.py` / `rag.py` were already GPU-agnostic (all GPU work behind Ollama); their only coupling was thermal reads via `power.py`, so fixing `power.py` fixed them.
+
+### Agreed direction (as locked 2026-05-28, with flagged departures)
+
+Full design doc: `~/.claude/plans/i-want-to-discuss-cosmic-beacon.md`. (1) Long-term dual-card polymorphic backend, not a throwaway migration — held (module named `gpu.py`, not `gpu_backend.py`; cosmetic departure). (2) Explicit config — **reversed to auto-detect** (flagged, owner-approved 2026-05-29). (3) AMD-baseline-first sequencing with byte-identical-command correctness proof — held. Seam covered video encoder/filter/hwaccel/device (VAAPI↔NVENC), torch env + device, and GPU sensor resolution, keeping `gpu_junction`/`gpu_ppt_w` stable. Open-Qs resolved along the way: `scale_cuda` + `h264/hevc/av1_nvenc` already present in `ffmpeg-master` (no rebuild needed); `av1_nvenc` has no `-profile` knob; `-rc cbr` is the ABR-equivalent. The baseline-integrity gate (CR-029 §2 parameters locked before the baseline; no CR-025/CR-031-§2 interleaving) was honoured: §2 shipped S34 (`88a2696`), baseline S35, swap S36.
 
 ---

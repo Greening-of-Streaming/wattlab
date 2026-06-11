@@ -14,7 +14,7 @@ OWL was designed as a **lab tool first** — dense, fast, neutral, no marketing 
 
 ## CR-003 · Iso-energy bitrate sweep ("I want to spend X Wh, what are my options?")
 
-**Status:** captured 2026-05-01 — likely post-conference.
+**Status:** captured 2026-05-01 — longer horizon (long test runs needed).
 **Triggered by:** Dom (transcript ~T+1126s and ~T+2398s).
 
 ### Problem
@@ -35,13 +35,13 @@ Possibly pair with a quality metric (mean PSNR / SSIM / VMAF) so the result is "
 - Bitrate sweep granularity? Logarithmic vs linear?
 - White-paper scope: just CPU? Just GPU? Both? Cross-grid?
 
-### Pre-conference: unrealistic (long test runs needed). Post-conference: strong candidate, especially as IBC submission.
+### Priority: strong candidate when capacity allows — long (overnight/weekend) test runs needed; natural IBC-submission material.
 
 ---
 
 ## CR-004 · Visual graphing in OWL
 
-**Status:** captured 2026-05-01 — pre-conference nice-to-have.
+**Status:** captured 2026-05-01 — nice-to-have.
 **Triggered by:** Dom (transcript ~T+1657s) + owner notes.
 
 ### Problem
@@ -58,13 +58,13 @@ Add chart rendering to result pages. Three candidates in priority order:
 
 Library choice is open: chart.js (small, easy), uPlot (faster, smaller, ugly defaults), pure SVG (no dep, more code). Probably chart.js.
 
-### Pre-conference: nice-to-have. Would visibly improve demo impact.
+### Priority: nice-to-have. Would visibly improve demo impact.
 
 ---
 
 ## CR-007 · Carbon variance study over time-of-day / season / location
 
-**Status:** captured 2026-05-01 — possible pre-conference talking point if scoped tight.
+**Status:** captured 2026-05-01 — strong talking point if scoped tight.
 **Triggered by:** Simon + Dom (transcript ~T+2029s onwards).
 
 ### Problem
@@ -87,19 +87,19 @@ Possible deliverable: a methodology-page sub-section, a separate `/grid-variance
 
 ### Output value
 
-Strong conference talking point — speaks directly to Simon's "schedule your work to carbon-efficient times" thesis. Could become guidance for operators / regulators on workload scheduling. *"Move your workload to this time slot for X% lower carbon."*
+Strong industry talking point — speaks directly to Simon's "schedule your work to carbon-efficient times" thesis. Could become guidance for operators / regulators on workload scheduling. *"Move your workload to this time slot for X% lower carbon."*
 
 ### Cross-references (added 2026-05-27)
 
 - **CR-054** (findings catalog): the deliverable line above offered "methodology sub-section, separate `/grid-variance` page, or one-off white paper" — once CR-054 ships, the natural answer is **a finding** (`docs/findings/grid-variance-fr-2026.md`). The `/grid-variance` page option dissolves into the finding page; the white paper becomes the finding's analysis prose.
 
-### Pre-conference: candidate if scoped tight. Worth a half-day spike to assess.
+### Priority: worth a half-day spike to assess, if scoped tight.
 
 ---
 
 ## CR-008 · REM ↔ OWL integration
 
-**Status:** captured 2026-05-01 — branding step pre-conference, full integration is post.
+**Status:** captured 2026-05-01 — branding step first, full integration later.
 **Triggered by:** Dom + owner across the transcript (~T+486s, ~T+2160s, ~T+3151s, ~T+1014s).
 
 ### Problem
@@ -112,18 +112,18 @@ They're **complementary, not competing**, but currently they look like separate 
 
 ### Agreed direction (multi-step)
 
-1. **(Pre-conference)** Pull REM source code into the Claude project context so cross-understanding is possible. Owner action item from transcript.
-2. **(Pre-conference)** Update REM with **OWL branding and visual style** — same owl mark, same `#00ff99` accent, same dark theme — so they read as one coherent GoS system. Dom's request.
-3. **(Post-conference)** Genuine data interoperability — OWL exporting in a format REM can ingest, or vice versa. Mash-up view where 100s of homes report from REM and 1-2 contribute high-resolution OWL-style local measurements; visualised together.
+1. **(First)** Pull REM source code into the Claude project context so cross-understanding is possible. Owner action item from transcript.
+2. **(Next)** Update REM with **OWL branding and visual style** — same owl mark, same `#00ff99` accent, same dark theme — so they read as one coherent GoS system. Dom's request.
+3. **(Later)** Genuine data interoperability — OWL exporting in a format REM can ingest, or vice versa. Mash-up view where 100s of homes report from REM and 1-2 contribute high-resolution OWL-style local measurements; visualised together.
 4. **(Long-term, exploratory)** OWL acting as the encoder in a REM-orchestrated end-to-end test (encoder → intermediary server [Linode / TNO / Bristol] → client). Auto-hackathon workflow (see CR-009).
 
-### Pre-conference: branding pass is feasible; data integration is post.
+### Priority: the branding pass is the feasible near-term step; data integration comes later.
 
 ---
 
 ## CR-009 · Cross-platform web client test bay
 
-**Status:** captured 2026-05-01 — post-conference.
+**Status:** captured 2026-05-01 — longer horizon.
 **Triggered by:** Dom (transcript ~T+1431s, ~T+2940s); Simon flagged the long-standing problem this solves (~T+1394s).
 
 ### Problem
@@ -148,8 +148,7 @@ Web-based test client that uses page-reload as the "restart media player" mechan
 
 Dom guessed five days of Claude Code work. Probably correct order of magnitude. Cross-platform browser quirks (autoplay policies on iOS especially) will eat real time.
 
-### Pre-conference: unrealistic.
-### Post-conference: high leverage — turns OWL into a contribution-driven RUM platform, not just a single-server lab.
+### Priority: longer horizon, high leverage — turns OWL into a contribution-driven RUM platform, not just a single-server lab.
 
 ---
 
@@ -175,7 +174,7 @@ The next step up: instead of cherry-picking five dates, pull every month from 20
 
 **Cost estimate:** ~1 day. The script is the slowest part because of API pagination across 150 months × ~1500 records each — manageable but not instant; budget a half-hour fetch the first time.
 
-**Why not now:** Tier 1 covers the conference narrative (a small, well-chosen set of dates makes a sharper story than a slider that lets visitors "shop around"). Tier 2 earns its keep when there's a specific user demand for a date that's not in the curated five.
+**Why not now:** Tier 1 covers the current narrative (a small, well-chosen set of dates makes a sharper story than a slider that lets visitors "shop around"). Tier 2 earns its keep when there's a specific user demand for a date that's not in the curated five.
 
 ### Tier 3 — interactive timeline
 
@@ -185,7 +184,7 @@ Visitor scrubs across years; the headline number, the EV equivalence, and the co
 
 **Cost estimate:** ~2 days. UX work is the bulk — the data is already cached by Tier 2.
 
-**Why not now:** scope creep risk. The animation is engaging but adds maintenance for marginal pedagogical gain over Tier 2's picker. Lands well after the conference if at all.
+**Why not now:** scope creep risk. The animation is engaging but adds maintenance for marginal pedagogical gain over Tier 2's picker. Lands late if at all.
 
 ### Other zones
 
@@ -194,15 +193,15 @@ All three tiers are FR-only out of the box. Eco2mix is RTE's data; it doesn't co
 - ElectricityMaps' historical API (paid; their token already in scope per CR for the live path).
 - Ember's monthly data (free; published with a few months' lag; cleaner provenance for European zones).
 
-Adding non-FR historical is essentially "the same Tier 2 infrastructure pointing at a second data source." Captured here as a follow-up consideration; not in scope for the FR-focused conference launch.
+Adding non-FR historical is essentially "the same Tier 2 infrastructure pointing at a second data source." Captured here as a follow-up consideration; not in scope while the focus stays FR.
 
 ### Caveat across all tiers
 
 Lifecycle factors (IPCC AR6 WGIII 2022) are static, so we're applying current factors to historical mixes. Defensible (the factors are physics/process estimates, not annual statistics that drift), but worth a footnote on `/methodology` if Tier 2 ships. Already noted in passing in the Tier 1 doc.
 
-### Pre-conference: no
+### Priority: low
 
-Tier 1 is enough for the conference. Tier 2 lands post-launch if visitors ask for it; Tier 3 only if Tier 2 itself proves popular.
+Tier 1 is enough for now. Tier 2 lands if visitors ask for a date that's not in the curated five; Tier 3 only if Tier 2 itself proves popular.
 
 ---
 
@@ -264,7 +263,7 @@ Leverage: the panel becomes self-contained — operator clicks a button, walks a
 
 ## CR-025 · Migrate to a real-time Linux kernel for tighter measurement determinism
 
-**Status:** **Low priority (downgraded 2026-05-28 — owner: "we won't be going there for a while").** Originally captured 2026-05-04 (Session 21) as exploratory; upgraded to confirmed direction by team meeting 2026-05-04 (item 30). Tagged "maybe" because the wins are bounded by the current P110 API resolution; the meeting agreed to pursue regardless because "Ubuntu focus mode may not suppress background activity enough" and the RT investigation creates a path to higher-resolution sensor work later. **Must not interleave with the CR-060 GPU swap** — RT + a card swap together would confound the AMD↔Nvidia comparison, and PREEMPT_RT independently risks ROCm/VAAPI. Revisit well after the swap.
+**Status:** **Low priority (downgraded 2026-05-28 — owner: "we won't be going there for a while").** Originally captured 2026-05-04 (Session 21) as exploratory; upgraded to confirmed direction by team meeting 2026-05-04 (item 30). Tagged "maybe" because the wins are bounded by the current P110 API resolution; the meeting agreed to pursue regardless because "Ubuntu focus mode may not suppress background activity enough" and the RT investigation creates a path to higher-resolution sensor work later. The old "must not interleave with the CR-060 GPU swap" gate passed 2026-05-29 (swap done); this is now simply parked on priority. (The ROCm/VAAPI risk analysis below predates the RTX 5080 — an RT validation would now target the Nvidia/CUDA stack.)
 **Triggered by:** owner — meeting question on whether `systemctl stop` (focus mode) becomes more effective on a real-time Linux. Honest answer surfaced a different framing: RT and focus mode address orthogonal noise sources, and there's a coherent story where they stack rather than overlap.
 
 ### Problem (what we're trying to improve)
@@ -362,7 +361,7 @@ Worth a 30-minute discussion with the measurement team rather than a unilateral 
 
 ## CR-029 · Encoding rigor pass (apples-to-apples credibility)
 
-**Status:** captured 2026-05-04 (post-meeting). High priority. **Now the immediate priority (2026-05-28):** §2's encode-parameter decisions gate the CR-060 AMD baseline — a video benchmark captured on parameters §2 is about to rewrite would be stale, so §2 must be settled *before* the night-time AMD baseline run. Bundles items 18, 19, 20, 21, 22, 23 — Tania's video credibility workstream. Coherent because each item is a step in the same chain: *what is each encoder actually doing → are CPU and GPU comparable → can we present it cleanly*.
+**Status:** captured 2026-05-04 (post-meeting). High priority, Tania-led. **§2 (encode normalization) shipped S34** (commit `88a2696` — `video._norm_args` + `encode_gop_frames`, provisional pending Tania's review); the AMD baseline (S35) and GPU swap (S36) are done, so nothing here gates CR-060 any more — the remaining sub-items (§1 pipeline doc, Tania's §2 review, §4 typical-use mode, §5 philosophy doc) stand on their own. Bundles items 18, 19, 20, 21, 22, 23 — Tania's video credibility workstream. Coherent because each item is a step in the same chain: *what is each encoder actually doing → are CPU and GPU comparable → can we present it cleanly*.
 **Triggered by:** team meeting 2026-05-04 — for the canonical ABR all-codecs benchmark to be cited externally, the pipeline has to be auditable and the comparison's semantics explicit (apples-to-apples vs. typical use).
 
 ### Problem
@@ -379,7 +378,7 @@ The current `/video` flow runs presets that look comparable but haven't been for
 **Six items, sequenced:**
 
 1. **Document the pipeline** on `/methodology` — new subsection under "Video transcoding". Cover: input read, decode (CPU vs `hwaccel vaapi`), pixel-format handling (`scale_vaapi` + `format=nv12`), encoder defaults this deployment relies on, output container. One pass per codec/path. Source from the actual command, not from memory.
-   - **Progress (2026-05-28):** partially shipped — `/methodology` already carries the ABR apples-to-apples framing + two explicit GOP/profile-equivalence open-items (`main.py:11368`, `:11406`). `WATTLAB_SPEC.md` §2.4 was **stale** (listed CRF/QP + `libaom-av1`; code has run ABR + `libsvtav1` since S13) and was **corrected 2026-05-28**. Remaining: the full per-codec pipeline subsection.
+   - **Progress (2026-05-28):** partially shipped — `/methodology` already carries the ABR apples-to-apples framing + two explicit GOP/profile-equivalence open-items (page template now in `routes_methodology.py` post-S42). `WATTLAB_SPEC.md` §2.4 was **stale** (listed CRF/QP + `libaom-av1`; code has run ABR + `libsvtav1` since S13) and was **corrected 2026-05-28**. Remaining: the full per-codec pipeline subsection.
 2. **Validate CPU vs GPU encode parameters** (Tania-led). For each codec, compare what the CPU and GPU encoders actually produce: profile, level, B-frames, GOP, refs, slices. Write findings to `WATTLAB_SPEC.md` and adjust commands as needed to bring them into apples-to-apples shape (or document explicitly where they can't be).
    - **VMAF already exposes a concrete instance to chase down (2026-05-22, clean 🟢 run `e18a9d57`):** at the same 1500 kbps AV1 target, `av1_vaapi` (hw) hit the target (20.34 MB) while `libsvtav1` (sw) undershot to ~967 kbps (14.51 MB) yet scored *higher* VMAF (92.74 vs 90.79). So "same bitrate target" is not being honoured equally across encoders, and the hw encoder is less bit-efficient. This is exactly the apples-to-apples gap this item is meant to characterise — the VMAF axis (CR-044) now makes it measurable. See CLAUDE.md Key Findings (AV1 hardware vs software).
    - **Measured audit (2026-05-28 — ffprobe on 12s `meridian_120s` encodes, ABR ladder 4000/2000/1500).** The presets are bare (codec + bitrate + scale + audio; **no `-g` / `-bf` / `-profile` / `-level` / `-refs` anywhere in `video.PRESETS`**), so GOP and B-frame structure are encoder-defaulted and diverge systematically:
@@ -444,7 +443,7 @@ Leverage is high: this is the work that turns OWL's video numbers from "interest
 ### Cross-references (added 2026-05-27)
 
 - **CR-054** (findings catalog): §1's `/methodology` documentation becomes the `methodology_ref` target for video findings. §2's CPU-vs-GPU validation work, if it changes the AV1 numbers, ships as a new finding version (`av1-hw-sw-vmaf-tradeoff-v2.md` with `supersedes: av1-hw-sw-vmaf-tradeoff`) — CR-054's versioning primitive is designed for exactly this case.
-- **CR-060** (added 2026-05-28): §2 is the load-bearing gate on the CR-060 AMD baseline. The cross-card (AMD↔Nvidia) comparison freezes the video encode commands; if §2 rewrites them after the baseline, the night's run is stale. Lock §2's parameters into the suite before capturing the AMD baseline. See CR-060's baseline-integrity gate.
+- **CR-060** (closed 2026-06-11): the §2 parameter decisions were locked in before the AMD baseline (S35) and the swap (S36), as the old baseline-integrity gate required — that gate is satisfied. Any future §2 revision by Tania re-bases the video numbers (change `video._norm_args` / `encode_gop_frames`, re-run variance calibration) but no longer affects the captured cross-card comparison (`docs/gpu_swap_amd_baseline.md` + post-swap benchmark `f56dfa77`).
 
 ---
 
@@ -735,7 +734,7 @@ V1 ~1 day (new preset variants with CRF/QP + a mode flag through `run_all_measur
 
 ### Problem
 
-Today's `/` for Member/Lab visitors is a *bench launchpad*: live watts hero, then "◆ Guided Tour / ▶ Video transcode / Beta cards (image / llm / rag / video-enhance) / utility links" (`wattlab_service/main.py:~2657-2680`). Anonymous visitors don't even reach this page — they're redirected to `/demo` (CR-001 / CR-026, gated on `WORKING_NAV`).
+Today's `/` for Member/Lab visitors is a *bench launchpad*: live watts hero, then "◆ Guided Tour / ▶ Video transcode / Beta cards (image / llm / rag / video-enhance) / utility links" (`main.py` home route). Anonymous visitors don't even reach this page — they're redirected to `/demo` (CR-001 / CR-026, gated on `WORKING_NAV`).
 
 Neither path surfaces the findings catalog. Per the S32 strategic thread, OWL's stated audience (CTOs / operators / policymakers — see CLAUDE.md "GoS Framing") reads findings rather than runs benches; the front door inverts that intent. CLAUDE.md also flags this implicitly: the "Findings step" of the guided tour was redesigned in CR-058 specifically because echoing the session run wasn't what visitors needed at that point in the flow — the same logic applies one level up.
 
@@ -795,78 +794,6 @@ Smallest-footprint flow change in the findings chain that touches the *most-visi
 
 ---
 
-## CR-060 · GPU-backend abstraction (AMD VAAPI/ROCm ↔ Nvidia NVENC/CUDA)
-
-**Status:** **abstraction SHIPPED 2026-05-29 (S35), pre-swap — AMD validated, Nvidia path awaiting the physical RTX 5080.** The software layer is done, tested, and stamping provenance; what remains is hardware validation + the env prereqs (torch wheel, driver) on the actual card. Keep open until the 5080 is in and a re-run confirms NVENC.
-**Triggered by:** Pixop conversion (CUDA-only) → planned RX 7800 XT → RTX 5080 swap. Full hardware/strategy context in memory `gpu-swap-nvidia-initiative` + board lazy-consensus email 2026-05-28.
-
-### What shipped (S35)
-
-New `wattlab_service/gpu.py` — `AmdBackend` / `NvidiaBackend` / `NoGpuBackend`, resolved **once at import** into `gpu.BACKEND` (so a card swap + reboot is picked up with zero code edits). Each backend supplies: GPU sensor read (`{gpu_junction, gpu_ppt_w}`), ffmpeg GPU encode pieces (hwaccel args / scale filter / encoder / codec norm args), torch env setup, device label, and a provenance `stamp()`. Refactored consumers: `power.read_sensors_dict` (GPU half → backend; `amdgpu_chip` kept as a back-compat alias), `video.py` (3 GPU presets → `_gpu_cmd()`), `image_gen.py` (env + label), `persist.save_result` (stamps `gpu_hardware`). Methodology Hardware-Disclosure table now dynamic via the `gpu_display_name` setting (curated default preserved). 339 → 385 tests; new `tests/test_gpu_backend.py`.
-
-**Three deliberate departures from the locked design below — flagged, not silent:**
-1. **Module named `gpu.py`, not `gpu_backend.py`** (cosmetic).
-2. **Auto-detect, NOT explicit config (reverses decision #2).** Owner's S35 instruction was *"swapping a new GPU just requires a reboot"* — explicit config can't satisfy that (needs a settings edit), auto-detect can. Detection order: `nvidia-smi` → sensors amdgpu → none. The explicit-config *intent* is preserved via an `OWL_GPU_VENDOR` env override **and** the per-result `gpu_hardware` stamp. Owner okayed auto-detect 2026-05-29 ("let's go for autodetect… we'll see if it works or whether we were too ambitious").
-3. **AMD path proven by a byte-identical-command test (as planned)** — no ΔWh re-baseline (a pure software abstraction's energy effect is imperceptible per owner; see memory `software-abstraction-energy-imperceptible`).
-
-**Open-Q resolved:** `scale_cuda` + `h264/hevc/av1_nvenc` are **already present** in the `ffmpeg-master` build — no ffmpeg rebuild needed. `-rc cbr` valid; `av1_nvenc` has no `-profile` knob (handled). Still pending: torch `+cu12x` wheel + Nvidia driver/CUDA. NVENC commands are a best-effort first cut to validate on the 5080.
-
-**Label pass — partially done:** the authoritative methodology Hardware table is now dynamic. The remaining ~13 scattered "RX 7800 XT"/"ROCm" UI copy strings in `main.py` + `reproduce.py:29` `_HARDWARE["gpu"]` are still static (several also list retired models — fold into a copy refresh, not this CR).
-
-**AMD pre-swap energy baseline frozen:** `docs/gpu_swap_amd_baseline.md` (overnight benchmark `e29ccef7`, n=10 × 6 presets × 2 sources; variance 3.07% warm-ambient; no VMAF that run). This is the reference the 5080's NVENC numbers compare against.
-
-### Problem
-
-Every GPU-touching path in OWL assumes AMD: `video.py` hardcodes VAAPI encoders/filters/device in the `PRESETS` lambdas (~280–365); `power.py` reads AMD lm-sensors keys (`amdgpu_chip()`, `junction`, `PPT`, ~36–71); `image_gen.py` sets the ROCm `HSA_OVERRIDE_GFX_VERSION` env + hardcodes "RX 7800 XT, ROCm" labels. To swap in an Nvidia card — and keep AMD runnable as a future GoS2 reference — the codebase must run on **both**, selectable by config. Because GoS1 is one box with a single P110, an in-place swap makes the card the only variable, so an identical benchmark suite before/after yields the AMD-vs-Nvidia energy comparison for free.
-
-`llm.py` / `rag.py` are already GPU-agnostic (all GPU work is behind Ollama); their only coupling is thermal reads via `power.py`, so fixing `power.py` fixes them.
-
-### Agreed direction
-
-Full design doc: `~/.claude/plans/i-want-to-discuss-cosmic-beacon.md`. Headline decisions (locked 2026-05-28):
-
-1. **Long-term dual-card** — a real polymorphic backend abstraction (new `gpu_backend.py` with a frozen dataclass per card + `current()` resolving the config), not a throwaway migration.
-2. **Explicit config** — a `gpu_backend` setting (`amd_vaapi` | `nvidia_nvenc`) in `settings.json` DEFAULTS, **stamped onto every result** beside `owl_version` (`persist.py:51` + `append_history_line` `:75`).
-3. **AMD-baseline-first sequencing** — capture the AMD benchmark baseline while the AMD card is still installed, then physically swap and re-run. The abstraction is a pure refactor; its correctness is proven by a cheap **byte-identical-command test** (assembled ffmpeg arg lists match today's literals — no hardware, no measurement re-run) rather than a ΔWh re-validation. Per owner (2026-05-28), a software abstraction layer's effect on measured energy is imperceptible, so this is a correctness check, not a confounder gate.
-
-Seam covers: video encoder/filter/hwaccel/device (VAAPI↔NVENC), torch env + device (ROCm `HSA_OVERRIDE`↔none; device string stays `"cuda"` for both), and GPU sensor resolution (lm-sensors `amdgpu`↔`nvidia-smi`), keeping the returned keys `gpu_junction`/`gpu_ppt_w` stable so `main.py` telemetry + AI modules need no change. Benchmark suite = thin orchestration over the existing `/llm/compare` `/rag/compare` `/image/compare` (CR-048/049/050) + video `all_codecs`; no new measurement code.
-
-Environment prerequisites (not code): rebuild ffmpeg with `--enable-nvenc` (keep libvmaf); swap torch `+rocm6.2`→`+cu12x`; install Nvidia driver/CUDA. Plan two saved driver/venv states for the swap-iterate cycle.
-
-### Baseline-integrity gate (sequencing vs other CRs — folded in 2026-05-28)
-
-The cross-card comparison is only valid if the GPU is the sole variable, so the AMD baseline and the Nvidia re-run must bracket a frozen measurement environment. Constraints found in the 2026-05-28 open-CR sweep, by severity:
-
-- **CR-029 (fix first — the active blocker).** Its §2 encode-parameter audit (GOP / profile / B-frames) rewrites the very ffmpeg commands the suite freezes. Lock §2's parameter decisions *into* the baseline before the night run — don't benchmark a night on params CR-029 is about to change.
-- **CR-025 (shelved — now low priority).** RT kernel + CPU isolation + `taskset` in the ffmpeg chain would change measured energy/variance and risks ROCm/VAAPI. Must land well before the baseline or well after the swap, never during.
-- **CR-031 §2 (co-design).** Refactors `power.py` into a dispatcher — the same file as this CR's GPU-sensor seam. Design the power-source and GPU-backend abstractions together, or sequence them; don't let two `power.py` refactors collide. Its resolution-aware confidence also changes result labels.
-- **CR-024 (verify-neutral).** Shares the measurement spine (`transcode` / `focus_mode` / `LOCK_FILE`). Claims behaviour-neutral; confirm the probe CSVs are unchanged before trusting a baseline captured around it.
-- **CR-045 (downstream).** Its V1 CQ presets use VAAPI-specific `qp` / `global_quality`, so they are GPU-backend-coupled and ride on this CR's abstraction to go cross-card (NVENC uses `-cq` / `-rc`). Also entangled with CR-029.
-- **CR-041 (reuse).** Its `chip_instance_id` is the sibling provenance pattern to `gpu_backend`; the "compare results across a hardware field" machinery is shared — reuse, don't reinvent.
-
-Two non-CR freezes:
-- **Variance calibration:** capture the AMD baseline calibration under normal ambient — NOT during the current Paris heat wave (inflates the floor 2–6×; memory `variance-calibration-ambient-sensitive`). Same constraint as the post-swap Nvidia calibration.
-- **`ffmpeg_bin`:** the suite runs on `/usr/local/bin/ffmpeg-master`. The NVENC rebuild (this CR) and the deferred ffmpeg old-vs-new energy test both change that binary — keep them out of the comparison window.
-
-**Not a confounder: this abstraction itself.** Per owner, a pure software abstraction layer's energy impact is imperceptible (see decision #3) — it does not need a re-baseline.
-
-### Open questions
-
-- **`scale_cuda` availability** — needs a cuda-filters ffmpeg build. If absent, the Nvidia scale step diverges (hwupload_cuda or CPU scale) and the pipeline is no longer directly comparable. Decide the Nvidia filter chain explicitly before benchmarking.
-- **Sampling semantics** — nvidia-smi `power.draw` (instantaneous) vs AMD `power1_average` (averaged). Document; consider an averaging window for parity.
-- **Post-swap obligations** — re-run variance calibration (**not during the Paris heat wave** — memory `variance-calibration-ambient-sensitive`) and supersede AMD-measured findings via the `/findings` `supersedes:` machinery.
-
-### Out of scope (track separately)
-
-- Label-only pass: ~15 hardcoded "RX 7800 XT"/"ROCm" UI strings in `main.py` + `reproduce.py:29` `_HARDWARE["gpu"]` will misreport on Nvidia.
-- 7800 XT disposition (sell vs shelve as AMD reference) — see memory.
-
-### Lab look & feel constraint
-
-No new UI surface; the backend chip on a result card (if surfaced at all) is a single token in the existing provenance line. Don't add a card.
-
----
-
 ## CR-064 · /enhance-run revamp — upload, format/resolution controls, generated presets
 
 **Status:** logged 2026-06-10, implementation started same day.
@@ -908,146 +835,64 @@ Two compact controls replace the preset `<select>`; no new cards. Limits line is
 
 ---
 
-## Caught during the session but **not** new CRs
+## Unverified reports (compressed 2026-06-11)
 
-For the record, several items came up that don't warrant new CR entries:
+The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, team meeting 2026-05-04, board meeting 2026-05-11) were compressed 2026-06-11: every item that was marked resolved, absorbed into a CR, or is a meeting note recorded elsewhere (JOURNAL.md / board notes / CR cross-refs) was deleted. The genuinely unresolved residue:
 
-- **Bug: `/settings` page rendered empty mid-run** (~T+338s) — owner observed this when trying to demo settings during a queued calibration. Filed as a bug to investigate, not a CR. May be related to job-state machine showing the page in a transient state. Repro: start a calibration, immediately reload `/settings`.
-- **Confidence multipliers (5× / 2×) statistical grounding** — ✅ resolved by **CR-028 Phase 2** (shipped 2026-05-22): the multipliers are replaced by the Φ(z) CI model. Full body in `CHANGE_REQUESTS_CLOSED.md`.
-- **Codec apples-to-apples equivalence (GOP, profile)** — see **CR-029** sub-item 2 (Tania's CPU-vs-GPU encode-parameter validation).
-- **Long-term mash-up of REM + OWL data for 100s of homes** — covered as the post-conference phase of CR-008. No separate CR.
-- **"Counter for OWL's own compute footprint"** (Dom, ~T+3319s, in passing) — fun meta-toy, not load-bearing. Skip.
-- **The 5-minute training narrative was generated mid-meeting** — captured separately if needed. No CR; deliverable not infrastructure.
-
-**From team meeting 2026-05-04:**
-
-- **GPU variance broken at calibration time** (item 10, originally tagged Bug Medium) — turned out to be a settings tweak, not a bug: `gpu_encode_max_s` was set too short for the variance calibration's sampling window. Bumped from 30 to 90 inline. Not a CR. *Resolved 2026-05-05: overnight n=24 calibration confirmed GPU CV at 4.77% (clean, statistically real); idle 2.41%, cpu 1.33%. CR-028 open question closed; Phase 2 design session with Tania has a clean number as input.*
-- **Carbon philosophy / scoping board agenda** (item 25) — strategic discussion item, not engineering work. Belongs on a board agenda, not in CRs.
-- **GosOne → OWL name pass** (item 33) — doc/comment audit. Trivial sweep across stale references; do inline whenever convenient. Not a CR.
-
-**From board meeting 2026-05-11:**
-
-- **Bug: live energy-mix breakdown row missing from some result tables.** Owner observed mid-demo: *"it doesn't show the energy mix here, a little bug here… it's supposed to have a little thing just on this table, it's not here."* Filed as bug; check the `wlCarbonStrip` mode-detection branch that conditionally renders the mix row.
-- **Bug: `/image` previous-results panel not rendering.** Owner: *"there's a bug, it's not showing the previous results."* Likely the same drift-bug class as the original /demo↔main-page renderer split; check first whether CR-034 Phase A would absorb the fix automatically rather than patching `/image` in isolation.
-- **Methodology page status:** as of 2026-05-11 the page is mostly aligned with board feedback already — CO₂e section reduced and reframed *"for reference only"*; recovery-curve graphic added under *Thermal-recovery probe* (uses the shared `WlCharts.line` helper from S21). Owner waiting on Tania's review before publishing the page externally.
-- **OWL/WattLab UI rename** done 2026-05-11 across all pages (`<title>`s, headers, hero name, methodology copy); repo URLs and module names stay lowercase `wattlab`. Not a CR — naming hygiene only.
-- **Marketing Lab workshop on OWL usage** (Barbara): action for Marketing Lab, not a CR. Pair with CR-040 — the reproducibility kit is the natural artefact for that workshop.
-- **OWL containerised + data-centre hosting** (Mike's Akamai-Virginia open-rack offer; Linode option): folds into the 2026-05-11 addendum on CR-031 sub-section 3. New constraint surfaced: 1 s power-measurement granularity as a hard portability gate.
-- **Recruitment brainstorm meeting (~10 days out)**: action item from the meeting, not a CR. Stan / Marisol / Veronika / Ben / probably Mike participating.
+- **Bug (2026-05-01, never reproduced): `/settings` rendered empty mid-run** — observed while a queued calibration ran; suspect the job-state machine showing the page in a transient state. Repro attempt: start a calibration, immediately reload `/settings`.
+- **Bug (2026-05-11 board demo, unverified): live energy-mix breakdown row missing** from some result tables — check the `wlCarbonStrip` mode-detection branch that conditionally renders the mix row.
+- **Bug (2026-05-11 board demo, unverified): `/image` previous-results panel not rendering** — likely the renderer-drift class; verify against the shared renderers before patching `/image` in isolation.
+- **GosOne → OWL doc/comment sweep** (team meeting 2026-05-04, item 33) — trivial stale-reference audit; do inline whenever convenient. Not a CR.
 
 ---
 
-## Groupings & dependencies (added 2026-05-08, S23 close-out review; updated 2026-05-11 after board meeting; 2026-05-12 close-out sweep — CR-032 / CR-034 / CR-036 / CR-038 / CR-042 moved to closed; S26 close-out 2026-05-20 — CR-037 / CR-040 / CR-027 moved to closed; S32 close-out 2026-05-27 — CR-054 / CR-055 / CR-056 / CR-058 findings-chain + CR-012 history-journal moved to closed)
+## Groupings & dependencies (rewritten 2026-06-11 — post-S42 refactor sweep; CR-060 closed, CR-052/053/061 back-filled to `CHANGE_REQUESTS_CLOSED.md`)
 
-The 15 active CRs cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
+The 16 active CRs cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
 
 ### Track A — Storage / persistence (Tania-elevated 2026-05-07)
 
-Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a lot of really interesting statistics on that"* — turned storage from quality-of-life into the gating decision for the analytics layer. Remaining CRs on this track:
+Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a lot of really interesting statistics on that"* — made the storage-family decision the gate for the analytics layer; the flat-file-blocker memory says decide before extending `persist.py` again.
 
-- **CR-031** sub-section 1 (DB choice with REM coherence — "I don't want five different databases")
-- **CR-003** iso-energy bitrate sweep *(downstream — the analytics use-case)*
-- **CR-007** carbon variance over time-of-day / season / location *(downstream — also analytics)*
+- **CR-031** §1 (DB choice with REM coherence — "I don't want five different databases") — the bottleneck. §2 power-source abstraction: cheap wins shipped 2026-06-09 (`power.stamp()` + `meter_display_name`); full PowerBackend/PDU/synthetic + resolution-aware confidence still open. §3 containerisation: externally driven (Mike's Akamai offer / Linode).
+- **CR-003** iso-energy bitrate sweep + **CR-007** carbon variance study *(downstream analytics; both outputs land as `/findings` entries via the shipped CR-054 machinery)*.
 
-*(CR-012 calibration + probe history journal shipped S32 — JSONL files under `results/variance/` and `results/diagnostics/`. Append-only; first feed for the analytics layer. In `CHANGE_REQUESTS_CLOSED.md`.)*
+### Track B — Encoding rigor / quality (Tania-led)
 
-**Recommendation:** the storage-family decision (CR-031 §1) is the remaining bottleneck. CR-012's JSONL shape works standalone; whether the analytics layer reads it as-is or migrates onto whatever DB the §1 pass picks is a CR-031 decision. CR-003 and CR-007 still inherit the eventual storage shape automatically.
+- **CR-029** — §2 (encode normalization) shipped S34 (`88a2696`) and §3 is a standing ffprobe pass; remaining sub-items (§1 pipeline doc, Tania's §2 review, §4 typical-use mode, §5 philosophy doc) stand on their own — no longer gating anything (the CR-060 baseline/swap bracket completed S35/S36).
+- **CR-045** "Same bitrate / Constant quality" toggle — rides with/after CR-029; V1 = the deferred "Benchmark 2" (CRF/QP); V2 (target-VMAF search) later. NVENC CQ flags (`-cq`/`-rc`) replace the old VAAPI-specific notes.
+- **CR-043** result-card video preview — deferred until CR-039 sets the output-retention plumbing; CR-029's rigor is what makes the side-by-side meaningful.
 
-### Track B — Confidence model (CR-028 Phase 2 ✅ SHIPPED 2026-05-22)
+### Track C — In flight / awaiting review
 
-- **CR-028 Phase 2 shipped** — the CI model (`confidence.py`) per Tania's §9 v2 is on `main`; raw `baseline_samples_w` + `task_samples_w` are persisted; all four modules share it; legacy fallback retained. Full body in `CHANGE_REQUESTS_CLOSED.md`. Absorbed CR-020 (per-run baseline-CV gate) and the 5×/2× threshold grounding.
-- **CR-029** encoding rigor benefits from the shipped model but, per the 2026-05-22 decision, stays a **separate, deferred** issue (Tania-led; the §9 v2 gate is lifted but CR-029 isn't being pushed now).
-- *Open follow-up:* the **aggregate / repeated-run confidence layer** that consumes `variance_cpu_pct` / `variance_gpu_pct` (reserved by Phase 2's option-C choice) is not yet built — capture as a new CR if/when it's wanted.
+- **CR-064** `/enhance-run` revamp — **active** (implementation started 2026-06-10); remaining open questions are all on Jon (Pixop); independent of every other track.
+- **CR-057** home-page findings-first repositioning — drafted, **awaiting lab UX review**; ~half a day of mechanical work behind `findings_enabled`; non-blocking.
 
-**Recommendation:** track complete for now. The natural next step is the **Track A storage decision** (sample persistence already lands raw arrays per result — CR-012 + the analytics layer can build on that shape).
+### Track D — Operator quality-of-life (small, independent)
 
-### Track C — Widget / progress extensions (post-CR-019)
+- **CR-024** re-run thermal-recovery probe from `/settings` (promote `bin/probe-thermal-recovery` → endpoint via `queue_control.enqueue`).
+- **CR-004** visual graphing — no dependencies; CR-007 + the CR-012 history journals are its first consumers.
 
-All three touch `wlRenderProgress` but the work is independent:
+### Track E — Strategic / exploratory (captured, idle)
 
-- **CR-035 encode progress bar — ✅ SHIPPED S23** (`b2204b4`): `ffmpeg -progress pipe:1` parsing + `progress_pct` / `eta_s` surfaced through `wlRenderProgress`. In `CHANGE_REQUESTS_CLOSED.md`.
-- **CR-024** re-run probe button — server-side endpoint promotion (`bin/probe-thermal-recovery` → `precalibration.py`) routed through `queue_control.enqueue`.
-- **CR-019 deferred (resume-job hook)** — client-side lifecycle, URL `?job=<id>`, browser history.
-
-**Recommendation:** CR-035 shipped. Remaining: CR-024 next (operator quality-of-life), resume-job last (lifecycle is the hardest to design for cleanly without spilling).
-
-### Track D — Result-rendering / framing coherence
-
-**Track D is now fully shipped.** The 2026-05-12 sweep closed CR-034 / CR-032 / CR-036 / CR-038; the S26 credibility bundle (2026-05-20) closed the last two — **CR-037** (AI workloads tethered to streaming: per-page streaming-context bands + the paper's framing principles + a per-result "≈ N× a 120 s video encode" multiplier) and **CR-027** (tier copy: three-column Public/Member/Lab matrix + first-step tier indicator). All in `CHANGE_REQUESTS_CLOSED.md`.
-
-### Track E — Polish (small, independent)
-
-- **CR-007** carbon variance study *(also Track A downstream)*
-
-*(CR-005 software fan control — resolved S24 by investigation, not feasible on GoS1's hardware; moved to `CHANGE_REQUESTS_CLOSED.md`.)*
-
-**Recommendation:** CR-007 has no dependencies; slot whenever Track A–D are blocked.
-
-### Track F — Strategic / exploratory (longer horizon, captured-but-not-active)
-
-- **CR-008** REM ↔ OWL integration
-- **CR-009** cross-platform web client test bay
-- **CR-018 Tier 2/3** historical CO₂e visitor-pickable any-month *(Tier 1 shipped; T2/T3 are gold-plating)*
-- **CR-025** real-time Linux kernel migration *(team meeting upgraded direction but not yet started)*
-- **CR-039** *(new, 2026-05-11)* energy-vs-quality axis for AI (frontier-model judge) — explicit tension with CR-029 §6 to resolve; easy to drop.
-- **CR-041** *(new, 2026-05-11)* new-vs-aged silicon comparison — opportunistic, awaiting chip availability.
-
-**Recommendation:** keep captured. CR-039 is the one most likely to mature quickly now that CR-037 has shipped (it lives on the tethered AI pages, and CR-038's verdict line is its natural surface). Others remain idle until the active tracks resolve.
-
-### Track G — Member trust & verification *(new, 2026-05-11)*
-
-- **CR-040** "Reproduce this result" downloadable bundle — ✅ **shipped S26 (2026-05-20)**, video-only V1 (`cmd.sh` + `expected.json` k=3σ envelope + stdlib `compare.py` + README; "↓ Reproduce this" on video cards). `POST /reproduce/contribute` deferred. In `CHANGE_REQUESTS_CLOSED.md`.
-
-**Follow-up:** pair with the Marketing Lab workshop Barbara proposed — the bundle is the natural artefact for that conversation. The deferred member-side `POST /reproduce/contribute` can become its own CR if a member asks for it.
+- **CR-008** REM ↔ OWL integration · **CR-009** cross-platform web client test bay · **CR-018 T2/T3** historical CO₂e picker · **CR-025** RT kernel (low priority, parked; the old CR-060-swap gate passed 2026-05-29) · **CR-039** AI quality judge (CR-029 §6 carve-out to resolve, or drop) · **CR-041** new-vs-aged silicon (awaits a chip).
 
 ### Cross-track dependencies summary
 
 ```
-CR-031 storage decision  ─┬─→  CR-012  (calibration history persistence)
-                         └─→  Track A analytics: CR-003, CR-007
-
-CR-028 Phase 2 ✅ SHIPPED ──→  CR-029 (encoding rigor — deferred by decision 2026-05-22)
-(2026-05-22)              ──→  CR-020 retired (absorbed into SE_per_run)
-                         ──→  aggregate-confidence layer (cpu/gpu CVs) = future CR
-
-CR-037 ✅ (shipped S26)  ──→  CR-039  (quality scoring lives on the now-tethered AI pages)
-CR-029 §6 "external PQA"  ─?→  CR-039  (carve-out needed, or drop CR-039)
-
-CR-044 (VMAF ✅ shipped)  ──→  CR-029  (VMAF proves CPU/GPU do comparable work)
-                         ──→  CR-039  (VMAF is the video sibling of the AI quality judge)
-                         ──→  CR-043  (cheaper, rigorous half of "make the claim visceral")
-                         ──→  CR-045  (enables the iso-VMAF "Match quality" search)
-
-CR-045 (Same Bitrate /   ──→  CR-029  (defining "equivalent quality" is Tania's territory)
-        Same Quality)    ──→  CR-003  (mirror axis: fix energy, vary quality)
-                         ↳ V1 = the deferred "Benchmark 2" (CRF/QP) surfaced as a toggle
-
-CR-026 ✅  ─→  CR-027 ✅  (tier explanation — both shipped)
-
-CR-054 ✅ (findings catalog, shipped S32) ──→  CR-055 ✅ (catalog index — shipped S32)
-                                         ──→  CR-056 ✅ (bulk import Key Findings — shipped S32)
-                                         ──→  CR-058 ✅ (guided tour terminus — shipped S32)
-                                         ──→  CR-057  (home-page repositioning — DRAFTED S32, awaiting lab UX review)
-CR-029 §1 + §2  ─?→  CR-054   (methodology_ref source; potential AV1 finding v2 via supersedes)
-CR-041 (chip)   ─?→  CR-054   (output is a finding, not a bespoke /findings/chip-aging page)
-CR-007 (grid)   ─?→  CR-054   (deliverable becomes a finding, not a separate page)
+CR-031 §1 storage decision ──→ CR-003, CR-007 (analytics layer)
+CR-029 (rigor)             ──→ CR-045 (defining "equivalent quality" is the shared territory)
+CR-029 §6 "external PQA"   ─?→ CR-039 (carve-out needed, or drop CR-039)
+CR-039 (retention plumbing)──→ CR-043 (dual-player rides it)
+CR-041 / CR-007 outputs    ──→ /findings entries (CR-054 machinery, shipped)
+CR-057                     ──→ gated only on the lab UX review (flag-protected rollback)
+CR-064                     ──→ gated only on Jon's (Pixop) answers
 ```
 
-(Track D's internal chain — CR-034 → CR-036 → CR-038 → CR-032 — has fully resolved; all four are closed. CR-037 now lands on that finished surface.)
+### Suggested order (2026-06-11)
 
-### Suggested order (updated S32 close-out, 2026-05-27 — findings chain shipped except CR-057)
-
-S26 shipped the credibility three (CR-037, CR-040, CR-027); S28 (2026-05-22) shipped CR-044 (VMAF) + CR-028 Phase 2 (CI confidence); S29 (2026-05-26) shipped CR-046 Phase 1 (BBB preloaded) + CR-047 (variants schema for `/video` Source picker); S30 (2026-05-27) closed CR-033 + CR-046 Phase 2; S30/S31 (2026-05-26 → 2026-05-27, parallel sessions) shipped the AI-comparison trilogy CR-048 (`/llm/compare`) + CR-049 (`/rag/compare`) + CR-050 (dynamic model catalog + active-probe thermal floor + N-way `/image/compare`); S32 (2026-05-27) shipped CR-051 (RAG corpus self-service: Member upload + delete) and the findings-chain bundle CR-054 / CR-055 / CR-056 / CR-058.
-
-**The S32 UX-strategy thread (2026-05-27) re-prioritised the order** — most visitors browse without running jobs; the strategic role of OWL per the board is credibility/recruitment, not interactivity; the S32 architecture audit established that rich replay of past results is essentially free because the renderers are already JSON-pure. The findings chain shipped behind a feature flag (`findings_enabled`) for safe lab-colleague review. **CR-057 (home page repositioning) is the one remaining flow change in the chain**, drafted and awaiting lab UX review.
-
-Remaining order:
-
-1. **CR-057** home page repositioning to findings-first — **DRAFTED, awaiting lab UX review.** Mechanical work ~half day; design discussion is the bottleneck. Behind same `findings_enabled` flag for byte-identical rollback. Non-blocking — the rest of the backlog can progress without it.
-2. **Track A storage decision** — CR-031 §1 (REM coherence); unblocks the analytics layer (CR-003, CR-007). CR-012's JSONL journals are the first feed; the §1 decision is whether to consume them as-is or migrate onto a shared DB with REM. Can run in parallel with CR-057.
-3. **CR-045 (with/after CR-029)** — Tania-led; "Same Bitrate / Same Quality" toggle.
-4. **Track C — CR-024** re-run-probe button (CR-035 progress bar already shipped S23).
-5. **CR-039 / CR-041** as exploratory follow-ups (CR-039 lands on the shipped tethered AI pages; VMAF is its video sibling; CR-041 awaits chip arrival, output lands as a CR-054 finding).
-6. **CR-007** carbon variance (output lands as a CR-054 finding) · **CR-004** graphing · longer-horizon Track F (CR-008 / 009 / 018 T2-3 / 025) as capacity allows.
-
-CR-029 stays Tania-led and deferred; CR-045 rides with it. CR-029's eventual encoding-rigor work may refine the AV1 finding (v2 via `supersedes`) — designed-for in CR-054's versioning primitive.
+1. **CR-064** — already in flight; close out as Jon's answers land.
+2. **CR-057** — schedule the lab UX review; the implementation itself is ~half a day.
+3. **CR-031 §1** storage decision — unblocks the analytics layer (CR-003, CR-007).
+4. **CR-029 remainder + CR-045** — Tania-led, as her availability allows; a §2 revision re-bases video numbers (re-run variance calibration), designed-for via `video._norm_args`.
+5. **CR-024**, then **CR-039 / CR-041 / CR-004 / CR-007** opportunistically; Track E (CR-008 / 009 / 018 T2-3 / 025) as capacity allows.
