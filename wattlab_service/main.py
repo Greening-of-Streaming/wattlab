@@ -346,6 +346,14 @@ async def queue_empty():
     return {"ok": True, "drained": len(drained), "job_ids": drained}
 
 
+@app.post("/queue/pause", dependencies=[Depends(requires(SETTINGS_WRITE))])
+async def queue_pause(on: bool):
+    """Lab toggle for the worker's PAUSE_FLAG (owner ask 2026-06-11 — the
+    flag predates the UI; it was only settable by external tools). In-flight
+    jobs always finish; pausing only stops NEW jobs being picked up."""
+    return {"ok": True, "paused": queue_control.set_paused(on)}
+
+
 @app.post("/queue/cancel-current", dependencies=[Depends(requires(SETTINGS_WRITE))])
 async def queue_cancel_current():
     jid = queue_control.current_job_id
@@ -424,10 +432,21 @@ async function load() {
     banner.innerHTML = q.paused
         ? '<div style="background:#442200;color:var(--warn);padding:0.75rem 1rem;'
         + 'margin-bottom:1rem;font-size:0.85rem;border:1px solid var(--warn)">'
-        + '⏸ Queue paused — new jobs will wait until <code>/tmp/owl-paused</code>'
-        + ' is removed. Running job (if any) continues normally.'
+        + '⏸ Queue paused — new jobs wait until it is re-enabled (the toggle'
+        + ' below, or removing <code>/tmp/owl-paused</code>).'
+        + ' Running job (if any) continues normally.'
         + '</div>'
         : '';
+    if (window.CAN_CANCEL) {
+        // Lab toggle for the same PAUSE_FLAG external tools use (one state).
+        banner.innerHTML += '<button onclick="togglePause(' + (!q.paused) + ')" '
+            + 'style="margin-bottom:1rem;background:transparent;'
+            + 'color:' + (q.paused ? 'var(--accent)' : 'var(--warn)') + ';'
+            + 'border:1px solid currentColor;padding:0.3rem 0.9rem;cursor:pointer;'
+            + 'font-family:monospace;font-size:0.78rem">'
+            + (q.paused ? '▶ Enable queue' : '⏸ Disable queue (running job finishes)')
+            + '</button>';
+    }
     const el = document.getElementById('content');
     if (q.depth === 0) {
         el.innerHTML = '<div class="depth">0</div><div class="depth-lbl">jobs in queue — GoS1 is idle</div>';
@@ -488,6 +507,10 @@ async function cancelCurrent() {
 async function emptyQueue() {
     if (!confirm('Remove ALL waiting jobs from the queue? The running job is not affected.')) return;
     try { await fetch('/queue/empty', {method:'POST'}); } catch(e) {}
+    load();
+}
+async function togglePause(on) {
+    try { await fetch('/queue/pause?on=' + on, {method:'POST'}); } catch(e) {}
     load();
 }
 load();

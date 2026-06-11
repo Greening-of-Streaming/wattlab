@@ -200,6 +200,22 @@ def paused() -> bool:
     return Path(PAUSE_FLAG).exists()
 
 
+def set_paused(on: bool) -> bool:
+    """Create/remove PAUSE_FLAG (the /queue-status Lab toggle). Same flag the
+    external tools use (claude-local-router GPU sessions), so the UI and the
+    tools see one state. In-flight jobs are never touched — the worker just
+    stops picking up new ones. Returns the resulting paused state."""
+    p = Path(PAUSE_FLAG)
+    try:
+        if on:
+            p.write_text("paused via /queue-status toggle\n")
+        else:
+            p.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return paused()
+
+
 def snapshot() -> dict:
     """Snapshot of queue state for the /queue JSON endpoint."""
     running = None

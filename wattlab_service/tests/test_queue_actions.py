@@ -134,3 +134,30 @@ def test_settings_page_nav_and_collapsed_sections():
     # Bulky panels are default-collapsed.
     assert "Model enable/disable matrix" in r.text
     assert "Magic-link allowlist" in r.text
+
+
+# --- pause toggle (owner ask 2026-06-11 — flag predated the UI) ----------------
+
+def test_queue_pause_forbidden_for_anonymous():
+    assert client.post("/queue/pause?on=true", headers=ANON).status_code == 403
+
+
+def test_queue_pause_toggle_roundtrip(monkeypatch, tmp_path):
+    flag = tmp_path / "owl-paused"
+    monkeypatch.setattr(queue_control, "PAUSE_FLAG", str(flag))
+    r = client.post("/queue/pause?on=true", headers=LAB)
+    assert r.status_code == 200 and r.json()["paused"] is True
+    assert flag.exists()
+    # snapshot reflects it (drives the page banner)
+    assert client.get("/queue").json()["paused"] is True
+    r = client.post("/queue/pause?on=false", headers=LAB)
+    assert r.json()["paused"] is False
+    assert not flag.exists()
+    assert client.get("/queue").json()["paused"] is False
+
+
+def test_queue_status_page_has_pause_toggle():
+    r = client.get("/queue-status", headers=LAB)
+    assert r.status_code == 200
+    assert "togglePause" in r.text
+    assert "Disable queue" in r.text and "Enable queue" in r.text
