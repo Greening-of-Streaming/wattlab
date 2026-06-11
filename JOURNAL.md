@@ -7,6 +7,36 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 43 — 2026-06-11
+
+Two threads: a `/video` regression report run to ground, and a documentation cleanup pass
+(executed overnight on owner instruction). Service restarted twice (01:59 post-S42/CR-064,
+and again after the `/video` fix).
+
+**/video "compare-codecs boxes non-selectable" — an affordance bug, not a refactor
+casualty.** Owner reported the three batch boxes (Compare codecs CPU / GPU / all) couldn't
+be selected. Root-caused via server-log forensics + real-browser reproduction (Playwright
+Chromium through the public HTTPS path): the clicks were in fact firing — preview-cmd hits
+visible in the journal log — but the boxes had zero selection affordance: no pointer
+cursor, no hover state, "selected" was only a 1px border-brightness change, and clicking
+one visibly *deselected* the default H.264 Both card, so the control read as dead. Fix:
+shared `.batch-box` class (cursor + hover + the same selected border+tint the `.preset`
+cards get), `selectPreset` simplified to one class-based selection mechanism; locked boxes
+keep the lock-block dimming + `not-allowed` cursor. Guard test added in
+`test_codecs_split.py`; commit `47aa150`; **615 tests passing**. The affordance gap dates
+back to the S38 codec split — the markup/JS were byte-identical to `v0.8.7`, so the S42
+refactor was not the cause.
+
+**Documentation cleanup (overnight, owner instruction).** CLAUDE.md pruned + fact-fixed;
+CR-060 moved to closed + CR-052/053/061 back-filled; the groupings appendix rewritten;
+README + TESTING.md rewritten to current reality; `wattlab_service_overview.md` stubbed as
+superseded; status headers added to the architecture-review / traffic-light /
+gpu-swap-checklist docs; GOS1_INFRA.md facts pass + CGNAT/DuckDNS records; this journal's
+tail repaired (dead "Phase 6 resumption" runbook deleted, the Sessions 1–5 era reordered
+newest-first) + back-filled S38/S40 stubs so the session sequence has no holes.
+
+---
+
 ## Session 42 — 2026-06-10/11 (overnight, autonomous)
 
 Refactor **Phases 2–4 complete** — the code restructuring the 2026-06 review planned is
@@ -119,6 +149,15 @@ full journal entry — see git log `CR-063` and CHANGE_REQUESTS_CLOSED.md.
 
 ---
 
+## Session 40 — 2026-06-08
+
+*(back-filled stub, 2026-06-11)* CR-063 — Pixop partner-transcode integration: hidden
+`/enhance-run` page (AI-vs-ffmpeg upscale comparison) behind the `ENHANCE_RUN` capability,
+new `pixop.py`, 73 new tests → 505. Recorded in git log under `CR-063`; no full journal
+entry was written at the time.
+
+---
+
 ## Session 39 — 2026-06-03
 
 CR-062 follow-up: three reported bugs in the `/image` "compare 4 models" run, plus a
@@ -183,6 +222,15 @@ result `results/image/2026-06-03_13a5b4c3.json` before touching code.
 - **NB:** JOURNAL has no Session 38 full entry — CR-062 shipped (commit `c430217`) with only
   its CLAUDE.md one-liner written, never a JOURNAL block. Left as-is (not reconstructing it
   from git); flagged here so the S37→S39 gap isn't read as a lost session.
+
+---
+
+## Session 38 — 2026-06-02
+
+*(back-filled stub, 2026-06-11)* CR-062 omnibus: unified cooldown / wait-for-idle
+(`cooldown_wait_for_idle` toggle + `power.cooldown_between_runs` as the single execution
+path), `/video` codec split, queue resume routing, JS bundling fix; 392 → 427 tests. Full
+record lives in the CR-062 closed entry in CHANGE_REQUESTS_CLOSED.md.
 
 ---
 
@@ -1798,6 +1846,8 @@ Previous approach was a hard 403. Replaced with a friendlier read-only view:
 
 ---
 
+*(Sessions 1–5, April 2026 — bootstrap era; entries below predate the current format.)*
+
 ## Session 5 — 2026-04-05
 
 ### What we built
@@ -1871,98 +1921,6 @@ Nextcloud snap → moved to :8080 (off :80)
 ### Deferred (noted for next session)
 - **Image page progress bar:** missing elapsed time (video + LLM pages both show it). Standardise elapsed time + live wall power across all three test pages.
 - **GPU image generation:** code is complete and should work (SD-Turbo float16 needs ~2-3 GB VRAM, well within the 11.1 GB available). Just needs a first run to confirm and record the measurement.
-
----
-
-## Phase 6 — Resumption instructions (for next session)
-
-### Step 1 — Run setup script on GoS1 (needs sudo)
-```bash
-sudo bash /home/gos/wattlab/infra/setup-nginx.sh
-```
-This:
-1. Moves Nextcloud snap from :80 → :8080
-2. Installs nginx + certbot + python3-certbot-nginx
-3. Deploys nginx config to `/etc/nginx/sites-available/wattlab`
-4. Creates symlink in sites-enabled, removes default site
-5. Tests config (`nginx -t`) and starts nginx
-
-After this: Nextcloud accessible at `http://192.168.1.62:8080/` on LAN.
-
-### Step 2 — BouyguesBox port forwarding (do from home)
-Admin panel → port forwarding → add:
-- TCP **80** → `192.168.1.62:80`
-- TCP **443** → `192.168.1.62:443`
-
-**Pre-existing rules to clean up first:** Two old rules were found pointing to `192.168.1.1` (the router itself — initially misread as `192.161.1.1`): one called "apache" forwarding port 80, and one called "ssh" forwarding port 22. Both were left over from the owner's son's personal projects and no longer needed. The port 80 conflict would have silently broken nginx, so delete both before adding the new rules. The active SSH rule (port 2222 → GoS1) is separate and stays.
-
-After this: WattLab reachable at `http://176.148.88.254/` (IP, no DNS needed to test).
-
-### Step 3 — DNS record (wherever greeningofstreaming.org is managed)
-```
-wattlab.greeningofstreaming.org  A  176.148.88.254
-```
-TTL: 300 or lower to propagate fast. May take up to 24-48h.
-
-### Step 4 — Issue SSL cert (once DNS has propagated)
-Verify DNS first:
-```bash
-dig wattlab.greeningofstreaming.org A +short
-# should return 176.148.88.254
-```
-Then issue cert:
-```bash
-sudo certbot --nginx -d wattlab.greeningofstreaming.org
-```
-Then enable HTTPS redirect — edit `/etc/nginx/sites-available/wattlab`, uncomment the `return 301` line and comment out the proxy block in the HTTP server block, then:
-```bash
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-### Step 5 — Update CLAUDE.md
-Add `wattlab.greeningofstreaming.org` to Current URLs section, mark Phase 6 complete.
-
----
-
-## Session 1 — 2026-04-03/04
-
-### What we built
-1. **Live power display** — P110 via local API, auto-refresh 10s, systemd service
-2. **Video transcode test** — CPU vs GPU H.264 comparison, P110 + thermals, side-by-side report, server-reported progress stages, Meridian 4K pre-loaded
-3. **LLM inference test** — Ollama, TinyLlama + Mistral 7B, fixed prompts, cold inference protocol, energy per token
-4. **Focus mode** — 8 background timers suppressed during measurement
-5. **Infrastructure** — Git/GitHub, SSH keys, Nighthawk AP mode, Claude Code on GoS1
-
-### Key Video Findings
-
-**H.264 1080p from 4K source (Meridian, 4 runs) — 🟢 Repeatable**
-
-| | CPU (libx264) | GPU (h264_vaapi) |
-|---|---|---|
-| Duration (mean) | 174.3s 🏁 | 114.0s |
-| Energy (mean) | 4.06 Wh ✓ | 4.42 Wh |
-| Peak delta | ~85W | ~139W |
-| Variance | 7.3% (3.4% ex. outlier) | 0.2% |
-
-GPU 34.5% faster, 9.7% more energy. CPU wins on energy efficiency.
-
-Crossover exists: GPU wins on short clips (<10s transcode), CPU wins on long. The crossover point is between 10-60s transcode duration for this workload.
-
-**Methodology note:** CPU baseline drifts 51-58W between runs (OS thermal state). GPU baseline stable (~54W). Focus mode and 60s cooldown reduce but don't eliminate CPU variance.
-
-### Key LLM Findings
-
-**Cold inference (model unloaded before each run)**
-
-| Model | Task | Tok/s | mWh/token | Confidence |
-|---|---|---|---|---|
-| Mistral 7B | T2 Medium | 59.3 | 1.028 | 🟢 |
-| Mistral 7B | T3 Long | 47.6 | 0.943 | 🟢 |
-| TinyLlama | T3 Long | 209.3 | 0.061 | 🟡 |
-
-TinyLlama ~15x more energy efficient per token than Mistral. TinyLlama too fast (1-4s) for reliable P110 measurement — batching needed.
-
-**Warm vs cold:** A contaminated warm run showed 161W delta vs 219W cold — 26% lower. Cold measurement (first-request cost) is more honest for real-world scenarios.
 
 ---
 
@@ -2126,6 +2084,48 @@ LLM response was truncated at 500 chars (leftover from original non-streaming `r
 - Which image generation runtime to install?
 - Should video crossover point (GPU vs CPU efficiency) be a published GoS finding?
 - Results directory — add to `.gitignore` or commit selected runs to repo as reference data?
+
+---
+
+## Session 1 — 2026-04-03/04
+
+### What we built
+1. **Live power display** — P110 via local API, auto-refresh 10s, systemd service
+2. **Video transcode test** — CPU vs GPU H.264 comparison, P110 + thermals, side-by-side report, server-reported progress stages, Meridian 4K pre-loaded
+3. **LLM inference test** — Ollama, TinyLlama + Mistral 7B, fixed prompts, cold inference protocol, energy per token
+4. **Focus mode** — 8 background timers suppressed during measurement
+5. **Infrastructure** — Git/GitHub, SSH keys, Nighthawk AP mode, Claude Code on GoS1
+
+### Key Video Findings
+
+**H.264 1080p from 4K source (Meridian, 4 runs) — 🟢 Repeatable**
+
+| | CPU (libx264) | GPU (h264_vaapi) |
+|---|---|---|
+| Duration (mean) | 174.3s 🏁 | 114.0s |
+| Energy (mean) | 4.06 Wh ✓ | 4.42 Wh |
+| Peak delta | ~85W | ~139W |
+| Variance | 7.3% (3.4% ex. outlier) | 0.2% |
+
+GPU 34.5% faster, 9.7% more energy. CPU wins on energy efficiency.
+
+Crossover exists: GPU wins on short clips (<10s transcode), CPU wins on long. The crossover point is between 10-60s transcode duration for this workload.
+
+**Methodology note:** CPU baseline drifts 51-58W between runs (OS thermal state). GPU baseline stable (~54W). Focus mode and 60s cooldown reduce but don't eliminate CPU variance.
+
+### Key LLM Findings
+
+**Cold inference (model unloaded before each run)**
+
+| Model | Task | Tok/s | mWh/token | Confidence |
+|---|---|---|---|---|
+| Mistral 7B | T2 Medium | 59.3 | 1.028 | 🟢 |
+| Mistral 7B | T3 Long | 47.6 | 0.943 | 🟢 |
+| TinyLlama | T3 Long | 209.3 | 0.061 | 🟡 |
+
+TinyLlama ~15x more energy efficient per token than Mistral. TinyLlama too fast (1-4s) for reliable P110 measurement — batching needed.
+
+**Warm vs cold:** A contaminated warm run showed 161W delta vs 219W cold — 26% lower. Cold measurement (first-request cost) is more honest for real-world scenarios.
 
 ---
 
