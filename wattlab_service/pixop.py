@@ -273,6 +273,23 @@ def list_inputs(c: Optional[dict] = None) -> list[str]:
         return []
 
 
+def input_norm_flags(c: Optional[dict] = None) -> dict:
+    """{input_name: "reason; reason"} for staged inputs that would be
+    normalized before measurement. Re-derived live on every call (the verdict
+    is file × CURRENT policy — verified pix_fmt set and VFR tolerance both
+    move), deliberately never persisted or filename-encoded so it can't go
+    stale (owner discussion, 2026-06-11). Drives the picker badge + the
+    upload response; the run-start probe stays the correctness gate."""
+    c = c or config()
+    inp, _, _ = _workdir_paths(c)
+    out = {}
+    for name in list_inputs(c):
+        p = probe_normalization(inp / name)
+        if p["needed"]:
+            out[name] = "; ".join(p["reasons"])
+    return out
+
+
 def input_previews(c: Optional[dict] = None) -> dict:
     """{input_name: preview_name} for inputs whose normalized preview proxy
     exists on disk (i.e. the input has been run through normalization at
@@ -299,10 +316,12 @@ def input_previews(c: Optional[dict] = None) -> dict:
 # point). Conditional, not always-on: inputs already CFR + in a verified pixel
 # format run untouched, preserving continuity with every result to date.
 
-# Pixel formats verified to decode in pixop-live on real runs (BBB 8-bit 4:2:0,
-# Meridian PQ 10-bit 4:2:0). Anything else gets normalized — Jon declined to
-# publish a supported-format matrix and prescribed normalization instead.
-_VERIFIED_PIX_FMTS = {"yuv420p", "yuv420p10le"}
+# Pixel formats verified to decode in pixop-live on real runs (BBB = yuv420p,
+# Meridian PQ = yuv422p — both encoded clean 2026-06-03; yuv420p10le = the
+# HEVC Main10 outputs our own runs produce). Anything else gets normalized —
+# Jon declined to publish a supported-format matrix and prescribed
+# normalization instead. Grow this set only on a VERIFIED real encode.
+_VERIFIED_PIX_FMTS = {"yuv420p", "yuv420p10le", "yuv422p"}
 
 # Audio codecs the downstream mp4 mux (`--audio-copy`) accepts; anything else
 # (PCM in old camera files, …) is transcoded to AAC in the intermediate.
@@ -645,6 +664,7 @@ def preflight(c: Optional[dict] = None) -> dict:
     presets = list_presets(c)
     inputs = list_inputs(c)
     previews = input_previews(c)  # normalized-preview proxies, where they exist
+    norm_flags = input_norm_flags(c)  # which inputs would normalize, and why
     combos = generate_presets(c)  # CR-064 — format×resolution matrix
 
     reasons = []
@@ -667,6 +687,7 @@ def preflight(c: Optional[dict] = None) -> dict:
         "presets": presets,
         "inputs": inputs,
         "input_previews": previews,
+        "input_norm_flags": norm_flags,
         "combos": combos,
         "ok_selftest": image_present,
         "ok_transcode": bool(image_present and workdir_ok and license_present and presets and inputs),

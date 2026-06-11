@@ -1311,9 +1311,12 @@ def test_probe_normalization_legacy_pix_fmt(monkeypatch):
     assert any("yuvj422p" in r for r in p["reasons"])
 
 
-def test_probe_normalization_clean_input_untouched(monkeypatch):
+@pytest.mark.parametrize("pix_fmt", ["yuv420p", "yuv420p10le", "yuv422p"])
+def test_probe_normalization_clean_input_untouched(monkeypatch, pix_fmt):
+    # yuv422p = Meridian PQ, verified on a real 2026-06-03 encode — the badge
+    # sweep caught it being needlessly flagged (2026-06-11).
     monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
-        {"codec_type": "video", "pix_fmt": "yuv420p10le",
+        {"codec_type": "video", "pix_fmt": pix_fmt,
          "r_frame_rate": "30000/1001", "avg_frame_rate": "30000/1001"},
     ]))
     p = pixop.probe_normalization("meridian.mov")
@@ -1645,3 +1648,38 @@ def test_compare_normalizes_despite_1x_pacing(tmp_path, monkeypatch):
     assert pacers[0] is not None and " ".join(pacers[0]).endswith("-f nut -")
     assert pacers[1] is None
     assert not (tmp_path / "input" / "normalized_clip.nut").exists()
+
+
+def test_input_norm_flags_live_probe(tmp_path, monkeypatch):
+    c = _cfg(tmp_path)
+    _stage(tmp_path, inp=True)
+    (tmp_path / "input" / "vfr.mov").write_text("x")
+    monkeypatch.setattr(pixop, "probe_normalization",
+                        lambda p: ({"needed": True, "reasons": ["variable frame rate (…)"]}
+                                   if "vfr" in str(p) else {"needed": False, "reasons": []}))
+    flags = pixop.input_norm_flags(c)
+    assert flags == {"vfr.mov": "variable frame rate (…)"}
+
+
+def test_enhance_options_html_norm_badge():
+    html = routes_enhance._enhance_options_html(
+        ["a.mov", "b.mov"], None, {"a.mov": "pixel format yuvj422p not in the verified set"})
+    assert 'data-norm="pixel format yuvj422p not in the verified set"' in html
+    assert ">a.mov · normalizes first</option>" in html
+    assert ">b.mov</option>" in html
+
+
+def test_upload_reports_normalization_verdict(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "probe_input_stream",
+                        lambda p: {"codec": "mjpeg", "duration_s": 5.0})
+    monkeypatch.setattr(pixop, "probe_normalization",
+                        lambda p: {"needed": True,
+                                   "reasons": ["pixel format yuvj422p not in the verified set"]})
+    r = client.post("/enhance-run/upload", headers=LAB,
+                    files={"file": ("old.mov", b"x" * 100, "video/quicktime")},
+                    data={"keep": "true"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["normalization"]["needed"] is True
+    assert "yuvj422p" in d["normalization"]["reasons"][0]

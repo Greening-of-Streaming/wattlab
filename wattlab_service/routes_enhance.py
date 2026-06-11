@@ -334,17 +334,26 @@ async def video_enhance_page(request: Request):
 # once a preset .args + an input clip are staged in the OWL workdir. A no-license
 # `--check-device` self-test proves the docker+GPU plumbing today.
 
-def _enhance_options_html(items: list, previews: dict | None = None) -> str:
+def _enhance_options_html(items: list, previews: dict | None = None,
+                          norm_flags: dict | None = None) -> str:
     """Input <option>s. data-preview carries the normalized-preview proxy name
     (when one exists from a prior run) so the in-page preview can show what the
     measurement actually encodes — sources that need normalizing are often the
-    ones a browser can't decode at all (the 2026-06-11 MJPEG audio-only case)."""
+    ones a browser can't decode at all (the 2026-06-11 MJPEG audio-only case).
+    data-norm carries the live probe's reasons for inputs that would be
+    normalized before measurement, with a visible label badge — re-derived at
+    render time, never stored (the verdict is file × current policy)."""
     previews = previews or {}
+    norm_flags = norm_flags or {}
     out = []
     for x in items:
         pv = previews.get(x)
+        nf = norm_flags.get(x)
         attr = f' data-preview="{html_lib.escape(pv)}"' if pv else ""
-        out.append(f'<option value="{html_lib.escape(x)}"{attr}>{html_lib.escape(x)}</option>')
+        if nf:
+            attr += f' data-norm="{html_lib.escape(nf)}"'
+        label = x + (" · normalizes first" if nf else "")
+        out.append(f'<option value="{html_lib.escape(x)}"{attr}>{html_lib.escape(label)}</option>')
     return "".join(out)
 
 
@@ -612,12 +621,14 @@ function updateInputPreview() {
   // what the measurement encodes, and it plays where the raw source may not.
   var opt = sel.options[sel.selectedIndex];
   var pv = opt ? opt.getAttribute('data-preview') : null;
+  var nf = opt ? opt.getAttribute('data-norm') : null;
   vid.src = '/enhance-run/input/' + encodeURIComponent(pv || sel.value);
   if (note) {
-    note.style.display = pv ? 'block' : 'none';
-    note.textContent = pv
-      ? 'Showing the normalized stream (what a run measures against) — the raw source may not be browser-playable.'
-      : '';
+    var msgs = [];
+    if (nf) msgs.push('Will be normalized before measurement (' + nf + ') — runs outside the energy window.');
+    if (pv) msgs.push('Showing the normalized stream (what a run measures against) — the raw source may not be browser-playable.');
+    note.style.display = msgs.length ? 'block' : 'none';
+    note.textContent = msgs.join(' ');
   }
   wrap.style.display = 'block';
   _wireNativeVids(wrap);
@@ -883,14 +894,21 @@ async function uploadClip() {
     }
     var sel = document.getElementById('inSel');
     var opt = document.createElement('option');
+    var willNorm = d.normalization && d.normalization.needed;
+    var normWhy = willNorm ? d.normalization.reasons.join('; ') : '';
     opt.value = d.name;
-    opt.textContent = d.name;
+    opt.textContent = d.name + (willNorm ? ' · normalizes first' : '');
+    if (willNorm) opt.setAttribute('data-norm', normWhy);
     sel.appendChild(opt);
     sel.value = d.name;
     updateInputPreview();
     document.getElementById('status').innerHTML =
       '<div style="color:var(--accent);font-size:0.82rem">Uploaded ' + d.name
-      + (d.duration_s != null ? ' · ' + d.duration_s + 's' : '') + '</div>';
+      + (d.duration_s != null ? ' · ' + d.duration_s + 's' : '') + '</div>'
+      + (willNorm
+          ? '<div style="color:var(--warn);font-size:0.76rem;margin-top:0.2rem">Will be normalized before measurement ('
+            + normWhy + ') — runs outside the energy window.</div>'
+          : '');
   } catch(e) {
     document.getElementById('status').innerHTML = '<div style="color:var(--err)">' + e + '</div>';
   } finally {
@@ -1266,7 +1284,8 @@ async def enhance_run_page(request: Request):
             .replace("{RUN_DISABLED}",     "" if run_enabled else " disabled")
             .replace("{ST_DISABLED}",      "" if st_enabled else " disabled")
             .replace("{INPUT_OPTIONS}",    _enhance_options_html(pf["inputs"],
-                                               pf.get("input_previews")))
+                                               pf.get("input_previews"),
+                                               pf.get("input_norm_flags")))
             .replace("{DEL_BTN}",          del_btn)
             .replace("{KEEP_CHECKED}",     " checked" if is_lab else "")
             .replace("{SR_OPTIONS}",       _enhance_sr_options_html())
@@ -1505,7 +1524,13 @@ async def enhance_upload(request: Request, file: UploadFile = File(...),
             path.unlink(missing_ok=True)
             return JSONResponse({"error": f"Clip is {dur:.0f}s — Member limit is {max_dur}s"},
                                 status_code=413)
-    return {"name": name, "duration_s": dur, "input_stream": stream}
+    # Early normalization verdict (owner ask, 2026-06-11): tell the uploader
+    # NOW that the run will start with a normalize stage, and why. Live probe,
+    # never persisted — see pixop.input_norm_flags.
+    nf = pixop.probe_normalization(path)
+    return {"name": name, "duration_s": dur, "input_stream": stream,
+            "normalization": {"needed": bool(nf.get("needed")),
+                              "reasons": nf.get("reasons") or []}}
 
 
 @router.delete("/enhance-run/input/{name}",
