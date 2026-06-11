@@ -39,6 +39,31 @@ epoch note in findings). `TAPO_P110_IP_2=.159` = outer. Phase 2 integration (met
 registry + cached handles, shared sampler, per-meter ΔW `ci2` combine, cadence token,
 recal) is specced in CR-065 and the approved plan; next session.
 
+**Phase 2 shipped (same session, post-approval).** power.py grew the meter
+registry (`_meter_ips`, index 0 = inner/primary), per-meter CACHED device
+handles with rebuild-on-403 (side win: kills the per-poll KLAP handshake the
+old `get_power_watts()` paid at 1 Hz), and ONE shared sampler pair
+(`sample_baseline`/`sample_task`) that all five modules' legacy-shaped
+wrappers now delegate to (video/llm/image_gen/rag; pixop borrows video's).
+Secondary meter polls staggered 0.5 s on a parallel task; failure mid-run
+fail-softs to flagged single-meter data (`meters: {degraded: true}`), never
+aborts. Energy blocks gain an optional `energy.meters` block (per-meter
+w_base/w_task/ΔW + outer raw samples + `delta_w_combined`); headline
+`delta_w`/`delta_e_wh` become the per-meter mean combine while
+w_base/w_task/sample arrays keep their exact historical (inner-meter)
+meaning. confidence() gained the `meters` kwarg → method "ci2"
+(SE = √(SE₁²+SE₂²)/2, per-meter ΔW against own baseline so the daisy-chain
+offset cancels; n_task gates stay on primary poll count — duration proxy).
+Copy via new `{METER_CADENCE}`/`{METER_TOPOLOGY_ROW}` tokens (methodology,
+demo, ui-config) — claims "1-second intervals on each of two staggered
+meters", never "0.5-second intervals". Registered the schema delta in
+docs/result_envelope.md; ARCHITECTURE/GOS1_INFRA one-liners. 14 new tests
+(parity, stagger, fail-soft, combine maths, ci2 gates, handle rebuild,
+ui-config token) → **662**. Live-verified end-to-end against both plugs
+(outer−inner ≈ +0.8 W as the pre-test predicted; method ci2 on real data).
+**To close CR-065: Ben restarts wattlab, then one variance recalibration
+from /settings under normal ambient.**
+
 Continuation of the S44 day. Four threads: Pixop naming, queue toggle, the first
 energy-vs-quality learnings from real UGC runs, and the degradation-ladder fixture
 library for the upscale sweet-spot experiment. **648 tests.** Service restart pending

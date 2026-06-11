@@ -13,7 +13,7 @@ import findings as findings_mod
 import settings as cfg
 import ui
 from capabilities import requires, PUBLIC_PAGE
-from power import meter_display_name
+from power import meter_display_name, meter_cadence_label
 from routes_findings import _findings_catalog_rows_html, _FINDINGS_CATALOG_CSS
 from ui import (GOS_URL, JOIN_GOS_URL, _BETA_CHIP, _CONF_HELP_WIDGET,
                 _PROGRESS_JS, _RESULT_JS, _gpu_display_name, _gpu_enc,
@@ -183,7 +183,7 @@ _DEMO_HTML = f"""
   <details>
     <summary>What's being measured?</summary>
     <p>GoS1 is an AMD Ryzen 9 workstation with an {{GPU_DISPLAY_NAME}} GPU.
-    Power is sampled at 1-second intervals via a {{METER_NAME}}
+    Power is sampled via {{METER_NAME}} at {{METER_CADENCE}},
     connected to the mains supply. We measure the delta between idle
     baseline and task power — not estimated TDP or nameplate figures.</p>
     <p>Scope: device layer only. Network, CDN, and CPE are explicitly excluded.
@@ -321,7 +321,7 @@ _DEMO_HTML = f"""
     <details>
       <summary>How this is measured</summary>
       <p>Model unloaded from VRAM. 3s settle. 10s idle baseline. Single inference run.
-      P110 at 1s intervals. Primary metric: mWh per output token.</p>
+      {{METER_NAME}} at {{METER_CADENCE}}. Primary metric: mWh per output token.</p>
       <p>Model: Mistral 7B (4.4 GB). Previous result: 0.94 mWh/tok, ~47 tok/s.</p>
     </details>
     <details>
@@ -375,7 +375,7 @@ _DEMO_HTML = f"""
     </p>
     <details>
       <summary>How this is measured</summary>
-      <p>10s idle baseline. CPU diffusion run. P110 at 1s intervals.
+      <p>10s idle baseline. CPU diffusion run. {{METER_NAME}} at {{METER_CADENCE}}.
       Metric: Wh per image = ΔW × generation_time / 3600.</p>
       <p>Previous result: 0.21 Wh/image, 12s, ~30W delta above idle.</p>
     </details>
@@ -422,7 +422,7 @@ _DEMO_HTML = f"""
     </p>
     <details>
       <summary>How this is measured</summary>
-      <p>Each mode: 10s idle baseline, inference with P110 at 1s intervals.
+      <p>Each mode: 10s idle baseline, inference with {{METER_NAME}} at {{METER_CADENCE}}.
       Metric: mWh per output token. ChromaDB embeddings via sentence-transformers.
       Corpus: academic papers on streaming energy.</p>
     </details>
@@ -1408,4 +1408,5 @@ async def demo_page(request: Request):
             .replace("{GPU_H264_ENC}",       _gpu_enc("h264"))
             .replace("{GPU_DISPLAY_NAME}",   _gpu_display_name())
             .replace("{METER_NAME}",         meter_display_name())
+            .replace("{METER_CADENCE}",      meter_cadence_label())
             .replace("{FINDINGS_PANEL}",     findings_panel_html))

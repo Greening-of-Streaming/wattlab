@@ -12,6 +12,14 @@ OWL was designed as a **lab tool first** — dense, fast, neutral, no marketing 
 
 ---
 
+## Design principle (standing): quality assessment by external authority
+
+*(Promoted 2026-06-11 from CR-029 §6 — a stance, not a closable feature.)* OWL measures **energy**; it does not develop or internalise perceptual-quality assessment for video. Where a quality axis is needed, point at external authorities (Netflix VMAF, industry references) and document the scoping on `/methodology`. Origin: team meeting 2026-05-04 (CR-029 §6); reinforced by Tania's caution at the 2026-05-11 board.
+
+**One open tension carried here verbatim:** CR-039 proposes a frontier-model-as-judge quality axis for AI jobs (LLM/RAG/image), where no external authority exists. That is an *exception to this principle* the owner must explicitly ratify — or reject, in which case **drop CR-039**. (Video PQA remains out of scope either way; shipped quality columns — VMAF for codec comparisons, CompressedVQA-HDR as a relative NR indicator for enhancement — are external models consumed as-is, consistent with this principle.)
+
+---
+
 ## CR-003 · Iso-energy bitrate sweep ("I want to spend X Wh, what are my options?")
 
 **Status:** captured 2026-05-01 — longer horizon (long test runs needed).
@@ -31,9 +39,13 @@ Possibly pair with a quality metric (mean PSNR / SSIM / VMAF) so the result is "
 
 ### Open questions
 
-- Quality metric to use? VMAF is the streaming-industry standard but adds dependency.
+- Quality metric: VMAF **shipped since (CR-044)** — the dependency objection is gone; reuse it.
 - Bitrate sweep granularity? Logarithmic vs linear?
 - White-paper scope: just CPU? Just GPU? Both? Cross-grid?
+
+### Cross-reference
+
+CR-045 is the mirror axis (fix quality/bitrate, compare energy); this CR fixes energy and sweeps the rest. Sequence independently.
 
 ### Priority: strong candidate when capacity allows — long (overnight/weekend) test runs needed; natural IBC-submission material.
 
@@ -41,65 +53,67 @@ Possibly pair with a quality metric (mean PSNR / SSIM / VMAF) so the result is "
 
 ## CR-004 · Visual graphing in OWL
 
-**Status:** captured 2026-05-01 — nice-to-have.
+**Status:** captured 2026-05-01 — nice-to-have. **Partially overtaken by incidental shipping** (2026-06-11 audit): Chart.js 4.4 is the de facto house library (`ui.CHARTJS_URL`), the thermal-recovery curve renders on `/settings`, and `/llm/compare` + `/rag/compare` ship energy bar charts. Remaining scope below.
 **Triggered by:** Dom (transcript ~T+1657s) + owner notes.
 
 ### Problem
 
-OWL currently renders all results as metric tables. Trend, variance, and shape are visible only by reading numbers row-by-row. Visitors are visual thinkers; demos land harder with a chart than a table.
+Single-run results and the home page are still metric tables only; trend, variance, and shape are visible only by reading numbers row-by-row.
 
-### Agreed direction
+### Remaining deliverables
 
-Add chart rendering to result pages. Three candidates in priority order:
-
-1. **Per-run power trace** — line chart of P110 polls (1s cadence) across the run, showing baseline → ramp-up → workload → cooldown. Makes the ΔW computation visually obvious. Single canvas per result card.
-2. **Comparison-mode side-by-side** — bar chart for both/all-codecs/compare-models results, energy + CO₂e + duration on the same axis or stacked. Replaces or supplements the existing summary table.
-3. **Historical trend** — small chart on the home page or `/queue-status` showing last N runs' energy across run timestamp. Gives a feel for how stable the lab is over time.
-
-Library choice is open: chart.js (small, easy), uPlot (faster, smaller, ugly defaults), pure SVG (no dep, more code). Probably chart.js.
+1. **Per-run power trace** — line chart of the P110 polls (raw samples are persisted on every result since the CI confidence work) showing baseline → ramp-up → workload → cooldown. Makes the ΔW computation visually obvious. Single canvas per result card.
+2. **Comparison-mode side-by-side on the result card** — bar chart for both/all-codecs results (the LLM/RAG compare pages already have one; video doesn't).
+3. **Historical trend** — small chart of last N runs' energy over time. Coordinate the surface with CR-057's findings-first home redesign rather than landing on today's home page.
 
 ### Priority: nice-to-have. Would visibly improve demo impact.
 
 ---
 
-## CR-007 · Carbon variance study over time-of-day / season / location
+## CR-007 · Carbon-intensity history & variance study (absorbs CR-018 Tier 2/3)
 
-**Status:** captured 2026-05-01 — strong talking point if scoped tight.
-**Triggered by:** Simon + Dom (transcript ~T+2029s onwards).
+**Status:** captured 2026-05-01; **merged 2026-06-11 with CR-018's Tiers 2/3** (CR-018's shipped Tier 1 — the curated "Through history" block — is recorded in CHANGE_REQUESTS_CLOSED.md). The variance study needs exactly the historical dataset Tier 2 specified: one infrastructure, two outputs.
+**Triggered by:** Simon + Dom (transcript ~T+2029s onwards); CR-018 owner question on "what would this job have emitted in 2020".
 
 ### Problem
 
 OWL now reports gCO₂e against live grid intensity, but **the variance of that intensity itself** isn't characterised. Dom raised the right framing: if the carbon intensity of the grid varies by 1000% across the day, optimising your code by 1% is noise. If the grid varies by 1% and your code variation drives 50%, your code matters more. Without knowing which regime you're in, optimisation effort is mis-targeted.
 
-### Agreed direction
+### Agreed direction — Stage 1: historical-data infrastructure (ex-CR-018 Tier 2)
 
-Background or one-shot job:
-1. Take a **standard fixed-energy reference workload** (e.g. exactly 1 Wh of compute — could be a calibrated transcode or a synthetic CPU hold).
-2. Pull historical Eco2mix data for the last N months.
-3. Compute the resulting gCO₂e variance for that 1 Wh workload as a function of:
-   - Hour of day
-   - Day of week
-   - Season
-   - Comparison location (UK / Germany / Poland — using their available historical data)
-4. Render: a chart (CR-004 territory) plus a punchy summary line ("your 1 Wh workload, run in France, swung from X g to Y g over the last 6 months — Z× spread").
+- `bin/refresh-historical-carbon` (replaces the one-shot `bin/fetch-historical-mix`): fetch monthly Eco2mix aggregates for every (zone, year, month) tuple in scope → `data/eco2mix_history.json` (~50 KB for FR, ~150 monthly aggregates). Run on demand; re-run quarterly. Budget a half-hour first fetch (API pagination).
+- `carbon.py` loads the cache at startup; new `historical_intensity(zone, year, month)`.
+- `/carbon/historical?zone=FR&year=2020&month=6` → `{g_per_kwh, label}`.
+- Comparison strip gains a small year-month picker (2012 → last completed month).
+- Cost ~1 day. Same lifecycle method as the live path (`compute_intensity_from_mix`).
 
-Possible deliverable: a methodology-page sub-section, a separate `/grid-variance` page, or a one-off white paper.
+### Agreed direction — Stage 2: the variance study
+
+1. Take a **standard fixed-energy reference workload** (e.g. exactly 1 Wh of compute — a calibrated transcode or synthetic CPU hold).
+2. Compute its gCO₂e variance over Stage 1's dataset as a function of hour of day / day of week / season / comparison zone.
+3. Render: a chart plus a punchy summary line ("your 1 Wh workload, run in France, swung from X g to Y g over the last 6 months — Z× spread").
+4. **Deliverable is a finding** (`docs/findings/grid-variance-fr-2026.md`) via the shipped CR-054 machinery — the old "/grid-variance page or white paper" options dissolve into the finding.
 
 ### Output value
 
-Strong industry talking point — speaks directly to Simon's "schedule your work to carbon-efficient times" thesis. Could become guidance for operators / regulators on workload scheduling. *"Move your workload to this time slot for X% lower carbon."*
+Strong industry talking point — speaks directly to Simon's "schedule your work to carbon-efficient times" thesis: if grid intensity varies 1000% across the day, optimising code by 1% is noise; if it varies 1%, your code dominates. Knowing the regime targets the optimisation effort.
 
-### Cross-references (added 2026-05-27)
+### Later (one line each)
 
-- **CR-054** (findings catalog): the deliverable line above offered "methodology sub-section, separate `/grid-variance` page, or one-off white paper" — once CR-054 ships, the natural answer is **a finding** (`docs/findings/grid-variance-fr-2026.md`). The `/grid-variance` page option dissolves into the finding page; the white paper becomes the finding's analysis prose.
+- Ex-Tier 3 interactive timeline scrubber — only if Stage 1's picker proves popular.
+- Non-FR zones — the same Stage 1 infrastructure pointed at ElectricityMaps (paid) or Ember (free, lagged, cleaner European provenance).
 
-### Priority: worth a half-day spike to assess, if scoped tight.
+### Caveat
+
+Lifecycle factors (IPCC AR6) are static — applied to historical mixes. Defensible; footnote on `/methodology` when Stage 1 ships.
+
+### Priority: low / half-day spike to assess. Gated on the CR-031 §1 storage decision only if results need persisting beyond the findings file.
 
 ---
 
 ## CR-008 · REM ↔ OWL integration
 
-**Status:** captured 2026-05-01 — branding step first, full integration later.
+**Status:** captured 2026-05-01. **Steps 1–2 ✅ shipped** (REM source in-repo under `REM/`; OWL branding pass — `rem-theme.css` re-skin, 2026-05-27). Steps 3–4 (data interop, OWL-as-encoder) remain — longer horizon.
 **Triggered by:** Dom + owner across the transcript (~T+486s, ~T+2160s, ~T+3151s, ~T+1014s).
 
 ### Problem
@@ -112,8 +126,8 @@ They're **complementary, not competing**, but currently they look like separate 
 
 ### Agreed direction (multi-step)
 
-1. **(First)** Pull REM source code into the Claude project context so cross-understanding is possible. Owner action item from transcript.
-2. **(Next)** Update REM with **OWL branding and visual style** — same owl mark, same `#00ff99` accent, same dark theme — so they read as one coherent GoS system. Dom's request.
+1. ✅ **(Shipped)** Pull REM source code into the Claude project context so cross-understanding is possible (`REM/` + `REM/CLAUDE.md`).
+2. ✅ **(Shipped)** Update REM with **OWL branding and visual style** — `rem-theme.css` drop-in re-skin, same owl mark / `#00ff99` accent / dark theme. Dom's request.
 3. **(Later)** Genuine data interoperability — OWL exporting in a format REM can ingest, or vice versa. Mash-up view where 100s of homes report from REM and 1-2 contribute high-resolution OWL-style local measurements; visualised together.
 4. **(Long-term, exploratory)** OWL acting as the encoder in a REM-orchestrated end-to-end test (encoder → intermediary server [Linode / TNO / Bristol] → client). Auto-hackathon workflow (see CR-009).
 
@@ -152,385 +166,169 @@ Dom guessed five days of Claude Code work. Probably correct order of magnitude. 
 
 ---
 
-## CR-018 · Historical CO₂e comparison — full coverage upgrade (Tier 2 + Tier 3)
-
-**Status:** Tier 1 ✅ done 2026-05-03 (Session 18 part 14 — `bf462c3`); Tier 2 + Tier 3 captured for later.
-**Triggered by:** owner question on whether OWL could show "if this job had run in Paris in January 2020" as a feel for grid evolution. Tier 1 (curated five dates) shipped same session because the methodology was already in place after CR-016 — same `compute_intensity_from_mix` for live and historical.
-
-### What Tier 1 delivered (already shipped)
-
-Five hard-coded France monthly lifecycle intensities in `carbon.HISTORICAL_INTENSITY`, surfaced as a "Through history" block in the carbon comparison strip and documented on `/methodology`. Generated by a one-shot `bin/fetch-historical-mix --year YYYY --month MM` helper that fetches Eco2mix consolidated data and runs each record through the same lifecycle calculation as the live path. Curated, narrative-driven, FR-only.
-
-### Tier 2 — full historical coverage with cached JSON
-
-The next step up: instead of cherry-picking five dates, pull every month from 2012 to last month, cache it locally, and let the visitor pick any date.
-
-**Mechanism:**
-- `bin/refresh-historical-carbon` — Python, replaces the one-shot helper. Fetches monthly aggregates for every (zone, year, month) tuple in scope. Writes to `data/eco2mix_history.json` (~50KB for FR alone, ~150 monthly aggregates).
-- Run on demand (no cron); re-run quarterly to extend the dataset by ~3 months.
-- `carbon.py` loads the cache at startup; new function `historical_intensity(zone, year, month)`.
-- New endpoint `/carbon/historical?zone=FR&year=2020&month=6` returns `{g_per_kwh: …, label: …}`.
-- Comparison strip gains a small year-month picker (2012 → last completed month). When the visitor picks a date, the historical row updates inline.
-
-**Cost estimate:** ~1 day. The script is the slowest part because of API pagination across 150 months × ~1500 records each — manageable but not instant; budget a half-hour fetch the first time.
-
-**Why not now:** Tier 1 covers the current narrative (a small, well-chosen set of dates makes a sharper story than a slider that lets visitors "shop around"). Tier 2 earns its keep when there's a specific user demand for a date that's not in the curated five.
-
-### Tier 3 — interactive timeline
-
-Visitor scrubs across years; the headline number, the EV equivalence, and the comparison rows all animate in response.
-
-**Mechanism:** Tier 2's data + a simple range slider + smooth transitions on the carbon-strip values. Optionally a sparkline of intensity-over-time for the home zone.
-
-**Cost estimate:** ~2 days. UX work is the bulk — the data is already cached by Tier 2.
-
-**Why not now:** scope creep risk. The animation is engaging but adds maintenance for marginal pedagogical gain over Tier 2's picker. Lands late if at all.
-
-### Other zones
-
-All three tiers are FR-only out of the box. Eco2mix is RTE's data; it doesn't cover Germany, UK, etc. Other zones could get historical coverage via:
-
-- ElectricityMaps' historical API (paid; their token already in scope per CR for the live path).
-- Ember's monthly data (free; published with a few months' lag; cleaner provenance for European zones).
-
-Adding non-FR historical is essentially "the same Tier 2 infrastructure pointing at a second data source." Captured here as a follow-up consideration; not in scope while the focus stays FR.
-
-### Caveat across all tiers
-
-Lifecycle factors (IPCC AR6 WGIII 2022) are static, so we're applying current factors to historical mixes. Defensible (the factors are physics/process estimates, not annual statistics that drift), but worth a footnote on `/methodology` if Tier 2 ships. Already noted in passing in the Tier 1 doc.
-
-### Priority: low
-
-Tier 1 is enough for now. Tier 2 lands if visitors ask for a date that's not in the curated five; Tier 3 only if Tier 2 itself proves popular.
-
----
-
 ## CR-024 · Re-run thermal-recovery probe from the "More calibration details" panel
 
-**Status:** captured 2026-05-04 (Session 21). Half-day of work — not lightweight enough to fold into the panel that currently just renders the chart.
-**Triggered by:** owner — the "More calibration details" dropdown on `/settings` (shipped Session 21) renders the recovery curve from `bin/probe-thermal-recovery` output. The CLI script is fine for owner-on-keyboard runs, but the natural next step is a "▶ Re-run probe" button next to the chart so the operator can refresh the curve without dropping to the shell.
+**Status:** captured 2026-05-04 (S21). The panel *display* shipped (S21: recovery chart from `GET /precalibration/data`, served from `routes_settings.py` post-S42-refactor) — but the deliverable here, **`POST /precalibration/run` + a "▶ Re-run probe" button, was never built**; the deferral is documented in code at `routes_settings.py:573`. Half-day estimate stands.
+**Triggered by:** owner — refresh the curve without dropping to the shell.
 
 ### Problem
 
-Currently the probe is a CLI script (`bin/probe-thermal-recovery`) that takes ~65 min, holds `/tmp/owl-paused` and `/tmp/gos-measure.lock` directly, and writes CSVs under `results/diagnostics/`. The settings panel reads the latest CSV via `GET /precalibration/data`. There is no in-process trigger; the operator has to SSH in and run the script.
-
-The mismatch: every other long-running measurement on OWL (variance, video, llm, image, rag) goes through `queue_control.enqueue` so visitor-vs-operator collision is handled by the spine. The probe doesn't, because it predates being a first-class server feature.
+The probe is a CLI script (`bin/probe-thermal-recovery`, ~65 min) that holds `/tmp/owl-paused` + `/tmp/gos-measure.lock` directly and writes CSVs under `results/diagnostics/`. Every other long-running measurement goes through `queue_control.enqueue` so visitor-vs-operator collision is handled by the spine; the probe predates being a first-class server feature.
 
 ### Agreed direction
 
-**Promote `bin/probe-thermal-recovery` into a `wattlab_service/precalibration.py` module + `POST /precalibration/run` endpoint that mirrors `/variance/run`.**
+**Promote the probe into `wattlab_service/precalibration.py` + `POST /precalibration/run`, mirroring `/variance/run`.**
 
-1. **Extract the probe loop** from the CLI into `precalibration.py:run_thermal_recovery_probe(job_id, jobs)` — same shape as `video.run_variance_calibration`. Reuses `focus_mode_enter/exit`, `LOCK_FILE`, `transcode`, `_maybe_cap_vaapi` (CR-022).
-2. **New endpoint** `POST /precalibration/run`, gated on `VARIANCE_RUN` capability (or a sibling `PRECALIBRATION_RUN` if we want to differentiate). Routes through `queue_control.enqueue(...)` so visitor jobs queue behind it just like a variance calibration.
-3. **CLI script becomes a thin client** that POSTs to the endpoint and tails progress. Or stays as a stand-alone — the module is what matters.
-4. **Panel UI**: a "▶ Re-run probe" button next to the chart, plus a status line that polls `/jobs/{id}` (existing pattern). On completion, refetch `/precalibration/data` and replace the chart. ETA badge ("≈65 min"). Disabled while a probe is in-flight.
+1. Extract the probe loop into `precalibration.py:run_thermal_recovery_probe(job_id, jobs)` — same shape as the variance calibration (encoder pieces now route through `gpu.BACKEND`). Also lift `_append_probe_history` from the CLI so runs keep journaling to `results/diagnostics/history.jsonl` (the hook CR-012's closed entry pre-named).
+2. New endpoint gated on `VARIANCE_RUN` (or a sibling capability), routed through `queue_control.enqueue`.
+3. CLI script becomes a thin client (or stays standalone — the module is what matters).
+4. Panel UI: "▶ Re-run probe" button + job polling + chart refresh on completion; ETA badge (≈65 min); disabled while in-flight.
 
 ### Setting shape
 
-Add the existing probe parameters to settings.json so they're operator-tunable from `/settings`:
 ```jsonc
 {
-  "precal_distances":     "0,2,5,8,12,18,25,35,50,70,95,120",  // comma-separated seconds
-  "precal_pre_cool_s":    30,                                   // pre-encode wait
-  "precal_baseline_polls": null  // null → fall back to baseline_polls
+  "precal_distances":      "0,2,5,8,12,18,25,35,50,70,95,120",
+  "precal_pre_cool_s":     30,
+  "precal_baseline_polls": null   // null → baseline_polls
 }
 ```
+Defaults match the CLI so behaviour is unchanged.
 
-Default values match the CLI defaults so behaviour is unchanged.
-
-### Cost / leverage
-
-Estimate ~half a day:
-- ~2h to extract `precalibration.py` and the route (mostly mechanical — copy from `bin/probe-thermal-recovery`, adapt to `jobs[job_id]["stage"]` reporting, integrate with `queue_control.enqueue`).
-- ~1h for the panel UI button + status polling + auto-refresh of the chart.
-- ~1h for tests covering the module-level pure functions (cap injection already covered by CR-022 changes).
-- ~1h for docs + checking the visitor-protection story matches `/variance/run` exactly.
-
-Leverage: the panel becomes self-contained — operator clicks a button, walks away for an hour, comes back to a refreshed curve. Also: every future hardware change (new GPU, new ambient temp, swapped fan) can be re-validated in one click instead of "remember to run the script". The diagnostic stops being tribal knowledge.
+**Cost:** ~half a day (mechanical extract + button + tests + docs).
 
 ### Watch-outs
 
-- **Don't drop the CLI script.** It still has value for diagnostic-during-development work where you want pdb/raw logs. Keep `bin/probe-thermal-recovery` as a thin wrapper around the module — it's already structured that way.
-- **`results/diagnostics/` should keep its current shape.** Same CSV format, same naming. The endpoint just produces them via a different code path. The reader (`/precalibration/data`) doesn't care.
-- **Don't auto-fold this into variance calibration.** Tempting to chain "probe → variance" as a single workflow, but they answer different questions and operators may want one without the other. Keep them separate buttons; document the recommended sequence on `/methodology`.
+- Keep the CLI script (diagnostic/pdb value) as a thin wrapper around the module.
+- `results/diagnostics/` keeps its CSV shape — the reader doesn't care which path produced it.
+- Don't auto-chain probe → variance; separate buttons, recommended sequence documented on `/methodology`.
 
-### Open questions
+### Open question
 
-- **Sub-CR or independent?** Could ship as a follow-up to the Session-21 panel (CR-001 style sub-letter), but it's substantial enough to deserve its own number. Going with CR-024 as primary.
-- **Naming:** `/precalibration/run` mirrors `/variance/run` symmetrically, which is the priority. The word "precalibration" is clunky; "thermal recovery" is more accurate but operators are already used to "pre-calibration" framing. Stick with `/precalibration/*` for the URL space, but the panel header could say "Thermal recovery probe" if that reads better in context.
+Naming only: `/precalibration/*` URL space for symmetry with `/variance/run`; the panel header may read "Thermal recovery probe".
 
 ---
 
 ## CR-025 · Migrate to a real-time Linux kernel for tighter measurement determinism
 
-**Status:** **Low priority (downgraded 2026-05-28 — owner: "we won't be going there for a while").** Originally captured 2026-05-04 (Session 21) as exploratory; upgraded to confirmed direction by team meeting 2026-05-04 (item 30). Tagged "maybe" because the wins are bounded by the current P110 API resolution; the meeting agreed to pursue regardless because "Ubuntu focus mode may not suppress background activity enough" and the RT investigation creates a path to higher-resolution sensor work later. The old "must not interleave with the CR-060 GPU swap" gate passed 2026-05-29 (swap done); this is now simply parked on priority. (The ROCm/VAAPI risk analysis below predates the RTX 5080 — an RT validation would now target the Nvidia/CUDA stack.)
-**Triggered by:** owner — meeting question on whether `systemctl stop` (focus mode) becomes more effective on a real-time Linux. Honest answer surfaced a different framing: RT and focus mode address orthogonal noise sources, and there's a coherent story where they stack rather than overlap.
+**Status:** **Parked, low priority** (owner 2026-05-28: "we won't be going there for a while"). Captured 2026-05-04 (S21); confirmed by team meeting same day (item 30). **Body compressed 2026-06-11** — the original AMD-era analysis (ROCm-on-RT risk, per-number win estimates from pre-normalization CVs) is in this file's git history; any future validation targets the **Nvidia/CUDA/NVENC** stack (RTX 5080 since 2026-05-29).
+**Triggered by:** owner — does focus mode become more effective on RT? Honest answer: RT and focus mode address orthogonal noise sources and stack.
 
-### Problem (what we're trying to improve)
+### Problem
 
-The current variance-control setup has two layers:
-- **Focus mode** stops 8 background timer units (cron, fwupd, apt-daily, …) so they don't fire during measurement and contribute to ΔW noise. This addresses the *power-side* of background work — things that wake a core and draw watts.
-- **The 1 Hz P110 polling cadence** is on a vanilla preemptive kernel and is therefore subject to whatever scheduling jitter the kernel sees from itself, IRQ handlers, kernel threads, and any non-suppressed userspace.
+Focus mode addresses the *power side* of background noise (timers that wake cores and draw watts). Nothing addresses *temporal* jitter: poll-spacing variance, ffmpeg startup transients, scheduler quanta. A slice of the unexplained variance residual is real per-run timing variance.
 
-We have no layer addressing *temporal* jitter: variance in poll spacing, variance in ffmpeg startup transient, variance in encode runtime caused by scheduler quanta or kernel housekeeping. On the probe data this manifests as the few-percent residual we can't easily explain — most of the floor is P110 quantisation, but a slice is real per-run timing variance.
+### What RT does / doesn't
 
-### What RT Linux actually does (and doesn't)
+- **Does:** deterministic kernel-thread latency, prioritised IRQs, `SCHED_FIFO`, CPU isolation (`isolcpus`/`nohz_full`/`rcu_nocbs`), exact sleep granularity (1 Hz polls actually at 1.000 s).
+- **Doesn't:** stop background draw (the P110 measures the whole box — focus mode still required); improve P110 resolution; make encoders deterministic.
 
-A PREEMPT_RT kernel + CPU isolation gives:
+### Direction if picked up
 
-1. **Preemptable kernel threads** with deterministic latency bounds (microseconds vs. tens of ms on stock).
-2. **Prioritised IRQ handling** — interrupts handled at known priority instead of competing with kernel housekeeping.
-3. **`SCHED_FIFO` / `SCHED_RR`** strict priority for designated tasks.
-4. **CPU isolation** (`isolcpus`, `nohz_full`, `rcu_nocbs`) — dedicate cores to measurement; all other system activity runs on a smaller "housekeeping" core set.
-5. **More consistent sleep granularity** — `asyncio.sleep(1.0)` actually wakes at 1.000 s rather than 1.000 ± a few ms.
+1. Install `linux-image-rt-generic`; **validate the full stack on RT — the proprietary Nvidia driver + CUDA + NVENC + Ollama + diffusers is the single biggest unknown.**
+2. Core split via cmdline (`isolcpus`/`nohz_full`/`rcu_nocbs`, split TBD empirically) + systemd `CPUAffinity` + `taskset` on measurement spawns; focus mode unchanged (composes).
+3. `cyclictest` harness gating calibrations.
+4. `/methodology` + Hardware Disclosure update; result JSON gains `kernel_flavour`/`isolated_cpus` tags.
+5. Reversibility: GRUB-selectable, one reboot back — verify nothing hard-codes against RT first.
 
-What it does **not** do:
-- It does not stop scheduled jobs from running. A cron job pinned to housekeeping cores still draws power, and the **P110 measures the whole box** — so isolated measurement cores don't isolate W_base from background load. Focus mode still required.
-- It does not improve P110 resolution. Today's ~1 W floor via the cloud API is unaffected.
-- It does not magically make ffmpeg deterministic — VAAPI driver behaviour, hardware thermals, and surface-pool warm-up dynamics are unchanged.
+~Half a week of careful work. Run the thermal probe + variance calibration before/after; the empirical delta is the only honest justification.
 
-### Where the wins land (concretely)
+### Decision frame (the honest core)
 
-If we ship CR-025 *as-is, with focus mode still in place*, expect:
-
-- **Tighter `variance_cpu_pct` / `variance_gpu_pct`** — encode runtime variance shrinks. Today's CPU 2.11% / GPU 17.22% have a real timing-variance slice; RT compresses it.
-- **More predictable short-task measurement.** This morning's 17.22% GPU CV from 2-poll encodes is partly because polling cadence has jitter; on RT, exact 1 Hz with deterministic ffmpeg startup pushes that figure down regardless of `gpu_encode_max_s` tuning.
-- **Sub-1 W signal investigations become tractable.** If we ever swap to the P110's direct device read (~1 mW resolution) or a PDU / IPMI, kernel jitter goes from "noise floor << instrument floor" to "noise floor ≈ instrument floor" — and RT becomes the difference between credible mW measurements and not.
-
-### Agreed direction (if shipped)
-
-**Stack RT + focus mode + CPU isolation** so the three layers solve different problems instead of overlapping:
-
-1. **Install `linux-image-rt-generic`** (Ubuntu 24 ships PREEMPT_RT in the generic-rt flavour). Validate boot + GPU drivers + ROCm + VAAPI on the RT kernel before changing anything else. Some out-of-tree drivers don't love PREEMPT_RT — known risk.
-2. **Kernel cmdline:** `isolcpus=8-23 nohz_full=8-23 rcu_nocbs=8-23` (dedicate 16 of 24 cores to measurement, leave 0-7 for housekeeping). Tunable; the split is a knob to test.
-3. **Pin OWL service + measurement spawns to the isolated set.** systemd unit override: `CPUAffinity=8-23`. ffmpeg is already invoked through `nice -n -5`; add `taskset -c 8-23` to the chain. Power polling stays on isolated cores too.
-4. **Focus mode unchanged** — it still suppresses the cron-side noise on the housekeeping cores. The two layers compose.
-5. **Verification harness.** Use `cyclictest -p 99 -t -m -n -i 1000 -l 100000` to prove latency stays in the µs range during a calibration run. Add a smoke test in `bin/` that fires before each calibration and aborts if max latency exceeds a threshold.
-6. **Document on `/methodology`.** New subsection under "Diagnostics" explaining the kernel layer; bumps the "Hardware Disclosure" table to include kernel flavour + isolation config.
-
-### Setting shape
-
-No new runtime settings. Two operator-facing knobs are kernel-level (cmdline) rather than `settings.json`:
-
-```
-# /etc/default/grub
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash isolcpus=8-23 nohz_full=8-23 rcu_nocbs=8-23"
-
-# /etc/systemd/system/wattlab.service.d/affinity.conf
-[Service]
-CPUAffinity=8-23
-```
-
-### Cost / leverage
-
-Estimate **~half a week of careful work**, not a quick patch:
-
-- ~1 day: install RT kernel, validate full stack (FastAPI + ffmpeg + Ollama + ROCm + diffusers + ChromaDB) survives the migration. ROCm on RT is the single biggest unknown.
-- ~1 day: cmdline tuning, CPU isolation, systemd affinity overrides, taskset wrappers in `transcode()` / measurement spawns.
-- ~1 day: cyclictest harness + a re-run of variance calibration + the thermal-recovery probe, comparing pre/post numbers honestly.
-- ~½ day: methodology page update + journal entry.
-
-Leverage depends entirely on whether RT moves the needle for OWL specifically. **Run the probe before and after; the empirical delta on `variance_*_pct` and on probe within-window CV is the only honest justification.**
-
-### Watch-outs
-
-- **Can lose ROCm or VAAPI.** AMD's driver stack on PREEMPT_RT isn't a tested combination. If it breaks, the workload modules (image_gen, video GPU presets) lose their primary path. Validate on a snapshot before committing.
-- **Power-measurement boundary unchanged.** P110 still sees the whole box. Visitors and team members must understand isolation is *for jitter*, not *for excluding cores from energy accounting* — easy to confuse.
-- **System feels different to operate.** Background commands run on 8 cores instead of 24; non-measurement work (apt update, git operations, an SSH session) feels slower. Worth a heads-up to anyone who SSHes in.
-- **Diminishing returns ceiling.** With the P110's 1 W cloud-API quantisation, RT's likely contribution to `variance_idle_pct` is ≤1 percentage point. The probe data will tell us whether that's worth the complexity.
-- **Reversibility.** The RT kernel is selectable from GRUB at boot, so falling back is one reboot — *if* nothing in the stack has hard-coded behaviour against the RT kernel. Verify before shipping.
-
-### Open questions
-
-- **Does ROCm work on Ubuntu 24's `linux-image-rt-generic`?** First thing to test; everything downstream depends on it.
-- **What's the right isolated/housekeeping split?** 16/8 is a guess; 12/12 might be cleaner for parallelism on the housekeeping side. Empirical.
-- **Does this make `variance_cooldown_s` shorter feasible?** Less jitter could mean less safety margin needed. Not a primary motivation but a possible side-benefit.
-- **Should the probe + calibration auto-detect RT and tag results?** I.e. result JSON gains `kernel_flavour` and `isolated_cpus` so historical comparisons can attribute differences. Probably yes; small change.
-- **Companion CR for power-sensor upgrade?** RT's full value lands when paired with a higher-resolution sensor. If the team is interested, capture a sibling CR for evaluating P110 direct-read or a proper PDU. RT alone is partial value; together they're transformative.
-
-### Why "maybe"
-
-Two questions tip the decision:
-
-1. **Is jitter the limiting factor?** Probe says noise floor is ~2% within-window. P110 quantisation alone explains ~1.5-1.8% on a ~55 W idle (1 W / 55 W ≈ 1.8%). Margin for kernel jitter is small. RT might shave 0.5 percentage points; might shave none.
-2. **Are we planning a sensor upgrade?** If yes, RT moves from "marginal win" to "necessary precondition" and the calculus flips entirely.
-
-Worth a 30-minute discussion with the measurement team rather than a unilateral decision. The CR is here so that conversation has something concrete to push against.
+The P110 cloud-API quantisation bounds RT's likely win to **≲1 percentage point of variance** — marginal alone, *necessary* if a higher-resolution power path ever lands. **The power-measurement landscape is in motion under CR-065 (dual P110) — re-read this calculus after it settles; don't predict it here.** Worth a 30-minute team discussion before any work.
 
 ---
 
 ## CR-029 · Encoding rigor pass (apples-to-apples credibility)
 
-**Status:** captured 2026-05-04 (post-meeting). High priority, Tania-led. **§2 (encode normalization) shipped S34** (commit `88a2696` — `video._norm_args` + `encode_gop_frames`, provisional pending Tania's review); the AMD baseline (S35) and GPU swap (S36) are done, so nothing here gates CR-060 any more — the remaining sub-items (§1 pipeline doc, Tania's §2 review, §4 typical-use mode, §5 philosophy doc) stand on their own. Bundles items 18, 19, 20, 21, 22, 23 — Tania's video credibility workstream. Coherent because each item is a step in the same chain: *what is each encoder actually doing → are CPU and GPU comparable → can we present it cleanly*.
-**Triggered by:** team meeting 2026-05-04 — for the canonical ABR all-codecs benchmark to be cited externally, the pipeline has to be auditable and the comparison's semantics explicit (apples-to-apples vs. typical use).
+**Status:** captured 2026-05-04 (post-meeting). High priority, Tania-led. **Remaining scope: §1** (finish the per-codec pipeline doc on `/methodology` — now describing the **NVENC** paths), **Tania's review of the §2 normalization decisions** (made on the AMD card; review is against current NVENC reality), **§5** (philosophy doc). Shipped: §2 (S34, `88a2696` — provisional pending that review), §3 (standing pass). Restructured 2026-06-11: **§4 extracted into CR-045** as its "Typical use" mode; **§6 promoted to the standing External-PQA principle** at the top of this file.
+**Triggered by:** team meeting 2026-05-04 — for the canonical ABR all-codecs benchmark to be cited externally, the pipeline has to be auditable and the comparison's semantics explicit.
 
 ### Problem
 
-The current `/video` flow runs presets that look comparable but haven't been formally checked at the level needed for citation. Specifically:
+For the canonical ABR all-codecs benchmark to be cited externally: (1) the exact per-codec pipeline isn't documented anywhere readers can audit; (2) CPU and GPU encoder parameters were encoder-defaulted and diverged (addressed by §2, pending review); (3) the comparison philosophy needs explicit documentation so the headline isn't misread.
 
-1. **The exact pipeline isn't documented** anywhere readers can audit. The ffmpeg command is logged in result JSON (per CR-002) but the surrounding choices (input format, intermediate buffer formats, output container, profile/level defaults, GOP defaults per encoder) aren't.
-2. **CPU and GPU may not be running comparable work.** Same bitrate target, yes, but profile level, B-frame structure, GOP cadence, refs, and preset are all encoder-defaulted and may differ. Tania to verify by reading the encoded outputs.
-3. **Sample outputs aren't routinely verified.** We trust ffmpeg; we don't routinely confirm the output file's actual encoding matches what we intended.
-4. **There's only one comparison philosophy.** Same bitrate across codecs ("apples-to-apples") is one valid frame; same *typical operating point per codec* (different bitrates representing real-world use) is another. The team agreed both should exist; currently we only have the first.
+### §1 — Document the pipeline on /methodology (REMAINING)
 
-### Agreed direction
+New subsection under "Video transcoding": input read, decode path, pixel-format handling, encoder defaults this deployment relies on, output container — one pass per codec/path, **describing the current NVENC pipeline** (`-hwaccel cuda` + `scale_cuda` + `*_nvenc`). Source from the actual command, not memory. Partial progress 2026-05-28: ABR framing + GOP/profile open-items already on the page; `WATTLAB_SPEC.md` §2.4 corrected.
 
-**Six items, sequenced:**
+### §2 — Encode normalization (SHIPPED S34 `88a2696`; Tania's review REMAINING)
 
-1. **Document the pipeline** on `/methodology` — new subsection under "Video transcoding". Cover: input read, decode (CPU vs `hwaccel vaapi`), pixel-format handling (`scale_vaapi` + `format=nv12`), encoder defaults this deployment relies on, output container. One pass per codec/path. Source from the actual command, not from memory.
-   - **Progress (2026-05-28):** partially shipped — `/methodology` already carries the ABR apples-to-apples framing + two explicit GOP/profile-equivalence open-items (page template now in `routes_methodology.py` post-S42). `WATTLAB_SPEC.md` §2.4 was **stale** (listed CRF/QP + `libaom-av1`; code has run ABR + `libsvtav1` since S13) and was **corrected 2026-05-28**. Remaining: the full per-codec pipeline subsection.
-2. **Validate CPU vs GPU encode parameters** (Tania-led). For each codec, compare what the CPU and GPU encoders actually produce: profile, level, B-frames, GOP, refs, slices. Write findings to `WATTLAB_SPEC.md` and adjust commands as needed to bring them into apples-to-apples shape (or document explicitly where they can't be).
-   - **VMAF already exposes a concrete instance to chase down (2026-05-22, clean 🟢 run `e18a9d57`):** at the same 1500 kbps AV1 target, `av1_vaapi` (hw) hit the target (20.34 MB) while `libsvtav1` (sw) undershot to ~967 kbps (14.51 MB) yet scored *higher* VMAF (92.74 vs 90.79). So "same bitrate target" is not being honoured equally across encoders, and the hw encoder is less bit-efficient. This is exactly the apples-to-apples gap this item is meant to characterise — the VMAF axis (CR-044) now makes it measurable. See CLAUDE.md Key Findings (AV1 hardware vs software).
-   - **Measured audit (2026-05-28 — ffprobe on 12s `meridian_120s` encodes, ABR ladder 4000/2000/1500).** The presets are bare (codec + bitrate + scale + audio; **no `-g` / `-bf` / `-profile` / `-level` / `-refs` anywhere in `video.PRESETS`**), so GOP and B-frame structure are encoder-defaulted and diverge systematically:
+The 2026-05-28 ffprobe audit found systematic driver-vs-library default splits across all six presets (VAAPI GOP 120 vs CPU 249–321; `hevc_vaapi` zero B-frames vs libx265 using them; full table in this file's git history / JOURNAL S34). The decisions taken — **the object of Tania's review**:
 
-     | Preset | Profile | Level | GOP (keyint) | B-frames |
-     |---|---|---|---|---|
-     | libx264 (CPU) | High | 4.2 | **249** | max 3 (has_b 2) |
-     | h264_vaapi (GPU) | High | 4.2 | **120** | max 2 (has_b 1) |
-     | libx265 (CPU) | Main | 4.1 | ~250 | uses B (has_b 2) |
-     | hevc_vaapi (GPU) | Main | 4.0 | **120** | **none (has_b 0)** |
-     | libsvtav1 (CPU) | Main | 4.0 | **321** | none (AV1 alt-ref) |
-     | av1_vaapi (GPU) | Main | 4.0 | **120** | none (AV1 alt-ref) |
+- **GOP pinned** via `encode_gop_frames` (default 120 ≈ 2 s segments), identical across all six presets; CPU encoders get closed GOP + scenecut-off so cadence is exactly the setting. Validated: all six at avg=max=120.
+- **Profiles pinned explicit** (H.264 High, H.265/AV1 Main).
+- **B-frames documented as a hardware limit, not normalized** — `-bf 2` requested; the AMD card capped it (reorder depth 1/0). Surfaced per-result in `stream.has_b_frames`.
+- **Level left as-is** (cosmetic 4.1/4.0 split).
+- **Update path:** GOP → settings; everything else → ONE function `video._norm_args`; any revision **re-runs variance calibration** (re-bases all video numbers — intended).
+- **Honesty note for the review (2026-06-11):** these decisions were validated on the AMD/VAAPI card. NVENC defaults differ (B-frame behaviour; `av1_nvenc` has no `-profile` knob — see CR-060's closed record). **Tania reviews against current NVENC reality, not the archived VAAPI numbers.** The motivating VMAF instance stands: same-target AV1 hw vs sw split bitrate honouring AND quality (run `e18a9d57`, hw 90.79 @ target vs sw 92.74 @ undershoot).
 
-     Headline gaps: **(a)** every VAAPI encoder defaults to **GOP 120**; every CPU encoder runs 2–2.7× longer (x264 249 / svtav1 321 / x265 ~250) — a driver-vs-library default split consistent across all three codecs. **(b)** `hevc_vaapi` uses **zero B-frames** while `libx265` uses them; H.264 B-depth differs (CPU 3 / GPU 2). **(c)** profiles align across the board; H.265 level differs slightly (4.1 vs 4.0). **(d)** scalers differ (`scale` libswscale on CPU vs `scale_vaapi` on GPU). These explain the cross-CPU/GPU VMAF gaps — e.g. AV1 **92.29 (CPU) vs 81.48 (GPU)** at near-equal file size on BBB (run `a4332530`), an 11-point gap driven by encoder internals + content, not bitrate. **The fix: pin `-g` / `-bf` / `-profile` / `-level` (and force B-frames on `hevc_vaapi`) across all six presets, or document each residual gap.** This doubles as a **CR-060 requirement** — NVENC's defaults differ again, so bare presets would float the AMD↔Nvidia comparison on three different driver defaults.
-     - *Method caveat:* per-frame `pict_type` is reliable for H.264 but not populated for HEVC/AV1 via ffprobe's CSV path, so the H.265/AV1 B-frame/GOP figures lean on `has_b_frames` + packet-keyframe counting. §3's ffprobe-on-output (now wired) makes GOP codec-agnostic by deriving it from packet keyframe flags.
-   - **Decision taken (2026-05-28 — provisional, pending Tania's review).** We can't gate the GPU-swap baseline on Tania's availability, so a defensible normalization was chosen now, validated on real encoders, with a one-line update path:
-     - **GOP — pinned & normalized (the big win).** Settings key `encode_gop_frames` (default **120** = 2 s on the 59.94 fps Meridian, a streaming-standard segment length), applied identically to all six presets; CPU encoders also get **closed GOP + scene-cut disabled** (`scenecut=0:open_gop=0` / `open-gop=0` / SVT `scd=0`) so the cadence is *exactly* the setting. Validation: all six now produce GOP avg=max=120 (was 249/250/321 CPU vs 120 GPU). Pure win, low risk.
-     - **Profiles — pinned explicit** (H.264 High, H.265/AV1 Main). Already aligned by default; pinning locks them against driver/lib drift. Zero behaviour change.
-     - **B-frames — documented as a hardware limit, not normalized.** `-bf 2` is *requested* on H.264/H.265, but AMD VAAPI caps it (validation: `h264_vaapi` reorder depth **1**, `hevc_vaapi` **0**) while the CPU encoders honour 2. This is a VAAPI pipeline limitation the flag can't beat — so the CPU encoders retain a B-frame compression advantage the GPU paths *structurally cannot match*. This is itself a finding (part of why VAAPI is less bit-efficient), surfaced per-result in `stream.has_b_frames`. Not a settings choice; flagged for Tania to confirm she's happy treating it as a documented residual rather than dropping the GPU B-frame request entirely.
-     - **Level — left as-is.** The H.265 4.1 (CPU) / 4.0 (GPU) split is cosmetic at 1080p and forcing `-level` on VAAPI is fragile. Documented residual.
-     - **Update path:** GOP → `settings.json` `encode_gop_frames`; everything else → **one function, `video._norm_args`**. When Tania revises any value: change there, **re-run variance calibration** (the calibration workload is `video.PRESETS`, so the existing `variance_*_pct` are now stale and must be re-measured), then re-capture the AMD baseline. This re-bases all video numbers vs pre-2026-05-28 results — intended (that's the point of §2).
-     - **Implemented:** `video._norm_args` + `encode_gop_frames` setting; tests in `tests/test_encode_norm.py`; full suite green.
-3. **Verify sample output files.** Pick at least two recent encodes per codec. Inspect with `ffprobe -show_format -show_streams` and `mediainfo`. Confirm: bitrate matches target, codec matches command, profile/level reasonable, file size in expected range. Once-off audit; capture findings.
-   - **Progress (2026-05-28): ✅ wired as a standing pass, not a once-off.** `video.probe_output_stream()` runs as a terminal ffprobe after each encode's measurement window closes (alongside `output_size_mb`, so its draw never enters an energy figure); result JSON now carries a `stream` block per encode — actual codec / profile / level / pix_fmt / bit_rate / `has_b_frames` + GOP (avg/max, from packet keyframe flags, codec-agnostic).
-4. **Add two comparison modes to `/video`.**
-   - **"Compare all codecs · apples-to-apples"** — current behaviour, identical bitrate per codec from settings.
-   - **"Compare all codecs · typical use"** — each codec at its real-world operating point. Bitrates per codec to be agreed but provisionally H.264 6000 kbps, H.265 3500 kbps, AV1 2500 kbps (representative of streaming-platform mid-tier; needs Tania confirm).
-   Mode is a UI radio button on the compare-all preset, not a separate preset. Result page label includes the mode so post-hoc comparison is unambiguous.
-5. **Define and document the default comparison philosophy.** Which mode is the headline finding measured under? Currently apples-to-apples. Document this explicitly on `/methodology` and the home page so the headline isn't accidentally misread.
-6. **External PQA, not internal.** When quality-targeted comparison comes up (visitors asking "is the AV1 output as good as H.264 at the same bitrate?"), the answer is to point at Netflix / industry references — not to do PQA inside OWL. Document this scoping decision on `/methodology` so the question has a written answer.
+### §3 — Output verification (✅ SHIPPED, standing pass)
 
-### Cost / leverage
+`video.probe_output_stream()` stamps a `stream` block (codec/profile/level/pix_fmt/bitrate/`has_b_frames`/GOP) on every encode, after the measurement window closes.
 
-Sub-items differ wildly:
-- #1 (document): half a day if the audit is clean, more if it surfaces issues.
-- #2 (validate CPU/GPU): Tania session + iteration. ~half a day to a day depending on what the audit finds.
-- #3 (verify samples): 1-2 hours, mostly mechanical.
-- #4 (two modes): ~half a day for the UI + the new bitrate set.
-- #5 (philosophy): an hour of writing once #1-#4 are settled.
-- #6 (external PQA scoping): an hour.
+### §5 — Comparison-philosophy doc (REMAINING)
 
-Total ~2-3 days, gated on Tania's availability for #2.
+Which mode is the headline finding measured under (currently same-bitrate apples-to-apples)? Document explicitly on `/methodology` + home page. An hour of writing once §1 and the review settle.
 
-Leverage is high: this is the work that turns OWL's video numbers from "interesting" into "citable". Until this is done, the headline benchmark sits in the canonical-finding section with an asterisk.
+*(§4 "typical use" mode → CR-045. §6 external-PQA → standing principle, top of file.)*
+
+**Cost:** ~1–2 days remaining, gated on Tania's availability.
 
 ### Watch-outs
 
-- **Don't quietly change bitrates mid-experiment.** If #2's audit finds CPU and GPU need different settings to align, the previous benchmark numbers no longer apply and the canonical finding gets re-run. The headline-findings audit (already in CLAUDE.md deferred) is upstream of this.
-- **Don't internalise PQA.** Visual quality assessment is a deep field with established methodology and large tooling; OWL trying to do it lightly is a credibility liability, not an asset. Hold the line on #6.
-- **Mode names matter.** "Apples-to-apples" and "typical use" are good for engineers but might confuse public visitors. Consider "Same bitrate" / "Real-world bitrate" or similar in UI copy. Decide during implementation.
+- **Don't quietly change bitrates mid-experiment** — a §2 revision re-bases the canonical finding; that's deliberate and announced, never silent.
 
-### Not in scope
+### Open question
 
-- Benchmark 2 (CRF/QP codec-natural rate control) — already on the CLAUDE.md roadmap, separate workstream.
-- LLM / image / RAG equivalent rigor passes — out of scope for *this* CR even though the same principles apply. Capture follow-ups if the team wants.
+Spec-doc ownership: Tania the encoding-spec subsection of `WATTLAB_SPEC.md`, owner the methodology page.
 
-### Open questions
+### Cross-references
 
-- **Who owns the spec doc?** `WATTLAB_SPEC.md` exists but is sparse. This CR could grow it substantially; Tania probably owns the encoding-spec subsection and bs/owner owns the methodology page.
-- **Per-codec "typical use" bitrate values** — provisional numbers above; Tania to confirm against Bitmovin / Netflix tier guidance.
-
-### Cross-references (added 2026-05-27)
-
-- **CR-054** (findings catalog): §1's `/methodology` documentation becomes the `methodology_ref` target for video findings. §2's CPU-vs-GPU validation work, if it changes the AV1 numbers, ships as a new finding version (`av1-hw-sw-vmaf-tradeoff-v2.md` with `supersedes: av1-hw-sw-vmaf-tradeoff`) — CR-054's versioning primitive is designed for exactly this case.
-- **CR-060** (closed 2026-06-11): the §2 parameter decisions were locked in before the AMD baseline (S35) and the swap (S36), as the old baseline-integrity gate required — that gate is satisfied. Any future §2 revision by Tania re-bases the video numbers (change `video._norm_args` / `encode_gop_frames`, re-run variance calibration) but no longer affects the captured cross-card comparison (`docs/gpu_swap_amd_baseline.md` + post-swap benchmark `f56dfa77`).
+- **CR-054**: §1's doc becomes the `methodology_ref` for video findings; a §2 revision ships as a versioned finding (`supersedes:` primitive).
+- **CR-060 (closed)**: the old baseline-integrity gate was satisfied (S34 → S35 → S36); future §2 revisions no longer affect the captured AMD↔Nvidia comparison.
 
 ---
 
 ## CR-031 · Deployment portability (DB / power source / containerisation)
 
-**Status:** captured 2026-05-04 (post-meeting). Medium priority. Bundles items 29, 31, 32 because all three answer the same underlying question: *what does it take to run OWL somewhere other than GoS1?* Three sub-sections rather than three CRs because they share a single decision frame and will be designed together.
-**Triggered by:** team meeting 2026-05-04 — sketches of OWL running on Linode, on a different bench server, or in a container; concerns that today's design (one JSON per job, `power.py` only has the Tapo path, no container story) makes that harder than it needs to be.
+**Status:** captured 2026-05-04 (post-meeting). Medium priority. One CR, three sub-sections (they share the question *what does it take to run OWL somewhere other than GoS1?*) — each with its own state: **§1 open decision (the Track A gate) · §2 cheap wins shipped, full backend parked behind CR-065 · §3 nothing built, externally driven.**
+**Triggered by:** team meeting 2026-05-04; board 2026-05-11 reinforced §3 (rack hosting — Linode, or Mike's Akamai open-rack offer in Virginia).
 
-### Problem
+#### §1 Persistence — STATUS: open decision, and the gate for Track A (CR-003, CR-007 analytics)
 
-OWL was built for one server (GoS1) and the assumptions show:
+Flat JSON per result (`results/{type}/{date}_{job_id}.json`): fast, debuggable, version-controllable — but no indexing for time-series queries, no atomic transactions, no growth story. Two options:
 
-1. **Persistence** — flat JSON files keyed by date+job_id under `results/{type}/`. Fast, debuggable, version-controllable. But: no indexing for time-series queries (history charts, drift over runs), no atomic transactions (CR-023 abort path writes settings.json directly), no portability story when the data volume grows.
-2. **Power source** — `power.py` is `get_power_watts() → float` from the Tapo P110 via the `tapo` lib. The abstraction is the right shape but the implementation is single-source. Other deployments (different bench, hosted environment, no Tapo plug available) need a swap path: PDU read, IPMI sensor, BMC API, or a synthetic source for development.
-3. **Containerisation** — there's no container story. OWL is a systemd service + sudoers config + nginx vhost + a venv. Reproducing this on another machine is a half-day of imperative steps. The Tapo cloud path, the focus-mode sudoers rules, and the GPU drivers (VAAPI, ROCm) all need careful staging.
+- **JSON + thin index** — `persist.py` maintains a small SQLite mirror for queries; raw JSON stays source of truth. Cheap, preserves `jq` workflows.
+- **Real DB migration** (SQLite → maybe Postgres). Better for history charts, time-of-day carbon UI, multi-deployment merge. Bigger lift.
 
-### Agreed direction
+Decision criteria: if the historical-carbon work (now CR-007 Stage 1) and the calibration-history journals (CR-012, shipped — `results/diagnostics/history.jsonl`; their query friction is live evidence) show real flat-file pain, migrate; else index. Don't pre-decide the engine; REM coherence matters (owner: "I don't want five different databases").
 
-**Three sub-sections; one CR because the decisions interact.**
+#### §2 Power source — STATUS: cheap wins shipped 2026-06-09 (`power.stamp()` provenance + `meter_display_name`); full backend NOT built
 
-#### 1. Persistence: decision required, not implementation yet.
+The deferred full shape: `power.py` becomes a dispatcher (`POWER_SOURCE` = tapo | pdu | synthetic) over `power_tapo.py` / `power_pdu.py` / `power_synthetic.py`. Board-added requirements (2026-05-11): every backend declares its **meter resolution**, and confidence must visibly degrade when resolution is coarser than the task ("you cannot be 🟢 on a 4 s encode measured by a 60 s meter" — *resolution-aware confidence is required behaviour, not a watch-out*); the interface must express **one primary reading plus N attributable sub-readings** (utility-grade meter + per-plug PDU stack, Mike's rack model).
 
-Two options:
+**⚠ CR-065 (in flight, owned by a parallel session) is rewriting `power.py`** — meter registry, cached KLAP handles, a shared baseline/task sampler. That registry is a step *toward* this backend (CR-065 says so itself) but is not the protocol. **Do not design or build §2 until CR-065 lands; re-scope this section against the post-CR-065 `power.py`.**
 
-- **Stay with JSON files**, add a thin index layer (`persist.py` gains `list_results_indexed()` that maintains a small SQLite mirror for time-series queries; raw JSON stays the source of truth). Cheap, preserves all existing tooling.
-- **Migrate to a real DB** (SQLite or Postgres). Better story for history charts, time-of-day carbon UI, multi-deployment data merge. Bigger lift, breaks current `cat results/video/2026-05-04_*.json | jq` workflows.
+#### §3 Containerisation — STATUS: nothing built; timeline externally driven (Mike's rack / Linode)
 
-Decision criteria: if the time-of-day / historical UI work (CR-018 T2/T3) plus the variance + thermal-recovery history work (CR-012) show real friction with flat-file storage, migrate. If they don't, stay with JSON + a small index.
-
-#### 2. Power source abstraction.
-
-`power.py` already has the right shape (one function, one return type). Make it explicit:
-- Move the Tapo implementation to `power_tapo.py`.
-- Add `power_pdu.py` (stub for SNMP-based PDU reading) and `power_synthetic.py` (returns a configurable noise pattern around a configurable mean — for tests / dev without hardware).
-- `power.py` becomes a dispatcher reading `POWER_SOURCE` env var (`tapo` | `pdu` | `synthetic`) and importing the right backend.
-- Existing tests stay green via `synthetic`.
-
-This is small (~half a day) and unblocks anyone else in the GoS network running OWL on a non-Tapo environment.
-
-#### 3. Containerisation readiness.
-
-A `Dockerfile` + `compose.yml` that boot OWL with all needed runtime, with explicit acknowledgement of what *can't* be containerised cleanly:
-- **Sudoers + focus mode** — focus mode `systemctl stop` calls don't work inside a container. Either drop focus mode in containerised mode (and document the loss of measurement quality) or run privileged + bind-mount /run/systemd. Both are ugly.
-- **VAAPI / ROCm** — passing GPU into a container needs `--device /dev/dri/...` for VAAPI and the ROCm runtime image for AI workloads. The CLAUDE.md long-term plan mentions a two-stage container plan (FastAPI+VAAPI first, ROCm later); this CR formalises it.
-- **Settings + calibration** — settings.json must be system-dependent and recalculable when moved. The container's first run on a new host MUST run a fresh variance calibration before trusting confidence labels. Bake this as a startup check, not a manual step.
-
-### Cost / leverage
-
-- **Sub 1 (persistence decision):** half a day to write up the criteria, talk to the team, decide. Implementation cost depends on the decision (small for "JSON + SQLite index", several days for DB migration).
-- **Sub 2 (power source abstraction):** ~half a day. Zero coupling to other CRs.
-- **Sub 3 (containerisation):** ~3-5 days for stage 1 (FastAPI + VAAPI). Stage 2 (ROCm) is its own follow-up.
-
-Total: depends on Sub 1's decision. If "JSON + SQLite index" + Sub 2 + Stage 1 container, ~1 week. If "DB migration" + Sub 2 + Stage 1, ~2 weeks.
-
-Leverage: Sub 2 is pure win, ship anytime. Sub 1 is a strategic decision that other CRs (CR-012, CR-018 T2/T3) depend on. Sub 3 is the long-term vision, currently CLAUDE.md "Deferred / open".
+`Dockerfile` + `compose.yml`, with explicit acknowledgement of what can't containerise cleanly: focus mode's `systemctl stop` (drop it and document the quality loss, or privileged + /run/systemd — both ugly); GPU passthrough (now `--gpus` + nvidia-container-toolkit for NVENC/CUDA, not the old VAAPI `--device /dev/dri`); settings/calibration are host-specific — **first run on a new host MUST trigger a fresh variance calibration as a startup check**, never a manual step.
 
 ### Watch-outs
 
-- **Don't migrate the DB silently.** If we go DB, ship a migration script + rollback path + test that historical results render identically before and after.
-- **Don't lose the calibration when moving hosts.** A container that starts on a new machine and serves results without a fresh calibration is worse than no container — it produces confident-looking readings that are physically meaningless.
-- **Don't break the bench dev loop.** Today's loop is "edit, restart wattlab, refresh page". Anything that adds 5 minutes to that loop (slow container build, DB migrate steps) reduces iteration speed dramatically. Optimise for fast restart, not pristine reproducibility.
+- Don't migrate the DB silently — migration script + rollback + render-identical test.
+- Don't lose calibration when moving hosts — confident-looking readings on an uncalibrated box are worse than none.
+- Don't break the bench dev loop — optimise for fast restart, not pristine reproducibility.
 
 ### Not in scope
 
-- Multi-tenancy / multi-deployment data merge — separate CR if/when needed.
-- Cloud-native rewrite — out of scope by orders of magnitude.
-- REM ↔ OWL data merge — already CR-008.
-
-### Open questions
-
-- **DB choice if we migrate.** SQLite is the obvious starting point (file-based, no extra service). Postgres if multi-deployment merge becomes near-term. Don't pre-decide; the answer falls out of Sub 1's criteria.
-- **Synthetic power source as a first-class testing tool?** Cleanly written, it'd let us run integration tests with deterministic measurement responses — useful far beyond this CR. Capture as a follow-up if Sub 2 ships.
-
-### Update 2026-05-11 (board meeting context)
-
-Board reinforced sub-section 3 (containerisation) as the path to data-centre hosting on a friendly partner's rack (Linode, or Mike's Akamai offer of an open-rack slot in Virginia with 100% renewable cover). Two constraints surfaced that grow sub-section 2:
-
-- **1 s power-measurement granularity is a hard portability constraint.** Many PDUs poll at 1 min or coarser — they can't replace the Tapo P110 without losing measurement fidelity. Sub-section 2 must include a *meter-resolution declaration* on every backend, and the confidence flag must visibly degrade when the backend's resolution is coarser than the task's duration ("you cannot be 🟢 on a 4 s encode measured by a 60 s meter"). This is **resolution-aware confidence**, a required behaviour of the abstraction, not a watch-out.
-- **Utility-grade meter + PDU per-plug meters in series** (Mike). A contained-rack deployment is one utility-grade meter on top of the rack plus PDU meters per plug for component attribution. The backend interface should be expressive enough to represent that stack — one primary reading plus N attributable sub-readings — not just `get_power_watts() -> float`.
-
-Net: sub-section 2 grows from ~half day to ~1 day. Sub-section 3 lands on Mike's facility if/when the offer materialises; nothing about CR-031 changes in shape, but the timeline becomes externally-driven.
+Multi-tenancy / multi-deployment merge; cloud-native rewrite; REM↔OWL data merge (CR-008).
 
 ---
 
 ## CR-039 · Energy-vs-quality axis for AI jobs (frontier-model-as-judge — exploratory)
 
-**Status:** captured 2026-05-11 (board meeting). **Exploratory** — owner's idea, mixed reception; ship behind a Member/Lab gate, frame explicitly as a snapshot not a leaderboard. **Easy to drop** if the answer to the CR-029 §6 tension below is "don't."
+**Status:** captured 2026-05-11 (board meeting). **Exploratory, zero implementation** — owner's idea, mixed reception; ship behind a Member/Lab gate, frame explicitly as a snapshot not a leaderboard. **Gated on the standing External-PQA principle's carve-out (top of file): owner ratifies the LLM-judge exception or this CR is dropped.**
 **Triggered by:** GoS board meeting 2026-05-11. Ben: *"use a frontier model. We'd have to have a teeny weeny budget for some tokens to ask really cheap local models simple questions, then send them to a frontier model and have a frontier model score them. So you could say, OK, you're using ten times less energy for a ten times smaller model, but the answer is only ten percent less good."* Mike: standardise on a model and evolve. Tania (cautionary): *"I would seriously hesitate getting into measuring the energy consumption and sustainability of AI… we're going to be really out of our depth really quickly."* Tania's concern is energy-of-AI; this CR is **quality-of-AI** — the orthogonal axis the paper itself calls out as missing (*"what constitutes useful work?"*).
 
 ### Problem
@@ -565,7 +363,7 @@ Leverage: turns the LLM and RAG Compare views from "small is cheap" into the act
 
 ### Watch-outs
 
-- **Tension with CR-029 §6 ("External PQA, not internal").** That principle was about *video* PQA, where industry has external benchmarks (Netflix VMAF). Internalising video quality scoring would be a credibility liability. **AI quality scoring has no equivalent external authority OWL can point at** — University of Michigan's `ml.energy/leaderboard` measures energy only; LMSYS and Hugging Face quality leaderboards are general-purpose, not streaming-anchored. So CR-039 doesn't *violate* CR-029's spirit, but it sits adjacent to it and the carve-out must be explicit on `/methodology`: *"we don't do PQA on video output because Netflix-class references exist; we do a quality snapshot on LLM output because no equivalent external authority exists for the streaming-adjacent AI workloads we measure."* **If owner disagrees with the carve-out, drop CR-039 entirely** — the principle of leaning on external authorities is more important than the column.
+- **The External-PQA carve-out** (see the standing principle at the top of this file, which carries the full argument): no external authority exists for streaming-adjacent AI quality, so this is an explicit *exception* to the principle, documented on `/methodology` — or the CR is dropped. The principle outranks the column.
 - **Judge bias.** A frontier model judging smaller models inherits the judge's own training-data bias. Document this on `/methodology`; pick a judge from a different provider than the candidates where possible (avoid "OpenAI judges OpenAI"). Periodic sanity check with a second judge family; surface divergence if scores diverge meaningfully.
 - **Cost spiral.** The budget cap is non-optional. Without it, an enthusiastic Member could rack up real money. Cap enforced server-side per visitor key per day.
 - **Staleness.** Models update on weeks-months cadence. The "snapshot date" in the header copy is the single most important framing; don't let it get stale. A periodic refresh of canonical snapshots (same judge, same rubric) keeps the displayed ratios fresh.
@@ -573,13 +371,12 @@ Leverage: turns the LLM and RAG Compare views from "small is cheap" into the act
 
 ### Cross-references
 
-- **CR-029 §6:** principle-tension noted above; resolved (or rejected) by owner judgment.
-- **CR-037:** the streaming-tethered framing for LLM/RAG. Quality scoring lives on those tethered pages, not a generic `/ai-judge`.
-- **CR-038:** the verdict line is the natural surface for the quality clause.
+- **Standing External-PQA principle (top of file):** carries the carve-out tension; resolved (or rejected) by owner judgment.
+- **CR-037 (✅ closed):** the streaming-tethered framing for LLM/RAG — quality scoring lives on those tethered pages, not a generic `/ai-judge`.
+- **CR-038 (✅ closed):** the verdict line is the natural surface for the quality clause.
+- **Retention:** judging stored runs needs retained outputs — CR-064's enhance retention pattern (keep flag, TTL sweep, scoped serving) is the in-repo precedent.
 
-### Priority: medium (exploratory) — sequence after CR-037 and CR-038, or drop.
-
-If CR-037 and CR-038 land first, CR-039 reads as natural continuation. If they don't, it risks reading as a quality leaderboard out of nowhere.
+### Priority: medium (exploratory). CR-037 and CR-038 both shipped — the surfaces this rides on exist, so it reads as natural continuation. Decide the carve-out, then build or drop.
 
 ---
 
@@ -590,7 +387,7 @@ If CR-037 and CR-038 land first, CR-039 reads as natural continuation. If they d
 
 ### Problem
 
-OWL's canonical findings are all from one chip instance (GoS1's Ryzen 9 7900 + RX 7800 XT, ~18 months old, sitting-room ambient). Whether those numbers generalise to a *data-centre-aged* chip — same SKU, same kernel, but hammered for years — is unknown. CLAUDE.md memory already flags the *ffmpeg* version analogue ("software-aging energy comparison"); this is the hardware analogue. Both speak to the same generalisable insight: *small changes to the run environment shift energy meaningfully, and the streaming industry tends to forget that.*
+OWL's canonical findings are all from one chip instance (GoS1's Ryzen 9 7900 — paired with the RX 7800 XT pre-2026-05-29, the RTX 5080 since — sitting-room ambient). Whether those numbers generalise to a *data-centre-aged* chip — same SKU, same kernel, but hammered for years — is unknown. CLAUDE.md memory already flags the *ffmpeg* version analogue ("software-aging energy comparison"); this is the hardware analogue. Both speak to the same generalisable insight: *small changes to the run environment shift energy meaningfully, and the streaming industry tends to forget that.*
 
 ### Agreed direction
 
@@ -598,7 +395,7 @@ When a comparable chip becomes available (Mike's offer; or any donated/decommiss
 
 1. **Settings:** `chip_instance_id` string in `settings.json` (free-form: `"gos1-original-2024"` / `"akamai-recycled-2026-05"`). Defaults to a generated UUID with a friendly suffix.
 2. **Result JSON:** `hardware.chip_instance_id` written into every result alongside the existing `cpu` / `gpu` fields.
-3. **Comparison helper:** a small `/findings/chip-aging` page (Lab-only) that walks results across `chip_instance_id` values and renders the delta on the canonical Meridian benchmark.
+3. **Output is a finding:** `docs/findings/chip-aging.md` with two `source_result_ids` (original GoS1 + donated chip) via the shipped CR-054 machinery; the cross-instance comparison lives in the finding's analysis prose — no bespoke route (keeps the catalog's one-renderer invariant).
 4. **Discoverability:** when a new chip_instance appears in stored results, a one-line "chip change detected" note on `/queue-status` so the operator confirms before publishing comparison numbers.
 
 ### Lab look & feel constraint
@@ -610,14 +407,14 @@ One field on result JSON (invisible to most visitors), one Lab-only findings pag
 ~half a day for instrumentation; the experiment itself depends on chip availability. Without chip access, this CR is captured-only.
 
 - ~1h: settings field + result JSON wiring + tests.
-- ~2h: `/findings/chip-aging` page (Lab-only, simple table — graph deferred to CR-004 territory).
+- ~2h: the finding markdown + analysis once comparison data exists.
 - ~1h: documentation on `/methodology` once the first finding lands.
 
 Leverage: low until a chip exists. When one does, the finding is a sharper version of CLAUDE.md's existing "software changes shift energy" story. Pair with the ffmpeg-version energy test (existing memory note) for a running theme: *"the lab numbers are good; here are the things that move them."*
 
 ### Watch-outs
 
-- **Without chip access, don't ship the instrumentation prematurely.** The result-JSON field is fine to add (forward-compatible), but the `/findings` page should land *with* the first comparison data, not as a placeholder. Empty findings pages erode credibility.
+- **The result-JSON field is fine to add ahead of chip access** (forward-compatible); the finding lands *with* the first comparison data, never as a placeholder.
 - **Confound: thermal environment.** A chip in a data centre runs cooler and steadier than one in a sitting room. If we compare "aged data-centre chip vs new sitting-room chip", the delta is *aging + thermal environment*, not aging alone. Document the confound; ideally test both chips in the same environment.
 - **Confound: power supply.** PSU age also matters. If the aged chip arrives in its original chassis, the PSU is part of the comparison.
 
@@ -626,63 +423,51 @@ Leverage: low until a chip exists. When one does, the finding is a sharper versi
 - **CLAUDE.md memory `ffmpeg_version_energy_test.md`:** the software analogue. Land both as a single "things that move the numbers" finding.
 - **CR-031:** if OWL is portable, the chip-instance field is the natural multi-deployment merge key.
 - **CR-008:** REM ↔ OWL — REM already runs across a fleet; cross-fleet chip-aging data could come from REM rather than from a one-off OWL experiment.
-- **CR-054** (added 2026-05-27): when this ships, the output lands as a CR-054 finding (`docs/findings/chip-aging.md` with two `source_result_ids` — original GoS1 + donated chip), **not** a bespoke `/findings/chip-aging` page. The "walks across instances" comparison lives in the finding's analysis prose, not a separate route. Keeps the catalog's "one renderer for all finding pages" invariant intact.
 
 ### Priority: low (opportunistic). Stays captured until a chip arrives.
 
 ---
 
-## CR-043 · Input/output video preview in the result card (defer until CR-039 lands quality plumbing)
+## CR-043 · Input/output video preview on the `/video` result card
 
-**Status:** captured 2026-05-14. Deferred — re-evaluate once CR-039 (energy-vs-quality axis) lands its retention plumbing.
-**Triggered by:** owner question — "what's the feasibility of a video display in the results card? optional, input and output side by side in a dropdown — the 4K→HD downscale might be visible."
+**Status:** captured 2026-05-14; **premise updated 2026-06-11** — `/enhance-run` result cards now DO show input + output video (CR-064: kept outputs, TTL orphan sweep, browser-playable normalized-stream proxy, visitor-scoped serving). The generic `/video` card remains media-less. **No longer gated on CR-039**: CR-064 solved retention locally and is the pattern to port.
+**Triggered by:** owner question — feasibility of input/output side-by-side in a dropdown on the result card.
 
 ### Problem
 
-The result card today is metrics + carbon strip + scope notes — no media. A visitor reading "GPU used 81% less energy than CPU on H.265" has to trust that the two encodes produced equivalent output. Showing the actual transcoded video (or at least the input) would make the energy claim visceral and answer the implicit "is this still good enough to ship?" question that comes up around every codec-comparison number.
+The `/video` result card is metrics + carbon strip + scope notes — no media. A visitor reading "GPU used 81% less energy than CPU on H.265" has to trust that the two encodes produced equivalent output.
 
-### Why this was deferred, not built
+### Honesty point (kept — it renames the feature)
 
-The pushback that landed it here:
+Every preset scales to 1080p on both paths, so a side-by-side would NOT reveal the downscale — it reveals the **codec-engine delta** (libx264 vs NVENC at the same ABR), which at 1080p in a browser tab is subtle without still-frame zoom. Name and frame the eventual UI "codec-engine comparison preview", never "see the downscale".
 
-1. **The "4K→1080p downscale" intuition doesn't survive contact with the presets.** Every preset already runs `-vf scale=-2:1080` on both CPU and GPU paths. A side-by-side player would not reveal that downscale — both sides are downscaled identically. What it *would* reveal is the codec-engine delta (libx264 vs h264_vaapi at the same ABR), which at 1080p in a browser tab is usually too subtle to see without still-frame zoom or a proper PSNR/VMAF treatment.
-2. **Retention is a lifecycle flip.** Today `run_job(..., delete_after=True)` clears outputs the moment metrics are computed. Keeping them needs (a) a scoped-by-`visitor_key` serving route (CR-026 just tightened this), (b) a janitor for disk pressure — a Member `all_codecs` sweep retains six files at ~4 Mbps × N min = multi-GB per run, (c) per-tier retention policy. None of this is hard individually, but it's a small system, not a one-file change.
-3. **The "quality" question already has a home.** CR-039 (frontier-model-as-judge / energy-vs-quality axis) is the right place for a structured quality treatment of all the comparison results, and it will need its own output-retention plumbing anyway. Building a generic dual-player here forks the retention machinery before CR-039 has set its shape.
+### Cheap fallback (~15 lines, anytime)
 
-### Cheap-fallback option (~15 lines, if owner ever wants the visceral beat sooner)
+Input-only preview of the fixed `test_content/` sources via an allowlist route; `<details>`-lazy single `<video>`. Nothing new stored — no retention, no janitor.
 
-**Input-only preview, preloaded sources only.** Three fixed known files in `test_content/`, served via the existing `/video-enhance/asset/` allowlist pattern (extend the allowlist). A `<details>` block on the result card lazy-mounts a single `<video>` element when opened. No retention changes, no per-job scoping, no janitor — because nothing new is stored. The visitor sees what went into the encoder, which is the lesser half of the comparison but the *only* half that scales without a retention rebuild.
+### Agreed direction (when picked up)
 
-### Agreed direction (when picked back up)
+Port CR-064's enhance retention pattern to `/video`:
 
-Ride on CR-039's plumbing once it lands:
-
-1. Reuse CR-039's per-job output retention (it needs the encoded artefact for any quality-judge pass anyway — PSNR/VMAF/LLM-judge all consume the actual encoded file).
-2. Reuse its serving route (visitor_key-scoped) and its janitor.
-3. The dual-player UI then becomes a thin add: a `<details>` on the card, two `<video>` elements with synchronised seek, lazy-mounted on open. Audio off by default. Add a "freeze frame at t=" picker to make codec-engine artefacts visible — that's where the eye actually sees the delta.
-4. Gate behind a per-result `keep_output` flag so most runs still default to `delete_after=True` and don't pay the disk cost.
+1. Per-result `keep_output` flag, defaulting off (most runs keep `delete_after=True`).
+2. Generalise the enhance TTL janitor; visitor_key-scoped serving route (CR-026 scoping honoured).
+3. Dual `<video>` in a `<details>`, synchronised seek, lazy-mounted, audio off, "freeze frame at t=" picker — that's where the eye actually sees the codec delta.
+4. CR-029's rigor pass is what makes the side-by-side meaningful; CR-039, if built, consumes the same retained artefacts — **converging consumers, not a gate**.
 
 ### Watch-outs
 
-- **Don't ship retention without a janitor.** Even with the Member `queue_member_cap=4` and Anonymous `queue_anonymous_cap=1`, a busy day stacks GB-scale residue fast. Hours-old auto-purge is fine; the visitor's window for "still useful preview" is short.
-- **Don't serve outputs via a guessable URL.** Per-`visitor_key` scoping + token in URL, not just job_id.
-- **The 4K→1080p framing was misleading** — see above. If the eventual UI ships, name and frame it as "codec-engine comparison preview," not "see the downscale."
-- **Mobile-data viewer concern:** if a visitor opens the result card on a phone and the dual-player auto-loads, that's tens of MB streamed without consent. Lazy-mount on `<details>` open, and label the disclosure.
+- No retention without a janitor (an all-codecs sweep retains six multi-MB files per run).
+- No guessable output URLs — visitor_key scoping + token.
+- Mobile data: lazy-mount on `<details>` open, label the disclosure.
 
-### Cross-references
-
-- **CR-039** — owns the retention plumbing this CR rides on. Don't build before CR-039 sets its shape.
-- **CR-029** — encoding rigor / apples-to-apples GOP+profile work. A dual-player without CR-029's validation is just two videos that *look* similar; the rigor pass is what makes the comparison meaningful.
-- **CR-026** — anon-integrity pass that explicitly scopes own-jobs by `visitor_key`. Any output-serving route must honour this.
-
-### Priority: deferred. Re-evaluate when CR-039 picks up.
+### Priority: deferred, but unblocked. Natural follow-on whenever `/video` gets attention post-CR-029.
 
 ---
 
-## CR-045 · "Same Bitrate / Same Quality" toggle on the all-codecs comparison
+## CR-045 · Comparison-mode toggle on the all-codecs comparison (Same bitrate / Typical use / Constant quality)
 
-**Status:** captured 2026-05-22 (owner idea). Rides on the VMAF axis (CR-044, shipped). Sequence after / alongside CR-029.
-**Triggered by:** owner — *"the compare-all-codecs button could have a toggle: Same Bitrate OR Same Quality."*
+**Status:** captured 2026-05-22 (owner idea). Rides on the VMAF axis (CR-044, ✅ shipped). **Absorbs CR-029 §4 ("typical use" mode, 2026-06-11)** — same control, same result-framing rule. Sequence after / alongside CR-029's remaining review.
+**Triggered by:** owner — *"the compare-all-codecs button could have a toggle: Same Bitrate OR Same Quality"* + team meeting 2026-05-04 (typical-use mode).
 
 ### Problem / opportunity
 
@@ -697,31 +482,33 @@ The all-codecs comparison runs **ABR at a fixed per-codec bitrate** ("Same Bitra
 - The cheap implementation is to swap ABR for **CRF / CQP constant-quality** rate control. But CRF values are **not comparable across codecs** — libx264 CRF 23 ≠ libx265 CRF 23 ≠ SVT-AV1 CRF 23 ≠ VAAPI `qp`/`global_quality`. "Same CRF" is **not** "same quality." A button labelled "Same Quality" that just sets equal CRF asserts something untrue.
 - **True** same-quality = **same VMAF**, which ffmpeg cannot target directly. It needs a per-codec **bitrate search** (encode → measure VMAF → adjust → re-encode, ~3–5 passes), i.e. N× the encodes (and N× the energy/time). VMAF (CR-044) is exactly the instrument that makes the search possible.
 
-### Agreed direction — two honest designs, not one mislabelled button
+### Agreed direction — three honest modes, not one mislabelled button
 
-1. **V1 — "Constant quality (per-codec)".** Native CQ rate control per encoder (CRF for libx264/libx265/SVT-AV1, `qp` / `global_quality` for the VAAPI encoders). The VMAF column (CR-044) is shown prominently so the visitor *sees* the resulting quality is close-but-not-identical across codecs — the honesty is in surfacing the real VMAF, not in claiming equality. This is essentially the long-deferred **"Benchmark 2 — codec-natural rate control (CRF/QP)"** from the roadmap. Cheap: same number of encodes as today.
-2. **V2 — "Match quality (target VMAF)".** The rigorous iso-VMAF version: binary-search each codec's bitrate to hit a target VMAF ± tolerance, then report the energy to deliver it. Bigger build (N× encodes, search loop, abort/convergence guards, much longer wall-time — keep VMAF scoring as the terminal pass per CR-044 so the search encodes don't pollute energy readings of the *final* accepted encode).
+1. **"Same bitrate"** — today's ABR at identical per-codec targets (default; unchanged).
+2. **"Typical use"** (ex-CR-029 §4) — each codec at its real-world operating point: provisionally H.264 6000 / H.265 3500 / AV1 2500 kbps (streaming-platform mid-tier; **Tania to confirm against Bitmovin/Netflix tier guidance**). Different question, different honest answer.
+3. **"Constant quality (per-codec)"** (V1) — native CQ rate control per encoder. The VMAF column is shown prominently so the visitor *sees* the resulting quality is close-but-not-identical — the honesty is in surfacing the real VMAF, not claiming equality. This is the long-deferred "Benchmark 2 — codec-natural rate control". Cheap: same number of encodes as today.
 
-UX: a two-state toggle on the all-codecs control — `Same bitrate` (today's ABR, default) / `Constant quality` (V1) — with V2 as a later third state once it exists. The result card's framing line and the carbon/energy headline must state which mode produced the numbers.
+**V2 — "Match quality (target VMAF)"** as a later fourth state: binary-search each codec's bitrate to a target VMAF ± tolerance, report the energy to deliver it (N× encodes; keep VMAF terminal per CR-044 so search re-encodes never pollute the accepted encode's energy).
+
+UX: one radio control on the all-codecs preset. **The result card's framing line and energy headline must state which mode produced the numbers** — mode names are visitor-facing ("Same bitrate" / "Typical use" / "Constant quality"), not engineer jargon.
 
 ### Cost / leverage
 
-V1 ~1 day (new preset variants with CRF/QP + a mode flag through `run_all_measurement` + result framing). V2 ~2–4 days (search loop + convergence handling + longer-run UX). Leverage: high — answers the codec-adoption question directly and showcases the VMAF axis. The energy-vs-quality story becomes "AV1 delivers VMAF 93 at X Wh vs H.264 at Y Wh," which is the headline operators care about.
+Typical-use mode ~half a day (a second bitrate set + mode flag + framing). V1 ~1 day. V2 ~2–4 days. Leverage: high — answers the codec-adoption question directly; "AV1 delivers VMAF 93 at X Wh vs H.264 at Y Wh" is the headline operators care about.
 
 ### Cross-references
 
-- **CR-044** (VMAF) — the enabling measurement; V2's search loop consumes it.
-- **CR-029** (encoding rigor) — overlaps heavily: defining "equivalent quality" (GOP/profile, the CRF-isn't-comparable point) is Tania's apples-to-apples territory. **Sequence CR-045 after/with CR-029** so encode-parameter changes aren't re-validated against a moving target.
+- **CR-044 (✅ shipped)** — the enabling measurement; V2's search loop consumes it.
+- **CR-029** (encoding rigor) — defining "equivalent quality" is Tania's territory; sequence after/with her review so encode-parameter changes aren't validated against a moving target.
 - **CR-003** (iso-energy bitrate sweep) — the mirror-image axis (fix energy, vary quality).
-- **"Benchmark 2 — codec-natural rate control (CRF/QP)"** (CLAUDE.md deferred / WATTLAB_SPEC) — V1 *is* this, surfaced as a toggle.
 
 ### Watch-outs
 
 - **Never label CRF-equal as "Same Quality."** Call V1 "Constant quality (per-codec)" and let VMAF show the spread.
-- **VMAF stays a terminal pass** (CR-044) even inside V2's search, so the accepted encode's reported energy excludes all the search re-encodes' draw.
-- VAAPI CQ rate control differs by driver/codec — verify `qp` vs `global_quality` behaviour per `*_vaapi` encoder during V1.
+- **VMAF stays a terminal pass** even inside V2's search, so the accepted encode's reported energy excludes all search re-encodes.
+- **TODO at V1 build time:** verify NVENC CQ rate-control flags (`-cq` / `-rc`) per codec — replaces the obsolete VAAPI `qp`/`global_quality` analysis; **nothing verified yet**.
 
-### Priority: captured; gate V1 behind (or run alongside) CR-029. V2 is a later, larger follow-up.
+### Priority: captured; typical-use + V1 gate behind (or run alongside) CR-029's review. V2 is a later, larger follow-up.
 
 ---
 
@@ -794,69 +581,9 @@ Smallest-footprint flow change in the findings chain that touches the *most-visi
 
 ---
 
-## CR-064 · /enhance-run revamp — upload, format/resolution controls, generated presets
-
-**Status:** logged 2026-06-10, implementation started same day.
-**Triggered by:** June 10 call with Jon (Pixop) + Tania. Jon is decision-maker; HDR stays (over Tania's objection to drop it).
-
-### Problem
-
-`/enhance-run` exposes raw `.args` preset files and fixed staged clips. The call agreed a user-facing flow: upload or pick a clip, choose output format (SDR/HDR) + Super Resolution target (SD/HD/4K), bitrate auto-coupled — preset selected silently. Only 3 hand-written presets exist; the 2×3 combo matrix needs 6, generated rather than hand-authored.
-
-### Agreed direction
-
-1. **No input probe driving the UI** (Jon's simplification): six static combos work on any input — pixop-live auto-downscales when the target is below source. Probe results (w/h/duration/colour-transfer) are stamped on the result JSON as provenance only.
-2. **Preset generation:** two colour templates (SDR-out / HDR-out) × `--output-res` (854×480 / 1920×1080 / 3840×2160) × `--cbr` (5000 / 20000 / 35000 — CBR, never user-chosen) → `presets/generated/*.args`. Interim templates derived from Jon's `fhd_709` / `fhd_pq` files (correct for SDR input); swap in his blessed input-agnostic templates when they arrive. Generated presets stamp `preset_origin: generated`.
-3. **UI:** Output Format radio (SDR default; HDR + viewing-environment footnote) + "Super Resolution" dropdown (SD / HD default / 4K), bitrate read-only. Flow: select/upload → format → resolution → Run. `<details>` keeps full generated args for transparency. Page label stays "Video Enhancement".
-4. **Upload:** Member 1 GB + clip duration ≤ 60 s (ffprobe-enforced; reading of the call's "60 s processing time" — runs are 1×-paced so duration ≈ processing time); Lab uncapped; limits shown pre-upload; Anonymous already excluded by the page gate. Member upload inputs deleted after the run (outputs kept).
-5. **ffmpeg comparison side** matched to preset output (4:2:2 10-bit HEVC, `p210le` verified in ffmpeg-master's hevc_nvenc) to stay apples-to-apples.
-6. NR-quality footnote gains "subject to further refinement pending validation" (call note). Quality metric itself shipped pre-CR (`8b561ea`, CompressedVQA-HDR).
-7. **Past runs** (owner add, 2026-06-10): enhance results become first-class — `persist._SUMMARISERS` entries for `enhance`/`enhance_compare` (kills the `unrecognised_mode` gap), `/results/enhance/*` list/JSON/CSV/delete endpoints, a "Previous runs" section on the page (own-jobs scoped), and the exact expanded `preset_args` + `preset_origin` + `input_stream` stamped on every result.
-8. **Complexity table collapsed** (owner add): the SI/TI "Resulting-file complexity" block renders inside a default-collapsed `<details>` marked "under discussion" — deep-analysis readers opt in.
-9. **4:2:0 by default** (owner decision 2026-06-10, supersedes the call's item-6 "default 4:2:2"): the generator substitutes `--output-csp yuv420` — outputs become HEVC Main10 (browser-decodable) instead of Rext 4:2:2. Jon's template files untouched on disk.
-10. **Advanced args editor** (owner add): default-collapsed "Encoder command — advanced" `<details>` with the selected combo's NVEncC args in a textarea; edits run via a per-job `presets/custom/custom_<job>.args` file and stamp `preset_origin: custom` (can't masquerade as a standard combo). Docker plumbing (mounts/GPU/license) stays fixed and non-editable. The ffmpeg comparison derives res/bitrate/pix_fmt from the actual args, so edited runs stay apples-to-apples automatically.
-11. **Queue controls on /queue-status** (owner add): Lab-only **Cancel current run** + **Empty queue**. Cancel is workload-aware and honest: enhance = `docker kill owl_enhance_<job>` (per-job container name; run concludes via its normal failed path, marked cancelled, not persisted) + a pre-launch flag check for the baseline phase; benchmark = the existing cooperative flag; video/llm/image = refused 409 with the reason (an asyncio cancel would orphan the tool and release the lock onto a contaminated baseline — bounded by their own timeouts instead). Empty queue = `queue_control.empty_pending()`, running job untouched. Chosen over a /settings panel: actions live with the queue, parameters live in /settings.
-12. **/settings navigation pass** (owner ask): sticky anchor index (toc-bar) + ids on every section; Models matrix and Members allowlist default-collapsed into `<details>` (the house pattern). No tabs/subpages — single dense page with one Save preserved; the parameters-vs-operations split is the future fault line if it outgrows this.
-
-### Open questions — status after Jon's reply (2026-06-11, implemented S44)
-
-- **Real-world UGC tolerance — ANSWERED + SHIPPED.** Jon prescribed ONE mechanism for both
-  2026-06-10 failures ((a) VFR × `forcecfr` mp4-muxer abort; (b) `yuvj422p` decoder refusal):
-  lossless local pre-conversion to `yuv444p10le` + the `fps` filter at the detected rate
-  (VFR→CFR), FFV1/NUT. Implemented as a conditional, probe-driven normalize stage that runs
-  BEFORE the baseline window (his "slight energy skew" trade-off declined — OWL keeps the
-  figure clean; his stdin-pipe variant would have put a decode inside the window). `forcecfr`
-  stays; no `--avsync vfr` switch. Verified on the real VFR night
-  clip (was rc 1 @ frame 427 → rc 0, 914 frames) + a synthesized `yuvj422p` clip. Live 1× mode
-  refuses inputs needing normalization (honest: a hidden pre-conversion isn't the live scenario);
-  the compare flow normalizes and paces via a NUT pipe (its 1× pacing is a measurement-window
-  tactic, not a live claim). **Pix_fmt matrix (Jon's 2026-06-11 addendum):** the classic formats
-  `yuv420p/yuv422p/yuv444p` + their `10le` variants are fully supported — `_VERIFIED_PIX_FMTS`
-  is exactly that list; only non-standard formats (legacy `yuvj*`, exotic packings) convert.
-- **`hdr_4k` abort — root cause likely VRAM, exclusion stays for now.** Jon's theory:
-  out-of-GPU-memory (16 GB is "very close to the limit" at 4K), aggravated by the desktop
-  running on the 5080; exception handling (abort instead of graceful error) acknowledged as
-  their bug. S44 reproduction of the bisect conditions PASSED at **96.8% peak VRAM
-  (15,774/16,303 MiB, desktop holding ~389 MiB)** — the intermittency is the margin. Keep
-  `_COMBO_EXCLUSIONS` until the desktop moves to the Raphael iGPU (owner op; changes idle
-  baseline → recalibrate) and/or Jon's memory-tuning env vars land (ask on Slack). Log for
-  Jon: `/srv/data/owl/pixop/logs/repro_hdr4k.log`.
-- **HDR→SDR tone-map — DEFERRED by Pixop.** `--vpp-colorspace` supports some conversion but
-  isn't in the presets; their own dynamic tone-mapper is planned. SDR-template-on-HDR-input
-  colour treatment stays unvalidated; revisit when their tone-mapper ships.
-- `dnn_scaling` behaviour at ~×4.5 (480p → 4K) — **still open** (not addressed in the reply;
-  possibly the same VRAM ceiling). (×2.25, 480p→HD, confirmed working 2026-06-10.)
-- Tania: statistical-significance thresholds for confidence badges (global `confidence.py` follow-up, not this CR).
-
-### Lab look & feel constraint
-
-Two compact controls replace the preset `<select>`; no new cards. Limits line is one muted sentence. Follow-up review with Jon/Tania planned before the page sheds its "UNDER DEVELOPMENT" banner.
-
----
-
 ## CR-065 · Dual daisy-chained P110 — staggered polling for ~2× fresh samples
 
-**Status:** logged 2026-06-11; Phase 1 pre-test run same day (`bin/probe-dual-meter`, findings in `docs/dual_meter_pretest_findings.md`). Phase 2 integration **gated on the pre-test verdict**.
+**Status:** logged 2026-06-11; Phase 1 pre-test PASSED same day (2.5× fresh-sample gain — `bin/probe-dual-meter`, `docs/dual_meter_pretest_findings.md`); Phase 2 integration shipped same evening (meter registry + cached KLAP handles, shared sampler in power.py, ci2 combine, `energy.meters` block, `{METER_CADENCE}` token; live-verified against both plugs). **Remaining to close: service restart + variance recalibration under normal ambient (owner).**
 **Triggered by:** owner idea 2026-06-11 — daisy-chain a second P110 and alternate polls to halve the effective sampling interval, with a side benefit of hedging single-meter calibration risk.
 
 ### Problem
@@ -880,64 +607,63 @@ No new UI elements; only serve-time wording (meter name already tokenized, caden
 
 ---
 
-## Unverified reports (compressed 2026-06-11)
+## Unverified reports (compressed 2026-06-11; re-checked same day — the GosOne→OWL sweep item closed by S43's doc pass)
 
-The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, team meeting 2026-05-04, board meeting 2026-05-11) were compressed 2026-06-11: every item that was marked resolved, absorbed into a CR, or is a meeting note recorded elsewhere (JOURNAL.md / board notes / CR cross-refs) was deleted. The genuinely unresolved residue:
+The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, team meeting 2026-05-04, board meeting 2026-05-11) were compressed 2026-06-11: every item that was marked resolved, absorbed into a CR, or is a meeting note recorded elsewhere (JOURNAL.md / board notes / CR cross-refs) was deleted. The genuinely unresolved residue — **all three possibly mooted by the S42 routes refactor; verify with the named 5–15 min spike before deleting**:
 
-- **Bug (2026-05-01, never reproduced): `/settings` rendered empty mid-run** — observed while a queued calibration ran; suspect the job-state machine showing the page in a transient state. Repro attempt: start a calibration, immediately reload `/settings`.
-- **Bug (2026-05-11 board demo, unverified): live energy-mix breakdown row missing** from some result tables — check the `wlCarbonStrip` mode-detection branch that conditionally renders the mix row.
-- **Bug (2026-05-11 board demo, unverified): `/image` previous-results panel not rendering** — likely the renderer-drift class; verify against the shared renderers before patching `/image` in isolation.
-- **GosOne → OWL doc/comment sweep** (team meeting 2026-05-04, item 33) — trivial stale-reference audit; do inline whenever convenient. Not a CR.
+- **Bug (2026-05-01, never reproduced): `/settings` rendered empty mid-run** — suspect the job-state machine showing the page in a transient state. *Spike: start a calibration, immediately reload `/settings`.*
+- **Bug (2026-05-11 board demo, unverified): live energy-mix breakdown row missing** from some result tables. *Spike: check the `wlCarbonStrip` mode-detection branch against a recent result card (the S37 guard fix may already cover it).*
+- **Bug (2026-05-11 board demo, unverified): `/image` previous-results panel not rendering** — the renderer-drift class. *Spike: load `/image` previous results against the S42-unified shared renderers.*
 
 ---
 
-## Groupings & dependencies (rewritten 2026-06-11 — post-S42 refactor sweep; CR-060 closed, CR-052/053/061 back-filled to `CHANGE_REQUESTS_CLOSED.md`)
+## Groupings & dependencies (rewritten 2026-06-11 — restructure pass: CR-018 merged into CR-007, CR-064 closed, CR-029 §4/§6 extracted)
 
-The 16 active CRs cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
+The **15 active CRs** cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
 
-### Track A — Storage / persistence (Tania-elevated 2026-05-07)
+### Track A — Storage / analytics (Tania-elevated 2026-05-07)
 
 Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a lot of really interesting statistics on that"* — made the storage-family decision the gate for the analytics layer; the flat-file-blocker memory says decide before extending `persist.py` again.
 
-- **CR-031** §1 (DB choice with REM coherence — "I don't want five different databases") — the bottleneck. §2 power-source abstraction: cheap wins shipped 2026-06-09 (`power.stamp()` + `meter_display_name`); full PowerBackend/PDU/synthetic + resolution-aware confidence still open. §3 containerisation: externally driven (Mike's Akamai offer / Linode).
-- **CR-003** iso-energy bitrate sweep + **CR-007** carbon variance study *(downstream analytics; both outputs land as `/findings` entries via the shipped CR-054 machinery)*.
+- **CR-031 §1** (DB choice with REM coherence — "I don't want five different databases") — the bottleneck/gate.
+- **CR-003** iso-energy bitrate sweep + **CR-007** carbon history & variance (merged entry) *(downstream analytics; both outputs land as `/findings` entries via the shipped CR-054 machinery)*.
 
 ### Track B — Encoding rigor / quality (Tania-led)
 
-- **CR-029** — §2 (encode normalization) shipped S34 (`88a2696`) and §3 is a standing ffprobe pass; remaining sub-items (§1 pipeline doc, Tania's §2 review, §4 typical-use mode, §5 philosophy doc) stand on their own — no longer gating anything (the CR-060 baseline/swap bracket completed S35/S36).
-- **CR-045** "Same bitrate / Constant quality" toggle — rides with/after CR-029; V1 = the deferred "Benchmark 2" (CRF/QP); V2 (target-VMAF search) later. NVENC CQ flags (`-cq`/`-rc`) replace the old VAAPI-specific notes.
-- **CR-043** result-card video preview — deferred until CR-039 sets the output-retention plumbing; CR-029's rigor is what makes the side-by-side meaningful.
+- **CR-029** remainder — §1 pipeline doc (NVENC paths), Tania's §2 review against NVENC reality, §5 philosophy doc.
+- **CR-045** comparison-mode toggle (now 3-mode: Same bitrate / Typical use (ex-§4) / Constant quality) — rides with/after CR-029's review. NVENC CQ flags to be verified at V1 build time (replaces the old VAAPI notes — nothing verified yet).
+- **CR-043** `/video` result-card video preview — **de-gated** from CR-039; ports CR-064's shipped retention pattern; CR-029's rigor is what makes the side-by-side meaningful.
 
 ### Track C — In flight / awaiting review
 
-- **CR-064** `/enhance-run` revamp — **active** (implementation started 2026-06-10); remaining open questions are all on Jon (Pixop); independent of every other track.
+- **CR-065** dual daisy-chained P110 — **in flight, owned by a parallel session; hands off from this backlog.** Its `power.py` rewrite gates any CR-031 §2 design.
 - **CR-057** home-page findings-first repositioning — drafted, **awaiting lab UX review**; ~half a day of mechanical work behind `findings_enabled`; non-blocking.
 
 ### Track D — Operator quality-of-life (small, independent)
 
-- **CR-024** re-run thermal-recovery probe from `/settings` (promote `bin/probe-thermal-recovery` → endpoint via `queue_control.enqueue`).
-- **CR-004** visual graphing — no dependencies; CR-007 + the CR-012 history journals are its first consumers.
+- **CR-024** re-run thermal-recovery probe from `/settings` (the display shipped; the run endpoint + button didn't).
+- **CR-004** visual graphing remainder — no dependencies; CR-007 + the CR-012 history journals are its first consumers.
 
 ### Track E — Strategic / exploratory (captured, idle)
 
-- **CR-008** REM ↔ OWL integration · **CR-009** cross-platform web client test bay · **CR-018 T2/T3** historical CO₂e picker · **CR-025** RT kernel (low priority, parked; the old CR-060-swap gate passed 2026-05-29) · **CR-039** AI quality judge (CR-029 §6 carve-out to resolve, or drop) · **CR-041** new-vs-aged silicon (awaits a chip).
+- **CR-008** REM ↔ OWL (steps 3–4; branding shipped) · **CR-009** cross-platform web client test bay · **CR-025** RT kernel (parked; re-read its decision frame after CR-065 settles) · **CR-039** AI quality judge (ratify the standing External-PQA carve-out, or drop) · **CR-041** new-vs-aged silicon (awaits a chip).
 
 ### Cross-track dependencies summary
 
 ```
 CR-031 §1 storage decision ──→ CR-003, CR-007 (analytics layer)
-CR-029 (rigor)             ──→ CR-045 (defining "equivalent quality" is the shared territory)
-CR-029 §6 "external PQA"   ─?→ CR-039 (carve-out needed, or drop CR-039)
-CR-039 (retention plumbing)──→ CR-043 (dual-player rides it)
+CR-065 (in flight)         ──→ CR-031 §2 re-scope (power.py rewrite lands first)
+CR-029 (rigor review)      ──→ CR-045 (defining "equivalent quality" is the shared territory)
+Standing External-PQA rule ─?→ CR-039 (carve-out: ratify or drop)
+CR-064 retention pattern   ──→ CR-043 (port to /video; CR-039 a converging consumer)
 CR-041 / CR-007 outputs    ──→ /findings entries (CR-054 machinery, shipped)
 CR-057                     ──→ gated only on the lab UX review (flag-protected rollback)
-CR-064                     ──→ gated only on Jon's (Pixop) answers
 ```
 
 ### Suggested order (2026-06-11)
 
-1. **CR-064** — already in flight; close out as Jon's answers land.
+1. **CR-065** close-out — the parallel session's to drive, not this backlog's.
 2. **CR-057** — schedule the lab UX review; the implementation itself is ~half a day.
 3. **CR-031 §1** storage decision — unblocks the analytics layer (CR-003, CR-007).
 4. **CR-029 remainder + CR-045** — Tania-led, as her availability allows; a §2 revision re-bases video numbers (re-run variance calibration), designed-for via `video._norm_args`.
-5. **CR-024**, then **CR-039 / CR-041 / CR-004 / CR-007** opportunistically; Track E (CR-008 / 009 / 018 T2-3 / 025) as capacity allows.
+5. **CR-024**, then **CR-039 / CR-041 / CR-004 / CR-007 / CR-043** opportunistically; Track E as capacity allows.

@@ -10,6 +10,7 @@ from pathlib import Path
 from video import focus_mode_enter, focus_mode_exit
 import settings as cfg
 from confidence import confidence
+import power
 from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 import gpu
 
@@ -69,20 +70,14 @@ class _ImageModelsView:
 
 IMAGE_MODELS = _ImageModelsView()
 
+# Shared sampler delegation (CR-065) — legacy signatures/shapes preserved;
+# see power.sample_baseline / power.sample_task.
 async def measure_baseline(polls: int = 10) -> dict:
-    readings = []
-    for _ in range(polls):
-        readings.append(await get_power_watts())
-        await asyncio.sleep(1)
-    return {"w_base": round(sum(readings) / len(readings), 2),
-            "samples_w": [round(w, 2) for w in readings]}
+    return await power.sample_baseline(polls, read_watts=get_power_watts)
 
 async def poll_during_task(stop_event: asyncio.Event) -> list:
-    readings = []
-    while not stop_event.is_set():
-        readings.append((time.time(), await get_power_watts()))
-        await asyncio.sleep(1)
-    return readings
+    return await power.sample_task(stop_event, read_watts=get_power_watts,
+                                   tuples=True)
 
 def read_sensors() -> dict:
     return read_sensors_dict()
@@ -258,15 +253,19 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
 
 
 def _calc_energy(w_base: float, w_task: float, delta_t: float,
-                 readings: list, batch: int, baseline_samples: list = None) -> dict:
+                 readings: list, batch: int, baseline_samples: list = None,
+                 baseline_dict: dict = None) -> dict:
     poll_count = len(readings)
     delta_w = round(w_task - w_base, 2)
+    task_samples = [round(r[1], 2) for r in readings]
+    meters = power.meters_summary(baseline_dict, readings, task_samples)
+    if meters and "delta_w_combined" in meters:
+        delta_w = meters["delta_w_combined"]
     delta_e_wh = round(delta_w * (delta_t / 3600), 4)
     wh_per_image = round(delta_e_wh / batch, 4)
-    task_samples = [round(r[1], 2) for r in readings]
     conf = confidence(delta_w, poll_count, w_base,
                       baseline_samples_w=baseline_samples,
-                      task_samples_w=task_samples)
+                      task_samples_w=task_samples, meters=meters)
     return {
         "w_base": round(w_base, 2),
         "w_task": round(w_task, 2),
@@ -278,6 +277,7 @@ def _calc_energy(w_base: float, w_task: float, delta_t: float,
         "baseline_samples_w": baseline_samples,
         "task_samples_w": task_samples,
         "confidence": conf,
+        **({"meters": meters} if meters else {}),
     }
 
 
@@ -317,7 +317,8 @@ async def _run_single_image(prompt: str, device: str, job_id: str,
     batch = gen_result["batch_size"]
     delta_t = gen_result["gen_s"]   # measure only generation time, not load time
     w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
-    energy = _calc_energy(w_base, w_task, delta_t, readings, batch, baseline_samples_w)
+    energy = _calc_energy(w_base, w_task, delta_t, readings, batch,
+                          baseline_samples_w, baseline_dict=_baseline)
 
     return {
         "device": device,
@@ -386,7 +387,8 @@ async def run_image_measurement(prompt: str, job_id: str,
     batch = gen_result["batch_size"]
     delta_t = gen_result["gen_s"]
     w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
-    energy = _calc_energy(w_base, w_task, delta_t, readings, batch, baseline_samples_w)
+    energy = _calc_energy(w_base, w_task, delta_t, readings, batch,
+                          baseline_samples_w, baseline_dict=_baseline)
 
     device_label = f"GPU ({gpu.BACKEND.device_label()})" if device == "gpu" else "CPU (Ryzen 9 7900)"
     scope = (f"Device layer only (GoS1). {device_label}. "

@@ -25,9 +25,10 @@ Every result JSON under `results/{type}/{date}_{job_id}.json` carries:
 | `mode` | the runner | dispatch key — see inventory below |
 | `version`, `build` | `persist` ← `version.py` | build stamp |
 | `gpu_hardware` | `persist` ← `gpu.BACKEND` | CR-060 |
-| `power_hardware` | `persist` ← `power.stamp()` | CR-031 §2 |
+| `power_hardware` | `persist` ← `power.stamp()` | CR-031 §2; dual-meter runs (CR-065) add `meters: 2, topology: "daisy_chain", stagger_s` |
 | `energy{}` per run/side | measurement module | `w_base, w_task, delta_w, delta_e_wh, delta_t_s, poll_count, confidence{}, baseline_samples_w[], task_samples_w[], co2e{}` |
-| `confidence{}` | `confidence.confidence()` | `flag` 🟢🟡🔴, `label`, `method` (`ci`/`variance`) |
+| `energy.meters{}` | `power.meters_summary()` | **optional**, CR-065 dual-meter only. `inner{w_base,w_task,delta_w}, outer{… + baseline_samples_w[], task_samples_w[]}, combine_method, delta_w_combined` — top-level `delta_w`/`delta_e_wh` ARE the combined figures; `w_base`/`w_task`/`*_samples_w` keep their historical meaning (inner/primary meter). A dropped secondary stream persists as `meters: {degraded: true}` instead — the run is honest single-meter data. Renderers may ignore the whole block. |
+| `confidence{}` | `confidence.confidence()` | `flag` 🟢🟡🔴, `label`, `method` (`ci`/`ci2`/`variance` — `ci2` = CR-065 per-meter combine) |
 
 ## Mode inventory
 

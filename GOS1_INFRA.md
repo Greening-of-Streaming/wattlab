@@ -44,6 +44,9 @@ fstab entry: `UUID=3b621612-f3fa-4873-8c10-0cea94105591  /srv/data  ext4  defaul
 ## Cooling (S24, 2026-05-13 — fan census predates the GPU swap)
 9 fans total: **5 case** (the 5th re-enabled via a Y-splitter off an existing header — had been left deactivated), **2 GPU** (integrated; counted on the RX 7800 XT — the RTX 5080 brings its own), **1 CPU** (the board header can drive a 2nd if thermals warrant), **1 PSU internal**. The case + CPU fans run a BIOS curve (quiet below ~70 °C; never observed ramping in any OWL run) and are **not Linux-controllable** — no super-I/O sensor driver (`nct6775`/`it87`/…), the only platform hwmon is an empty `asus` node. So they're an effectively fixed-airflow constant; only the GPU fans exposed PWM (via `amdgpu` hwmon in the AMD era). The whole envelope is inside the P110 boundary — the extra fan added ~1-2 W (the S24 thermal-recovery probe put steady idle at ~56-58 W, vs the old ~51-54 W; combined NVMe + fan — both AMD-era figures; see the GPU section for the post-swap ~79 W). See WattLab `CHANGE_REQUESTS_CLOSED.md` CR-005 for the full fan-control investigation.
 
+## Power Metering (CR-065, 2026-06-11)
+Two Tapo P110 smart plugs daisy-chained: **wall → `.159` (outer, the original plug) → `.91` (inner, primary, Tapo nickname "GoS1b-server") → GoS1**. The inner plug measures the server alone and supplies every absolute-W figure (`TAPO_P110_IP`); the outer (`TAPO_P110_IP_2`) doubles the fresh-sample rate via staggered polling and additionally sees the inner plug's ~0.7 W self-draw. The two units are unequal samplers (inner refreshes ≥1 Hz, outer exactly 1.5 s) and KLAP sessions are exclusive per device — never poll a plug from two clients at once (`bin/probe-dual-meter` requires the wattlab service stopped). Pre-test record: WattLab `docs/dual_meter_pretest_findings.md`.
+
 ## Other Users
 dom, marisol, simon, tania — home dirs exist but unreadable by gos user.
 

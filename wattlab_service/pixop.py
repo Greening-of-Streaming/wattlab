@@ -36,6 +36,7 @@ from typing import Optional
 import gpu
 import settings as cfg
 from confidence import confidence
+import power
 from power import cooldown_between_runs
 from video import (
     measure_baseline, poll_during_task, focus_mode_enter, focus_mode_exit,
@@ -1424,10 +1425,13 @@ async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
     baseline_samples_w = baseline.get("baseline_samples_w")
     w_task = sum(r["watts"] for r in readings) / len(readings) if readings else w_base
     delta_w = round(w_task - w_base, 2)
+    meters = power.meters_summary(baseline, readings, task_samples_w)
+    if meters and "delta_w_combined" in meters:
+        delta_w = meters["delta_w_combined"]
     delta_e_wh = round(delta_w * (delta_t / 3600), 4)
     conf = confidence(delta_w, len(readings), w_base,
                       baseline_samples_w=baseline_samples_w,
-                      task_samples_w=task_samples_w)
+                      task_samples_w=task_samples_w, meters=meters)
 
     cpu_temps = [r["cpu_tctl"] for r in readings if r.get("cpu_tctl")]
     gpu_temps = [r["gpu_junction"] for r in readings if r.get("gpu_junction")]
@@ -1478,6 +1482,7 @@ async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
                 "baseline_samples_w": baseline_samples_w,
                 "task_samples_w": task_samples_w,
                 "confidence": conf,
+                **({"meters": meters} if meters else {}),
             },
             "thermals": {
                 "cpu_base": baseline["cpu_temp_base"],

@@ -12,6 +12,7 @@ from typing import Callable, Optional
 import settings as cfg
 import gpu
 from confidence import confidence
+import power
 from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 UPLOAD_DIR = Path("/tmp/wattlab_uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -478,34 +479,30 @@ POLL_INTERVAL = 1.0
 def read_sensors() -> dict:
     return read_sensors_dict()
 
+# Baseline/task polling delegates to the shared sampler in power.py (CR-065)
+# — one loop implementation for all modules, dual-meter aware. The wrappers
+# keep their legacy signatures and return shapes; `get_power_watts` is passed
+# at call time so monkeypatching this module's binding still works.
+
 async def measure_baseline(polls: int = 10) -> dict:
-    power_readings = []
-    sensor_readings = []
-    for _ in range(polls):
-        power_readings.append(await get_power_watts())
-        sensor_readings.append(read_sensors())
-        await asyncio.sleep(POLL_INTERVAL)
+    b = await power.sample_baseline(polls, read_watts=get_power_watts,
+                                    read_sensors=read_sensors,
+                                    interval=POLL_INTERVAL)
+    sensor_readings = b["sensor_readings"]
     return {
-        "w_base": round(sum(power_readings) / len(power_readings), 2),
-        "baseline_samples_w": [round(w, 2) for w in power_readings],
+        "w_base": b["w_base"],
+        "baseline_samples_w": b["samples_w"],
         "cpu_temp_base": round(sum(s["cpu_tctl"] for s in sensor_readings
                                    if s["cpu_tctl"]) / len(sensor_readings), 1),
         "gpu_temp_base": round(sum(s["gpu_junction"] for s in sensor_readings
                                    if s["gpu_junction"]) / len(sensor_readings), 1),
+        **{k: b[k] for k in ("baseline_samples_w_2", "meter2_degraded") if k in b},
     }
 
 async def poll_during_task(stop_event: asyncio.Event) -> list:
-    readings = []
-    while not stop_event.is_set():
-        watts = await get_power_watts()
-        sensors = read_sensors()
-        readings.append({
-            "t": time.time(),
-            "watts": watts,
-            **sensors
-        })
-        await asyncio.sleep(POLL_INTERVAL)
-    return readings
+    return await power.sample_task(stop_event, read_watts=get_power_watts,
+                                   read_sensors=read_sensors,
+                                   interval=POLL_INTERVAL)
 
 # --- Confidence ---
 # Unified single-run confidence lives in confidence.py (CR-028 Phase 2);
@@ -672,10 +669,15 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
     baseline_samples_w = baseline.get("baseline_samples_w")
     w_task = sum(r["watts"] for r in readings) / len(readings) if readings else w_base
     delta_w = round(w_task - w_base, 2)
+    # CR-065: on a healthy dual-meter run the headline ΔW (and hence ΔE) is
+    # the per-meter combine; w_base/w_task stay the primary/inner meter.
+    meters = power.meters_summary(baseline, readings, task_samples_w)
+    if meters and "delta_w_combined" in meters:
+        delta_w = meters["delta_w_combined"]
     delta_e_wh = round(delta_w * (delta_t / 3600), 4)
     conf = confidence(delta_w, len(readings), w_base,
                       baseline_samples_w=baseline_samples_w,
-                      task_samples_w=task_samples_w)
+                      task_samples_w=task_samples_w, meters=meters)
 
     cpu_temps = [r["cpu_tctl"] for r in readings if r.get("cpu_tctl")]
     gpu_temps = [r["gpu_junction"] for r in readings if r.get("gpu_junction")]
@@ -707,6 +709,7 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
             "baseline_samples_w": baseline_samples_w,
             "task_samples_w": task_samples_w,
             "confidence": conf,
+            **({"meters": meters} if meters else {}),
         },
         "thermals": {
             "cpu_base": baseline["cpu_temp_base"],

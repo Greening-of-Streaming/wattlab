@@ -18,9 +18,24 @@ import persist
 import main
 
 
-def test_stamp_shape_and_defaults():
+def test_stamp_shape_and_defaults(monkeypatch):
+    # Single-meter: exact legacy shape, byte-identical to pre-CR-065.
+    monkeypatch.setattr(power, "_meter_ips", lambda: ["10.0.0.1"])
     s = power.stamp()
     assert s == {"name": "Tapo P110", "kind": "smart_plug", "resolution_s": 1.0}
+
+
+def test_stamp_dual_meter_extension(monkeypatch):
+    # Dual-meter (CR-065): legacy keys preserved, configuration facts added —
+    # never measured performance (fresh-sample rates live in the findings doc).
+    monkeypatch.setattr(power, "_meter_ips", lambda: ["10.0.0.1", "10.0.0.2"])
+    s = power.stamp()
+    assert s["name"] == "Tapo P110"
+    assert s["kind"] == "smart_plug"
+    assert s["resolution_s"] == 1.0
+    assert s["meters"] == 2
+    assert s["topology"] == "daisy_chain"
+    assert s["stagger_s"] == 0.5
 
 
 def test_meter_display_name_honours_setting_override(monkeypatch):

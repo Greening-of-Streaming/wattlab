@@ -15,7 +15,7 @@ import gpu
 import settings as cfg
 import version
 from capabilities import can
-from power import meter_display_name
+from power import meter_display_name, meter_cadence_label
 
 # ── External links — single source of truth ─────────────────────────────────
 # Every externally-hosted URL the UI points at lives here, so a changed link is
@@ -575,6 +575,7 @@ def _ui_cfg() -> dict:
         "show_wait_detail": bool(s.get("cooldown_show_wait_detail", True)),
         "idle_tolerance_w": s.get("cooldown_idle_tolerance_w", 3.0),
         "meter_name": meter_display_name(),
+        "meter_cadence": meter_cadence_label(),
         # Registry/source URLs for wl-carbon.js links — constants above stay
         # the single source; the browser gets them through WL_CFG.
         "urls": {

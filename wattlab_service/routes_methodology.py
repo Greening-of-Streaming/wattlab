@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse
 import settings as cfg
 import ui
 from capabilities import requires, PUBLIC_PAGE
-from power import meter_display_name
+from power import meter_display_name, meter_cadence_label, meter_topology_row
 from ui import (CHARTJS_URL, ECO2MIX_URL, EMBER_URL, GITHUB_ISSUES_URL,
                 GITHUB_REPO_URL, GOS_LOGO_URL, GOS_URL, POSITION_PAPER_URL,
                 _AUTH_CHIP_STYLES, _auth_chip_html)
@@ -423,13 +423,13 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
       <strong>Model unload</strong> (LLM/RAG only). Send <code>keep_alive=0</code> to Ollama and wait 3 seconds for GPU memory release. Ensures a cold start when cold-inference mode is selected.
     </li>
     <li>
-      <strong>Baseline capture.</strong> Poll the {METER_NAME} at 1-second intervals for a configurable period (currently <code>{BASELINE_POLLS}</code> polls &mdash; configurable in Settings). The mean of these readings becomes W<sub>base</sub> &mdash; the server&rsquo;s idle power draw.
+      <strong>Baseline capture.</strong> Poll the {METER_NAME} at {METER_CADENCE} for a configurable period (currently <code>{BASELINE_POLLS}</code> polls &mdash; configurable in Settings). The mean of these readings becomes W<sub>base</sub> &mdash; the server&rsquo;s idle power draw.
     </li>
     <li>
       <strong>Lock.</strong> Acquire <code>/tmp/gos-measure.lock</code> to prevent concurrent measurements from overlapping. A FIFO queue manages waiting jobs.
     </li>
     <li>
-      <strong>Execute task.</strong> Run the actual workload (ffmpeg, Ollama inference, SD-Turbo diffusion) while continuing to poll the P110 at 1-second intervals. Thermal sensors (CPU Tctl, GPU junction, GPU PPT) are read in parallel.
+      <strong>Execute task.</strong> Run the actual workload (ffmpeg, Ollama inference, SD-Turbo diffusion) while continuing to poll the {METER_NAME} at {METER_CADENCE}. Thermal sensors (CPU Tctl, GPU junction, GPU PPT) are read in parallel.
     </li>
     <li>
       <strong>Compute energy.</strong> Calculate delta power, total energy, and per-unit metrics (see formulas below).
@@ -583,7 +583,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <tr><td>RAM</td><td>61 GB DDR5</td></tr>
     <tr><td>Storage</td><td>500 GB NVMe SSD (OS + working set) + 4 TB NVMe SSD (test media &amp; result archive, mounted <code>/srv/data</code>)</td></tr>
     <tr><td>Idle power</td><td>~79W at the wall (settled, display-blanked). The mid-2026 RTX 5080 swap raised idle ~+20W over the prior AMD 7800 XT (~57&ndash;59W) &mdash; intrinsic to the larger card, not a fault. The 5080 idle is display-state-sensitive: a blanked desktop sits at ~79W, an active (non-blanked) desktop ~101W; GoS1 blanks ~15&nbsp;min after the last input, so the like-for-like figure is ~79W</td></tr>
-    <tr><td>Measurement</td><td>{METER_NAME}, 1-second polling via local API (tapo 0.8.12)</td></tr>
+    <tr><td>Measurement</td><td>{METER_NAME}, polled at {METER_CADENCE} via local API (tapo 0.8.12)</td></tr>{METER_TOPOLOGY_ROW}
     <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code> &mdash; ships the NVENC encoders + <code>scale_cuda</code> filter) &mdash; libx264, libx265, libsvtav1 (CPU); {VIDEO_GPU_ENCODERS}</td></tr>
     <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; ladder of TinyLlama 1.1B, Qwen3 1.7B/4B/8B, Mistral-NeMo 12B, Phi-4 14B, GPT-OSS 20B (CPU + CUDA GPU); Qwen3 4B is the canonical RAG model</td></tr>
     <tr><td>Image</td><td>PyTorch + diffusers &mdash; SD-Turbo (~1B), SDXL-Turbo (~3.5B, GPU only); CPU + CUDA GPU</td></tr>
@@ -744,6 +744,8 @@ async def methodology_page(request: Request):
             .replace("{GPU_H265_ENC}",       _gpu_enc("h265"))
             .replace("{GPU_AV1_ENC}",        _gpu_enc("av1"))
             .replace("{METER_NAME}",         meter_display_name())
+            .replace("{METER_CADENCE}",      meter_cadence_label())
+            .replace("{METER_TOPOLOGY_ROW}", meter_topology_row())
             .replace("{PARTNER_NAME}",       _partner()["partner_name"])
             .replace("{PARTNER_ORG}",        _partner()["partner_org"])
             .replace("{RECOVERY_CHART_DATA}", json.dumps(recovery))

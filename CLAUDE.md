@@ -1,14 +1,15 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-11 (Session 46 — CR-065 Phase 1: dual daisy-chained P110 pre-test PASSED (2.5×
-#   fresh-sample gain); primary meter now the NEW plug (.91, inner, ≥1Hz refresh); KLAP sessions are
-#   exclusive per device. Phase 2 integration next. Service restart PENDING since S44.)
+# Last updated: 2026-06-11 (Session 46 — CR-065 BOTH phases: pre-test PASSED (2.5× fresh gain) AND
+#   integration shipped — power.py meter registry + cached KLAP handles + ONE shared sampler (5 modules
+#   delegate), per-meter ΔW combine (confidence method ci2), energy.meters block, {METER_CADENCE} token.
+#   Tests 662. Service restart PENDING (S44 + CR-065); variance recal after restart.)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 17 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (628 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - CHANGE_REQUESTS.md — 15 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - TESTING.md — pytest suite (662 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - docs/wattlab_traffic_light_confidence.md (Tania §9 spec) · docs/wattlab_parameters_audit.md (param taxonomy)
@@ -90,7 +91,7 @@ binds a name, not main.
 3. Baseline: 10 polls × 1s → W_base
 4. Lock: `/tmp/gos-measure.lock`
 5. Task: ffmpeg (nice -n -5) or Ollama API
-6. Poll P110 + sensors at 1s
+6. Poll P110(s) + sensors at 1s (dual-meter: 2nd plug staggered 0.5s, per-meter ΔW combine — CR-065)
 7. Compute: ΔW, ΔE = ΔW × (ΔT/3600) Wh, mWh/token (LLM)
 8. Write result JSON to results/{type}/{date}_{job_id}.json
 9. Focus exit: parallel timer restart (ThreadPoolExecutor + run_in_executor)
@@ -105,7 +106,7 @@ Single implementation `confidence.py`, shared by all four measurement modules (C
 full math in `docs/wattlab_traffic_light_confidence.md`). Contract:
 `confidence(delta_w, poll_count, w_base, baseline_samples_w=…, task_samples_w=…)` → `confidence_positive = Φ(ΔW/SE)`;
 🟢 ≥0.95 AND n_task≥10 · 🟡 ≥0.80 AND n_task≥5 · 🔴 otherwise (thresholds are settings). Raw samples are persisted
-in every result; legacy results without them fall back to the old variance-threshold flag (`method` = ci|variance).
+in every result; legacy results without them fall back to the old variance-threshold flag (`method` = ci|variance; ci2 = CR-065 dual-meter per-meter combine).
 
 ## Scope Statements
 Video: "Device layer only (GoS1 server). Network, CDN, and CPE excluded."
@@ -122,7 +123,7 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 16 CRs** in CHANGE_REQUESTS.md; closed archive (problem + closing commit) in
+tour/credibility → RAG). **Active: 15 CRs** in CHANGE_REQUESTS.md; closed archive (problem + closing commit) in
 CHANGE_REQUESTS_CLOSED.md.
 
 ### Recent sessions (true one-liners — full entries in JOURNAL.md)
@@ -140,7 +141,7 @@ CHANGE_REQUESTS_CLOSED.md.
 - S43 (06-11): /video batch-box selection affordance fix (boxes looked dead; clicks worked) + doc cleanup. →615.
 - S44 (06-11): CR-064 Jon's answers — conditional input normalization (pre-baseline, energy-clean) + per-job logs; hdr_4k = 96.8% VRAM (OOM theory). →628.
 - S45 (06-11 pm): Pixop named (member-contributed framing) · queue pause toggle · UGC energy-vs-quality learnings · degradation ladder frozen (test_content/degraded/). →648.
-- S46 (06-11 eve): CR-065 Phase 1 — bin/probe-dual-meter pre-test PASSED (2.5× fresh gain); primary meter → new plug (.91 inner, ≥1Hz); KLAP sessions exclusive per device. Phase 2 gated-open.
+- S46 (06-11 eve): CR-065 complete — pre-test PASSED (2.5× fresh gain, probe + findings doc) then integration: meter registry/cached handles, shared sampler, ci2 combine, energy.meters, cadence token. →662.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

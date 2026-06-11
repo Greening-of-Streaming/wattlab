@@ -1,18 +1,35 @@
 """
 power.py — pluggable power + telemetry interface for WattLab.
 
-Currently backed by a Tapo P110 smart plug polled via local Wi-Fi API
-(wall power) plus lm-sensors (CPU + GPU temperatures and GPU PPT).
+Currently backed by one or two Tapo P110 smart plugs polled via local Wi-Fi
+API (wall power) plus lm-sensors (CPU + GPU temperatures and GPU PPT).
+
+CR-065 dual-meter: with a second plug daisy-chained (wall → outer → inner →
+server) and `TAPO_P110_IP_2` set, the shared samplers below poll both meters
+on staggered 1s schedules — the P110's local value only refreshes every
+~1–1.5s, so two independently-clocked meters ≈ double the fresh-sample rate
+(measured 2.5×, see docs/dual_meter_pretest_findings.md). The INNER plug
+(`TAPO_P110_IP`) measures the server alone and is always the primary: every
+absolute W figure comes from it, and with `TAPO_P110_IP_2` unset behavior is
+exactly single-meter. The outer plug additionally sees the inner plug's
+self-draw (~0.7 W), which cancels in the per-meter ΔW combine (confidence
+"ci2") — raw samples from the two meters are never interleaved into one
+stream.
+
+⚠ KLAP sessions are exclusive per device: a fresh handshake invalidates other
+sessions on that plug. Device handles are therefore cached per meter and
+rebuilt on error — and nothing outside this process may poll a registered
+meter concurrently (bin/probe-dual-meter requires the service stopped).
 
 To swap in a different power source (PDU, IPMI, another smart plug brand):
-  replace get_power_watts() — keep the same signature and return type.
-  Everything else (polling loops, baseline measurement, energy maths)
-  lives in the individual measurement modules and needs no changes.
+  replace _read_meter_watts() — keep the same signature and return type
+  (the fuller PowerBackend protocol is CR-031 §2, deliberately deferred).
 """
 
 import asyncio
 import json
 import subprocess
+import time
 from dotenv import dotenv_values
 from tapo import ApiClient
 
@@ -20,19 +37,56 @@ import gpu
 
 _config = dotenv_values("/home/gos/wattlab/.env")
 
+# Cached device handles, one per meter IP (KLAP sessions are exclusive — see
+# module docstring). The per-IP lock prevents two coroutines (e.g. the runtime
+# telemetry poller and a measurement sampler) from double-handshaking or
+# interleaving requests on one handle.
+_DEVICE_CACHE: dict = {}
+_DEVICE_LOCKS: dict = {}
 
-async def get_power_watts() -> float:
-    """Return current system power draw in watts. Retries 3× on transient errors."""
-    for attempt in range(3):
+
+def _meter_ips() -> list:
+    """Registered meter IPs. Index 0 = primary = INNER plug (measures the
+    server alone). A second entry exists only when `TAPO_P110_IP_2` is set."""
+    ips = [(_config.get("TAPO_P110_IP") or "").strip()]
+    ip2 = (_config.get("TAPO_P110_IP_2") or "").strip()
+    if ip2:
+        ips.append(ip2)
+    return [ip for ip in ips if ip]
+
+
+def meter_count() -> int:
+    return len(_meter_ips())
+
+
+async def _read_meter_watts(idx: int = 0, retries: int = 3) -> float:
+    """Read one meter (full mW precision), via a cached device handle.
+    On any error the handle is dropped and rebuilt on the next attempt —
+    the standard recovery for a KLAP session invalidated elsewhere."""
+    ip = _meter_ips()[idx]
+    lock = _DEVICE_LOCKS.setdefault(ip, asyncio.Lock())
+    for attempt in range(retries):
         try:
-            client = ApiClient(_config["TAPO_EMAIL"], _config["TAPO_PASSWORD"])
-            device = await client.p110(_config["TAPO_P110_IP"])
-            result = await device.get_energy_usage()
+            async with lock:
+                device = _DEVICE_CACHE.get(ip)
+                if device is None:
+                    client = ApiClient(_config["TAPO_EMAIL"], _config["TAPO_PASSWORD"])
+                    device = await client.p110(ip)
+                    _DEVICE_CACHE[ip] = device
+                result = await device.get_energy_usage()
             return result.current_power / 1000
         except Exception:
-            if attempt == 2:
+            _DEVICE_CACHE.pop(ip, None)
+            if attempt == retries - 1:
                 raise
             await asyncio.sleep(1)
+
+
+async def get_power_watts() -> float:
+    """Return current system power draw in watts (primary/inner meter).
+    Retries 3× on transient errors. Semantics unchanged by CR-065 — cooldown,
+    thermal-floor waits and the runtime telemetry poller all stay on this."""
+    return await _read_meter_watts(0)
 
 
 # Back-compat alias — the amdgpu chip resolver now lives on the AMD GPU
@@ -69,11 +123,204 @@ def stamp() -> dict:
     """Provenance stamp for results — the power-measurement analogue of
     gpu.stamp(). Records which meter produced the energy figures and its
     polling resolution, so a future PDU/IPMI swap is never silently compared
-    against Tapo runs. Stamped by persist.save_result() next to gpu_hardware."""
-    return {
+    against Tapo runs. Stamped by persist.save_result() next to gpu_hardware.
+    Dual-meter runs (CR-065) additionally record the configuration facts —
+    measured fresh-sample rates live in docs/dual_meter_pretest_findings.md,
+    not here, so the stamp never asserts performance it didn't measure."""
+    out = {
         "name": meter_display_name(),
         "kind": METER_KIND,
         "resolution_s": METER_RESOLUTION_S,
+    }
+    if meter_count() >= 2:
+        out["meters"] = meter_count()
+        out["topology"] = "daisy_chain"
+        out["stagger_s"] = METER_RESOLUTION_S / 2
+    return out
+
+
+def meter_cadence_label() -> str:
+    """Serve-time wording for how often power is sampled — the cadence
+    analogue of meter_display_name(), consumed via the {METER_CADENCE} token.
+    Deliberately claims per-meter cadence, never \"0.5-second intervals\":
+    the P110's internal value refreshes slower than the stagger grid (see
+    docs/dual_meter_pretest_findings.md)."""
+    if meter_count() >= 2:
+        return "1-second intervals on each of two staggered meters"
+    return "1-second intervals"
+
+
+def meter_topology_row() -> str:
+    """Hardware-disclosure table row describing the dual-meter daisy-chain —
+    empty on a single-meter setup. Consumed via the {METER_TOPOLOGY_ROW}
+    token on /methodology. States the integrity caveat rather than hiding it:
+    the outer meter does not measure the server alone."""
+    if meter_count() < 2:
+        return ""
+    return ("<tr><td>Meter topology</td><td>Two daisy-chained meters "
+            "(wall &rarr; outer &rarr; inner &rarr; server), polls staggered "
+            "0.5&thinsp;s. Absolute watts come from the inner meter only; the "
+            "outer meter also sees the inner plug&rsquo;s self-draw (~0.7 W), "
+            "which cancels in the per-meter &Delta;W combine (confidence "
+            "method <code>ci2</code>).</td></tr>")
+
+
+# --- Shared measurement samplers (CR-065) ------------------------------------
+#
+# ONE implementation of the baseline / during-task polling loops, replacing the
+# four near-identical copies that lived in video / llm / image_gen / rag
+# (pixop borrows video's). The module-level wrappers there now delegate here,
+# keeping their exact legacy signatures and return shapes — existing tests
+# that monkeypatch e.g. `video.measure_baseline` are untouched.
+#
+# `read_watts` is passed in BY THE WRAPPER so it resolves the calling module's
+# own `get_power_watts` binding (monkeypatch seam) — it is always the primary
+# meter. The secondary meter, when registered, is polled on a parallel task
+# staggered by half the interval, via _read_meter_watts(1) directly. Secondary
+# failure NEVER fails a run: the stream is marked degraded, the run continues
+# primary-only, and the result records meters as degraded instead of silently
+# presenting itself as dual-meter.
+
+class TaskReadings(list):
+    """Legacy-shaped readings list (each module's historical record format)
+    with the dual-meter sidecar riding along as attributes, so every existing
+    call site that iterates/serialises the list keeps working unchanged."""
+    samples_w_2 = None      # secondary-meter watts (rounded), or None
+    degraded = False        # True when the secondary stream dropped mid-run
+
+
+async def _poll_secondary_baseline(polls: int, interval: float):
+    """`polls` staggered reads of the secondary meter. Returns (samples, degraded)."""
+    samples = []
+    try:
+        await asyncio.sleep(interval / 2)
+        for _ in range(polls):
+            samples.append(round(await _read_meter_watts(1, retries=2), 2))
+            await asyncio.sleep(interval)
+    except Exception:
+        return samples, True
+    return samples, False
+
+
+async def _poll_secondary_task(stop_event: asyncio.Event, interval: float):
+    """Staggered secondary-meter reads until stop_event. Returns (samples, degraded)."""
+    samples = []
+    try:
+        await asyncio.sleep(interval / 2)
+        while not stop_event.is_set():
+            samples.append(round(await _read_meter_watts(1, retries=2), 2))
+            await asyncio.sleep(interval)
+    except Exception:
+        return samples, True
+    return samples, False
+
+
+async def sample_baseline(polls: int, *, read_watts, read_sensors=None,
+                          interval: float = None) -> dict:
+    """Shared baseline sampler. Returns
+        {w_base, samples_w, sensor_readings?, baseline_samples_w_2?, meter2_degraded?}
+    where the *_2 keys appear only on a dual-meter run. `w_base` and
+    `samples_w` are always the primary meter — identical to the legacy loops."""
+    interval = METER_RESOLUTION_S if interval is None else interval
+    second = asyncio.create_task(_poll_secondary_baseline(polls, interval)) \
+        if meter_count() >= 2 else None
+    power_readings = []
+    sensor_readings = []
+    try:
+        for _ in range(polls):
+            power_readings.append(await read_watts())
+            if read_sensors is not None:
+                sensor_readings.append(read_sensors())
+            await asyncio.sleep(interval)
+    except BaseException:
+        if second is not None:
+            second.cancel()
+        raise
+    out = {
+        "w_base": round(sum(power_readings) / len(power_readings), 2),
+        "samples_w": [round(w, 2) for w in power_readings],
+    }
+    if read_sensors is not None:
+        out["sensor_readings"] = sensor_readings
+    if second is not None:
+        samples_2, degraded = await second
+        if degraded or len(samples_2) < 2:
+            out["meter2_degraded"] = True
+        else:
+            out["baseline_samples_w_2"] = samples_2
+    return out
+
+
+async def sample_task(stop_event: asyncio.Event, *, read_watts,
+                      read_sensors=None, tuples: bool = False,
+                      interval: float = None) -> TaskReadings:
+    """Shared during-task sampler. Returns the calling module's legacy record
+    shape — dicts {t, watts, **sensors} (video/pixop style) or (t, watts)
+    tuples (llm/rag/image style) — as a TaskReadings list carrying the
+    secondary meter's samples as a sidecar."""
+    interval = METER_RESOLUTION_S if interval is None else interval
+    second = asyncio.create_task(_poll_secondary_task(stop_event, interval)) \
+        if meter_count() >= 2 else None
+    readings = TaskReadings()
+    try:
+        while not stop_event.is_set():
+            watts = await read_watts()
+            if tuples:
+                readings.append((time.time(), watts))
+            else:
+                sensors = read_sensors() if read_sensors is not None else {}
+                readings.append({"t": time.time(), "watts": watts, **sensors})
+            await asyncio.sleep(interval)
+    except BaseException:
+        if second is not None:
+            second.cancel()
+        raise
+    if second is not None:
+        samples_2, degraded = await second
+        if degraded or len(samples_2) < 2:
+            readings.degraded = True
+        else:
+            readings.samples_w_2 = samples_2
+    return readings
+
+
+def meters_summary(baseline: dict, readings, task_samples_w: list):
+    """Build the optional `energy.meters` block for a dual-meter run.
+
+    Returns None on a single-meter run (energy block unchanged from
+    pre-CR-065), {"degraded": True} when the secondary stream dropped (the
+    result is honest single-meter data and must say so), or the full block:
+    per-meter w_base/w_task/ΔW, the outer meter's raw samples, and the
+    combined ΔW (simple mean — each meter's ΔW is computed against its OWN
+    baseline, so the inner-plug self-draw seen by the outer meter cancels).
+    `baseline_samples_w`/`task_samples_w` at the energy-block top level keep
+    their exact historical meaning: the primary/inner meter."""
+    baseline = baseline or {}
+    b2 = baseline.get("baseline_samples_w_2")
+    t2 = getattr(readings, "samples_w_2", None)
+    degraded = bool(baseline.get("meter2_degraded")) or \
+        bool(getattr(readings, "degraded", False))
+    if not (b2 or t2 or degraded):
+        return None
+    if degraded or not b2 or not t2:
+        return {"degraded": True}
+    b1 = baseline.get("baseline_samples_w") or baseline.get("samples_w") or []
+    if not b1 or not task_samples_w:
+        return {"degraded": True}
+    w_base_1 = sum(b1) / len(b1)
+    w_task_1 = sum(task_samples_w) / len(task_samples_w)
+    w_base_2 = sum(b2) / len(b2)
+    w_task_2 = sum(t2) / len(t2)
+    d1 = w_task_1 - w_base_1
+    d2 = w_task_2 - w_base_2
+    return {
+        "inner": {"w_base": round(w_base_1, 2), "w_task": round(w_task_1, 2),
+                  "delta_w": round(d1, 2)},
+        "outer": {"w_base": round(w_base_2, 2), "w_task": round(w_task_2, 2),
+                  "delta_w": round(d2, 2),
+                  "baseline_samples_w": b2, "task_samples_w": t2},
+        "combine_method": "mean",
+        "delta_w_combined": round((d1 + d2) / 2, 2),
     }
 
 

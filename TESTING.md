@@ -1,6 +1,6 @@
 # WattLab — Testing Strategy
 
-*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (628 tests). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
+*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (662 tests). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
 
 ## Philosophy
 
@@ -23,7 +23,7 @@ These are covered by Tier 3 manual checks before high-stakes use.
 
 ```bash
 cd wattlab_service && pytest tests/
-# 628 passed in ~7s
+# 662 passed in ~9s
 ```
 
 **Where it lives:** `wattlab_service/tests/` — 36 test files (~6,700 lines) plus `conftest.py`.

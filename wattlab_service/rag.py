@@ -24,6 +24,7 @@ from pathlib import Path
 
 import settings as cfg
 from confidence import confidence
+import power
 from power import get_power_watts, read_sensors_dict
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
@@ -395,21 +396,15 @@ def corpus_list() -> list[dict]:
     return docs
 
 
+# Shared sampler delegation (CR-065) — legacy signatures/shapes preserved;
+# see power.sample_baseline / power.sample_task.
 async def measure_baseline(polls: int = 10) -> dict:
-    readings = []
-    for _ in range(polls):
-        readings.append(await get_power_watts())
-        await asyncio.sleep(1)
-    return {"w_base": round(sum(readings) / len(readings), 2),
-            "samples_w": [round(w, 2) for w in readings]}
+    return await power.sample_baseline(polls, read_watts=get_power_watts)
 
 
 async def poll_during_task(stop_event: asyncio.Event) -> list:
-    readings = []
-    while not stop_event.is_set():
-        readings.append((time.time(), await get_power_watts()))
-        await asyncio.sleep(1)
-    return readings
+    return await power.sample_task(stop_event, read_watts=get_power_watts,
+                                   tuples=True)
 
 
 def read_sensors() -> dict:
@@ -589,12 +584,15 @@ async def run_rag_measurement(model_key: str, rag_mode: str, question: str,
     task_samples_w = [round(r[1], 2) for r in readings]
     w_task   = sum(r[1] for r in readings) / len(readings) if readings else w_base
     delta_w  = round(w_task - w_base, 2)
+    meters = power.meters_summary(_b, readings, task_samples_w)
+    if meters and "delta_w_combined" in meters:
+        delta_w = meters["delta_w_combined"]
     delta_e_wh = round(delta_w * (duration_s / 3600), 4)
     mwh_per_token = round((delta_e_wh * 1000) / max(output_tokens, 1), 4) \
         if output_tokens else None
     conf = confidence(delta_w, len(readings), w_base,
                       baseline_samples_w=baseline_samples_w,
-                      task_samples_w=task_samples_w)
+                      task_samples_w=task_samples_w, meters=meters)
 
     if jobs and job_id:
         jobs[job_id]["stage"] = "done"
@@ -632,6 +630,7 @@ async def run_rag_measurement(model_key: str, rag_mode: str, question: str,
             "baseline_samples_w": baseline_samples_w,
             "task_samples_w": task_samples_w,
             "confidence":   conf,
+            **({"meters": meters} if meters else {}),
         },
         "thermals": {
             "cpu_base": sensors_base.get("cpu_tctl"),
