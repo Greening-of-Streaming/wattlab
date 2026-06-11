@@ -158,3 +158,23 @@ def test_preview_cmd_codecs_single():
     assert set(cpu["cmds"].keys()) == {"cpu", "h265_cpu", "av1_cpu"}
     gpu = asyncio.run(main.video_preview_cmd("codecs_gpu"))
     assert set(gpu["cmds"].keys()) == {"gpu", "h265_gpu", "av1_gpu"}
+
+
+# ── batch-box selection affordance (S43 regression fix) ─────────────────────
+# The three sweep boxes must look and behave selectable like the .preset
+# cards: pointer cursor + hover + a visible .selected state. Regression
+# report 2026-06-11: clicks fired but no visual feedback => "non selectable".
+
+def test_batch_boxes_are_selectable_affordance():
+    from fastapi.testclient import TestClient
+    html = TestClient(main.app).get("/video").text
+    for key in ("codecs_cpu", "codecs_gpu", "all_codecs"):
+        i = html.index(f'id="preset-{key}"')
+        # class attr of that element (search backwards from the id)
+        start = html.rindex("<div", 0, i)
+        assert 'class="batch-box' in html[start:i], key
+    assert ".batch-box.selected" in html
+    assert ".batch-box:hover" in html
+    assert ".batch-box {" in html and "cursor: pointer" in html.split(".batch-box {")[1][:120]
+    # selection JS clears both kinds of card
+    assert "querySelectorAll('.preset, .batch-box')" in html

@@ -159,6 +159,10 @@ async def video_page(request: Request):
                    flex: 1; transition: border-color 0.15s; }}
         .preset:hover {{ border-color: #00ff9966; }}
         .preset.selected {{ border-color: var(--accent); background: #00ff9911; }}
+        .batch-box {{ border: 1px solid #00ff9933; cursor: pointer; transition: border-color 0.15s; }}
+        .batch-box:hover {{ border-color: #00ff9966; }}
+        .batch-box.selected {{ border-color: var(--accent); background: #00ff9911; }}
+        .batch-box.lock-block {{ cursor: not-allowed; }}
         .preset h3 {{ color: var(--accent); font-size: 0.9rem; margin-bottom: 0.4rem; }}
         .preset p {{ color: var(--text-4); font-size: 0.78rem; line-height: 1.5; }}
         .preset .badge {{ display: inline-block; background: #00ff9922;
@@ -302,7 +306,7 @@ async def video_page(request: Request):
     </div>
 
     {lk_batch_badge}
-    <div class="{lk_batch_class}" style="border:1px solid #00ff9933;padding:0.9rem 1rem;margin-bottom:0.6rem;
+    <div class="batch-box {lk_batch_class}" style="padding:0.9rem 1rem;margin-bottom:0.6rem;
                 display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem"
          id="preset-codecs_cpu" onclick="if(CAN_BATCH_COMPARE) selectPreset('codecs_cpu')">
         <div>
@@ -311,7 +315,7 @@ async def video_page(request: Request):
         </div>
         <div style="color:var(--text-4);font-size:0.75rem">~3× longer · locks queue</div>
     </div>
-    <div class="{lk_batch_class}" style="border:1px solid #00ff9933;padding:0.9rem 1rem;margin-bottom:0.6rem;
+    <div class="batch-box {lk_batch_class}" style="padding:0.9rem 1rem;margin-bottom:0.6rem;
                 display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem"
          id="preset-codecs_gpu" onclick="if(CAN_BATCH_COMPARE) selectPreset('codecs_gpu')">
         <div>
@@ -320,7 +324,7 @@ async def video_page(request: Request):
         </div>
         <div style="color:var(--text-4);font-size:0.75rem">~3× longer · locks queue</div>
     </div>
-    <div class="{lk_batch_class}" style="border:1px solid #00ff9933;padding:0.9rem 1rem;margin-bottom:1.5rem;
+    <div class="batch-box {lk_batch_class}" style="padding:0.9rem 1rem;margin-bottom:1.5rem;
                 display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem"
          id="preset-all_codecs" onclick="if(CAN_BATCH_COMPARE) selectPreset('all_codecs')">
         <div>
@@ -525,18 +529,11 @@ async def video_page(request: Request):
 
     function selectPreset(key) {{
         selectedPreset = key;
-        document.querySelectorAll('.preset').forEach(el => el.classList.remove('selected'));
-        // reset the batch-sweep box highlights (all-codecs + the two single-device sweeps)
-        const BATCH_BOXES = ['all_codecs', 'codecs_cpu', 'codecs_gpu'];
-        BATCH_BOXES.forEach(k => {{
-            const b = document.getElementById('preset-' + k);
-            if (b) b.style.borderColor = '#00ff9933';
-        }});
+        // single .preset cards and the three .batch-box sweeps share one
+        // selection mechanism: the 'selected' class (border + tint via CSS)
+        document.querySelectorAll('.preset, .batch-box').forEach(el => el.classList.remove('selected'));
         const el = document.getElementById('preset-' + key);
-        if (el) {{
-            el.classList.add('selected');
-            if (BATCH_BOXES.includes(key)) el.style.borderColor = '#00ff99';
-        }}
+        if (el) el.classList.add('selected');
         fetchCmdPreview(key);
     }}
 
