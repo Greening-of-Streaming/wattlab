@@ -1311,10 +1311,11 @@ def test_probe_normalization_legacy_pix_fmt(monkeypatch):
     assert any("yuvj422p" in r for r in p["reasons"])
 
 
-@pytest.mark.parametrize("pix_fmt", ["yuv420p", "yuv420p10le", "yuv422p"])
+@pytest.mark.parametrize("pix_fmt", ["yuv420p", "yuv422p", "yuv444p",
+                                     "yuv420p10le", "yuv422p10le", "yuv444p10le"])
 def test_probe_normalization_clean_input_untouched(monkeypatch, pix_fmt):
-    # yuv422p = Meridian PQ, verified on a real 2026-06-03 encode — the badge
-    # sweep caught it being needlessly flagged (2026-06-11).
+    # Jon's blessed classic-format list (2026-06-11): fully supported, no
+    # conversion — normalizing them would only add energy/wall overhead.
     monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
         {"codec_type": "video", "pix_fmt": pix_fmt,
          "r_frame_rate": "30000/1001", "avg_frame_rate": "30000/1001"},

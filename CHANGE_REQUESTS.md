@@ -826,9 +826,13 @@ Smallest-footprint flow change in the findings chain that touches the *most-visi
   (VFR→CFR), FFV1/NUT. Implemented as a conditional, probe-driven normalize stage that runs
   BEFORE the baseline window (his "slight energy skew" trade-off declined — OWL keeps the
   figure clean; his stdin-pipe variant would have put a decode inside the window). `forcecfr`
-  stays; no `--avsync vfr` switch and no pix_fmt matrix needed. Verified on the real VFR night
+  stays; no `--avsync vfr` switch. Verified on the real VFR night
   clip (was rc 1 @ frame 427 → rc 0, 914 frames) + a synthesized `yuvj422p` clip. Live 1× mode
-  refuses inputs needing normalization (honest: a hidden pre-conversion isn't the live scenario).
+  refuses inputs needing normalization (honest: a hidden pre-conversion isn't the live scenario);
+  the compare flow normalizes and paces via a NUT pipe (its 1× pacing is a measurement-window
+  tactic, not a live claim). **Pix_fmt matrix (Jon's 2026-06-11 addendum):** the classic formats
+  `yuv420p/yuv422p/yuv444p` + their `10le` variants are fully supported — `_VERIFIED_PIX_FMTS`
+  is exactly that list; only non-standard formats (legacy `yuvj*`, exotic packings) convert.
 - **`hdr_4k` abort — root cause likely VRAM, exclusion stays for now.** Jon's theory:
   out-of-GPU-memory (16 GB is "very close to the limit" at 4K), aggravated by the desktop
   running on the 5080; exception handling (abort instead of graceful error) acknowledged as

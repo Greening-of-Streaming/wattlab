@@ -316,12 +316,13 @@ def input_previews(c: Optional[dict] = None) -> dict:
 # point). Conditional, not always-on: inputs already CFR + in a verified pixel
 # format run untouched, preserving continuity with every result to date.
 
-# Pixel formats verified to decode in pixop-live on real runs (BBB = yuv420p,
-# Meridian PQ = yuv422p — both encoded clean 2026-06-03; yuv420p10le = the
-# HEVC Main10 outputs our own runs produce). Anything else gets normalized —
-# Jon declined to publish a supported-format matrix and prescribed
-# normalization instead. Grow this set only on a VERIFIED real encode.
-_VERIFIED_PIX_FMTS = {"yuv420p", "yuv420p10le", "yuv422p"}
+# Pixel formats that run pixop-live UNCONVERTED. Jon's blessed list
+# (2026-06-11 email addendum): the classic formats are fully supported and
+# normalizing them would only add energy/wall overhead — convert only the
+# non-standard ones (yuvj* full-range legacy variants, exotic packings).
+# yuv420p (BBB) and yuv422p (Meridian PQ) are also verified on real encodes.
+_VERIFIED_PIX_FMTS = {"yuv420p", "yuv422p", "yuv444p",
+                      "yuv420p10le", "yuv422p10le", "yuv444p10le"}
 
 # Audio codecs the downstream mp4 mux (`--audio-copy`) accepts; anything else
 # (PCM in old camera files, …) is transcoded to AAC in the intermediate.
