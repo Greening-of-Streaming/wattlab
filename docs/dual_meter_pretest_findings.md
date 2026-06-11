@@ -53,9 +53,19 @@ independently clocked meter in series roughly doubles fresh samples.
 The existing plug's 1,2,1,2 plateau pattern against a drift-free 1s poll
 grid pins its internal refresh at exactly 1.5s (⅓ of polls stale — matching
 the 22.5% seen in stored results, where request latency stretched the
-effective poll period). The new unit (newer firmware/hw revision) never
-repeated a value: its refresh is at least 1 Hz and possibly faster — polling
-it quicker than 1s may yield more still (untested; Phase 2 keeps 1s).
+effective poll period). The new unit never repeated a value: its refresh is
+at least 1 Hz and possibly faster — polling it quicker than 1s may yield
+more still (untested; Phase 2 keeps 1s).
+
+**Root cause (checked 2026-06-11, post-integration): firmware, not wear and
+not hardware revision.** Both units are P110 hw 1.0. The SLOW unit runs the
+NEWER firmware — 1.4.0 (Build 251020, Oct 2025) vs the fast unit's 1.3.1
+(Build 240621, Jun 2024). Best hypothesis: fw 1.4.0 slowed the local-API
+energy refresh from ≥1 Hz to 1.5 s. Falsifiable: if the inner plug ever
+updates to 1.4.0, its duplicate rate should jump from 0% to ~33%.
+⚠ Operational rule: do NOT firmware-update the inner/primary plug casually;
+after ANY plug firmware update, re-run `bin/probe-dual-meter` and re-check
+duplicate rates before trusting fresh-sample arithmetic.
 
 Consequence: even **single-meter** operation improves by 1.5× just by making
 the new plug primary — done 2026-06-11 (`.env` swap, `TAPO_P110_IP=.91`).
