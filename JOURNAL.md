@@ -7,6 +7,51 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 45 — 2026-06-11 (afternoon)
+
+Continuation of the S44 day. Four threads: Pixop naming, queue toggle, the first
+energy-vs-quality learnings from real UGC runs, and the degradation-ladder fixture
+library for the upscale sweet-spot experiment. **648 tests.** Service restart pending
+(naming + queue toggle).
+
+**Pixop named on /enhance-run (088c249).** Pixop agreed to be named; framed as
+member-contributed technology under independent measurement (never promotion). Four
+placements (lead-band sentence, symmetric result-card labels, "Contributed technology"
+footer block with independence statement + members-can-contribute recruitment line,
+one /methodology paragraph), all from a single serve-time source
+(`enhance_partner_name/org/url` settings). Old vendor-neutral guard test replaced.
+
+**Queue enable/disable toggle (36aa8ae).** The worker's PAUSE_FLAG (`/tmp/owl-paused`)
+predated the UI; /queue-status now has a Lab toggle (`POST /queue/pause`,
+`queue_control.set_paused`) sharing the same flag file with external tools.
+
+**First UGC energy-vs-quality learnings (from today's 🟢 runs).** (1) Enhance energy
+tracks OUTPUT pixel rate almost linearly (~5.1–5.3 Wh per content-minute at 4K, ~1.4 at
+HD, on 15–21 fps sources) regardless of input. (2) Quality gain (NR-VQA) tracks INPUT
+badness: 2005 clip +1.83 at 4K vs night clip +0.64 — worst content = best Wh-per-quality.
+(3) The compare run's sharpest result: ffmpeg Lanczos to 4K cost 8× less energy and
+LOWERED the NR score below source (5.20 vs 5.37) — cheap upscale pays energy to magnify
+defects. All within-run NR caveats apply.
+
+**Degradation-ladder fixture library — built, calibrated, FROZEN**
+(`/srv/data/owl/test_content/degraded/` + manifest.json, scripts in-dir). For the
+SD→4K sweet-spot experiment (energy vs NR-quality gain across source quality).
+6 files per source (ref_4k CRF14 / 4k_dirty / hd_clean / hd_dirty / sd_clean /
+sd_dirty), 45 s windows (BBB 360 s action; Meridian 100 s office — 480 s/420 s windows
+rejected as too dark on eyeball review), dirty rungs = light temporal noise into a
+2-pass x264 starved encode (single-pass ABR undershot 2–10× from its high initial-QP
+estimate — diagnosed, hence 2-pass). Final NR ladder: BBB 9.58/8.63/9.30/8.10/7.83/5.45,
+Meridian 9.86/9.16/9.49/7.95/7.63/6.04 — sd_dirty lands within 0.1 VQA of the real 2005
+UGC clip (5.37), sd_clean at the night clip's level (7.89); real clips ride along as
+ecological anchors. Source check: held `bbb_4k.mp4` IS the best practical public copy
+(Sunflower distribution), held `meridian_4k.mp4` is md5-identical to the official
+Netflix Open Content mp4; true Meridian masters are 769 GB IMF / ~2 TB TIFFs — declined,
+flagged (a 45 s TIFF window ≈ 135 GB is the affordable true-master fallback). Next:
+owner eyeballs the two ref windows, then the measured sweep → /findings entry (+ TBD
+subpage off /enhance-run).
+
+---
+
 ## Session 44 — 2026-06-11
 
 Jon's (Pixop) reply to the CR-064 questions landed and resolved most of the open list; this
