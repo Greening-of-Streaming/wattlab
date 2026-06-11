@@ -160,6 +160,37 @@ Shipped as part of **CR-022 / CR-023** investigation in S21. Captured in `CHANGE
 
 ---
 
+## probe-dual-meter — CR-065 dual-P110 pre-test
+
+Measures whether two daisy-chained Tapo P110s (wall → outer → inner → GoS1), polled on staggered 1s schedules, actually deliver ~2× the fresh-sample rate of one meter. Background: the P110's local-API `current_power` only refreshes every ~1.3–1.6s, so single-meter 1s polling loses ~⅕ of polls to byte-identical stale reads. Gates the CR-065 service integration.
+
+### Usage
+
+```bash
+~/wattlab/bin/probe-dual-meter                                # 180s idle / 240s load / 180s idle
+~/wattlab/bin/probe-dual-meter --idle-s 10 --load-s 0 --idle2-s 0   # reachability smoke test
+~/wattlab/bin/probe-dual-meter --ips 192.168.1.159,192.168.1.91     # override .env (inner,outer)
+```
+
+**Output:** raw per-poll CSV + summary JSON under `results/diagnostics/dual_meter_<timestamp>_{raw.csv,summary.json}`, the same analysis printed to stdout, and a rollup line in `results/diagnostics/history.jsonl`. The summary reports the four CR-065 gate metrics: fresh-sample gain, outer−inner offset (inner-plug self-draw) and its drift, per-meter ΔW agreement + load correlation, and per-meter latency/rebuild/overrun counts.
+
+| Flag | Purpose |
+|---|---|
+| `--ips` | Comma-separated `inner,outer`. Default: `.env` `TAPO_P110_IP`,`TAPO_P110_IP_2`. |
+| `--interval` | Per-meter poll period (default 1.0s; meter 2 staggered by half). |
+| `--idle-s / --load-s / --idle2-s` | Segment durations. Load = looped `libx264 -preset medium` encode of `meridian_4k.mp4` to the null muxer via plain subprocess (no service code, no focus-mode dance — cross-meter comparison is relative). |
+| `--ffmpeg` | Load-generator binary (default `ffmpeg` on PATH). |
+| `--out` | Override raw CSV path; summary path derives from it. |
+
+### Things to know
+
+- **Stop the wattlab service first** (`sudo systemctl stop wattlab`) for clean numbers. P110 KLAP sessions are exclusive per device: every fresh handshake invalidates other sessions on that plug, and the service's 5s telemetry poller handshakes the inner meter continuously — the probe survives (rebuild-on-error, counted in `rebuilds`) but the inner meter's latency/fresh-rate metrics get thrashed.
+- **Records raw mW, unrounded.** Duplicate detection needs byte-identical integers; the service path's 2-decimal rounding would create false duplicates.
+- **Holds `/tmp/owl-paused` + `/tmp/gos-measure.lock`** (probe-thermal-recovery pattern), released on exit including Ctrl-C; aborts at startup if the lock already exists.
+- **Deliberately bypasses `power.get_power_watts()`** — needs per-meter cached handles and unmasked errors. Do not "fix" it to use the service helper.
+
+---
+
 ## owl-maintenance-watchdog — auto-lower the staging flag
 
 CR-015. One-shot script, designed to be invoked by `systemd/owl-maintenance-watchdog.timer` (every minute). Closes the "I forgot to run `stage-off`" failure mode of CR-011 staging.

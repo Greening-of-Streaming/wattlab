@@ -7,7 +7,37 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
-## Session 45 — 2026-06-11 (afternoon)
+## Session 46 — 2026-06-11 (evening)
+
+CR-065 logged and Phase 1 executed in one session: the owner's dual-meter idea
+(daisy-chain a second P110, stagger the polls) pre-tested and **gate PASSED — 2.5×
+fresh-sample gain**. Spanned the GoS1 rewire reboot (session handoff via plan file +
+WIP memory). No service code touched; restart still pending from S44/S45.
+
+**Why it works (disk evidence first).** Before any hardware: 30 recent results showed
+22.5% of consecutive 1s samples byte-identical at 10 mW resolution → the P110's
+local-API value refreshes only every ~1.3–1.6s; 1s polling already loses ~⅕ of polls
+to staleness. So a second independently-clocked meter ≈ doubles fresh information
+(it is NOT a 0.5s grid — copy must say "fresh samples/s").
+
+**`bin/probe-dual-meter` (new).** Staggered per-meter asyncio polling, raw mW, cached
+KLAP handles with rebuild-on-error, idle/load/idle2 protocol, plain-subprocess ffmpeg
+load, gate-metric analysis to `results/diagnostics/dual_meter_*` + history.jsonl.
+Deliberately bypasses `power.get_power_watts()`.
+
+**Pre-test results (`docs/dual_meter_pretest_findings.md`).** Gain 2.50× (gate ≥1.5×);
+ΔW agreement 78.79 vs 79.63 W (~1%); latency p95 40 ms, 0 overruns. Discoveries:
+(1) the plugs are unequal samplers — existing unit refreshes exactly 1.5s (perfect
+1,2,1,2 plateau pattern), the NEW unit had **zero dups in 601 polls** (≥1 Hz refresh);
+(2) **KLAP sessions are exclusive per device** — the service's 5s poller killed the
+probe's cached session on the shared plug within seconds (service stopped for the run);
+(3) topology came up reversed vs plan (owner-confirmed: wall → existing → new → GoS1).
+
+**Decisions.** Primary meter swapped to the new plug in `.env` (`TAPO_P110_IP=.91` =
+inner, measures GoS1 alone, 1.5× better sampler even single-meter; ~1% cross-unit
+epoch note in findings). `TAPO_P110_IP_2=.159` = outer. Phase 2 integration (meter
+registry + cached handles, shared sampler, per-meter ΔW `ci2` combine, cadence token,
+recal) is specced in CR-065 and the approved plan; next session.
 
 Continuation of the S44 day. Four threads: Pixop naming, queue toggle, the first
 energy-vs-quality learnings from real UGC runs, and the degradation-ladder fixture

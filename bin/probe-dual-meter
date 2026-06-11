@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+"""
+probe-dual-meter — CR-065 pre-test: do two daisy-chained Tapo P110s actually
+double the fresh-sample rate?
+
+Background: analysis of stored results shows the P110's local-API
+current_power refreshes only every ~1.3-1.6s — 22.5% of consecutive 1s polls
+return byte-identical raw values (stale reads). A second, independently
+clocked meter in the chain (wall → outer → inner → GoS1) should roughly
+double fresh samples. This probe measures whether it really does, BEFORE any
+service integration.
+
+Polls each configured meter on its own asyncio task at --interval (default
+1.0s), meter i staggered by i/n of the interval, recording RAW mW values
+(duplicate detection needs byte-identical ints — no rounding). Protocol:
+idle segment → ffmpeg CPU-encode load segment → second idle segment.
+
+Reports, per the CR-065 gate criteria:
+  (a) fresh-sample gain   — per-meter consecutive-duplicate rate + plateau
+                            histogram; combined fresh-values/s vs inner alone
+  (b) inner-plug self-draw — mean/std of (outer − inner) per segment, drift
+                            idle1→idle2, shift idle→load
+  (c) cross-meter agreement — per-meter ΔW(load−idle) and correlation of the
+                            1s-binned series under load
+  (d) latency/jitter      — p50/p95/max per meter, schedule overruns,
+                            session rebuilds, achieved stagger phase
+
+Deliberately does NOT route through power.get_power_watts(): we need raw mW,
+per-meter cached handles, and unmasked errors. KLAP sessions are exclusive
+per device — every fresh handshake (e.g. the live service's 5s telemetry
+poller) kills other sessions on that plug, so the poller rebuilds its handle
+on error and counts rebuilds. For clean inner-meter latency numbers, stop the
+wattlab service during the run (owner action); the probe works either way.
+
+Visitor protection (probe-thermal-recovery pattern):
+  - Touches /tmp/owl-paused       → queue worker stops dispatching jobs
+  - Touches /tmp/gos-measure.lock → marker for anything polling it
+Both removed on exit (incl. Ctrl-C).
+
+Usage:
+  bin/probe-dual-meter                          # 180s idle, 240s load, 180s idle
+  bin/probe-dual-meter --idle-s 10 --load-s 0 --idle2-s 0   # reachability smoke
+  bin/probe-dual-meter --ips 192.168.1.159,192.168.1.91     # override .env
+"""
+import argparse
+import asyncio
+import csv
+import json
+import statistics
+import sys
+import time
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE / "wattlab_service"))
+
+from dotenv import dotenv_values   # noqa: E402
+from tapo import ApiClient         # noqa: E402
+
+PAUSE_FLAG = Path("/tmp/owl-paused")
+LOCK_FILE = Path("/tmp/gos-measure.lock")
+LOAD_INPUT = HERE / "test_content" / "meridian_4k.mp4"
+ROLES = ["inner", "outer"]  # index 0 = TAPO_P110_IP = closest to the server
+
+
+# ---------------------------------------------------------------- polling
+
+class MeterPoller:
+    """One asyncio task per meter: drift-free schedule, cached device handle,
+    rebuild-on-error (KLAP sessions are exclusive — see module docstring)."""
+
+    def __init__(self, idx: int, ip: str, email: str, password: str,
+                 interval: float, stagger: float, state: dict):
+        self.idx, self.ip, self.role = idx, ip, ROLES[idx]
+        self.email, self.password = email, password
+        self.interval, self.stagger = interval, stagger
+        self.state = state            # shared: {"segment": str, "t0": float}
+        self.rows: list[dict] = []
+        self.rebuilds = 0
+        self.overruns = 0
+        self._dev = None
+
+    async def _read_mw(self) -> int:
+        if self._dev is None:
+            client = ApiClient(self.email, self.password)
+            self._dev = await client.p110(self.ip)
+            self.rebuilds += 1
+        result = await self._dev.get_energy_usage()
+        return result.current_power
+
+    async def run(self, stop: asyncio.Event):
+        await asyncio.sleep(self.stagger)
+        next_t = time.monotonic()
+        while not stop.is_set():
+            t_send = time.monotonic()
+            mw, err = None, ""
+            try:
+                mw = await asyncio.wait_for(self._read_mw(), timeout=5)
+            except Exception as ex:
+                self._dev = None       # force handle rebuild next poll
+                err = type(ex).__name__
+            t_recv = time.monotonic()
+            self.rows.append({
+                "ts": datetime.now().isoformat(timespec="milliseconds"),
+                "t_rel_s": round(t_recv - self.state["t0"], 3),
+                "meter": self.role,
+                "segment": self.state["segment"],
+                "power_mw": mw if mw is not None else "",
+                "latency_ms": round((t_recv - t_send) * 1000, 1),
+                "error": err,
+            })
+            next_t += self.interval
+            delay = next_t - time.monotonic()
+            if delay < 0:
+                self.overruns += 1
+                next_t = time.monotonic()   # reset schedule, don't burst
+            else:
+                await asyncio.sleep(delay)
+
+
+# ------------------------------------------------------------------- load
+
+async def run_load(seconds: float, ffmpeg: str):
+    """CPU load: loop libx264 encodes of the 4K asset to the null muxer.
+    Plain subprocess on purpose — the probe must not depend on service code,
+    and a relative cross-meter comparison needs no focus-mode dance."""
+    t_end = time.monotonic() + seconds
+    while time.monotonic() < t_end:
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+            "-i", str(LOAD_INPUT),
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-f", "null", "-",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=t_end - time.monotonic())
+        except asyncio.TimeoutError:
+            proc.terminate()
+            await proc.wait()
+
+
+# --------------------------------------------------------------- analysis
+
+def _ok(rows, segment=None):
+    return [r for r in rows
+            if r["power_mw"] != "" and (segment is None or r["segment"] == segment)]
+
+
+def _pct(xs, p):
+    if not xs:
+        return None
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(round(p / 100 * (len(xs) - 1))))]
+
+
+def duplicate_stats(rows):
+    """Consecutive-duplicate rate + plateau histogram on raw mW values."""
+    vals = [r["power_mw"] for r in rows]
+    if len(vals) < 2:
+        return {"n": len(vals), "dup_rate": None, "plateaus": {}}
+    dups = sum(1 for a, b in zip(vals, vals[1:]) if a == b)
+    plateaus = Counter()
+    run = 1
+    for a, b in zip(vals, vals[1:]):
+        if a == b:
+            run += 1
+        else:
+            plateaus[run] += 1
+            run = 1
+    plateaus[run] += 1
+    return {"n": len(vals),
+            "dup_rate": round(dups / (len(vals) - 1), 4),
+            "plateaus": dict(sorted(plateaus.items()))}
+
+
+def fresh_rate(rows):
+    """Fresh values per second: polls whose raw mW differs from the same
+    meter's previous successful poll."""
+    if len(rows) < 2:
+        return None
+    fresh = sum(1 for a, b in zip(rows, rows[1:])
+                if a["power_mw"] != b["power_mw"])
+    span = rows[-1]["t_rel_s"] - rows[0]["t_rel_s"]
+    return round(fresh / span, 3) if span > 0 else None
+
+
+def binned(rows, interval):
+    """{bin_index: mean W} on the t_rel grid (mean handles >1 poll per bin)."""
+    out: dict[int, list[float]] = {}
+    for r in rows:
+        out.setdefault(int(r["t_rel_s"] // interval), []).append(
+            r["power_mw"] / 1000)
+    return {k: statistics.mean(v) for k, v in out.items()}
+
+
+def offset_stats(rows_a, rows_b, interval):
+    """outer − inner (W) on the common 1s grid."""
+    ba, bb = binned(rows_a, interval), binned(rows_b, interval)
+    diffs = [bb[k] - ba[k] for k in ba.keys() & bb.keys()]
+    if not diffs:
+        return {"n": 0}
+    return {"n": len(diffs),
+            "mean_w": round(statistics.mean(diffs), 3),
+            "std_w": round(statistics.stdev(diffs), 3) if len(diffs) > 1 else 0.0}
+
+
+def analyse(pollers, interval, segments_run):
+    inner, outer = pollers[0], pollers[1]
+    rep = {"meters": {}, "segments": {}}
+
+    for p in pollers:
+        ok = _ok(p.rows)
+        lat = [r["latency_ms"] for r in p.rows]
+        rep["meters"][p.role] = {
+            "ip": p.ip,
+            "polls": len(p.rows),
+            "errors": len(p.rows) - len(ok),
+            "rebuilds": p.rebuilds,
+            "overruns": p.overruns,
+            "latency_ms": {"p50": _pct(lat, 50), "p95": _pct(lat, 95),
+                           "max": max(lat) if lat else None},
+            "dup": duplicate_stats(ok),
+        }
+
+    for seg in segments_run:
+        ri, ro = _ok(inner.rows, seg), _ok(outer.rows, seg)
+        s = {"offset_outer_minus_inner": offset_stats(ri, ro, interval)}
+        for role, rows in (("inner", ri), ("outer", ro)):
+            if rows:
+                w = [r["power_mw"] / 1000 for r in rows]
+                s[role] = {"n": len(w),
+                           "mean_w": round(statistics.mean(w), 3),
+                           "std_w": round(statistics.stdev(w), 3) if len(w) > 1 else 0.0,
+                           "fresh_per_s": fresh_rate(rows),
+                           "dup": duplicate_stats(rows)}
+        rep["segments"][seg] = s
+
+    # (a) headline: combined fresh rate vs inner alone, idle1 segment
+    seg = "idle1" if "idle1" in rep["segments"] else segments_run[0]
+    fi = rep["segments"][seg].get("inner", {}).get("fresh_per_s")
+    fo = rep["segments"][seg].get("outer", {}).get("fresh_per_s")
+    if fi and fo:
+        rep["fresh_gain"] = {"segment": seg, "inner_per_s": fi, "outer_per_s": fo,
+                             "combined_per_s": round(fi + fo, 3),
+                             "gain_vs_single": round((fi + fo) / fi, 2)}
+
+    # (c) per-meter ΔW + load correlation
+    if "load" in rep["segments"] and "idle1" in rep["segments"]:
+        segs = rep["segments"]
+        d = {}
+        for role in ROLES:
+            if role in segs["load"] and role in segs["idle1"]:
+                d[f"delta_w_{role}"] = round(
+                    segs["load"][role]["mean_w"] - segs["idle1"][role]["mean_w"], 3)
+        bi = binned(_ok(inner.rows, "load"), interval)
+        bo = binned(_ok(outer.rows, "load"), interval)
+        common = sorted(bi.keys() & bo.keys())
+        if len(common) > 2:
+            d["load_corr"] = round(statistics.correlation(
+                [bi[k] for k in common], [bo[k] for k in common]), 3)
+        rep["agreement"] = d
+
+    # (b) offset drift/shift
+    segs = rep["segments"]
+    drift = {}
+    if "idle1" in segs and "idle2" in segs:
+        o1 = segs["idle1"]["offset_outer_minus_inner"]
+        o2 = segs["idle2"]["offset_outer_minus_inner"]
+        if o1.get("n") and o2.get("n"):
+            drift["idle1_to_idle2_w"] = round(o2["mean_w"] - o1["mean_w"], 3)
+    if "idle1" in segs and "load" in segs:
+        o1 = segs["idle1"]["offset_outer_minus_inner"]
+        ol = segs["load"]["offset_outer_minus_inner"]
+        if o1.get("n") and ol.get("n"):
+            drift["idle_to_load_w"] = round(ol["mean_w"] - o1["mean_w"], 3)
+    if drift:
+        rep["offset_drift"] = drift
+    return rep
+
+
+# ------------------------------------------------------------------- main
+
+async def run(ips, email, password, interval, idle_s, load_s, idle2_s,
+              ffmpeg, raw_path: Path):
+    state = {"segment": "idle1", "t0": time.monotonic()}
+    pollers = [MeterPoller(i, ip, email, password, interval,
+                           i * interval / len(ips), state)
+               for i, ip in enumerate(ips)]
+
+    # startup sanity: one reading from each meter before committing
+    for p in pollers:
+        mw = await p._read_mw()
+        print(f"  {p.role} ({p.ip}): {mw / 1000:.3f} W", flush=True)
+
+    stop = asyncio.Event()
+    tasks = [asyncio.create_task(p.run(stop)) for p in pollers]
+    segments_run = []
+    t_start = time.monotonic()
+    try:
+        for seg, dur in (("idle1", idle_s), ("load", load_s), ("idle2", idle2_s)):
+            if dur <= 0:
+                continue
+            state["segment"] = seg
+            segments_run.append(seg)
+            print(f"=== {seg} ({dur}s) ===", flush=True)
+            if seg == "load":
+                await run_load(dur, ffmpeg)
+            else:
+                await asyncio.sleep(dur)
+    finally:
+        stop.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        print(f"polling done · wall {round((time.monotonic() - t_start) / 60, 1)} min")
+
+    rows = sorted((r for p in pollers for r in p.rows), key=lambda r: r["t_rel_s"])
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    with raw_path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["ts", "t_rel_s", "meter", "segment",
+                                          "power_mw", "latency_ms", "error"])
+        w.writeheader()
+        w.writerows(rows)
+    return analyse(pollers, interval, segments_run)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--ips", default=None,
+                    help="comma-separated inner,outer (default: .env "
+                         "TAPO_P110_IP,TAPO_P110_IP_2)")
+    ap.add_argument("--interval", type=float, default=1.0)
+    ap.add_argument("--idle-s", type=int, default=180)
+    ap.add_argument("--load-s", type=int, default=240)
+    ap.add_argument("--idle2-s", type=int, default=180)
+    ap.add_argument("--ffmpeg", default="ffmpeg")
+    ap.add_argument("--out", type=Path, default=None)
+    args = ap.parse_args()
+
+    cfg = dotenv_values(HERE / ".env")
+    if args.ips:
+        ips = [x.strip() for x in args.ips.split(",") if x.strip()]
+    else:
+        ips = [cfg.get("TAPO_P110_IP"), cfg.get("TAPO_P110_IP_2")]
+    if len(ips) != 2 or not all(ips):
+        sys.exit("need exactly two meter IPs (TAPO_P110_IP + TAPO_P110_IP_2 "
+                 "in .env, or --ips inner,outer)")
+    if args.load_s > 0 and not LOAD_INPUT.exists():
+        sys.exit(f"load input missing: {LOAD_INPUT}")
+    if LOCK_FILE.exists():
+        sys.exit(f"ABORT: {LOCK_FILE} exists — measurement in progress.")
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_path = args.out or HERE / "results" / "diagnostics" / f"dual_meter_{ts}_raw.csv"
+    summary_path = raw_path.with_name(raw_path.stem.replace("_raw", "") + "_summary.json")
+    print(f"meters: inner={ips[0]} outer={ips[1]} · interval {args.interval}s · "
+          f"stagger {args.interval / 2}s")
+    print(f"segments: idle {args.idle_s}s / load {args.load_s}s / idle2 {args.idle2_s}s")
+    print(f"raw → {raw_path}")
+
+    PAUSE_FLAG.touch()
+    LOCK_FILE.write_text("probe-dual-meter")
+    try:
+        rep = asyncio.run(run(ips, cfg["TAPO_EMAIL"], cfg["TAPO_PASSWORD"],
+                              args.interval, args.idle_s, args.load_s,
+                              args.idle2_s, args.ffmpeg, raw_path))
+    finally:
+        LOCK_FILE.unlink(missing_ok=True)
+        PAUSE_FLAG.unlink(missing_ok=True)
+        print("PAUSE_FLAG + LOCK_FILE released")
+
+    rep["raw_csv"] = str(raw_path)
+    summary_path.write_text(json.dumps(rep, indent=2))
+    print(f"summary → {summary_path}\n")
+    print(json.dumps(rep, indent=2))
+
+    try:
+        import persist  # noqa: PLC0415
+        persist.append_history_line("diagnostics", {
+            "kind": "dual_meter_pretest",
+            "summary_json": str(summary_path),
+            "fresh_gain": rep.get("fresh_gain"),
+            "agreement": rep.get("agreement"),
+            "offset_drift": rep.get("offset_drift"),
+        })
+    except Exception as e:
+        print(f"WARN: history append failed: {e}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

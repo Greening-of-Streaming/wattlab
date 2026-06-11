@@ -854,6 +854,32 @@ Two compact controls replace the preset `<select>`; no new cards. Limits line is
 
 ---
 
+## CR-065 · Dual daisy-chained P110 — staggered polling for ~2× fresh samples
+
+**Status:** logged 2026-06-11; Phase 1 pre-test run same day (`bin/probe-dual-meter`, findings in `docs/dual_meter_pretest_findings.md`). Phase 2 integration **gated on the pre-test verdict**.
+**Triggered by:** owner idea 2026-06-11 — daisy-chain a second P110 and alternate polls to halve the effective sampling interval, with a side benefit of hedging single-meter calibration risk.
+
+### Problem
+
+Analysis of the 30 most recent stored results shows 22.5% of consecutive 1s power samples are byte-identical at 10 mW resolution — the P110's local-API `current_power` only refreshes every ~1.3–1.6s, so OWL's 1s polling already loses ~⅕ of polls to stale reads. Short tasks (e.g. 12-poll GPU encodes) pay the price in confidence: n_task is small and a fifth of it is duplicates.
+
+### Agreed direction
+
+1. **Topology:** wall → outer plug → inner plug → GoS1. Inner measures the server alone and is the primary/absolute-W meter (`TAPO_P110_IP`); outer (`TAPO_P110_IP_2`, optional — absent = exact single-meter behavior) sees server + inner-plug self-draw, which cancels in per-meter ΔW.
+2. **Phase 1 (done):** `bin/probe-dual-meter` pre-test — fresh-sample gain, inner-plug self-draw stability, cross-meter ΔW agreement, latency/jitter. Gate: ≥~1.5× fresh gain, stable offset, ΔW agreement, latency p95 ≪ stagger slot.
+3. **Phase 2 (gated):** meter registry + cached KLAP handles in power.py (side win: kills the per-poll handshake); ONE shared baseline/task sampler the four measurement modules delegate to; per-meter ΔW combined (mean, `SE = √(SE_a²+SE_b²)/2`, `method: "ci2"`); `baseline_samples_w`/`task_samples_w` keep their exact current meaning (inner meter) with a new optional `energy.meters` block; honest cadence copy via a `{METER_CADENCE}` token (claim "fresh samples/s", never "0.5-second intervals"); recal after. Full step list in the approved plan + pre-test findings doc.
+4. **KLAP sessions are exclusive per device** (pre-test discovery): every fresh handshake invalidates other sessions on that plug — the registry's cached handles must rebuild on 403/SessionTimeout, and nothing else may poll a registered meter out-of-band.
+
+### Relationship to CR-031 §2
+
+The meter registry is a step *toward* the deferred PowerBackend abstraction, not the protocol itself — PDU/IPMI/synthetic backends stay out of scope here.
+
+### Lab look & feel constraint
+
+No new UI elements; only serve-time wording (meter name already tokenized, cadence token added). Result-card layout unchanged.
+
+---
+
 ## Unverified reports (compressed 2026-06-11)
 
 The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, team meeting 2026-05-04, board meeting 2026-05-11) were compressed 2026-06-11: every item that was marked resolved, absorbed into a CR, or is a meeting note recorded elsewhere (JOURNAL.md / board notes / CR cross-refs) was deleted. The genuinely unresolved residue:
