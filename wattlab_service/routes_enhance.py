@@ -327,9 +327,12 @@ async def video_enhance_page(request: Request):
             .replace("{PROGRESS_JS}",      _PROGRESS_JS))
 
 
-# ── Hidden Lab-only "partner GPU transcode/upscale" measurement (Pixop) ──────
-# Reachable by URL only — NOT in the nav grid — until Pixop green-lights a public
-# launch. Vendor-neutral copy (never prints "Pixop"/"NVEncC"). The real measured
+# ── Hidden member-gated AI-enhancement measurement (Pixop Live) ──────────────
+# Reachable by URL only — NOT in the nav grid. Pixop agreed to be NAMED on the
+# page (2026-06-11): framed as member-contributed technology under independent
+# measurement — name + factual role only, no logos/adjectives in measurement
+# areas, symmetric labels vs the ffmpeg baseline, naming via the serve-time
+# {PARTNER_*} tokens (pixop.config, settings-overridable). The real measured
 # run wraps the pixop/live docker image in OWL's harness (pixop.py); it lights up
 # once a preset .args + an input clip are staged in the OWL workdir. A no-license
 # `--check-device` self-test proves the docker+GPU plumbing today.
@@ -449,14 +452,16 @@ _ENHANCE_RUN_STYLES = """
 
 _ENHANCE_RUN_HTML = """
 <h1><span style="color:var(--warn)">UNDER DEVELOPMENT</span> Video enhancement <span style="color:var(--warn)">GoS ONLY</span> <span style="font-size:0.7rem;color:var(--warn)">&middot; Lab</span></h1>
-<div class="subtitle">Hidden &middot; partner GPU transcode / upscale &middot; energy measurement</div>
+<div class="subtitle">Hidden &middot; member-contributed AI enhancement &middot; energy measurement</div>
 
 <div class="lead-band">
-  Measures the <strong>energy cost</strong> of a partner GPU transcode/upscale pass
+  Measures the <strong>energy cost</strong> of AI video enhancement
   (e.g. SD&nbsp;&rarr;&nbsp;HD with ×2 super-resolution + HDR passthrough) on the
-  GoS1 RTX&nbsp;5080. The transcode runs in a vendor container; OWL wraps it in the
-  standard harness &mdash; focus mode, P110 polling at 1&nbsp;Hz, ΔWh with a
-  confidence flag. Device layer only; network / CDN / CPE excluded.
+  GoS1 RTX&nbsp;5080. The enhancement technology is contributed by
+  <strong>{PARTNER_ORG}</strong>, a Greening of Streaming member organisation; it runs
+  in {PARTNER_ORG}'s container, wrapped in OWL's standard harness &mdash; focus mode,
+  P110 polling at 1&nbsp;Hz, ΔWh with a confidence flag. Device layer only;
+  network / CDN / CPE excluded.
 </div>
 
 {CFG_BAND}
@@ -573,10 +578,14 @@ _ENHANCE_RUN_HTML = """
 <div id="prev-runs" style="margin-top:2rem;border-top:1px solid var(--border-2);padding-top:1.25rem"></div>
 
 <div class="footer-note">
-  A partner GPU transcode is measured with the same protocol as every other OWL
-  workload &mdash; see <a href="/methodology">/methodology</a>. Energy is the
-  headline; perceptual quality of super-resolution has no native ground-truth
-  reference, so it is not asserted here.
+  <strong>Contributed technology.</strong> {PARTNER_NAME} is contributed by
+  <a href="{PARTNER_URL}" rel="noopener">{PARTNER_ORG}</a>, a GoS member
+  organisation, for independent energy measurement. Measurements are run by GoS on
+  GoS hardware with the same protocol as every other OWL workload &mdash; see
+  <a href="/methodology">/methodology</a>. Results are energy data, not endorsements:
+  perceptual quality of super-resolution has no native ground-truth reference, so it
+  is not asserted here. GoS members can contribute streaming technologies for
+  measurement on the same terms.
 </div>
 
 {PROGRESS_JS}
@@ -1130,7 +1139,7 @@ function renderCompareHtml(meas) {
     + ratioRow
     + '<div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin:0.6rem 0 0.4rem">'
     +   _vidCell(inLbl, inUrl, meas.input_name)
-    +   _vidCell('AI / ML upscale', mlUrl, mlr.output_name || '')
+    +   _vidCell('{PARTNER_NAME} upscale', mlUrl, mlr.output_name || '')
     +   _vidCell('ffmpeg ' + (meas.ff_filter || ''), ffUrl, ffr.output_name || '')
     + '</div>'
     + '<div style="color:var(--text-4);font-size:0.7rem;margin-bottom:0.6rem">HEVC 10-bit / HDR may not play inline — use the ⬇ links if a player is blank.</div>'
@@ -1264,6 +1273,7 @@ def _enhance_cfg_band(pf: dict) -> str:
          dependencies=[Depends(requires(ENHANCE_RUN))])
 async def enhance_run_page(request: Request):
     pf = pixop.preflight()
+    c = pixop.config()
     tier = audience.tier(request)
     can_run = can(tier, ENHANCE_RUN)
     is_lab = can(tier, SETTINGS_WRITE)
@@ -1292,7 +1302,12 @@ async def enhance_run_page(request: Request):
             .replace("{UPLOAD_LIMITS}",    _enhance_upload_limits_html())
             .replace("{COMBOS_JSON}",      json.dumps(pf["combos"]))
             .replace("{RUN_ENABLED_JS}",   "true" if run_enabled else "false")
-            .replace("{PROGRESS_JS}",      _PROGRESS_JS))
+            .replace("{PROGRESS_JS}",      _PROGRESS_JS)
+            # Member-contributed technology naming (2026-06-11): single
+            # serve-time source (pixop.config), settings-overridable.
+            .replace("{PARTNER_NAME}",     html_lib.escape(c["partner_name"]))
+            .replace("{PARTNER_ORG}",      html_lib.escape(c["partner_org"]))
+            .replace("{PARTNER_URL}",      html_lib.escape(c["partner_url"])))
 
 
 @router.post("/enhance-run/self-test", dependencies=[Depends(requires(ENHANCE_RUN))])

@@ -602,6 +602,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <p>The ffmpeg command used for each run is logged in the result JSON, editable from the page (signed-in GoS members and lab access), and reproduced in the result card for full transparency.</p>
   <p><strong>Perceptual quality (VMAF).</strong> Comparison runs (CPU vs GPU, or all codecs) also report <strong>VMAF</strong> &mdash; Netflix&rsquo;s perceptual quality metric (0&ndash;100, higher is better) &mdash; so the energy figures sit next to a quality figure rather than an unstated assumption that the encodes are equivalent. It is computed at the delivered 1080p, comparing each encoded output against the source downscaled to 1080p (the distorted side is cropped to strip hardware-encoder padding, never upscaled). VMAF runs <em>after</em> the measurement window closes, so its compute cost is excluded from the reported energy. It is a quality cross-check, not a primary GoS measurement.</p>
   <p><strong>No-reference quality (CompressedVQA-HDR).</strong> Enhancement / super-resolution runs have no ground-truth reference (the AI adds detail the source never had), so VMAF does not apply. There, OWL reports a <strong>no-reference</strong> score from <strong>CompressedVQA-HDR</strong> (Sun et al., arXiv:2507.11900, Apache 2.0 &mdash; winner of the ICME 2025 HDR/SDR VQA grand challenge), a learned model that scores each file independently and handles both HDR10 and SDR content. Like VMAF it runs <em>after</em> the measurement window closes, so its compute cost is excluded from the reported energy. Being a learned opinion of perceptual quality rather than a measurement, it is presented as a relative indicator <em>within</em> a run &mdash; never as an absolute quality claim &mdash; and is subject to further refinement pending validation.</p>
+  <p><strong>Contributed technology.</strong> Some measured workloads use technology contributed by GoS member organisations &mdash; the AI video-enhancement harness measures <strong>{PARTNER_NAME}</strong>, contributed by {PARTNER_ORG}. Contributed technologies run on GoS hardware under this methodology; results are energy data, not endorsements. GoS members can contribute streaming technologies for measurement on the same terms.</p>
 
   <div class="callout">
     <strong>Open item (narrower than before):</strong> With ABR, the bitrate target is now equal across devices. GOP structure and profile level are not yet explicitly controlled and may differ between CPU and GPU encoder defaults &mdash; a working session with the measurement team is planned to confirm apples-to-apples output at the profile/GOP level. A second benchmark family at each codec&rsquo;s natural operating point (CRF for CPU, QP for GPU) is also on the roadmap.
@@ -709,6 +710,13 @@ _gpu_enc            = ui._gpu_enc
 _gpu_runtime        = ui._gpu_runtime
 
 
+def _partner() -> dict:
+    """Member-contributed-technology naming — single source in pixop.config
+    (settings-overridable), shared with /enhance-run."""
+    import pixop
+    return pixop.config()
+
+
 @router.get("/methodology", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def methodology_page(request: Request):
     # Inject live settings into placeholder fields so the methodology page
@@ -736,6 +744,8 @@ async def methodology_page(request: Request):
             .replace("{GPU_H265_ENC}",       _gpu_enc("h265"))
             .replace("{GPU_AV1_ENC}",        _gpu_enc("av1"))
             .replace("{METER_NAME}",         meter_display_name())
+            .replace("{PARTNER_NAME}",       _partner()["partner_name"])
+            .replace("{PARTNER_ORG}",        _partner()["partner_org"])
             .replace("{RECOVERY_CHART_DATA}", json.dumps(recovery))
             .replace("{POSITION_PAPER_URL}",  POSITION_PAPER_URL)
             .replace("{GOS_URL}",             GOS_URL)

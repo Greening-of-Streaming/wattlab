@@ -73,6 +73,13 @@ def config() -> dict:
         "template_sdr":  s.get("enhance_template_sdr", "nvencc_fhd_709_20mbps.args"),
         "template_hdr":  s.get("enhance_template_hdr", "nvencc_fhd_pq_20mbps.args"),
         "upload_ttl_h":  s.get("enhance_upload_ttl_h", 12),
+        # Partner naming (2026-06-11, Pixop agreed to be named): ONE serve-time
+        # source for every page/label mention — framed as member-contributed
+        # technology under independent measurement, never promotion. Settings-
+        # overridable so a future contributed technology reuses the page.
+        "partner_name":  s.get("enhance_partner_name", "Pixop Live"),
+        "partner_org":   s.get("enhance_partner_org", "Pixop"),
+        "partner_url":   s.get("enhance_partner_url", "https://www.pixop.com"),
     }
 
 
@@ -674,7 +681,7 @@ def preflight(c: Optional[dict] = None) -> dict:
     if not workdir_ok:
         reasons.append(f"workdir {c['workdir']} missing input/output/presets (or not writable)")
     if not license_present:
-        reasons.append(f"no Pixop license.jwt at {c['license_path']}")
+        reasons.append(f"no {c['partner_org']} license.jwt at {c['license_path']}")
     if not presets:
         reasons.append(f"no *.args preset staged in {pre}")
     if not inputs:
@@ -1579,7 +1586,7 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
             input_path=inp / enc_input, output_name=output_name,
             output_path=out / output_name, cmd=cmd, pacer_cmd=pacer_cmd, live=live,
             preset_key=preset_name,
-            preset_label=("Partner GPU transcode / upscale"
+            preset_label=(f"{c['partner_name']} — GPU transcode / upscale"
                           + (" · Live (1× paced)" if live else "")),
             preset_detail=preset_name, update_stage=True, do_cooldown=False,
             log_path=_logs_dir(c) / f"{job_id}_partner.log")
@@ -1705,7 +1712,8 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
             input_path=enc_path, output_name=ml_output,
             output_path=out / ml_output, cmd=ml_cmd, pacer_cmd=ml_pacer, live=live,
             preset_key=preset_name,
-            preset_label="AI / ML enhance" + (" · Live 1×" if live else ""),
+            preset_label=(f"{c['partner_name']} — AI enhance"
+                          + (" · Live 1×" if live else "")),
             preset_detail=preset_name, update_stage=False, cooldown_stage="ml",
             log_path=_logs_dir(c) / f"{job_id}_partner.log")
 

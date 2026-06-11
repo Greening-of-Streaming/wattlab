@@ -41,6 +41,9 @@ def _cfg(tmp_path) -> dict:
         "template_sdr": "tpl_sdr.args",          # CR-064 — stage via _stage_templates
         "template_hdr": "tpl_hdr.args",
         "upload_ttl_h": 12,
+        "partner_name": "Pixop Live",
+        "partner_org": "Pixop",
+        "partner_url": "https://www.pixop.com",
     }
 
 
@@ -397,12 +400,33 @@ def test_enhance_page_blocked_for_anonymous():
 def test_enhance_page_renders_for_member_and_is_hidden():
     r = client.get("/enhance-run", headers=LAB)   # Lab ≥ Member
     assert r.status_code == 200
-    # Vendor-neutral: never names the partner on the page.
-    assert "Pixop" not in r.text
-    assert "NVEncC" not in r.text
+    # Partner naming (2026-06-11, Pixop agreed): member-contributed framing,
+    # independence statement, recruitment line — and no unreplaced tokens.
+    assert "contributed by" in r.text and "Pixop" in r.text
+    assert "member organisation" in r.text
+    assert "not endorsements" in r.text
+    assert "contribute streaming technologies" in r.text
+    assert "{PARTNER_NAME}" not in r.text and "{PARTNER_ORG}" not in r.text
     # Hidden: not linked from the member nav grid.
     home = client.get("/").text
     assert "/enhance-run" not in home
+
+
+def test_methodology_names_contributed_technology():
+    r = client.get("/methodology")
+    assert r.status_code == 200
+    assert "Contributed technology" in r.text
+    assert "Pixop Live" in r.text
+    assert "{PARTNER_NAME}" not in r.text
+
+
+def test_partner_name_is_settings_overridable(tmp_path, monkeypatch):
+    base = _cfg(tmp_path)
+    monkeypatch.setattr(pixop, "config",
+                        lambda: {**base, "partner_name": "Acme SR",
+                                 "partner_org": "Acme", "partner_url": "https://acme.example"})
+    r = client.get("/enhance-run", headers=LAB)
+    assert "Acme SR" in r.text and "Pixop" not in r.text
 
 
 # --- Output route (download/preview) ----------------------------------------
