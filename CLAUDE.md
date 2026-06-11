@@ -1,30 +1,25 @@
 # WattLab — Claude Code Context File
-# Auto-loaded by Claude Code. Keep this current.
-# Last updated: 2026-06-11 (Session 42 overnight — refactor Phases 2–4 COMPLETE; goal "/goal complete the code restructuring" met. Phase 2: every standard page renders through ui.render_page() (one shell: auth chip + back + footer + design tokens + bundle tags); chrome-less by design: /findings, /methodology (bespoke topbar — converting would visually regress it), auth/gate mini-shell, asset-404. Phase 3: main.py 10,976 → ~430 lines (app assembly, middleware, gate handler, startup, home, /live /power /carbon, /ui-config.js, /queue(+-status), cooldown-decision — NOTHING feature-shaped); twelve flat routes_*.py APIRouter modules (video/llm/rag/image/enhance/benchmark/findings/results/settings/demo/methodology/auth) each own routes + page template + run_*_job orchestration; runtime.py owns the jobs dict + telemetry cache + pollers; ui.py owns serve-time wording (_ui_cfg/_bake_durations), CR-037 AI bands, CR-060 GPU copy helpers, _model_date_line. Feature modules NEVER import main; benchmark.py (byte-identical) + tests reach run_job / run_llm_compare_models_job / run_rag_compare_models_job / video_preview_cmd / results_delete / _DEMO_HTML / _METHODOLOGY_HTML via main's commented alias block — monkeypatch the routes_* module that BINDS a name, not main (test_codecs_split/test_delete_result updated). Phase 4: docs/result_envelope.md = the mode→renderer contract (job_type × mode catalogue + consumer blast-radius list; adding a mode = writer + persist._SUMMARISERS + wlRender*Card + that doc); persist._summarise is now that dispatch (differential-tested vs all 274 stored results on disk: 0 diffs); unregistered modes summarise but stamp "unrecognised_mode"; wl-result.js soft-fails echo the offending mode (_wlBadRecord); wlCooldownSummary accepts both cooldown stamp shapes (list + legacy singular dict). Deferred (documented in envelope doc + ARCHITECTURE.md): formal JobRecord shape; cooldown writer unification (singular writers live inside measurement modules — untouchable per the imperceptibility rule). Tests 560 → 566, green after every one of the ~20 commits. Measurement modules byte-identical throughout. ARCHITECTURE.md rewritten to current state. SERVICE RESTART NEEDED (new module layout). Gotcha: Python ≥3.12.4 counts TEST-NET 203.0.113.x as is_private → resolves Lab; probe Anonymous tier with a real public IP like 8.8.8.8.)
-# Previous: 2026-06-10 (Session 41 — Architecture review + refactor Phases 0–1. Review of 4 external observations (verdicts + plan) in docs/architecture_review_2026-06.md; ARCHITECTURE.md created (1–2 page orientation, current + target state). Phase 0: CR-063 merged to main, v0.8.7 pre-refactor checkpoint TAG pushed to GitHub (rollback anchor), stale .bak/.session15 files deleted. Phase 1 (front-end extraction): the five shared JS bundles (_LIVE/_CARBON/_PROGRESS/_RESULT/_BENCH_HYDRATE) are now real files at static/wl-*.js, pulled in via <script src> with a version-sha cache-buster; settings/meter copy reaches them per request via /ui-config.js → window.WL_CFG (new _ui_cfg() feeds both that route and _bake_durations) — the import-time bake is GONE, so cooldown-label/meter copy changes no longer need a restart. wl-carbon.js gets registry URLs via WL_CFG.urls. main.py 13,276 → 11,356 lines. Tests 505 → 555 (new test_ui_config.py: serve-time settings proof, token-leak guards, node --check JS syntax gate; test_js_bundling now checks the page's effective JS corpus = HTML + referenced bundles). infra/wattlab.nginx.conf synced from live (live already serves /static from disk, exempt from the limit_conn 3 cap — new bundles safe). Service restart needed to serve pages with the new script tags. Post-restart continuation: /llm+/rag hardcoded-tinyllama default fixed (live-view panels — never hardcode model keys); live idle-wait readout shipped everywhere + cooldown_show_wait_detail toggle; Phase 2a chrome → ui.py; Phase 2b render_page() + /queue-status converted. 560 tests.)
+# Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
+# Last updated: 2026-06-11 (Session 43 — /video batch-box selection-affordance fix (47aa150) + the big doc
+#   cleanup: this file pruned ~55%, CR-060 closed (+ CR-052/053/061 back-filled), README/TESTING rewritten to
+#   current reality, JOURNAL tail repaired, stale GPU/torch/idle facts fixed everywhere. Tests 615. Service current.)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
-#   - JOURNAL.md — session-by-session change log (full detail; not auto-loaded)
-#   - CHANGE_REQUESTS.md — active CRs (groupings appendix at end maps dependencies)
-#   - CHANGE_REQUESTS_CLOSED.md — closed CRs archive (problem statement + closing commit preserved)
-#   - TESTING.md — three-tier testing strategy
-#   - WATTLAB_SPEC.md — full product spec
-#   - GOS1_INFRA.md — server infrastructure, Nextcloud backup, personal stack context
-#   - ARCHITECTURE.md — 1–2 page module/flow orientation (current + refactor target state)
-#   - docs/architecture_review_2026-06.md — active refactor plan (Phases 0–4 + parallel PowerBackend track)
-#   - AUDIT_BRIEF.md + AUDIT_RESPONSE.md — pre-CR-001 architecture audit + recommendations
-#   - docs/wattlab_traffic_light_confidence.md — Tania §9 statistical framework (CR-028 Phase 2 spec)
-#   - docs/wattlab_parameters_audit.md — every settings parameter classified Arbitrary/Empirical/Calibrated/Constrained
-#   - docs/input_sensitivity_findings.md — empirical justification for the length-only `/video` picker matrix (S29 pre-CR-047 tests)
-#   - REM/CLAUDE.md — sibling project (distributed fleet via Tapo P110 + TP-Link cloud); repo at dom-robinson/stats. OWL = bench, REM = meter on the building.
+#   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
+#   - JOURNAL.md — session-by-session change log (full detail; newest first)
+#   - CHANGE_REQUESTS.md — 16 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - TESTING.md — pytest suite (615 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
+#   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
+#   - docs/wattlab_traffic_light_confidence.md (Tania §9 spec) · docs/wattlab_parameters_audit.md (param taxonomy)
+#   - docs/input_sensitivity_findings.md (CR-047 pre-test) · docs/gpu_swap_amd_baseline.md (frozen AMD-era data)
+#   - REM/CLAUDE.md — sibling project (Tapo fleet via TP-Link cloud). OWL = bench, REM = meter on the building.
 
 ## Project Identity
-- **Name:** WattLab
-- **Repo:** https://github.com/greeningofstreaming/wattlab
+- **Name:** WattLab · **Repo:** https://github.com/greeningofstreaming/wattlab
 - **Host:** GoS1 — Ubuntu 24, `192.168.1.62`, externally `gos1.duckdns.org:2222`
 - **Owner:** GoS (Greening of Streaming), French NGO loi 1901
 - **Mission:** Measure environmental impact of streaming. Neutral, technically credible.
-- **Full spec:** See WATTLAB_SPEC.md in repo root
 
 ## GoS Framing (always apply)
 - "Not eco-warriors. Just people who dislike waste."
@@ -34,77 +29,57 @@
 - Audience: CTOs, operators, infrastructure players, policymakers.
 
 ## GoS1 Server
-- OS: Ubuntu 24, kernel 6.17
-- CPU: AMD Ryzen 9 7900, 24 cores
-- GPU: AMD Radeon RX 7800 XT — VAAPI (video) + ROCm (AI), 12GB VRAM
-- RAM: 61GB
-- Disk: 500GB NVMe system disk (`nvme0n1`, `/` — ~264GB free, May 2026) + 4TB NVMe data disk (`nvme1n1`, ext4, mounted `/srv/data`, in fstab w/ `nofail` — added S24 2026-05-12). `/srv/data/owl/{test_content,results,corpus,.chroma}` hold OWL bulk/archival data, symlinked back into the repo; `/srv/data/rem/` holds Simon's REM display-test clips (symlinked from `/home/simon/rem`); `/srv/data/media/` is a general bucket.
-- Cooling: 9 fans total — 5 case (the 5th re-enabled via a Y-splitter S24 2026-05-13), 2 GPU (integrated), 1 CPU (header can take a 2nd), 1 PSU internal. Case + CPU fans run a BIOS curve (quiet below ~70 °C, never observed ramping in any OWL run) and aren't Linux-controllable — see closed CR-005.
-- Python: 3.12.3 · Node: 20.x
-- Claude Code: `~/.npm-global/bin/claude`, authenticated as nebul2
-- Git: bs@ctoic.net / nebul2
-- SSH users: simon, tania, dom, marisol, gos (owner)
-- External: `ssh -p 2222 user@gos1.duckdns.org`
-- Idle power: ~56-58W steady (S24 thermal-recovery probe, post-NVMe + 5th case fan; ~3-5W up on the old ~51-54W), brief drift to ~60-63W after sustained load. `variance_pct` **1.29%** as of 2026-05-14 (S25 overnight calibration, n=32, cooldown 10s — cleanest run on record: idle 2.3% / drift 1.1% / cpu 0.95% / gpu 0.63%); matches the S23 verification value at much larger n. Historical range 1.29–3.62% — calibration-dependent and code-coupled, see JOURNAL.md S25 for the full table.
+- CPU: AMD Ryzen 9 7900, 24 cores · RAM: 61GB · Python 3.12.3 · Node 20.x
+- GPU: **NVIDIA RTX 5080 (16GB) — NVENC (video) + CUDA (AI)**; swapped from AMD RX 7800 XT 2026-05-29 (S36, CR-060).
+  AMD-era baselines frozen in `docs/gpu_swap_amd_baseline.md`; rollback procedure in `docs/gpu_swap_checklist.md`.
+- Disk: 500GB NVMe system (`/`) + 4TB NVMe data (`/srv/data`). `/srv/data/owl/{test_content,results,corpus,.chroma}`
+  hold OWL bulk data, symlinked back into the repo. ⚠ HF cache (27G) + Ollama models (54G) still on the system disk.
+- Idle power: **~79 W display-blanked / ~101 W active display** since the GPU swap (+20 W vs AMD era ~57 W) —
+  idle↔load crossover means the swap is a capability/quality upgrade, not a same-workload energy win.
+- Variance calibration: live values in `settings.json` (recal 2026-06-10: idle 1.84%, n=20, cooldown 50s).
+  Ambient-sensitive (2–6× swing in heat waves) — calibrate under normal ambient only.
 
 ## Network Topology
-```
-Bbox Wi-Fi 7 (192.168.1.x)
-├── GoS1 (ethernet) → 192.168.1.62
-├── MacBook (Wi-Fi)
-└── Tapo P110 (Wi-Fi) → 192.168.1.159
-```
-(Nighthawk RAX120 AP retired 2026-05-26 when the Bbox was upgraded to Wi-Fi 7 — all wireless now goes direct to the Bbox.)
+Bbox Wi-Fi 7 (192.168.1.x) ── GoS1 ethernet `.62` · MacBook Wi-Fi · Tapo P110 Wi-Fi `.159`
+(External-access incidents + DuckDNS updater: see GOS1_INFRA.md.)
 
 ## Thermal Sensors
-- One source of truth: `power.read_sensors_dict()` → `{cpu_tctl, gpu_junction, gpu_ppt_w}`. The per-module `read_sensors()` wrappers (video/llm/image_gen/rag) just delegate to it.
-- CPU: `data['k10temp-pci-00c3']['Tctl']['temp1_input']` (k10temp is on the CPU bus — name is stable). Read in `power.py` via `subprocess.run(['sensors', '-j'], ...)`.
-- GPU: **vendor-abstracted (CR-060).** The GPU half of `read_sensors_dict()` delegates to `gpu.BACKEND.read_gpu_sensors()`, which returns the same `{gpu_junction, gpu_ppt_w}` shape on any card. AMD path: the one amdgpu chip with a `junction` sub-key (discrete card; iGPU has only `edge`/`PPT`) — resolved dynamically by `gpu.AmdBackend._amdgpu_chip` (aliased as `power.amdgpu_chip`), *never* by PCI address (it shifts on PCIe re-enumeration — the S24 NVMe add moved it `amdgpu-pci-0300`→`0400` and silently broke the old lookups), then `['junction']['temp2_input']` + `['PPT']['power1_average']`. Nvidia path: `nvidia-smi --query-gpu=temperature.gpu,power.draw` (temp mapped to `gpu_junction` to keep the schema stable; note `power.draw` is instantaneous vs AMD's `power1_average` — see CR-060 open Q).
+- One source of truth: `power.read_sensors_dict()` → `{cpu_tctl, gpu_junction, gpu_ppt_w}`; per-module
+  `read_sensors()` wrappers delegate to it.
+- CPU: `sensors -j` → `k10temp-pci-00c3.Tctl` (CPU-bus chip, name stable).
+- GPU: vendor-abstracted via `gpu.BACKEND.read_gpu_sensors()` (CR-060). Nvidia path: `nvidia-smi` temp + power
+  (`power.draw` is instantaneous vs AMD's `power1_average` — open sampling-semantics question, see closed CR-060).
+  AMD path (rollback): amdgpu chip resolved dynamically, never by PCI address (re-enumeration shifts it).
 
 ## Environment
-- `.env` at `/home/gos/wattlab/.env` — gitignored
-- Variables: `TAPO_EMAIL`, `TAPO_PASSWORD`, `TAPO_P110_IP`, `OWL_AUTH_SECRET` (CR-001 magic-link signing key), `OWL_GMAIL_USER` + `OWL_GMAIL_APP_PASSWORD` (Gmail SMTP for magic-link delivery)
+- `.env` at repo root (gitignored; `.env.example` is the tracked template): `TAPO_EMAIL`, `TAPO_PASSWORD`,
+  `TAPO_P110_IP`, `OWL_AUTH_SECRET` (magic-link signing), `OWL_SMTP_USER` + `OWL_SMTP_PASSWORD` (Gmail SMTP
+  for magic-link delivery — note: SMTP names, not the old OWL_GMAIL_* ones).
 
-## Installed Packages
-- Python: tapo==0.8.12, python-dotenv, fastapi, uvicorn, python-multipart, torch 2.5.1+rocm6.2, diffusers, transformers, accelerate, pillow
-- System: lm-sensors, ffmpeg 6.1.1, nmap. The `/usr/local/bin/ffmpeg-master` build (driven by `ffmpeg_bin`) **already ships the NVENC encoders** (`h264_nvenc`/`hevc_nvenc`/`av1_nvenc`) + the `scale_cuda` filter — so no ffmpeg rebuild is needed for the CR-060 Nvidia swap (resolves the old open Q). `av1_nvenc` exposes no `-profile` knob; `-rc cbr` is the ABR-equivalent. (Still pending for the swap: torch `+rocm6.2`→`+cu12x` wheel + Nvidia driver/CUDA.)
-- AI: Ollama 0.20.2 (systemd service, port 11434)
-- Models (S30 ladder refresh, 2026-05-27): tinyllama:latest (1.1B, anchor), qwen3:1.7b (modern tiny), qwen3:4b (modern small — also CANONICAL_RAG_MODEL), qwen3:8b (modern 8B), mistral-nemo:12b (French AI lab × NVIDIA — replaced mistral 7B + gemma3:12b), phi4:latest (14B reasoning), gpt-oss:20b (ceiling, MXFP4 partial-offload). Compare-panel = 5 of these: tinyllama / qwen3:4b / mistral-nemo:12b / phi4 / gpt-oss:20b. Retired: mistral 7B + gemma3:12b. x/z-image-turbo (12GB, GPU blocked), x/flux2-klein (5.7GB, CUDA/MLX only).
-- Image gen: stabilityai/sd-turbo + stabilityai/sdxl-turbo via diffusers (CPU for SD-Turbo only; GPU via ROCm for both; cached in ~/.cache/huggingface). **Cached but not yet wired into the pipeline (S30 audit):** Sana 0.6B (`Efficient-Large-Model/Sana_600M_512px_diffusers`, ~9 GB on disk fp16+fp32+Gemma-2B text encoder) and SDXL-Lightning 4-step UNet (`ByteDance/SDXL-Lightning`, 2 GB). SD 3.5 Medium (`stabilityai/stable-diffusion-3.5-medium`) is the next add but needs HF token + accepted license (gated). **Avoid on this hw:** FLUX.1-schnell — bitsandbytes NF4 is CUDA-only; ROCm path is ~80s/image + ~35 GB host-RAM spike at quantization load.
-- NR-VQA sandbox (runtime dep, NOT in repo git): `/srv/data/owl/vqa-eval/` = CompressedVQA-HDR clone (Sun et al., arXiv:2507.11900, Apache 2.0) + `venv/` (`--system-site-packages` + open_clip_torch + opencv-python-headless) + weights at `NR/ckpts/NR_HDR_VQA.{pth,npy}` (375 MB). Feeds `pixop.probe_vqa_nr` (/enhance-run NR quality score) via subprocess with cwd=`…/CompressedVQA-HDR/NR`; settings `vqa_enabled`/`vqa_dir`/`vqa_timeout_s`. ⚠ `NR/VQA_NR.py` is **locally patched** (`video_read_index < video_length` → `< video_length_read`, ~line 59) — upstream crashes on 23.976 fps clips (= every Meridian file); reapply after any re-clone/pull. Also depends on the HF-hub config `timm/ViT-B-16-SigLIP2-384` being cached for user gos. Everything fail-softs to "no score" if the sandbox is missing.
+## Installed Packages & Models
+- Python: fastapi/uvicorn, tapo 0.8.12, **torch 2.11.0+cu128**, diffusers/transformers/accelerate, chroma.
+- System: lm-sensors, ffmpeg 6.1.1 + `/usr/local/bin/ffmpeg-master` (driven by `ffmpeg_bin`; ships NVENC
+  encoders + `scale_cuda`; `av1_nvenc` has no `-profile` knob, `-rc cbr` is the ABR-equivalent).
+- Ollama 0.20.2 (port 11434). Ladder (S30): tinyllama (anchor, **off the default panel**), qwen3:1.7b/4b/8b,
+  mistral-nemo:12b, phi4, gpt-oss:20b. Live panel = `llm_enabled_models` in settings.json (currently the 6
+  non-tinyllama ones). CANONICAL_RAG_MODEL = qwen3:4b. **MODELS dicts are live views (CR-050) — never edit as
+  literals; add/remove via `ollama pull` or settings.**
+- Image gen (diffusers, `image_enabled_models`): sd-turbo, sdxl-turbo, sdxl-lightning, sana-600m. SD 3.5 Medium
+  is the next add (gated, needs HF token). Avoid FLUX.1-schnell NF4 paths on non-CUDA (see memory).
+- NR-VQA sandbox (runtime dep, NOT in git): `/srv/data/owl/vqa-eval/` = CompressedVQA-HDR + venv + weights;
+  feeds `pixop.probe_vqa_nr` via subprocess; settings `vqa_enabled`/`vqa_dir`/`vqa_timeout_s`.
+  ⚠ `NR/VQA_NR.py` is locally patched (`< video_length_read`, ~line 59) — upstream crashes on 23.976 fps;
+  reapply after any re-clone. Fail-softs to "no score" if missing.
 
 ## Repo Structure
-```
-wattlab/
-├── .env                          # gitignored
-├── .gitignore                    # ignores test_content, results, corpus, .chroma (now symlinks — no trailing slash so they still match)
-├── README.md
-├── CLAUDE.md
-├── JOURNAL.md
-├── TESTING.md                    # three-tier testing strategy
-├── WATTLAB_SPEC.md               # full product spec
-├── data_analysis_nov25/          # Nov25 hackathon scripts
-├── data_cleanup/
-│   └── clean_measures.py         # Tania — aligns Tapo CSVs
-├── test_content/   ->  /srv/data/owl/test_content   # symlink (S24, 4TB disk); meridian_4k.mp4 = Netflix Open Content CC BY 4.0, 812MB
-├── results/        ->  /srv/data/owl/results        # symlink (S24, 4TB disk); persistent result JSON — {video,llm,image,diagnostics}/
-├── corpus/         ->  /srv/data/owl/corpus         # symlink (S24); RAG source PDFs (papers/)
-├── .chroma/        ->  /srv/data/owl/.chroma        # symlink (S24); RAG vector store
-└── wattlab_service/
-    ├── main.py                   # App assembly ONLY (~430 lines): middleware, gate handler, startup, home, /live /power /carbon, /ui-config.js, /queue(+-status) + compat alias block (S42)
-    ├── routes_*.py               # S42 — one flat APIRouter module per feature (video/llm/rag/image/enhance/benchmark/findings/results/settings/demo/methodology/auth): routes + page template + run_*_job orchestration. Never import main.
-    ├── runtime.py                # S42 — shared jobs dict + live telemetry cache + pollers + job_status()
-    ├── ui.py                     # Page chrome: render_page() shell, lock badges, URL registry, serve-time wording (_ui_cfg/_bake_durations), AI bands, GPU copy helpers
-    ├── static/wl-*.js            # S41 — the shared JS bundles as real files (live/carbon/progress/result/bench-hydrate/charts), configured per request via /ui-config.js → window.WL_CFG
-    ├── video.py                  # P110 + ffmpeg + thermals + focus mode (GPU presets via gpu.BACKEND)
-    ├── llm.py                    # Ollama inference + P110 measurement (GPU-agnostic via Ollama)
-    ├── image_gen.py              # SD-Turbo CPU diffusion + P110 measurement
-    ├── persist.py                # Flat-file result storage + CSV/JSON export; _SUMMARISERS mode dispatch (S42, see docs/result_envelope.md)
-    ├── settings.py               # Lab config (settings.json)
-    ├── sources.py                # Pre-loaded test content registry
-    ├── gpu.py                    # CR-060 — GPU vendor abstraction (AMD VAAPI/ROCm ↔ Nvidia NVENC/CUDA); auto-detected at import into gpu.BACKEND
-    └── power.py                  # Power measurement interface (Tapo P110); GPU telemetry delegates to gpu.py
-```
+**See ARCHITECTURE.md for the module map** (main.py = ~500-line app assembly; twelve flat `routes_*.py` feature
+modules; `runtime.py` jobs/telemetry; `ui.py` page chrome + serve-time wording; measurement modules `video.py`
+`llm.py` `image_gen.py` `rag.py`; `power.py`/`gpu.py` instrumentation; `persist.py`/`settings.py` storage).
+Key paths: `wattlab_service/static/wl-*.js` (shared JS bundles, sha cache-busted, configured via `/ui-config.js`);
+`results/` → `/srv/data/owl/results` (per-result JSON, `{type}/{date}_{job_id}.json`); `test_content/`, `corpus/`,
+`.chroma/` similarly symlinked; `docs/findings/` (finding markdowns); `infra/` (nginx), `systemd/`, `bin/` (ops
+scripts, see bin/README.md). Feature modules NEVER import main; tests monkeypatch the routes_* module that
+binds a name, not main.
 
 ## Measurement Protocol
 1. Focus mode: stop background timers (sudoers: `/etc/sudoers.d/wattlab-focus`)
@@ -117,96 +92,68 @@ wattlab/
 8. Write result JSON to results/{type}/{date}_{job_id}.json
 9. Focus exit: parallel timer restart (ThreadPoolExecutor + run_in_executor)
 
-## Focus Mode Timers
-sysstat-collect, anacron, fwupd-refresh, apt-daily, apt-daily-upgrade,
-man-db, motd-news, update-notifier-download
-Sudoers: `/etc/sudoers.d/wattlab-focus`
+Focus-mode timers: sysstat-collect, anacron, fwupd-refresh, apt-daily{,-upgrade}, man-db, motd-news,
+update-notifier-download.
+Cooldowns route through ONE dispatcher: execution `power.cooldown_between_runs`, wording `_bake_durations`
+tokens, footer `wlCooldownSummary` (test-guarded — no raw sleeps or hardcoded `{COOLDOWN_S}s`).
 
 ## Traffic Light Confidence
-CR-028 Phase 2 CI model (Tania §9 v2, shipped) — single implementation in `confidence.py`, shared by all four modules. Per-run "can this be told apart from idle?":
-- `SE_final = max(SE_calibrated, SE_per_run) + SE_drift`; `SE_calibrated = variance_idle_pct/100·w_base·√(1/n_base+1/n_task)`; `SE_per_run = √(σ²_base/n_base + σ²_task/n_task)`; `SE_drift = variance_idle_drift_pct/100·w_base` (additive = worst-case, per the 2026-05-22 decision).
-- `confidence_positive = Φ(ΔW/SE_final)`. 🟢 `≥conf_positive_green (0.95)` AND `n_task≥conf_green_polls (10)`; 🟡 `≥conf_positive_yellow (0.80)` AND `n_task≥conf_yellow_polls (5)`; 🔴 otherwise.
-- Option C: only `variance_idle_pct` feeds the single-run flag; `variance_cpu_pct`/`variance_gpu_pct` are run-level repeatability CVs reserved for a future aggregate layer. First pass: raw n + 1.96 (autocorrelation/Student-t are future refinements).
-- Requires raw `baseline_samples_w` + `task_samples_w` (now persisted in every result's energy dict). **Legacy fallback:** results without raw samples keep the old variance-threshold flag (`variance_green_x`/`variance_yellow_x`); `confidence()` records `method` = `ci` | `variance`.
-- `confidence(delta_w, poll_count, w_base, baseline_samples_w=…, task_samples_w=…)` — `from confidence import confidence` in video / llm / image_gen / rag. Absorbed CR-020 (per-run baseline-CV gate) and the 5×/2× threshold grounding.
+Single implementation `confidence.py`, shared by all four measurement modules (CR-028 Phase 2, Tania §9 v2 —
+full math in `docs/wattlab_traffic_light_confidence.md`). Contract:
+`confidence(delta_w, poll_count, w_base, baseline_samples_w=…, task_samples_w=…)` → `confidence_positive = Φ(ΔW/SE)`;
+🟢 ≥0.95 AND n_task≥10 · 🟡 ≥0.80 AND n_task≥5 · 🔴 otherwise (thresholds are settings). Raw samples are persisted
+in every result; legacy results without them fall back to the old variance-threshold flag (`method` = ci|variance).
 
 ## Scope Statements
 Video: "Device layer only (GoS1 server). Network, CDN, and CPE excluded."
 LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised training cost."
 
-## Running Services
-| Service | Port | Status |
-|---|---|---|
-| wattlab (systemd) | 8000 | ✅ 1 worker |
-| ollama (systemd) | 11434 | ✅ active |
-
-## Current URLs
-- LAN: `http://192.168.1.62:8000` (paths: `/video /llm /image /demo /settings /queue-status /methodology /rag /carbon`)
-- Tunnel: `ssh -p 2222 -L 8000:localhost:8000 user@gos1.duckdns.org`
-- Public (HTTPS via certbot): `https://wattlab.greeningofstreaming.org`
-- Auth model: tier-based (CR-001). Anonymous = no auth, Member = magic-link sign-in via `/auth/sign-in` (allowlist `data/members.json`), Lab = LAN/loopback IP.
+## Services & URLs
+wattlab (systemd, port 8000, 1 worker — restart needs the OWNER: not in Claude's sudoers) · ollama (11434).
+LAN `http://192.168.1.62:8000` · public `https://wattlab.greeningofstreaming.org` (nginx + certbot).
+Pages: `/video /llm /rag /image /demo /findings /benchmark /enhance-run /settings /queue-status /methodology /carbon`.
+Auth tiers (CR-001): Anonymous (public) · Member (magic-link, allowlist `data/members.json`) · Lab (LAN/loopback).
+Policy lives ONLY in `capabilities.py`; routes never compare tiers. Tests run as Lab — reason about
+Anonymous/Member explicitly; probe Anonymous with a real public IP header like 8.8.8.8 (Python ≥3.12.4 counts
+TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
+**Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
+tour/credibility → RAG). **Active: 16 CRs** in CHANGE_REQUESTS.md; closed archive (problem + closing commit) in
+CHANGE_REQUESTS_CLOSED.md.
 
-**Phases 1–8 shipped:** research integrity (persistence + export), measurement quality (LLM batched/warm-cold/streaming, H.265+AV1), settings & lab config, demo mode + GoS visual identity, image generation (SD-Turbo CPU/GPU + SDXL-Turbo), public access (nginx + cert + IP-gate), guided tour + credibility (confidence popover, resume), RAG energy test (Chroma + compare-3-modes).
+### Recent sessions (true one-liners — full entries in JOURNAL.md)
+- S26–S30 (05-20→27): credibility bundle, versioning, VMAF + CI confidence model, BBB/variants picker, model-ladder refresh. 218→290 tests.
+- S31–S33 (05-27/28): compare trilogy (CR-048/049/050), RAG corpus self-service (CR-051), findings catalog (CR-054–058). →339.
+- S34–S35 (05-28/29): CR-061 benchmark orchestrator + CR-029 §2 encode norm; CR-060 GPU abstraction + AMD baseline frozen. →385.
+- S36 (05-29): GPU swap — RTX 5080 first light, zero code edits; NVENC beats VAAPI on energy, +20 W idle. 
+- S37 (06-01): /demo tour trap + findings-embed 404 fixes. →392.
+- S38 (06-02): CR-062 omnibus — unified cooldown/wait-for-idle, /video codec split, queue resume, JS bundling guard. →427.
+- S39 (06-03): compare-page cooldown-label factoring + /image compare fixes. →432.
+- S40 (06-08): CR-063 Pixop /enhance-run integration (pixop.py). →505.
+- S41 (06-10): architecture review; refactor Phases 0–1 (JS bundles → files, serve-time config); tinyllama-default fix; idle-wait readout. →560.
+- S42 (06-10/11): refactor Phases 2–4 — ui.render_page(), twelve routes_*.py + runtime.py, result-envelope contract. →566.
+- CR-064 arc (06-10 evening): /enhance-run revamp — uploads, NVEncC args editor, queue controls, upload TTL sweep, UGC VFR×forcecfr bisect. →614.
+- S43 (06-11): /video batch-box selection affordance fix (boxes looked dead; clicks worked) + this doc cleanup. →615.
 
-**Active CRs:** 15 entries in `CHANGE_REQUESTS.md`. Closed CRs (with original problem statements + closing commit) live in `CHANGE_REQUESTS_CLOSED.md` — that file is now the single source of truth for "what shipped and when." This header keeps only the recent-arc one-liners below.
-
-### Recent sessions (one-line summary; full detail in JOURNAL.md + git log)
-Earlier sessions (S1–S25) live in `JOURNAL.md`; recent arc below.
-- **S26 (2026-05-20):** Credibility & recruitment bundle — CR-037 (AI→streaming tethering), CR-040 (per-result reproduce.zip), CR-027 (capability matrix). 218 → 234 tests.
-- **S27 (2026-05-21):** Versioning + build stamp (`VERSION` + `version.py`, footer + result-stamping). 234 → 237 tests.
-- **S28 (2026-05-22):** CR-044 (VMAF) + CR-028 Phase 2 (Tania §9 v2 — `confidence.py`, shared CI model, raw samples persisted). 237 → 272 tests. Key Finding ⭐: AV1 hw vs sw at same 1500 kbps.
-- **S29 (2026-05-26):** CR-046 Phase 1 (BBB preloaded) + CR-047 (variants schema for `/video` Source picker) + VMAF stage in progress widget. 272 → 290 tests.
-- **S30 (2026-05-27):** Picker UX polish — source vignettes + CR-033 demo chip-row + CR-046 close-out + CR-047 source-key on result JSON. **290 tests** (refactor + UI only).
-- **S31 (2026-05-27 overnight):** AI-comparison trilogy — CR-048 (`/llm/compare`) + CR-049 (`/rag/compare`) + CR-050 (dynamic model catalog + active-probe thermal floor + Ollama eviction + N-way `/image/compare`). 290 tests.
-- **S32 (2026-05-27):** CR-051 RAG corpus self-service (Member upload + delete, audit log, ownership matrix). 292 → 307 tests.
-- **S32 close-out (2026-05-27 evening):** Findings-chain shipped behind `findings_enabled` flag — CR-054 (data model + AV1 worked example), CR-055 (`/findings` index), CR-056 (bulk import of 5 more findings), CR-058 (`/demo` step 7 rewire). CR-057 (home-page repositioning) drafted, awaiting lab UX review. CR-012 also closed — variance + thermal-probe drift journals (`results/{variance,diagnostics}/history.jsonl` via new `persist.append_history_line`). 307 → 339 tests.
-- **S33 (2026-05-28):** S32 close-out + md tidy + `/findings` bug fixes (wlCarbonStrip include; sequential embed hydration to dodge nginx 3-conn 429s) + kicked off overnight variance calibration. 339 tests.
-- **S34 (2026-05-28):** CR-061 in-app benchmark orchestrator (`benchmark.py` + `results/benchmark/`, multi-step variance→video→llm→rag→image run) + CR-029 §2 encode normalization.
-- **S35 (2026-05-29):** CR-060 GPU-backend abstraction shipped pre-swap (`gpu.py`; AMD byte-identical; auto-detect + `gpu_hardware` stamp). Overnight benchmark `e29ccef7` analysed → AMD pre-swap baseline frozen (`docs/gpu_swap_amd_baseline.md`). 339 → 385 tests.
-- **S36 (2026-05-29):** GPU swap — RTX 5080 first light. `gpu.BACKEND` auto-resolved to Nvidia with zero code edits (CR-060 as designed). Vendor-neutral wall idle ~57–59 W → **~79 W (+20 W / +34%)** — real but display-state-sensitive (blanked P8 ~79 W vs active P3 ~101 W); the GPU-sensor 4→18 W jump is mostly a board-vs-core sensor-scope artifact, not hardware. Overnight n=10 post-swap benchmark (`f56dfa77`): NVENC beats VAAPI on energy (H.264 −42%, H.265 −22%, AV1 −25%) and equals-or-beats quality in 5/6 (NVENC AV1 **+4.3 VMAF** on animation). Idle↔load crossover: +20 W idle = 480 Wh/day → swap is energy-positive only for H.264-heavy near-saturated loads, never for H.265 → reframed as a capability/quality/speed upgrade, not a same-workload energy win. AMD baseline VMAF correction. CR-061 Member benchmark view + `/benchmark` nav link.
-- **S37 (2026-06-01):** Root-caused two recurring `/demo` guided-tour bugs. (1) Tour trapped on LLM/Image steps — `/demo/last/{llm,image}` fed `compare_models` records (no `.energy`) into the single-run renderer, which bailed before `revealNext`; fix decouples Next-reveal from rendering (`goStep` reveals on entry) + mode-filters the pre-load. (2) Findings embeds 404'd for every non-Lab visitor — generic `/results` applies CR-026 visitor scoping to lab-measured finding sources; **invisible to tests because the suite runs as Lab** → new scoped `/findings/source/*` carve-out (cited-only, `visitor_key=None`). + `/findings` "Beta" badge + back-nav. 389 → 392 tests.
-- **S38 (2026-06-02):** **CR-062** omnibus (umbrella, created+closed). Headline = **unified cooldown / wait-for-idle**: `cooldown_wait_for_idle` toggle + `power.cooldown_between_runs` as the single path for every inter-pass cooldown (fixed vs active-probe idle-floor; variance stays fixed via `respect_toggle=False`); idle-wait timeout dialog (Wait/Run/Cancel + watchdog) for attended Lab compares; per-result `cooldowns[]` stamping; result-card summary + live "Cooldowns done" log; toggle-aware `Rest (→ idle)` labels. Plus: `/video` **codec split** (Compare codecs CPU / GPU / all — `run_codecs_single_measurement` + shared `wlRenderCodecsSingle`); **image compare 2-of-3 fix** (fresh card routed to N-aware `wlRenderImageCard`); **Lab test-data delete** panel (`DELETE /results/{type}/{id}` + /settings dropdown); **queue resume** routing (`enqueue(page=)` + `resume_page`; compare pages gained `?job=` handlers); **JS bundling fix** (cooldown helpers → `_CARBON_JS`; froze compare progress via ReferenceError) + `test_js_bundling.py` guard. 392 → 427 tests. **Known issue:** `/video` `Rest (→ idle)` live counter renders but doesn't tick (deferred). Infra: GoS1 `eno2` RTL8125 link flaps (suspect EEE/2.5G) intermittently kill all remote access — see CR-062 note.
-- **S39 (2026-06-03):** CR-062 follow-up — three `/image` compare-4-models bugs + a cooldown-factoring audit. (1) **"Cooldown shown as fixed 10s" despite wait-for-idle ON** — the inline compare-page progress labels (image `STAGE_LABELS` + `/llm` CPU-vs-GPU strip) hardcoded `{COOLDOWN_S}`, which `_bake_durations` bakes to `"10"` regardless of the toggle (CR-062 only fixed the *shared* `WL_*_STAGES`). Fix = one toggle-aware `{COOLDOWN_PAREN}` token in `_bake_durations`, both labels repointed; `{COOLDOWN_LABEL}` redefined in terms of it. The "20s/21s" footer was always correct (real idle-waits via `wlCooldownSummary`). (2) **Only 3 of 4 models = NOT a render bug** — `sdxl-lightning` (UNet-only, no `model_index.json`, first in panel) fails to load → recorded in `model_errors` + skipped; its failure also skipped the first cooldown (∴ 2 not 3). `wlRenderImageCard` now surfaces `model_errors` (it silently dropped them; `wlRenderComparePanel` already did). (3) **Progress strip misaligned** — duplicate `"cooldown"` keys collapsed under JS `indexOf` → unique `cooldown_<i>` keys + `pollJob` maps the generic stage via `current_model_idx`. **Audit verdict:** cooldown *behaviour* (`power.cooldown_between_runs`, ~14 call sites, no inline-sleep cooldowns) + *wording* (`_bake_durations` tokens) + footer (`wlCooldownSummary`) are single-sourced; per-caller *orchestration* (`reference_w`, when-to-cool, stamp-key) is not, and the result stamp-key is inconsistent (`cooldowns` list vs `cooldown` dict; `before_*` variants). +4 cooldown-label guard tests (incl. a source guard banning raw `{{COOLDOWN_S}}`) → **432 passing**. Restart needed for the label fix.
-- **S40 (2026-06-08):** CR-063 — Pixop partner-transcode integration: hidden `/enhance-run` page (AI-vs-ffmpeg upscale comparison) behind `ENHANCE_RUN` (Lab→Member so Jon/Tania can demo off-LAN); `pixop.py` + 73 tests → 505. Settings catch-up + 5GB Pixop OCI dump gitignored. (No full JOURNAL entry — see git log `CR-063`.)
-- **S41 (2026-06-10):** Architecture review + refactor **Phases 0–1**. Review of 4 external observations → `docs/architecture_review_2026-06.md` (verdicts: main.py gravity-well TRUE at 60%/59%-of-commits; blast radius = presentation layer; `features/` tree right-direction-wrong-first-move; rendering extraction FIRST) + `ARCHITECTURE.md`. Phase 0: CR-063 merged, **v0.8.7 checkpoint tag** pushed (rollback anchor), stale `.bak` files deleted. Phase 1: 5 shared JS bundles → `static/wl-*.js` (`<script src>` + sha cache-buster); **import-time bake gone** — `/ui-config.js` serves `window.WL_CFG` per request (new `_ui_cfg()` also feeds `_bake_durations`), so label/meter copy changes need no restart; carbon URLs via `WL_CFG.urls`. `main.py` 13,276 → 11,356. Tests 505 → **555** (test_ui_config.py: serve-time proof + `node --check` JS syntax gate; test_js_bundling = effective-JS-corpus). nginx infra conf synced from live (live `/static` already disk-served, exempt from `limit_conn 3`). Restart needed.
-- **S41 (cont., post-restart):** Owner smoke-test surfaced a NOT-Phase-1 regression: `/llm` + `/rag` hardcoded `'tinyllama'` as JS default, but tinyllama dropped out of `llm_enabled_models` (S40 settings catch-up) → dead `getElementById` killed /llm's whole init block (empty prompt box, nothing selected, "Invalid model"). Fix = serve first key of the live MODELS view + guarded lookup; `test_page_model_defaults.py` pins JS-default == first rendered card. ("Only GPU shown" on CPU-vs-GPU: NOT reproducible — both halves on disk + renderer draws both in node simulation; likely collateral of the dead init.) Shipped owner request (intended as a CR, implemented since small): **live idle-wait readout everywhere** — `wlRenderProgress` renders `wlCooldownLine(opts.cooldownData)`, wired into all poll loops incl. /demo; new `cooldown_show_wait_detail` settings toggle (default ON, display-only) via `WL_CFG`; wrap fix = target folds floor+tolerance into one number. Known limit: */compare model-panel cooldown LOG ignores the toggle. **Phase 2a:** page chrome (BASE_STYLES/header/auth chip/footer/lock badges/bundle tags + URL registry) → **`ui.py`**; main re-imports by name, zero behaviour change. **Phase 2b started:** `ui.render_page()` shell; `/queue-status` converted as proof. Benchmark pages got chrome after all (owner request) — only /findings + single-finding pages stay chrome-less. Post-smoke fixes (`6f2b4a6`): first-ever homepage **429** root-caused (nginx `limit_conn 3` + new /ui-config.js fetch) → ui-config `max-age=5`, WL_CFG fallback baked into wl-progress/wl-carbon (a failed config fetch degrades wording, no longer kills poll loops — likely the 'missing /enhance-run readout'), repo nginx conf exempts `= /ui-config.js` + cap→6 (**owner must sudo-apply + reload nginx**); /llm both-mode now shows CPU *response preview* (only GPU's rendered — the real 'only GPU shown' bug; energy columns were always fine); cooldown live-fields cleared server-side when a wait concludes (line self-expires). Tests **560**. main.py ~10,960. **Phase 2 NEXT:** convert remaining ~13 standard-chrome shells to `ui.render_page()` one page per sitting, tests green between — home, video, llm, llm/compare, rag, rag/compare, image, settings, demo, methodology, enhance-run, video-enhance, auth/gate shells last.
-- **S42 (2026-06-10/11 overnight, autonomous):** **Refactor Phases 2–4 COMPLETE** (owner went to bed with "/goal complete the code restructuring"). Phase 2: all standard shells → `ui.render_page()` (chrome-less by design: /findings, /methodology — bespoke topbar, converting would regress it —, auth/gate mini-shell, asset-404). Phase 3: `main.py` → ~430-line app assembly; **twelve `routes_*.py` APIRouter modules** + `runtime.py` (jobs dict, telemetry cache); compat aliases in main for benchmark.py + tests (patch the routes_* module that binds a name, not main). Phase 4: **`docs/result_envelope.md`** mode→renderer contract; `persist._SUMMARISERS` dispatch (differential-tested vs all 274 stored results — 0 diffs); `unrecognised_mode` loud marker; `_wlBadRecord` mode-echo on JS soft-fails; `wlCooldownSummary` tolerates both stamp shapes. Deferred: JobRecord; cooldown writer unification (inside measurement modules). ARCHITECTURE.md rewritten to current state. Tests 560 → **566**, green after each of ~20 commits; measurement modules byte-identical. Restart needed.
-
-### Deferred / open (active items only — completed ones removed; see CHANGE_REQUESTS_CLOSED.md / JOURNAL.md for history)
-- **Transcoding apples-to-apples (GOP / profile)** — see **CR-029** sub-item 2 (Tania-led); VMAF (CR-044) now makes the gap measurable (see AV1 hw-vs-sw Key Finding).
-- **VMAF-stage polish bundle on `/video`** (owner notes, 2026-06-10, while testing — 4 items):
-  (1) **Progress bar during VMAF** like the encode stage has. Render side already works (the `wl-progress.js` widget draws whenever the job carries `progress_pct`); server-side: `video._attach_vmaf` already stamps per-side `vmaf_total`/`vmaf_done`, but its comment claims libvmaf doesn't pipe ffmpeg progress — verify whether `-progress` frame counts work on the scoring pass for in-pass %, else render the per-side counters as the bar. Clear/relabel `progress_pct` between stages so the encode's 100% doesn't linger into VMAF.
-  (2) **Spurious "Wait for Idle"** appears after the first (or second) VMAF run — symptom observed during S41 testing, unconfirmed cause. Look at: extra `cooldown_between_runs` call around the VMAF pass vs. stage-strip index mapping going stale once `stage="vmaf"` (cf. the S39 duplicate-cooldown-key class).
-  (3) **Accelerate VMAF scoring** — cheap levers first: `vmaf_n_subsample` (frame subsampling, slight accuracy trade) + `vmaf_n_threads` (already 12) are existing settings. GPU path: ffmpeg-master has `libvmaf` but NOT `libvmaf_cuda` — would need libvmaf rebuilt with CUDA + ffmpeg rebuild (feasible now the RTX 5080 is in). Measurement-integrity caveat: GPU-side VMAF heats the GPU between measured passes, which interacts with wait-for-idle cooldown times — score on CPU stays cleaner for back-to-back runs.
-  (4) **VMAF checkbox on `/video`, checked by default** — `vmaf_enabled` already exists as a lab-wide setting (`video.py:229`); the ask is a per-run form control defaulting from it, so scoring can be skipped when not needed (saves the whole scoring pass per side).
-- **Benchmark 2** — codec-natural rate control (CRF/QP). Folded into **CR-045** as its V1 ("Constant quality (per-codec)").
-- **Dockerize OWL** — see **CR-031** sub-section 3 (containerisation, two-stage plan: FastAPI+VAAPI, then ROCm).
-- **Guided Tour Findings step** — currently echoes session run; redesign to aggregate across all stored results to surface body-of-evidence learnings (see Key Findings).
-- **RAG visitor upload + corpus PDF view** — see `CHANGE_REQUESTS.md` follow-ups.
-- **Power-user/visitor UX watch** — progressive-disclosure pilot live across test pages; revisit if a visible density toggle becomes needed.
+### Deferred / open (unique items only — CRs track themselves)
+- **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
+  (server stamps vmaf_done/vmaf_total; verify `-progress` works on the scoring pass, else render the counters);
+  (2) spurious "Wait for Idle" after first/second VMAF run (suspect stage-strip index vs extra cooldown call — cf.
+  the S39 duplicate-key class); (3) faster scoring: `vmaf_n_subsample`/`vmaf_n_threads` first; GPU libvmaf_cuda
+  needs a rebuild AND heats the GPU between passes (integrity caveat — CPU scoring stays cleaner); (4) per-run
+  VMAF checkbox defaulting from `vmaf_enabled` (video.py:229).
+- **Guided Tour Findings step** — redesign to aggregate across all stored results, not echo the session run.
+- **Power-user/visitor UX watch** — revisit if a visible density toggle becomes needed.
 
 ## Key Findings to Date
-
-Canonical store is the catalog at **`/findings`** (CR-054/055/056, shipped S32). Each finding is one markdown file under `docs/findings/<slug>.md` with a strict schema (frontmatter + analysis prose) and cites a real `source_result_id` on disk. The catalog is authoritative; **don't restate findings as prose here** — drift between this file and the finding markdown is a known hazard (see memory: claude-md-prose-can-drift-from-disk).
-
-Slugs currently published (`docs/findings/`):
-
-- `abr-all-codecs-meridian-120s` — ABR all-codecs benchmark (n=1 on disk; the popular "n=3" claim is unsupported, caveat noted)
-- `av1-hw-sw-vmaf-tradeoff` ⭐ — energy↔quality tradeoff at same 1500 kbps (the canonical use-case for VMAF + CR-045)
-- `input-master-sensitivity` — input bitrate / codec-of-origin sensitivity (CR-047 pre-test)
-- `llm-cold-inference-mwh-per-token` 🟡 — pre-S30 panel, re-measurement on the new ladder = future v2
-- `rag-faithfulness-rem-question` 🟡 — pre-S30 panel, single observed hallucination (n=1, not a statistical claim)
-- `sd-turbo-cpu-image-first-run` — first-image energy on CPU
-
-Not catalogued (don't fit the strict "cite one stored measurement" schema; live on `/methodology`):
-
-- **French grid evolution (S18):** monthly lifecycle gCO2e/kWh from Eco2mix × IPCC AR6 factors. Jan 2020 65.8 → Jun 2024 26.9 (55% reduction in 2 yrs); derived from `carbon.HISTORICAL_INTENSITY`, not a measurement run.
-- **CR-016 methodology insight:** Eco2mix's `taux_co2` is direct combustion only — never compare it to lifecycle annual means. Both paths now use lifecycle factors.
+Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real
+stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs:
+`abr-all-codecs-meridian-120s` · `av1-hw-sw-vmaf-tradeoff` ⭐ · `input-master-sensitivity` ·
+`llm-cold-inference-mwh-per-token` 🟡 · `rag-faithfulness-rem-question` 🟡 · `sd-turbo-cpu-image-first-run`.
+Not catalogued (live on `/methodology`): French grid evolution (Eco2mix lifecycle series); CR-016 insight —
+Eco2mix `taux_co2` is combustion-only, never compare it to lifecycle means.
 
 ## Visual Identity
-- Project mark: owl SVG at `wattlab_service/static/owl.svg` (2.4KB teal/green geometric).
-- Org mark: GoS round bug, footer only (`_LOGO`).
-- Dark theme: `#0a0a0a` bg, `#00ff99` accent — all tokens centralised in `_BASE_STYLES` (`main.py:~276`).
-- For external/family theming see `rem-theme.css` (drop-in stylesheet that re-skins REM with OWL palette).
+Owl SVG `wattlab_service/static/owl.svg`; GoS round bug footer-only. Dark theme `#0a0a0a` bg / `#00ff99`
+accent — tokens centralised in `_BASE_STYLES` (`ui.py:~334`). REM re-skin: `rem-theme.css`.
