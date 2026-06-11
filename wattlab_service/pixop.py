@@ -81,15 +81,39 @@ def _workdir_paths(c: dict) -> tuple[Path, Path, Path]:
     return base / "input", base / "output", base / "presets"
 
 
+def _logs_dir(c: dict) -> Path:
+    """Per-job encoder/normalize log files (full output, not the 2000-char
+    result tails) — what a partner debug request actually needs (Jon,
+    2026-06-11). Tiny text files; kept indefinitely."""
+    return Path(c["workdir"]) / "logs"
+
+
 def ensure_workdir(c: Optional[dict] = None) -> None:
-    """mkdir -p the three subdirs. OWL owns /srv/data/owl, so no root needed.
+    """mkdir -p the subdirs. OWL owns /srv/data/owl, so no root needed.
     Fails soft — preflight surfaces an unwritable workdir as a reason."""
     c = c or config()
-    for p in _workdir_paths(c):
+    for p in (*_workdir_paths(c), _logs_dir(c)):
         try:
             p.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
+
+
+def _write_log(log_path, cmd: list[str], out: str, err: str) -> Optional[str]:
+    """Persist a pass's FULL command + stdout + stderr (the result dict keeps
+    only 2000-char tails). Fail-soft: logging must never kill a run. Returns
+    the written file's name, or None."""
+    if log_path is None:
+        return None
+    try:
+        p = Path(log_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("$ " + " ".join(cmd)
+                     + "\n\n--- stdout ---\n" + (out or "")
+                     + "\n--- stderr ---\n" + (err or ""))
+        return p.name
+    except Exception:
+        return None
 
 
 def list_presets(c: Optional[dict] = None) -> list[str]:
@@ -213,9 +237,13 @@ def sweep_ephemeral_uploads(c: Optional[dict] = None) -> list[str]:
     swept = []
     try:
         for p in inp.iterdir():
-            if (p.is_file() and p.name.startswith("upload_")
-                    and not p.name.startswith("upload_keep_")
-                    and p.stat().st_mtime < cutoff):
+            if not p.is_file() or p.stat().st_mtime >= cutoff:
+                continue
+            ephemeral_upload = (p.name.startswith("upload_")
+                                and not p.name.startswith("upload_keep_"))
+            # normalized_* intermediates are deleted at run end; sweeping the
+            # stragglers covers a crash mid-run (they're bulky + reproducible).
+            if ephemeral_upload or p.name.startswith("normalized_"):
                 p.unlink(missing_ok=True)
                 swept.append(p.name)
     except Exception:
@@ -233,6 +261,170 @@ def list_inputs(c: Optional[dict] = None) -> list[str]:
                       if p.is_file() and p.suffix.lower() in exts)
     except Exception:
         return []
+
+
+# --- CR-064: input normalization (Jon's prescription, 2026-06-11) -----------
+# Real-world UGC broke pixop-live two distinct ways (the 2026-06-10 uploads):
+# VFR phone footage aborts the mp4 muxer under `--avsync forcecfr` (non-
+# monotonic DTS), and legacy pixel formats (`yuvj422p`) are refused by the
+# decoder outright. Jon's blessed fix is ONE mechanism for both: a lossless
+# local pre-conversion to yuv444p10le + the `fps` filter at the detected frame
+# rate (VFR→CFR), FFV1 in a NUT container. OWL improves on his "slight energy
+# skew" trade-off by running the pass BEFORE the baseline window — the ffmpeg
+# CPU cost never enters a reported figure (cf. the +2.6 W decode-pacing data
+# point). Conditional, not always-on: inputs already CFR + in a verified pixel
+# format run untouched, preserving continuity with every result to date.
+
+# Pixel formats verified to decode in pixop-live on real runs (BBB 8-bit 4:2:0,
+# Meridian PQ 10-bit 4:2:0). Anything else gets normalized — Jon declined to
+# publish a supported-format matrix and prescribed normalization instead.
+_VERIFIED_PIX_FMTS = {"yuv420p", "yuv420p10le"}
+
+# Audio codecs the downstream mp4 mux (`--audio-copy`) accepts; anything else
+# (PCM in old camera files, …) is transcoded to AAC in the intermediate.
+# Audio fidelity is not what /enhance-run measures — video stays lossless.
+_MP4_SAFE_AUDIO = {"aac", "mp3", "ac3", "eac3"}
+
+# Detected average rates snap to the nearest standard rate (within 2%) so the
+# CFR intermediate lands on a clean broadcast rate instead of e.g. 29.53.
+_STD_FPS = ((23.976, "24000/1001"), (24, "24"), (25, "25"),
+            (29.97, "30000/1001"), (30, "30"), (48, "48"), (50, "50"),
+            (59.94, "60000/1001"), (60, "60"))
+
+# VFR heuristic: container-declared rate vs measured average disagree by >0.5%.
+_VFR_TOLERANCE = 0.005
+
+
+def _parse_rate(val: Optional[str]) -> Optional[float]:
+    """ffprobe rational ('30000/1001') or plain number → float fps, else None."""
+    try:
+        if not val:
+            return None
+        if "/" in val:
+            num, den = val.split("/", 1)
+            return float(num) / float(den) if float(den) else None
+        return float(val)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def _snap_fps(avg: float) -> str:
+    """Nearest standard rate within 2%, else the measured average as-is."""
+    best = None
+    for std, token in _STD_FPS:
+        d = abs(avg - std) / std
+        if d <= 0.02 and (best is None or d < best[0]):
+            best = (d, token)
+    return best[1] if best else f"{avg:.3f}"
+
+
+def probe_normalization(path) -> dict:
+    """Decide whether an input needs the pre-normalization pass, from one
+    ffprobe call: VFR (r_frame_rate vs avg_frame_rate disagree) and/or a
+    pixel format outside the verified set. Fail-soft: an unprobeable file
+    returns needed=False — the run then fails (or passes) exactly as it
+    would have before this stage existed, with the real encoder error."""
+    out = {"needed": False, "reasons": [], "vfr": False, "pix_fmt": None,
+           "target_fps": None, "audio_codec": None}
+    try:
+        r = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-show_entries",
+             "stream=codec_type,codec_name,pix_fmt,r_frame_rate,avg_frame_rate",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=15)
+        streams = json.loads(r.stdout).get("streams") or []
+    except Exception:
+        return out
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    if not video:
+        return out
+    out["pix_fmt"] = video.get("pix_fmt")
+    out["audio_codec"] = (audio or {}).get("codec_name")
+    declared = _parse_rate(video.get("r_frame_rate"))
+    avg = _parse_rate(video.get("avg_frame_rate"))
+    if declared and avg and abs(declared - avg) / max(declared, avg) > _VFR_TOLERANCE:
+        out["vfr"] = True
+        out["needed"] = True
+        out["reasons"].append(
+            f"variable frame rate (declared {declared:.3f} fps, average {avg:.3f} fps)")
+        out["target_fps"] = _snap_fps(avg)
+    if out["pix_fmt"] and out["pix_fmt"] not in _VERIFIED_PIX_FMTS:
+        out["needed"] = True
+        out["reasons"].append(f"pixel format {out['pix_fmt']} not in the verified set")
+        if out["target_fps"] is None and avg:
+            out["target_fps"] = _snap_fps(avg)
+    return out
+
+
+def _normalized_name(input_name: str) -> str:
+    return f"normalized_{Path(input_name).stem}.nut"
+
+
+def build_normalize_cmd(input_name: str, normalized_name: str, target_fps: str,
+                        audio_codec: Optional[str],
+                        c: Optional[dict] = None) -> list[str]:
+    """The Jon-prescribed lossless pre-conversion: yuv444p10le (a superset of
+    any input — no chroma or bit-depth loss) + `fps` at the detected rate
+    (VFR→CFR with clean timestamps, so `--avsync forcecfr` stays valid), FFV1
+    in NUT. Audio copies when the downstream mp4 mux accepts the codec, else
+    transcodes to AAC (video stays lossless; audio is not the measurand)."""
+    c = c or config()
+    inp, _, _ = _workdir_paths(c)
+    ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
+    cmd = [ff, "-y", "-i", str(inp / input_name),
+           "-vf", f"fps={target_fps}", "-pix_fmt", "yuv444p10le",
+           "-c:v", "ffv1"]
+    if audio_codec in _MP4_SAFE_AUDIO:
+        cmd += ["-c:a", "copy"]
+    elif audio_codec:
+        cmd += ["-c:a", "aac", "-b:a", "192k"]
+    else:
+        cmd += ["-an"]
+    cmd += ["-f", "nut", str(inp / normalized_name)]
+    return cmd
+
+
+def normalize_input(input_name: str, probe: dict, c: Optional[dict] = None,
+                    log_path=None) -> dict:
+    """Run the pre-conversion synchronously (callers put it BEFORE the focus/
+    baseline bracket — its CPU draw must never enter a measured window) and
+    return the provenance dict stamped on the result. Raises RuntimeError on
+    ffmpeg failure — a run that can't normalize shouldn't proceed to a
+    known-bad encode."""
+    c = c or config()
+    inp, _, _ = _workdir_paths(c)
+    target_fps = probe.get("target_fps") or "30"
+    normalized = _normalized_name(input_name)
+    cmd = build_normalize_cmd(input_name, normalized, target_fps,
+                              probe.get("audio_codec"), c)
+    t0 = time.time()
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=c["docker_timeout_s"])
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"input normalization timed out after {c['docker_timeout_s']}s")
+    _write_log(log_path, cmd, r.stdout, r.stderr)
+    out_path = inp / normalized
+    if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+        out_path.unlink(missing_ok=True)
+        raise RuntimeError("input normalization failed: "
+                           + (r.stderr or "")[-_TAIL:])
+    return {
+        "performed": True,
+        "reasons": probe.get("reasons") or [],
+        "source": input_name,
+        "normalized_name": normalized,
+        "target_fps": target_fps,
+        "source_pix_fmt": probe.get("pix_fmt"),
+        "audio": ("copy" if probe.get("audio_codec") in _MP4_SAFE_AUDIO
+                  else ("aac" if probe.get("audio_codec") else "none")),
+        "duration_s": round(time.time() - t0, 1),
+        "size_mb": round(out_path.stat().st_size / 1024 / 1024, 2),
+        "cmd": " ".join(cmd),
+        "energy_note": "normalization runs before the baseline window — "
+                       "its cost is excluded from all energy figures",
+    }
 
 
 # --- CR-064: generated preset matrix (Output Format × Super Resolution) -----
@@ -880,11 +1072,13 @@ def parse_encode_stats(text: Optional[str]) -> Optional[dict]:
 
 
 def run_transcode_subprocess(cmd: list[str], timeout_s: int,
-                             pacer_cmd: Optional[list[str]] = None) -> dict:
+                             pacer_cmd: Optional[list[str]] = None,
+                             log_path=None) -> dict:
     """Run the docker transcode, capturing returncode + tails + NVEncC's encode
     fps. Batch mode (pacer_cmd=None) runs docker directly. Live mode pipes a
     host-side `ffmpeg -re -c copy` pacer into docker's stdin so the encode runs
-    at 1x realtime (the pacer's draw is negligible — see build_pacer_cmd)."""
+    at 1x realtime (the pacer's draw is negligible — see build_pacer_cmd).
+    log_path: full output lands there win or lose (see _write_log)."""
     t0 = time.time()
     out = err = ""
     rc: Optional[int] = None
@@ -924,6 +1118,7 @@ def run_transcode_subprocess(cmd: list[str], timeout_s: int,
         "stdout_tail": (out or "")[-_TAIL:] if rc != 0 else "",
         "stderr_tail": (err or "")[-_TAIL:] if rc != 0 else "",
         "encode_stats": parse_encode_stats(combined),
+        "log_file": _write_log(log_path, cmd, out, err),
     }
 
 
@@ -1066,7 +1261,8 @@ async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
                          preset_key: str, preset_label: str, preset_detail: str,
                          update_stage: bool = True,
                          cooldown_stage: str = "cooldown",
-                         do_cooldown: bool = True) -> dict:
+                         do_cooldown: bool = True,
+                         log_path=None) -> dict:
     """One measured transcode/upscale pass through the standard harness (focus →
     baseline → 1 Hz poll → cooldown → ΔW/ΔE + confidence → terminal probe),
     returning the single-run result dict shape. Shared by the partner-GPU run
@@ -1101,7 +1297,8 @@ async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
         t_start = time.time()
         transcode_result = await asyncio.get_event_loop().run_in_executor(
             None, lambda: run_transcode_subprocess(cmd, c["docker_timeout_s"],
-                                                   pacer_cmd=pacer_cmd))
+                                                   pacer_cmd=pacer_cmd,
+                                                   log_path=log_path))
         t_end = time.time()
         stop_event.set()
         readings = await poll_task
@@ -1194,6 +1391,31 @@ async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
     }
 
 
+async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
+                           job_id: str, live: bool) -> dict:
+    """Probe-and-normalize bracket shared by both run flavours. Runs BEFORE
+    focus/baseline so the ffmpeg cost stays outside every measured window.
+    Live 1× mode refuses inputs that need it: the pacer stream-copies mpegts,
+    which can't carry the FFV1 intermediate — and a paced run with a hidden
+    pre-conversion wouldn't be the live scenario it claims to measure."""
+    inp, _, _ = _workdir_paths(c)
+    probe = probe_normalization(inp / input_name)
+    if not probe["needed"]:
+        return {"performed": False, "reasons": [], "vfr": probe.get("vfr", False),
+                "source_pix_fmt": probe.get("pix_fmt")}
+    if live:
+        raise RuntimeError(
+            "this input needs pre-normalization ("
+            + "; ".join(probe["reasons"])
+            + ") which Live 1× mode does not support — run it un-paced (batch)")
+    if jobs is not None:
+        jobs[job_id]["stage"] = "normalize"
+        jobs[job_id]["substage"] = "normalize"
+    log_path = _logs_dir(c) / f"{job_id}_normalize.log"
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: normalize_input(input_name, probe, c, log_path=log_path))
+
+
 async def run_enhance_measurement(input_name: str, preset_name: str,
                                   job_id: str, jobs: Optional[dict] = None,
                                   live: bool = False) -> dict:
@@ -1214,42 +1436,58 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         raise RuntimeError(f"unknown preset: {preset_name!r}")
 
     inp, out, pre = _workdir_paths(c)
+    # Pre-normalization (Jon's 2026-06-11 prescription) — BEFORE the baseline,
+    # so its CPU cost is outside the energy window. The measured pass then
+    # encodes the normalized intermediate; the original is what the result's
+    # input_stream records.
+    norm = await _maybe_normalize(input_name, c, jobs, job_id, live)
+    enc_input = norm.get("normalized_name") or input_name
     output_name = _output_name(input_name, preset_name)
-    cmd = build_docker_cmd(input_name, preset_name, output_name, c, live=live,
+    cmd = build_docker_cmd(enc_input, preset_name, output_name, c, live=live,
                            job_id=job_id)
-    pacer_cmd = build_pacer_cmd(input_name, c) if live else None
+    pacer_cmd = build_pacer_cmd(enc_input, c) if live else None
 
-    # do_cooldown=False — same rule as the compare's last pass and video's
-    # all-codecs loop: no trailing cooldown after the LAST measured pass,
-    # since nothing is measured after it (probe + VQA are terminal/decode-only;
-    # the next job protects itself via its own baseline / wait-for-idle).
-    res = await _measured_pass(
-        c=c, job_id=job_id, jobs=jobs, input_name=input_name,
-        input_path=inp / input_name, output_name=output_name,
-        output_path=out / output_name, cmd=cmd, pacer_cmd=pacer_cmd, live=live,
-        preset_key=preset_name,
-        preset_label=("Partner GPU transcode / upscale"
-                      + (" · Live (1× paced)" if live else "")),
-        preset_detail=preset_name, update_stage=True, do_cooldown=False)
+    try:
+        # do_cooldown=False — same rule as the compare's last pass and video's
+        # all-codecs loop: no trailing cooldown after the LAST measured pass,
+        # since nothing is measured after it (probe + VQA are terminal/decode-only;
+        # the next job protects itself via its own baseline / wait-for-idle).
+        res = await _measured_pass(
+            c=c, job_id=job_id, jobs=jobs, input_name=input_name,
+            input_path=inp / enc_input, output_name=output_name,
+            output_path=out / output_name, cmd=cmd, pacer_cmd=pacer_cmd, live=live,
+            preset_key=preset_name,
+            preset_label=("Partner GPU transcode / upscale"
+                          + (" · Live (1× paced)" if live else "")),
+            preset_detail=preset_name, update_stage=True, do_cooldown=False,
+            log_path=_logs_dir(c) / f"{job_id}_partner.log")
 
-    # NR quality (CompressedVQA-HDR) on input + output — terminal, post-lock,
-    # fail-soft (fields nullable). Reuses the existing "probe" stage index.
-    if jobs is not None:
-        jobs[job_id]["stage"] = "probe"
-        jobs[job_id]["substage"] = "vqa"
-    res["result"]["source_vqa"] = probe_vqa_nr(inp / input_name, c)
-    output_path = out / output_name
-    tc_ok = bool((res["result"].get("transcode") or {}).get("success")
-                 and output_path.exists())
-    res["result"]["vqa"] = probe_vqa_nr(output_path, c) if tc_ok else None
-    # CR-064 provenance — the exact args used + where the preset came from +
-    # what the input actually was (never drives behaviour; record-keeping).
-    res["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
-    res["result"]["preset_origin"] = preset_origin(preset_name)
-    res["result"]["input_stream"] = probe_input_stream(inp / input_name)
-    if jobs is not None:
-        jobs[job_id]["stage"] = "done"
-    return res
+        # NR quality (CompressedVQA-HDR) on input + output — terminal, post-lock,
+        # fail-soft (fields nullable). Reuses the existing "probe" stage index.
+        if jobs is not None:
+            jobs[job_id]["stage"] = "probe"
+            jobs[job_id]["substage"] = "vqa"
+        res["result"]["source_vqa"] = probe_vqa_nr(inp / input_name, c)
+        output_path = out / output_name
+        tc_ok = bool((res["result"].get("transcode") or {}).get("success")
+                     and output_path.exists())
+        res["result"]["vqa"] = probe_vqa_nr(output_path, c) if tc_ok else None
+        # CR-064 provenance — the exact args used + where the preset came from +
+        # what the input actually was (never drives behaviour; record-keeping).
+        res["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
+        res["result"]["preset_origin"] = preset_origin(preset_name)
+        res["result"]["input_stream"] = probe_input_stream(inp / input_name)
+        res["result"]["input_normalization"] = norm
+        if norm.get("performed"):
+            res["result"]["normalized_stream"] = probe_input_stream(inp / enc_input)
+        if jobs is not None:
+            jobs[job_id]["stage"] = "done"
+        return res
+    finally:
+        # The intermediate is bulky (lossless 4:4:4 10-bit) and reproducible
+        # from source + the stamped cmd — never kept past the run.
+        if norm.get("performed"):
+            (inp / enc_input).unlink(missing_ok=True)
 
 
 # --- Compare: ML / partner upscale vs traditional ffmpeg upscale ------------
@@ -1322,88 +1560,102 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
 
     inp, out, pre = _workdir_paths(c)
     input_path = inp / input_name
+    # Pre-normalization (see run_enhance_measurement) — ONE pass feeding both
+    # sides, so the comparison stays apples-to-apples on the identical input.
+    norm = await _maybe_normalize(input_name, c, jobs, job_id, live)
+    enc_input = norm.get("normalized_name") or input_name
+    enc_path = inp / enc_input
 
-    # --- pass 1: ML / partner GPU upscale ---
-    if jobs is not None:
-        jobs[job_id]["stage"] = "ml"
-    ml_output = _output_name(input_name, preset_name)
-    ml_cmd = build_docker_cmd(input_name, preset_name, ml_output, c, live=live,
-                              job_id=job_id)
-    ml_pacer = build_pacer_cmd(input_name, c) if live else None
-    ml = await _measured_pass(
-        c=c, job_id=job_id, jobs=jobs, input_name=input_name,
-        input_path=input_path, output_name=ml_output,
-        output_path=out / ml_output, cmd=ml_cmd, pacer_cmd=ml_pacer, live=live,
-        preset_key=preset_name,
-        preset_label="AI / ML enhance" + (" · Live 1×" if live else ""),
-        preset_detail=preset_name, update_stage=False, cooldown_stage="ml")
+    try:
+        # --- pass 1: ML / partner GPU upscale ---
+        if jobs is not None:
+            jobs[job_id]["stage"] = "ml"
+        ml_output = _output_name(input_name, preset_name)
+        ml_cmd = build_docker_cmd(enc_input, preset_name, ml_output, c, live=live,
+                                  job_id=job_id)
+        ml_pacer = build_pacer_cmd(enc_input, c) if live else None
+        ml = await _measured_pass(
+            c=c, job_id=job_id, jobs=jobs, input_name=input_name,
+            input_path=enc_path, output_name=ml_output,
+            output_path=out / ml_output, cmd=ml_cmd, pacer_cmd=ml_pacer, live=live,
+            preset_key=preset_name,
+            preset_label="AI / ML enhance" + (" · Live 1×" if live else ""),
+            preset_detail=preset_name, update_stage=False, cooldown_stage="ml",
+            log_path=_logs_dir(c) / f"{job_id}_partner.log")
 
-    # --- pass 2: traditional ffmpeg upscale (same res + bitrate) ---
-    if jobs is not None:
-        jobs[job_id]["stage"] = "ffmpeg"
-    tgt_w, tgt_h = _resolve_target_dims(spec, ml, input_path)
-    ff_output = _ffmpeg_output_name(input_name, preset_name, ff_filter)
-    ff_cmd = build_ffmpeg_upscale_cmd(input_name, ff_output, tgt_w, tgt_h,
-                                      spec.get("bitrate_kbps"), ff_filter, c, live=live,
-                                      pix_fmt=_ffmpeg_pix_fmt(spec))
-    ff = await _measured_pass(
-        c=c, job_id=job_id, jobs=jobs, input_name=input_name,
-        input_path=input_path, output_name=ff_output,
-        output_path=out / ff_output, cmd=ff_cmd, pacer_cmd=None, live=live,
-        preset_key=f"ffmpeg:{ff_filter}",
-        preset_label=f"Traditional upscale (ffmpeg {ff_filter})"
-                     + (" · Live 1×" if live else ""),
-        preset_detail=f"scale={tgt_w}:{tgt_h}:flags={ff_filter}",
-        update_stage=False, cooldown_stage="ffmpeg", do_cooldown=False)
+        # --- pass 2: traditional ffmpeg upscale (same res + bitrate) ---
+        if jobs is not None:
+            jobs[job_id]["stage"] = "ffmpeg"
+        tgt_w, tgt_h = _resolve_target_dims(spec, ml, enc_path)
+        ff_output = _ffmpeg_output_name(input_name, preset_name, ff_filter)
+        ff_cmd = build_ffmpeg_upscale_cmd(enc_input, ff_output, tgt_w, tgt_h,
+                                          spec.get("bitrate_kbps"), ff_filter, c, live=live,
+                                          pix_fmt=_ffmpeg_pix_fmt(spec))
+        ff = await _measured_pass(
+            c=c, job_id=job_id, jobs=jobs, input_name=input_name,
+            input_path=enc_path, output_name=ff_output,
+            output_path=out / ff_output, cmd=ff_cmd, pacer_cmd=None, live=live,
+            preset_key=f"ffmpeg:{ff_filter}",
+            preset_label=f"Traditional upscale (ffmpeg {ff_filter})"
+                         + (" · Live 1×" if live else ""),
+            preset_detail=f"scale={tgt_w}:{tgt_h}:flags={ff_filter}",
+            update_stage=False, cooldown_stage="ffmpeg", do_cooldown=False,
+            log_path=_logs_dir(c) / f"{job_id}_ffmpeg.log")
 
-    # --- terminal analysis (post-measurement; no energy impact) ---
-    # Complexity (SI/TI + frame-size) of source + both outputs, and an A↔B
-    # differential (PSNR/SSIM) so the energy gap can be read against how much
-    # the outputs actually differ. All decode-only; runs after the lock is gone.
-    if jobs is not None:
-        jobs[job_id]["stage"] = "analyse"
-    ml_ok = bool((ml["result"].get("transcode") or {}).get("success") and ml["result"].get("output_name"))
-    ff_ok = bool((ff["result"].get("transcode") or {}).get("success") and ff["result"].get("output_name"))
-    if ml_ok:
-        ml["result"]["complexity"] = probe_complexity(out / ml_output, c)
-    if ff_ok:
-        ff["result"]["complexity"] = probe_complexity(out / ff_output, c)
-    source_complexity = probe_complexity(input_path, c)
-    ab_quality = probe_ab_quality(out / ml_output, out / ff_output) if (ml_ok and ff_ok) else None
+        # --- terminal analysis (post-measurement; no energy impact) ---
+        # Complexity (SI/TI + frame-size) of source + both outputs, and an A↔B
+        # differential (PSNR/SSIM) so the energy gap can be read against how much
+        # the outputs actually differ. All decode-only; runs after the lock is gone.
+        if jobs is not None:
+            jobs[job_id]["stage"] = "analyse"
+        ml_ok = bool((ml["result"].get("transcode") or {}).get("success") and ml["result"].get("output_name"))
+        ff_ok = bool((ff["result"].get("transcode") or {}).get("success") and ff["result"].get("output_name"))
+        if ml_ok:
+            ml["result"]["complexity"] = probe_complexity(out / ml_output, c)
+        if ff_ok:
+            ff["result"]["complexity"] = probe_complexity(out / ff_output, c)
+        source_complexity = probe_complexity(input_path, c)
+        ab_quality = probe_ab_quality(out / ml_output, out / ff_output) if (ml_ok and ff_ok) else None
 
-    # NR quality (CompressedVQA-HDR) — scores source + both outputs
-    # independently. Terminal like the probes above; all fields nullable.
-    if jobs is not None:
-        jobs[job_id]["substage"] = "vqa"
-    source_vqa = probe_vqa_nr(input_path, c)
-    ml["result"]["vqa"] = probe_vqa_nr(out / ml_output, c) if ml_ok else None
-    ff["result"]["vqa"] = probe_vqa_nr(out / ff_output, c) if ff_ok else None
+        # NR quality (CompressedVQA-HDR) — scores source + both outputs
+        # independently. Terminal like the probes above; all fields nullable.
+        if jobs is not None:
+            jobs[job_id]["substage"] = "vqa"
+        source_vqa = probe_vqa_nr(input_path, c)
+        ml["result"]["vqa"] = probe_vqa_nr(out / ml_output, c) if ml_ok else None
+        ff["result"]["vqa"] = probe_vqa_nr(out / ff_output, c) if ff_ok else None
 
-    # CR-064 provenance — exact AI-side args + preset origin + what the input
-    # actually was. The ffmpeg side's full command is already in its
-    # transcode.docker_cmd.
-    ml["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
-    ml["result"]["preset_origin"] = preset_origin(preset_name)
-    input_stream = probe_input_stream(input_path)
+        # CR-064 provenance — exact AI-side args + preset origin + what the input
+        # actually was. The ffmpeg side's full command is already in its
+        # transcode.docker_cmd.
+        ml["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
+        ml["result"]["preset_origin"] = preset_origin(preset_name)
+        input_stream = probe_input_stream(input_path)
 
-    if jobs is not None:
-        jobs[job_id]["stage"] = "done"
+        if jobs is not None:
+            jobs[job_id]["stage"] = "done"
 
-    comparison = _build_comparison(ml, ff)
-    comparison["ab_quality"] = ab_quality
-    return {
-        "mode": "enhance_compare",
-        "job_id": job_id,
-        "live": live,
-        "input_name": input_name,
-        "preset_key": preset_name,
-        "ff_filter": ff_filter,
-        "target_res": f"{tgt_w}x{tgt_h}",
-        "source_complexity": source_complexity,
-        "source_vqa": source_vqa,
-        "input_stream": input_stream,
-        "ml": ml,
-        "ffmpeg": ff,
-        "comparison": comparison,
-        "scope": SCOPE,
-    }
+        comparison = _build_comparison(ml, ff)
+        comparison["ab_quality"] = ab_quality
+        return {
+            "mode": "enhance_compare",
+            "job_id": job_id,
+            "live": live,
+            "input_name": input_name,
+            "preset_key": preset_name,
+            "ff_filter": ff_filter,
+            "target_res": f"{tgt_w}x{tgt_h}",
+            "source_complexity": source_complexity,
+            "source_vqa": source_vqa,
+            "input_stream": input_stream,
+            "input_normalization": norm,
+            "ml": ml,
+            "ffmpeg": ff,
+            "comparison": comparison,
+            "scope": SCOPE,
+        }
+    finally:
+        # The intermediate is bulky (lossless 4:4:4 10-bit) and reproducible
+        # from source + the stamped cmd — never kept past the run.
+        if norm.get("performed"):
+            enc_path.unlink(missing_ok=True)

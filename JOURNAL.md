@@ -7,6 +7,56 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 44 — 2026-06-11
+
+Jon's (Pixop) reply to the CR-064 questions landed and resolved most of the open list; this
+session implemented his prescriptions and gathered the evidence he asked for. **628 tests.**
+Service restart pending (new normalize stage + log capture need a reload).
+
+**Input normalization (Jon's fix for both UGC failure classes).** One mechanism kills both
+2026-06-10 upload failures: a lossless local pre-conversion to `yuv444p10le` + the `fps`
+filter at the detected average rate (VFR→CFR, so `--avsync forcecfr` stays valid), FFV1 in
+NUT. OWL improves on Jon's "slight energy skew" trade-off by running the pass BEFORE the
+baseline window — the ffmpeg CPU cost never enters a reported figure (the stdin-pipe
+variant he offered would have put a full decode inside the window; cf. the +2.6 W
+decode-pacing data point). Conditional, not always-on: probe-driven (VFR = declared-vs-
+average frame-rate disagreement >0.5%; pixel format outside the verified
+{yuv420p, yuv420p10le} set), so the staged clips and every result to date run untouched.
+Audio copies when mp4-safe, else AAC (video stays lossless; audio isn't the measurand).
+Live 1× mode refuses inputs needing normalization (the mpegts pacer can't carry FFV1, and
+a hidden pre-conversion wouldn't be the live scenario it claims to measure). The bulky
+intermediate is deleted at run end + swept on TTL if a crash orphans it. Provenance
+stamped on every result (`input_normalization`, + `normalized_stream` when performed).
+**Verified on the real failures:** the VFR night clip (declared 24.83 / average 21.08 fps,
+previously rc 1 at frame 427) → rc 0, 914 frames; a synthesized `yuvj422p` MJPEG clip
+(the swept 2005-camera file's failure mode) → flagged, normalized, rc 0. NVEncC decodes
+FFV1-in-NUT without complaint.
+
+**Per-job log capture.** `run_transcode_subprocess` now writes the FULL command +
+stdout/stderr to `<workdir>/logs/<job>_{partner,ffmpeg,normalize}.log` (the result keeps
+only 2000-char tails) — what a partner debug request actually needs.
+
+**hdr_4k abort: Jon's VRAM theory now has a number.** Reproduced the 2026-06-10 bisect
+conditions (1080p SDR → 4K, `sdr_to_hdr=on`, same `sm120_x2_rs1p0_1920_1080.so` AOTI
+model) with 1 Hz `nvidia-smi` sampling: the run PASSED this time at **15,774 / 16,303 MiB
+peak (96.8%, ~530 MiB headroom)** with the desktop holding ~389 MiB. A heavier desktop
+session on the bisect evening plausibly was the margin — consistent with Jon's
+couldn't-reproduce and the intermittent rc 134. `_COMBO_EXCLUSIONS` keeps `hdr_4k` out
+until the desktop moves off the 5080 (the Ryzen 7900's Raphael iGPU is present at
+`0c:00.0`) and/or Jon's memory-tuning env vars land — at 3% headroom it would be flaky in
+production. Log at `/srv/data/owl/pixop/logs/repro_hdr4k.log` for Jon.
+
+**UI:** `/enhance-run` stage strip gains a leading "Normalize" stage (conditional stages
+pass straight through for clean inputs); compare strip unchanged (normalize maps to the
+first bucket).
+
+**Still open on Jon:** blessed HDR→SDR tone-map (explicitly deferred to Pixop's own
+dynamic tone-mapper; `--vpp-colorspace` exists but isn't in the presets), `dnn_scaling`
+at ~×4.5, memory-tuning env vars (Slack). Owner ops queued: desktop→iGPU move (changes
+idle baseline → variance recalibration required), service restart.
+
+---
+
 ## Session 43 — 2026-06-11
 
 Two threads: a `/video` regression report run to ground, and a documentation cleanup pass

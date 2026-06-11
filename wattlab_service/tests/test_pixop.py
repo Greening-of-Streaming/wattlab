@@ -266,7 +266,7 @@ def test_run_enhance_measurement_shape(tmp_path, monkeypatch):
                         lambda p: {"codec": "hevc", "width": 1920, "height": 1080,
                                    "pix_fmt": "yuv420p10le", "bit_rate_bps": 35_000_000})
     monkeypatch.setattr(pixop, "run_transcode_subprocess",
-                        lambda cmd, t, pacer_cmd=None: {"success": True, "returncode": 0,
+                        lambda cmd, t, pacer_cmd=None, log_path=None: {"success": True, "returncode": 0,
                                         "duration_s": 19.7, "docker_cmd": " ".join(cmd),
                                         "live": False, "stdout_tail": "", "stderr_tail": "",
                                         "encode_stats": {"frames": 705, "fps": 51.9}})
@@ -327,7 +327,7 @@ def test_run_enhance_measurement_live_mode(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_run(cmd, t, pacer_cmd=None):
+    def fake_run(cmd, t, pacer_cmd=None, log_path=None):
         captured["pacer"] = pacer_cmd
         return {"success": True, "returncode": 0, "duration_s": 30.5,
                 "docker_cmd": " ".join(cmd), "live": pacer_cmd is not None,
@@ -723,7 +723,7 @@ def _mock_harness(monkeypatch, tmp_path, *, out_w=1920, out_h=1080):
     monkeypatch.setattr(pixop, "probe_vqa_nr",
                         lambda p, c=None: {"score": 9.5, "model": "CompressedVQA-HDR (NR)"})
     monkeypatch.setattr(pixop, "run_transcode_subprocess",
-                        lambda cmd, t, pacer_cmd=None: {"success": True, "returncode": 0,
+                        lambda cmd, t, pacer_cmd=None, log_path=None: {"success": True, "returncode": 0,
                                         "duration_s": 20.0, "docker_cmd": " ".join(cmd),
                                         "live": pacer_cmd is not None, "stdout_tail": "",
                                         "stderr_tail": "", "encode_stats": None})
@@ -1259,3 +1259,253 @@ def test_settings_page_exposes_enhance_upload_caps():
     assert 'id="enhance_upload_max_mb"' in r.text
     assert 'id="enhance_upload_max_duration_s"' in r.text
     assert 'id="enhance_upload_ttl_h"' in r.text
+
+
+# ═══ Input normalization (Jon's prescription, 2026-06-11) ════════════════════
+# One mechanism for both 2026-06-10 UGC failures: VFR × forcecfr (mp4 muxer
+# abort) and legacy pixel formats (decoder refusal). Lossless FFV1/NUT
+# yuv444p10le + fps CFR, run BEFORE the baseline window.
+
+def _ffprobe_json(streams):
+    import json as _json
+    class R:
+        returncode = 0
+        stdout = _json.dumps({"streams": streams})
+        stderr = ""
+    return R()
+
+
+def test_parse_rate_and_snap_fps():
+    assert pixop._parse_rate("30000/1001") == pytest.approx(29.97, abs=0.01)
+    assert pixop._parse_rate("25") == 25.0
+    assert pixop._parse_rate("0/0") is None
+    assert pixop._parse_rate(None) is None
+    assert pixop._snap_fps(29.53) == "30000/1001"   # nearest standard within 2%
+    assert pixop._snap_fps(25.0) == "25"
+    assert pixop._snap_fps(23.976) == "24000/1001"
+    assert pixop._snap_fps(17.3) == "17.300"        # no standard near → as-is
+
+
+def test_probe_normalization_vfr(monkeypatch):
+    monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
+        {"codec_type": "video", "pix_fmt": "yuv420p",
+         "r_frame_rate": "600/1", "avg_frame_rate": "2950/100"},
+        {"codec_type": "audio", "codec_name": "aac"},
+    ]))
+    p = pixop.probe_normalization("x.mov")
+    assert p["needed"] is True and p["vfr"] is True
+    assert p["target_fps"] == "30000/1001"
+    assert p["audio_codec"] == "aac"
+    assert any("variable frame rate" in r for r in p["reasons"])
+
+
+def test_probe_normalization_legacy_pix_fmt(monkeypatch):
+    monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
+        {"codec_type": "video", "pix_fmt": "yuvj422p",
+         "r_frame_rate": "25/1", "avg_frame_rate": "25/1"},
+        {"codec_type": "audio", "codec_name": "pcm_s16le"},
+    ]))
+    p = pixop.probe_normalization("old_camera.mov")
+    assert p["needed"] is True and p["vfr"] is False
+    assert p["target_fps"] == "25"
+    assert any("yuvj422p" in r for r in p["reasons"])
+
+
+def test_probe_normalization_clean_input_untouched(monkeypatch):
+    monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
+        {"codec_type": "video", "pix_fmt": "yuv420p10le",
+         "r_frame_rate": "30000/1001", "avg_frame_rate": "30000/1001"},
+    ]))
+    p = pixop.probe_normalization("meridian.mov")
+    assert p["needed"] is False and p["reasons"] == []
+
+
+def test_probe_normalization_fail_soft(monkeypatch):
+    def boom(*a, **kw):
+        raise OSError("no ffprobe")
+    monkeypatch.setattr(pixop.subprocess, "run", boom)
+    p = pixop.probe_normalization("x.mov")
+    assert p["needed"] is False   # unprobeable → run proceeds, real error surfaces
+
+
+def test_build_normalize_cmd_lossless_contract(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    cmd = pixop.build_normalize_cmd("in.mov", "normalized_in.nut",
+                                    "30000/1001", "aac")
+    joined = " ".join(cmd)
+    assert "-vf fps=30000/1001" in joined
+    assert "-pix_fmt yuv444p10le" in joined          # superset — no chroma/depth loss
+    assert "-c:v ffv1" in joined                     # lossless video
+    assert "-c:a copy" in joined                     # mp4-safe audio rides along
+    assert joined.endswith(f"-f nut {tmp_path}/input/normalized_in.nut")
+    # PCM (old cameras) → AAC: the downstream --audio-copy mp4 mux can't take it
+    cmd2 = pixop.build_normalize_cmd("in.mov", "n.nut", "25", "pcm_s16le")
+    assert "-c:a aac" in " ".join(cmd2)
+    # no audio → -an
+    cmd3 = pixop.build_normalize_cmd("in.mov", "n.nut", "25", None)
+    assert "-an" in cmd3
+
+
+def test_normalize_input_provenance_and_log(tmp_path, monkeypatch):
+    c = _cfg(tmp_path)
+    _stage(tmp_path, inp=True)
+
+    def fake_run(cmd, **kw):
+        out = Path(cmd[-1])
+        out.write_bytes(b"nut" * 100)
+
+        class R:
+            returncode = 0
+            stdout = "frames written"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    probe = {"needed": True, "reasons": ["variable frame rate (…)"],
+             "pix_fmt": "yuv420p", "target_fps": "30000/1001",
+             "audio_codec": "aac"}
+    log = tmp_path / "logs" / "j1_normalize.log"
+    n = pixop.normalize_input("clip.mov", probe, c, log_path=log)
+    assert n["performed"] is True
+    assert n["normalized_name"] == "normalized_clip.nut"
+    assert n["target_fps"] == "30000/1001"
+    assert n["audio"] == "copy"
+    assert "before the baseline window" in n["energy_note"]
+    assert (tmp_path / "input" / "normalized_clip.nut").exists()
+    assert log.exists() and "stdout" in log.read_text()
+
+
+def test_normalize_input_failure_raises(tmp_path, monkeypatch):
+    c = _cfg(tmp_path)
+    _stage(tmp_path, inp=True)
+
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "ffv1 exploded"
+        return R()
+
+    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="normalization failed"):
+        pixop.normalize_input("clip.mov", {"target_fps": "25"}, c)
+    assert not (tmp_path / "input" / "normalized_clip.nut").exists()
+
+
+def test_run_enhance_measurement_normalizes_and_cleans_up(tmp_path, monkeypatch):
+    _stage(tmp_path, preset=True, inp=True, license=True)
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "preflight",
+                        lambda c=None: {"ok_transcode": True,
+                                        "inputs": ["clip.mov"], "presets": ["p.args"],
+                                        "reasons": []})
+    monkeypatch.setattr(pixop, "LOCK_FILE", tmp_path / "lock")
+    monkeypatch.setattr(pixop, "focus_mode_enter", lambda: [])
+    monkeypatch.setattr(pixop, "focus_mode_exit", lambda stopped: None)
+
+    async def fake_baseline(polls=10):
+        return {"w_base": 50.0, "baseline_samples_w": [50.0],
+                "cpu_temp_base": 40.0, "gpu_temp_base": 35.0}
+
+    async def fake_poll(stop_event):
+        return [{"t": 1.0, "watts": 120.0, "cpu_tctl": 60.0,
+                 "gpu_junction": 70.0, "gpu_ppt_w": 200.0}]
+
+    monkeypatch.setattr(pixop, "measure_baseline", fake_baseline)
+    monkeypatch.setattr(pixop, "poll_during_task", fake_poll)
+    monkeypatch.setattr(pixop, "probe_output_stream", lambda p: {"codec": "hevc"})
+    monkeypatch.setattr(pixop, "_probe_input", lambda p: (30.0, 30.0))
+    monkeypatch.setattr(pixop, "probe_vqa_nr", lambda p, c=None: None)
+    monkeypatch.setattr(pixop, "probe_normalization",
+                        lambda p: {"needed": True, "vfr": True,
+                                   "reasons": ["variable frame rate (…)"],
+                                   "pix_fmt": "yuv420p", "target_fps": "30000/1001",
+                                   "audio_codec": "aac"})
+
+    def fake_normalize(input_name, probe, c=None, log_path=None):
+        (tmp_path / "input" / "normalized_clip.nut").write_bytes(b"n" * 10)
+        return {"performed": True, "reasons": probe["reasons"],
+                "source": input_name, "normalized_name": "normalized_clip.nut",
+                "target_fps": probe["target_fps"], "audio": "copy",
+                "duration_s": 1.0, "size_mb": 0.1, "cmd": "ffmpeg …",
+                "energy_note": "…"}
+
+    monkeypatch.setattr(pixop, "normalize_input", fake_normalize)
+    captured = {}
+
+    def fake_run(cmd, t, pacer_cmd=None, log_path=None):
+        captured["cmd"] = " ".join(cmd)
+        captured["log_path"] = log_path
+        return {"success": True, "returncode": 0, "duration_s": 5.0,
+                "docker_cmd": " ".join(cmd), "live": False,
+                "stdout_tail": "", "stderr_tail": "", "encode_stats": None,
+                "log_file": None}
+
+    monkeypatch.setattr(pixop, "run_transcode_subprocess", fake_run)
+
+    jobs = {"jn": {}}
+    res = asyncio.run(
+        pixop.run_enhance_measurement("clip.mov", "p.args", "jn", jobs))
+
+    # docker encodes the INTERMEDIATE, the result keeps the ORIGINAL's identity
+    assert "/mnt/host/input/normalized_clip.nut" in captured["cmd"]
+    assert res["result"]["input_name"] == "clip.mov"
+    assert res["result"]["output_name"] == "clip__p.mp4"
+    assert res["result"]["input_normalization"]["performed"] is True
+    # per-job log path threaded through to the encoder pass
+    assert str(captured["log_path"]).endswith("jn_partner.log")
+    # bulky intermediate never outlives the run
+    assert not (tmp_path / "input" / "normalized_clip.nut").exists()
+
+
+def test_run_enhance_measurement_live_refuses_normalization(tmp_path, monkeypatch):
+    _stage(tmp_path, preset=True, inp=True, license=True)
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "preflight",
+                        lambda c=None: {"ok_transcode": True,
+                                        "inputs": ["clip.mov"], "presets": ["p.args"],
+                                        "reasons": []})
+    monkeypatch.setattr(pixop, "probe_normalization",
+                        lambda p: {"needed": True, "vfr": True,
+                                   "reasons": ["variable frame rate (…)"],
+                                   "pix_fmt": "yuv420p", "target_fps": "30",
+                                   "audio_codec": None})
+    with pytest.raises(RuntimeError, match="Live 1×"):
+        asyncio.run(pixop.run_enhance_measurement(
+            "clip.mov", "p.args", "jl", {"jl": {}}, live=True))
+
+
+def test_run_transcode_subprocess_writes_full_log(tmp_path):
+    log = tmp_path / "logs" / "j_partner.log"
+    r = pixop.run_transcode_subprocess(["/bin/echo", "encoded 10 frames, 99.0 fps"],
+                                       timeout_s=10, log_path=log)
+    assert r["success"] is True
+    assert r["log_file"] == "j_partner.log"
+    text = log.read_text()
+    assert text.startswith("$ /bin/echo")
+    assert "encoded 10 frames" in text          # FULL output, not a tail
+
+
+def test_sweep_removes_stale_normalized_intermediates(tmp_path):
+    import os as _os
+    import time as _time
+    c = _cfg(tmp_path)
+    _stage(tmp_path)
+    inp = tmp_path / "input"
+    old = inp / "normalized_crashed_run.nut"
+    old.write_text("x")
+    _os.utime(old, (_time.time() - 13 * 3600,) * 2)
+    fresh = inp / "normalized_inflight.nut"
+    fresh.write_text("x")
+    keep = inp / "upload_keep_clip.mov"
+    keep.write_text("x")
+    _os.utime(keep, (_time.time() - 13 * 3600,) * 2)
+    swept = pixop.sweep_ephemeral_uploads(c)
+    assert "normalized_crashed_run.nut" in swept
+    assert fresh.exists() and keep.exists()
+
+
+def test_enhance_page_stage_map_includes_normalize():
+    r = client.get("/enhance-run", headers=LAB)
+    assert r.status_code == 200
+    assert "normalize:0" in r.text and "baseline:1" in r.text

@@ -564,7 +564,7 @@ _ENHANCE_RUN_HTML = """
 
 <script>
 function _enhStageIdx(stage) {
-  var m = {baseline:0, transcoding:1, probe:2, done:3};
+  var m = {normalize:0, baseline:1, transcoding:2, probe:3, done:4};
   return m[stage] != null ? m[stage] : 0;
 }
 // 1× sizing note: videos with .wl-1x render at native size (capped at the

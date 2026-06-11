@@ -101,7 +101,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 The service runs as a systemd unit on GoS1 (`systemctl status wattlab`).
 
-**Run the tests:** `cd wattlab_service && pytest tests/` — 615 tests (the suite must be run from `wattlab_service/`; its `conftest.py` sets up the import path).
+**Run the tests:** `cd wattlab_service && pytest tests/` — 628 tests (the suite must be run from `wattlab_service/`; its `conftest.py` sets up the import path).
 
 ---
 

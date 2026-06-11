@@ -1,14 +1,15 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-11 (Session 43 — /video batch-box selection-affordance fix (47aa150) + the big doc
-#   cleanup: this file pruned ~55%, CR-060 closed (+ CR-052/053/061 back-filled), README/TESTING rewritten to
-#   current reality, JOURNAL tail repaired, stale GPU/torch/idle facts fixed everywhere. Tests 615. Service current.)
+# Last updated: 2026-06-11 (Session 44 — CR-064: Jon's answers implemented — conditional input normalization
+#   (VFR/pix_fmt → FFV1/NUT yuv444p10le, pre-baseline so energy stays clean), per-job encoder logs,
+#   hdr_4k repro = 96.8% peak VRAM (Jon's OOM theory supported; exclusion stays). Tests 628.
+#   Service restart PENDING (normalize stage + logs need a reload).)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
 #   - CHANGE_REQUESTS.md — 16 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (615 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - TESTING.md — pytest suite (628 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - docs/wattlab_traffic_light_confidence.md (Tania §9 spec) · docs/wattlab_parameters_audit.md (param taxonomy)
@@ -134,7 +135,8 @@ CHANGE_REQUESTS_CLOSED.md.
 - S41 (06-10): architecture review; refactor Phases 0–1 (JS bundles → files, serve-time config); tinyllama-default fix; idle-wait readout. →560.
 - S42 (06-10/11): refactor Phases 2–4 — ui.render_page(), twelve routes_*.py + runtime.py, result-envelope contract. →566.
 - CR-064 arc (06-10 evening): /enhance-run revamp — uploads, NVEncC args editor, queue controls, upload TTL sweep, UGC VFR×forcecfr bisect. →614.
-- S43 (06-11): /video batch-box selection affordance fix (boxes looked dead; clicks worked) + this doc cleanup. →615.
+- S43 (06-11): /video batch-box selection affordance fix (boxes looked dead; clicks worked) + doc cleanup. →615.
+- S44 (06-11): CR-064 Jon's answers — conditional input normalization (pre-baseline, energy-clean) + per-job logs; hdr_4k = 96.8% VRAM (OOM theory). →628.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

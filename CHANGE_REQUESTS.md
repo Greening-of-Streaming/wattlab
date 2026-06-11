@@ -818,15 +818,30 @@ Smallest-footprint flow change in the findings chain that touches the *most-visi
 11. **Queue controls on /queue-status** (owner add): Lab-only **Cancel current run** + **Empty queue**. Cancel is workload-aware and honest: enhance = `docker kill owl_enhance_<job>` (per-job container name; run concludes via its normal failed path, marked cancelled, not persisted) + a pre-launch flag check for the baseline phase; benchmark = the existing cooperative flag; video/llm/image = refused 409 with the reason (an asyncio cancel would orphan the tool and release the lock onto a contaminated baseline — bounded by their own timeouts instead). Empty queue = `queue_control.empty_pending()`, running job untouched. Chosen over a /settings panel: actions live with the queue, parameters live in /settings.
 12. **/settings navigation pass** (owner ask): sticky anchor index (toc-bar) + ids on every section; Models matrix and Members allowlist default-collapsed into `<details>` (the house pattern). No tabs/subpages — single dense page with one Save preserved; the parameters-vs-operations split is the future fault line if it outgrows this.
 
-### Open questions (all on Jon)
+### Open questions — status after Jon's reply (2026-06-11, implemented S44)
 
-- Input-agnostic **HDR-out** colour template: auto-detect `input_mat`? does `sdr_to_hdr=on` no-op on PQ input? (Current `fhd_pq` flags would inverse-tone-map already-HDR content.) **Now with hard evidence (2026-06-10 bisect, 1080p SDR input):** `sdr_to_hdr=on` **aborts pixop-live at a 4K target** — rc 134, `std::runtime_error` immediately after the ×2 AOTI model loads (`sm120_x2_rs1p0_1920_1080.so`) — while SDR→4K, HDR→SD and HDR→HD all pass on the same input. `hdr_4k` is excluded from the generated matrix (`pixop._COMBO_EXCLUSIONS`) until Jon supplies a 4K-capable HDR template; re-enable by removing the exclusion.
-- Blessed **HDR→SDR** tone-map flags for the SDR-out template on HDR input (no `hdr_to_sdr` visible in `--vpp-pixop-live` options). Observed: PQ Meridian through the SDR template (`input_mat=bt709`) runs but the colour treatment is unvalidated.
-- `dnn_scaling` behaviour at ~×4.5 (480p → 4K). (×2.25, 480p→HD, confirmed working 2026-06-10.)
-- **Real-world UGC tolerance** (2026-06-10 evening, first user uploads — both UGC test files failed, distinct causes):
-  (a) **VFR phone footage × `--avsync forcecfr`** — mp4 muxer aborts on non-monotonic DTS mid-encode (rc 1 after 427 frames). **Bisected + fix confirmed:** identical preset with `--avsync vfr` runs clean (rc 0, VFR timing preserved). Ask Jon: bless `vfr` for the file/batch profile (keep `forcecfr` for Live 1×?), or prescribe upload-time normalisation.
-  (b) **Legacy pixel formats** — `avsw: Invalid pixel format "yuvj422p"` (2005 camera file): decoder refuses before encoding starts. Ask Jon: supported input pix_fmt matrix for pixop-live, or blessed pre-conversion.
-  Until answered, the workaround is the advanced args editor (that's how (a) was confirmed).
+- **Real-world UGC tolerance — ANSWERED + SHIPPED.** Jon prescribed ONE mechanism for both
+  2026-06-10 failures ((a) VFR × `forcecfr` mp4-muxer abort; (b) `yuvj422p` decoder refusal):
+  lossless local pre-conversion to `yuv444p10le` + the `fps` filter at the detected rate
+  (VFR→CFR), FFV1/NUT. Implemented as a conditional, probe-driven normalize stage that runs
+  BEFORE the baseline window (his "slight energy skew" trade-off declined — OWL keeps the
+  figure clean; his stdin-pipe variant would have put a decode inside the window). `forcecfr`
+  stays; no `--avsync vfr` switch and no pix_fmt matrix needed. Verified on the real VFR night
+  clip (was rc 1 @ frame 427 → rc 0, 914 frames) + a synthesized `yuvj422p` clip. Live 1× mode
+  refuses inputs needing normalization (honest: a hidden pre-conversion isn't the live scenario).
+- **`hdr_4k` abort — root cause likely VRAM, exclusion stays for now.** Jon's theory:
+  out-of-GPU-memory (16 GB is "very close to the limit" at 4K), aggravated by the desktop
+  running on the 5080; exception handling (abort instead of graceful error) acknowledged as
+  their bug. S44 reproduction of the bisect conditions PASSED at **96.8% peak VRAM
+  (15,774/16,303 MiB, desktop holding ~389 MiB)** — the intermittency is the margin. Keep
+  `_COMBO_EXCLUSIONS` until the desktop moves to the Raphael iGPU (owner op; changes idle
+  baseline → recalibrate) and/or Jon's memory-tuning env vars land (ask on Slack). Log for
+  Jon: `/srv/data/owl/pixop/logs/repro_hdr4k.log`.
+- **HDR→SDR tone-map — DEFERRED by Pixop.** `--vpp-colorspace` supports some conversion but
+  isn't in the presets; their own dynamic tone-mapper is planned. SDR-template-on-HDR-input
+  colour treatment stays unvalidated; revisit when their tone-mapper ships.
+- `dnn_scaling` behaviour at ~×4.5 (480p → 4K) — **still open** (not addressed in the reply;
+  possibly the same VRAM ceiling). (×2.25, 480p→HD, confirmed working 2026-06-10.)
 - Tania: statistical-significance thresholds for confidence badges (global `confidence.py` follow-up, not this CR).
 
 ### Lab look & feel constraint

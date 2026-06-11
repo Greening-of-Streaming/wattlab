@@ -125,7 +125,10 @@ var WL_IMAGE_STAGES = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Generating imag
 var WL_RAG_STAGES   = ['Baseline poll (' + WL_CFG.baseline_s + 's)', 'Inference running', 'Complete'];
 // No cooldown step: a single enhance run's measured pass is its LAST pass, so
 // it skips the trailing cooldown (same rule as the compare's ffmpeg pass).
-var WL_ENHANCE_STAGES = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Transcoding', 'Probe', 'Done'];
+// Normalize = the conditional lossless pre-conversion (VFR/odd-pixel-format
+// inputs only) — runs BEFORE the baseline so it never enters the energy
+// figure; clean inputs pass straight through it.
+var WL_ENHANCE_STAGES = ['Normalize', 'Baseline (' + WL_CFG.baseline_s + 's)', 'Transcoding', 'Probe', 'Done'];
 // Enhance compare flow: two measured passes, each followed by an idle/cooldown
 // step. WL_CFG.idle_label is the toggle-aware label baked above ("Wait for Idle"
 // when wait-for-idle is on, else "Idle").
