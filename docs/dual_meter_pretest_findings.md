@@ -57,15 +57,37 @@ effective poll period). The new unit never repeated a value: its refresh is
 at least 1 Hz and possibly faster — polling it quicker than 1s may yield
 more still (untested; Phase 2 keeps 1s).
 
-**Root cause (checked 2026-06-11, post-integration): firmware, not wear and
-not hardware revision.** Both units are P110 hw 1.0. The SLOW unit runs the
-NEWER firmware — 1.4.0 (Build 251020, Oct 2025) vs the fast unit's 1.3.1
-(Build 240621, Jun 2024). Best hypothesis: fw 1.4.0 slowed the local-API
-energy refresh from ≥1 Hz to 1.5 s. Falsifiable: if the inner plug ever
-updates to 1.4.0, its duplicate rate should jump from 0% to ~33%.
-⚠ Operational rule: do NOT firmware-update the inner/primary plug casually;
-after ANY plug firmware update, re-run `bin/probe-dual-meter` and re-check
-duplicate rates before trusting fresh-sample arithmetic.
+**Root cause — firmware, not wear: CONFIRMED by controlled experiment
+(2026-06-12).** Both units are P110 hw 1.0; the SLOW unit runs the NEWER
+firmware — 1.4.0 (Build 251020) vs the fast unit's 1.3.1 (Build 240621).
+A third (sacrificial) P110 shipping the same 1.3.1, metering an independent
+~69 W load (screen + MacBook), was measured for 10 min at 1 Hz, updated to
+1.4.0 via the Tapo app, and measured again — single-variable test:
+
+| | fw 1.3.1 before | fw 1.4.0 after |
+|---|---|---|
+| dup rate | **0.0%** (600 polls, plateaus {1: 600}) | **33.44%** (plateaus {1: 199, 2: 200}) |
+| implied refresh | ≥1 Hz | exactly 1.5 s |
+| latency p50/p95 | 26.6 / 43.5 ms | 28.5 / 42.3 ms |
+
+33.44% matches the production outer plug's rate exactly; latency is
+unchanged — 1.4.0 purely slows the metering refresh. Raw data:
+`results/diagnostics/p110_fw_fw131_before_20260612_001410.{csv,json}` /
+`p110_fw_fw140_after_20260612_004223.{csv,json}`.
+
+**Second 1.4.0 hazard — local-API lockout.** Immediately after the update
+the plug returned 403 Forbidden on the local API ("Make sure Third-Party
+Compatibility is turned on… Me > Third-Party Services") until the setting
+was toggled off/on in the app. Had the inner meter auto-updated, every OWL
+measurement would have FAILED until that app toggle — not just degraded.
+
+⚠ Operational rules: firmware auto-update is OFF on the inner/primary plug
+(owner, 2026-06-11) and meter firmware is part of the measurement setup —
+after ANY deliberate plug update, re-run `bin/probe-dual-meter` (or the fw
+probe) and re-check duplicate rates before trusting fresh-sample arithmetic.
+Open follow-up: fw 1.4.6 (adds MWh units — TP-Link is actively reworking
+energy monitoring in this line) — test on the sacrificial plug when the
+rollout reaches it.
 
 Consequence: even **single-meter** operation improves by 1.5× just by making
 the new plug primary — done 2026-06-11 (`.env` swap, `TAPO_P110_IP=.91`).
