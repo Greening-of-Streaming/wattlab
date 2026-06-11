@@ -56,6 +56,17 @@ production. Log at `/srv/data/owl/pixop/logs/repro_hdr4k.log` for Jon.
 pass straight through for clean inputs); compare strip unchanged (normalize maps to the
 first bucket).
 
+**Same-day follow-ups (owner feedback after first live runs):** (1) the post-normalize
+idle wait was invisible — it ran under the "Normalize" strip stage and fast settles outran
+the page's 2 s poll ("maybe it's there silently" — correct). Now its own stage key
+(`normalize-idle`) with the toggle-aware idle label as an explicit strip position, same as
+the compare flow. (2) The re-uploaded 2005 MJPEG clip previewed audio-only (browsers don't
+decode MJPEG `<video>`); normalization now also writes a browser-playable H.264 proxy OF
+THE NORMALIZED STREAM (`preview_<stem>.mp4`, kept past the run, orphan-swept with its
+source) — the input picker and the compare card's Source cell prefer it with an honest
+"showing the normalized stream" caption. Owner's framing adopted: what we measure against
+is the normalized stream, so that's what the preview should show. 633 tests.
+
 **Still open on Jon:** blessed HDR→SDR tone-map (explicitly deferred to Pixop's own
 dynamic tone-mapper; `--vpp-colorspace` exists but isn't in the presets), `dnn_scaling`
 at ~×4.5, memory-tuning env vars (Slack). Owner ops queued: desktop→iGPU move (changes

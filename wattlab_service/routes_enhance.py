@@ -334,9 +334,18 @@ async def video_enhance_page(request: Request):
 # once a preset .args + an input clip are staged in the OWL workdir. A no-license
 # `--check-device` self-test proves the docker+GPU plumbing today.
 
-def _enhance_options_html(items: list) -> str:
-    return "".join(f'<option value="{html_lib.escape(x)}">{html_lib.escape(x)}</option>'
-                   for x in items)
+def _enhance_options_html(items: list, previews: dict | None = None) -> str:
+    """Input <option>s. data-preview carries the normalized-preview proxy name
+    (when one exists from a prior run) so the in-page preview can show what the
+    measurement actually encodes — sources that need normalizing are often the
+    ones a browser can't decode at all (the 2026-06-11 MJPEG audio-only case)."""
+    previews = previews or {}
+    out = []
+    for x in items:
+        pv = previews.get(x)
+        attr = f' data-preview="{html_lib.escape(pv)}"' if pv else ""
+        out.append(f'<option value="{html_lib.escape(x)}"{attr}>{html_lib.escape(x)}</option>')
+    return "".join(out)
 
 
 def _enhance_sr_options_html() -> str:
@@ -541,6 +550,7 @@ _ENHANCE_RUN_HTML = """
 <div id="input-preview" style="display:none;margin-bottom:1.25rem">
   <div style="color:var(--text-4);font-size:0.68rem;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.3rem">Input preview</div>
   <video id="inVid" class="wl-1x" controls preload="metadata" muted style="max-height:320px"></video>
+  <div id="inPrevNote" style="display:none;color:var(--text-4);font-size:0.7rem;margin-top:0.25rem"></div>
 </div>
 
 <div style="margin-bottom:1.25rem">
@@ -564,7 +574,7 @@ _ENHANCE_RUN_HTML = """
 
 <script>
 function _enhStageIdx(stage) {
-  var m = {normalize:0, baseline:1, transcoding:2, probe:3, done:4};
+  var m = {normalize:0, 'normalize-idle':1, baseline:2, transcoding:3, probe:4, done:5};
   return m[stage] != null ? m[stage] : 0;
 }
 // 1× sizing note: videos with .wl-1x render at native size (capped at the
@@ -593,11 +603,22 @@ function updateInputPreview() {
   var sel = document.getElementById('inSel');
   var wrap = document.getElementById('input-preview');
   var vid = document.getElementById('inVid');
+  var note = document.getElementById('inPrevNote');
   // Lab-only ✕: deletable = uploaded clips only (staged clips protected).
   var del = document.getElementById('delBtn');
   if (del) del.style.display = (sel && sel.value && sel.value.indexOf('upload_') === 0) ? '' : 'none';
   if (!sel || !sel.value) { wrap.style.display = 'none'; return; }
-  vid.src = '/enhance-run/input/' + encodeURIComponent(sel.value);
+  // Prefer the normalized-preview proxy when a prior run produced one — it's
+  // what the measurement encodes, and it plays where the raw source may not.
+  var opt = sel.options[sel.selectedIndex];
+  var pv = opt ? opt.getAttribute('data-preview') : null;
+  vid.src = '/enhance-run/input/' + encodeURIComponent(pv || sel.value);
+  if (note) {
+    note.style.display = pv ? 'block' : 'none';
+    note.textContent = pv
+      ? 'Showing the normalized stream (what a run measures against) — the raw source may not be browser-playable.'
+      : '';
+  }
   wrap.style.display = 'block';
   _wireNativeVids(wrap);
 }
@@ -1054,7 +1075,11 @@ function renderCompareHtml(meas) {
   var mlr = ml.result || {}, ffr = ff.result || {};
   var mle = mlr.energy || {}, ffe = ffr.energy || {};
   var c = meas.comparison || {};
-  var inUrl = '/enhance-run/input/' + encodeURIComponent(meas.input_name);
+  // Source cell prefers the normalized-preview proxy (what both passes
+  // actually encoded; plays where the raw source may not).
+  var srcPv = (meas.input_normalization || {}).preview_name;
+  var inUrl = '/enhance-run/input/' + encodeURIComponent(srcPv || meas.input_name);
+  var inLbl = srcPv ? 'Source (normalized)' : 'Source';
   var mlUrl = (mlr.output_name && (mlr.transcode || {}).success !== false)
       ? '/enhance-run/output/' + encodeURIComponent(mlr.output_name) : null;
   var ffUrl = (ffr.output_name && (ffr.transcode || {}).success !== false)
@@ -1086,7 +1111,7 @@ function renderCompareHtml(meas) {
     + fail
     + ratioRow
     + '<div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin:0.6rem 0 0.4rem">'
-    +   _vidCell('Source', inUrl, meas.input_name)
+    +   _vidCell(inLbl, inUrl, meas.input_name)
     +   _vidCell('AI / ML upscale', mlUrl, mlr.output_name || '')
     +   _vidCell('ffmpeg ' + (meas.ff_filter || ''), ffUrl, ffr.output_name || '')
     + '</div>'
@@ -1240,7 +1265,8 @@ async def enhance_run_page(request: Request):
             .replace("{DISABLED}",         "" if run_enabled else " disabled")
             .replace("{RUN_DISABLED}",     "" if run_enabled else " disabled")
             .replace("{ST_DISABLED}",      "" if st_enabled else " disabled")
-            .replace("{INPUT_OPTIONS}",    _enhance_options_html(pf["inputs"]))
+            .replace("{INPUT_OPTIONS}",    _enhance_options_html(pf["inputs"],
+                                               pf.get("input_previews")))
             .replace("{DEL_BTN}",          del_btn)
             .replace("{KEEP_CHECKED}",     " checked" if is_lab else "")
             .replace("{SR_OPTIONS}",       _enhance_sr_options_html())

@@ -246,21 +246,45 @@ def sweep_ephemeral_uploads(c: Optional[dict] = None) -> list[str]:
             if ephemeral_upload or p.name.startswith("normalized_"):
                 p.unlink(missing_ok=True)
                 swept.append(p.name)
+        # preview_* proxies live as long as their source input does (kept
+        # uploads keep theirs); orphans are swept regardless of age.
+        sources = {Path(n).stem for n in list_inputs(c)}
+        for p in inp.iterdir():
+            if (p.is_file() and p.name.startswith("preview_")
+                    and Path(p.name).stem.removeprefix("preview_") not in sources):
+                p.unlink(missing_ok=True)
+                swept.append(p.name)
     except Exception:
         pass
     return swept
 
 
 def list_inputs(c: Optional[dict] = None) -> list[str]:
-    """Files staged in input/ (video containers only)."""
+    """Files staged in input/ (video containers only). Derived artifacts
+    (normalized_* intermediates, preview_* proxies) are not selectable."""
     c = c or config()
     inp, _, _ = _workdir_paths(c)
     exts = {".mov", ".mp4", ".mkv", ".m4v", ".y4m", ".webm"}
     try:
         return sorted(p.name for p in inp.iterdir()
-                      if p.is_file() and p.suffix.lower() in exts)
+                      if p.is_file() and p.suffix.lower() in exts
+                      and not p.name.startswith(("normalized_", "preview_")))
     except Exception:
         return []
+
+
+def input_previews(c: Optional[dict] = None) -> dict:
+    """{input_name: preview_name} for inputs whose normalized preview proxy
+    exists on disk (i.e. the input has been run through normalization at
+    least once). Drives the page's input-preview fallback for sources a
+    browser can't decode."""
+    c = c or config()
+    inp, _, _ = _workdir_paths(c)
+    out = {}
+    for name in list_inputs(c):
+        if (inp / _preview_name(name)).is_file():
+            out[name] = _preview_name(name)
+    return out
 
 
 # --- CR-064: input normalization (Jon's prescription, 2026-06-11) -----------
@@ -361,6 +385,26 @@ def _normalized_name(input_name: str) -> str:
     return f"normalized_{Path(input_name).stem}.nut"
 
 
+def _preview_name(input_name: str) -> str:
+    return f"preview_{Path(input_name).stem}.mp4"
+
+
+def build_preview_cmd(normalized_name: str, preview_name: str,
+                      c: Optional[dict] = None) -> list[str]:
+    """Browser-playable H.264 proxy OF THE NORMALIZED STREAM — sources that
+    need normalizing are often exactly the ones a browser can't decode (MJPEG,
+    odd pixel formats), and what the measurement actually encoded is the
+    normalized stream anyway (owner ask, 2026-06-11). Lossy is fine here:
+    it's a viewer convenience, never an input to anything measured."""
+    c = c or config()
+    inp, _, _ = _workdir_paths(c)
+    ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
+    return [ff, "-y", "-i", str(inp / normalized_name),
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23",
+            "-preset", "veryfast", "-c:a", "copy",
+            "-movflags", "+faststart", str(inp / preview_name)]
+
+
 def build_normalize_cmd(input_name: str, normalized_name: str, target_fps: str,
                         audio_codec: Optional[str],
                         c: Optional[dict] = None) -> list[str]:
@@ -410,11 +454,31 @@ def normalize_input(input_name: str, probe: dict, c: Optional[dict] = None,
         out_path.unlink(missing_ok=True)
         raise RuntimeError("input normalization failed: "
                            + (r.stderr or "")[-_TAIL:])
+
+    # Preview proxy of the normalized stream (kept past the run, unlike the
+    # intermediate). Fail-soft: a viewer convenience must never kill a run.
+    preview = _preview_name(input_name)
+    try:
+        pv_cmd = build_preview_cmd(normalized, preview, c)
+        pv = subprocess.run(pv_cmd, capture_output=True, text=True,
+                            timeout=c["docker_timeout_s"])
+        pv_path = inp / preview
+        if pv.returncode != 0 or not pv_path.exists() or pv_path.stat().st_size == 0:
+            pv_path.unlink(missing_ok=True)
+            preview = None
+        if log_path is not None:
+            with open(log_path, "a") as fh:
+                fh.write("\n$ " + " ".join(pv_cmd)
+                         + "\n--- preview stderr ---\n" + (pv.stderr or ""))
+    except Exception:
+        preview = None
+
     return {
         "performed": True,
         "reasons": probe.get("reasons") or [],
         "source": input_name,
         "normalized_name": normalized,
+        "preview_name": preview,
         "target_fps": target_fps,
         "source_pix_fmt": probe.get("pix_fmt"),
         "audio": ("copy" if probe.get("audio_codec") in _MP4_SAFE_AUDIO
@@ -580,6 +644,7 @@ def preflight(c: Optional[dict] = None) -> dict:
     license_present = Path(c["license_path"]).exists()
     presets = list_presets(c)
     inputs = list_inputs(c)
+    previews = input_previews(c)  # normalized-preview proxies, where they exist
     combos = generate_presets(c)  # CR-064 — format×resolution matrix
 
     reasons = []
@@ -601,6 +666,7 @@ def preflight(c: Optional[dict] = None) -> dict:
         "license_present": license_present,
         "presets": presets,
         "inputs": inputs,
+        "input_previews": previews,
         "combos": combos,
         "ok_selftest": image_present,
         "ok_transcode": bool(image_present and workdir_ok and license_present and presets and inputs),
@@ -1428,9 +1494,12 @@ async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
     log_path = _logs_dir(c) / f"{job_id}_normalize.log"
     norm = await asyncio.get_event_loop().run_in_executor(
         None, lambda: normalize_input(input_name, probe, c, log_path=log_path))
+    # Own stage key so the strip advances to the toggle-aware idle label
+    # while the wait runs (it was invisible inside "normalize" — fast settles
+    # outran the page's 2 s poll).
     norm["cooldown"] = await cooldown_between_runs(
         fixed_seconds=c["cooldown_s"], reference_w=ref["w_base"],
-        stage="normalize", jobs=jobs, job_id=job_id)
+        stage="normalize-idle", jobs=jobs, job_id=job_id)
     return norm
 
 

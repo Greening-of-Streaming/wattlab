@@ -1372,7 +1372,70 @@ def test_normalize_input_provenance_and_log(tmp_path, monkeypatch):
     assert n["audio"] == "copy"
     assert "before the baseline window" in n["energy_note"]
     assert (tmp_path / "input" / "normalized_clip.nut").exists()
+    # browser-playable proxy of the normalized stream, kept past the run
+    assert n["preview_name"] == "preview_clip.mp4"
+    assert (tmp_path / "input" / "preview_clip.mp4").exists()
     assert log.exists() and "stdout" in log.read_text()
+
+
+def test_normalize_input_preview_fail_soft(tmp_path, monkeypatch):
+    """A failed preview proxy must not kill the run — preview_name just nulls."""
+    c = _cfg(tmp_path)
+    _stage(tmp_path, inp=True)
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+
+        class R:
+            returncode = 0 if len(calls) == 1 else 1
+            stdout = ""
+            stderr = "x264 exploded" if len(calls) > 1 else ""
+        if len(calls) == 1:
+            Path(cmd[-1]).write_bytes(b"nut" * 100)
+        return R()
+
+    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    n = pixop.normalize_input("clip.mov", {"target_fps": "25"}, c)
+    assert n["performed"] is True
+    assert n["preview_name"] is None
+    assert not (tmp_path / "input" / "preview_clip.mp4").exists()
+
+
+def test_build_preview_cmd_shape(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    cmd = pixop.build_preview_cmd("normalized_clip.nut", "preview_clip.mp4")
+    joined = " ".join(cmd)
+    assert "-c:v libx264" in joined and "-pix_fmt yuv420p" in joined
+    assert joined.endswith(f"{tmp_path}/input/preview_clip.mp4")
+
+
+def test_list_inputs_and_previews_exclude_derived(tmp_path):
+    c = _cfg(tmp_path)
+    _stage(tmp_path, inp=True)
+    inp = tmp_path / "input"
+    (inp / "preview_clip.mp4").write_text("x")        # mp4 ext, but derived
+    (inp / "normalized_clip.nut").write_text("x")     # non-listed ext anyway
+    assert pixop.list_inputs(c) == ["clip.mov"]
+    assert pixop.input_previews(c) == {"clip.mov": "preview_clip.mp4"}
+
+
+def test_sweep_removes_orphaned_previews(tmp_path):
+    c = _cfg(tmp_path)
+    _stage(tmp_path, inp=True)
+    inp = tmp_path / "input"
+    (inp / "preview_clip.mp4").write_text("x")          # source clip.mov exists
+    (inp / "preview_gone.mp4").write_text("x")          # no gone.* source
+    swept = pixop.sweep_ephemeral_uploads(c)
+    assert "preview_gone.mp4" in swept
+    assert (inp / "preview_clip.mp4").exists()
+
+
+def test_enhance_options_html_data_preview():
+    html = routes_enhance._enhance_options_html(
+        ["a.mov", "b.mov"], {"a.mov": "preview_a.mp4"})
+    assert 'value="a.mov" data-preview="preview_a.mp4"' in html
+    assert 'value="b.mov">' in html and "b.mov\" data-preview" not in html
 
 
 def test_normalize_input_failure_raises(tmp_path, monkeypatch):
@@ -1467,7 +1530,7 @@ def test_run_enhance_measurement_normalizes_and_cleans_up(tmp_path, monkeypatch)
     # compare flow uses between passes, floored at the pre-normalize snapshot
     assert len(cooldowns) == 1
     assert cooldowns[0]["reference_w"] == 50.0
-    assert cooldowns[0]["stage"] == "normalize"
+    assert cooldowns[0]["stage"] == "normalize-idle"   # own strip position
     assert res["result"]["input_normalization"]["cooldown"]["settled"] is True
 
 
@@ -1521,4 +1584,6 @@ def test_sweep_removes_stale_normalized_intermediates(tmp_path):
 def test_enhance_page_stage_map_includes_normalize():
     r = client.get("/enhance-run", headers=LAB)
     assert r.status_code == 200
-    assert "normalize:0" in r.text and "baseline:1" in r.text
+    # normalize + its idle wait are distinct strip positions before baseline
+    assert "normalize:0" in r.text and "'normalize-idle':1" in r.text
+    assert "baseline:2" in r.text
