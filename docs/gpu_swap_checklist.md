@@ -1,5 +1,7 @@
 # GPU swap checklist — RX 7800 XT → RTX 5080 (CR-060)
 
+**Status:** swap completed 2026-05-29 (S36). Kept for the rollback procedure (exact ROCm wheel pins + Mesa hold).
+
 **Written:** 2026-05-29, immediately before power-down for the swap.
 **Why this exists:** the code side (CR-060 `gpu.py`) auto-detects the card at
 boot, so the swap needs **no code edits** — but the GPU *driver* and the *torch

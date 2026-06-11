@@ -1,7 +1,7 @@
 # OWL — 5-Minute Training Narrative
 
 **Purpose:** spoken segment for GoS's 1-hour training course on five years of measurement learnings.
-**Length:** ~735 words → ~5 minutes at ~140 wpm.
+**Length:** ~850 words → ~5–6 minutes at ~140 wpm. (Facts pass 2026-06-11: GPU-swap labelling + current model panel.)
 **Audience:** streaming-industry CTOs, operators, infrastructure people, policymakers.
 **Voice:** spoken prose. Read aloud, not from slides.
 **Sibling deliverable:** `TRAINING_REM_5MIN.md` (REM counterpart, same shape, written in a separate session).
@@ -11,7 +11,7 @@
 
 **[OPENING — anchor on a finding · ~45 seconds]**
 
-Last month we measured something that tells you everything about why OWL exists. Same workload — transcoding a two-minute clip of *Meridian* from 4K down to 1080p, H.264, with the same bitrate target on both runs. Same hardware. We ran it twice: once on the CPU, once on the GPU with the full VAAPI pipeline.
+Last month we measured something that tells you everything about why OWL exists. Same workload — transcoding a two-minute clip of *Meridian* from 4K down to 1080p, H.264, with the same bitrate target on both runs. Same hardware — the AMD card we had at the time. We ran it twice: once on the CPU, once on the GPU with the full hardware pipeline.
 
 The CPU run used 0.83 watt-hours and took 37 seconds. The GPU run used 0.37 watt-hours and took 17 seconds — fifty-five percent less energy, more than twice as fast.
 
@@ -35,9 +35,9 @@ And it puts a **traffic-light confidence flag** on every result. Green means rep
 
 Five years of GoS measurement work taught us things that don't fit on a single slide. OWL puts a few of them within reach in real time.
 
-On video transcoding, the encoder choice and the encoder *implementation* both matter more than people think. H.265 on the GPU uses eighty percent less energy than H.265 on the CPU for the same bitrate target. AV1 on the AMD GPU we use finishes in exactly 14.5 seconds — same as H.265 — which tells you the hardware encoder clock is the bottleneck, not the codec. These are findings you can cite in vendor conversations, not back-of-envelope estimates.
+On video transcoding, the encoder choice and the encoder *implementation* both matter more than people think. On the AMD GPU we ran until last month, H.265 on the GPU used eighty percent less energy than H.265 on the CPU for the same bitrate target — and AV1 finished in exactly 14.5 seconds, same as H.265, which told us the hardware encoder clock was the bottleneck, not the codec. The bench now runs an NVIDIA RTX 5080, and the old findings stay published alongside the new NVENC measurements. These are findings you can cite in vendor conversations, not back-of-envelope estimates.
 
-On AI workloads, scale and efficiency don't move together. TinyLlama at 1.1 billion parameters is fifteen times more energy-efficient per token than Mistral 7B. But ask both the same question grounded in our own corpus — say, *"What is REM?"*, where the answer lives in a GoS whitepaper we've indexed — and TinyLlama returns a confident, wrong answer; the larger models stay faithful to the source. **Energy, quality, and faithfulness are three independent axes of any AI tradeoff**, and OWL lets you walk that triangle in your browser.
+On AI workloads, scale and efficiency don't move together. When we measured it, TinyLlama — our 1.1-billion-parameter small anchor — was fifteen times more energy-efficient per token than a model seven times its size. But ask a model that small a question grounded in our own corpus — say, *"What is REM?"*, where the answer lives in a GoS whitepaper we've indexed — and it came back with a confident, wrong answer; the larger models stayed faithful to the source. Today's compare panel — Qwen3, Mistral-Nemo 12B, Phi-4, and GPT-OSS 20B — lets you re-run that comparison live. **Energy, quality, and faithfulness are three independent axes of any AI tradeoff**, and OWL lets you walk that triangle in your browser.
 
 On grid carbon, the same watt-hour means very different things in different places. The headline number in France right now, with the nuclear-heavy mix, is around eleven grams of CO₂ per kilowatt-hour. In Poland it's nearly six hundred. Same workload, same code, **fifty times the carbon footprint** depending on where the server is plugged in. OWL surfaces that comparison alongside every result you run.
 

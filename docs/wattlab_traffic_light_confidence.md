@@ -1,5 +1,7 @@
 # WattLab Traffic-Light Confidence Logic
 
+**Status (2026-06-11):** §9 shipped 2026-05-22 as `confidence.py` (the live CI model); §1–8 describe the legacy variance-threshold model, now the fallback for results without raw samples.
+
 Generated: 2026-05-07
 
 This document explains how WattLab assigns the traffic-light confidence flag shown on workload results.

@@ -1,5 +1,7 @@
 # OWL Parameters — Arbitrary, Empirical, Calibrated
 
+> **Note (2026-06-11):** values below are a 2026-05-07 snapshot and several have since drifted (e.g. `baseline_polls`, `video_cooldown_s`); `settings.json` is the live truth. The Arbitrary/Empirical/Calibrated/Constrained classification is the durable content here.
+
 Generated: 2026-05-07 (post-CR-022 resolution).
 
 This audit responds to Tania's meeting question: *"How should I think about these versions?"* — specifically about `baseline_polls = 8` and other numbers chosen by intuition.

@@ -3,9 +3,10 @@
 #
 # Install with: pip install -r requirements.txt
 #
-# NOTE: torch must be installed separately with the ROCm index for AMD GPU support:
-#   pip install torch==2.5.1+rocm6.2 --index-url https://download.pytorch.org/whl/rocm6.2
-# For CPU-only or NVIDIA, replace with the appropriate torch build from pytorch.org.
+# NOTE: torch must be installed separately with the CUDA index for NVIDIA GPU support:
+#   pip install torch==2.11.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+# The torch wheel is GPU-vendor-specific: cu12x for the current NVIDIA card, rocm
+# wheels for AMD — see docs/gpu_swap_checklist.md for the rollback (ROCm) pins.
 #
 # System packages also required (apt):
 #   sudo apt install lm-sensors ffmpeg
@@ -33,8 +34,8 @@ chromadb==1.5.5
 pypdf==6.9.2
 tokenizers==0.22.2
 
-# PyTorch (AMD ROCm — see note above)
-torch==2.5.1+rocm6.2
+# PyTorch (GPU-vendor-specific wheel — see note above)
+torch==2.11.0+cu128
 
 # Supporting libraries
 huggingface_hub==1.9.0

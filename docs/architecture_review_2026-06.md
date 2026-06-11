@@ -1,6 +1,6 @@
 # OWL Architecture Review — 2026-06-10
 
-**Status:** awaiting approval — no code changes made.
+**Status (2026-06-11):** executed — Phases 0–4 shipped S41–S42; the parallel PowerBackend track (CR-031 §2) remains open. Kept as the rationale record.
 **Inputs:** four observations from a previous external architecture review, evaluated against measured codebase data.
 **Companions:** `AUDIT_BRIEF.md` + `AUDIT_RESPONSE.md` (2026-05-01 access-spine audit), `CHANGE_REQUESTS.md` CR-031 (deployment portability).
 

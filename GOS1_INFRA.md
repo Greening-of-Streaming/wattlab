@@ -1,6 +1,6 @@
 # GoS1 Infrastructure & Backup Context
 # Companion to CLAUDE.md (which covers WattLab project specifics)
-# Last updated: 2026-05-12 (S24 — 4TB data disk added, OWL bulk data moved to /srv/data)
+# Last updated: 2026-06-11 (GPU swap recorded; 2026-06-01 CGNAT incident + DuckDNS updater move added)
 
 ## Owner
 Ben Schwarz (bs@ctoic.net / EURL CTO INNOVATION CONSULTING / SIREN 508109337)
@@ -38,11 +38,22 @@ fstab entry: `UUID=3b621612-f3fa-4873-8c10-0cea94105591  /srv/data  ext4  defaul
 
 **Backup-cron note:** `/etc/cron.d/wattlab-results-backup` syncs `/home/gos/wattlab/results/` (now a symlink) to Nextcloud. Verified S24 that rclone 1.73.2 follows the symlink when it's the root source path, so the nightly sync still works. Optional hardening: repoint it at the real path `/srv/data/owl/results/` to remove any fragility — `sudo sed -i 's|/home/gos/wattlab/results/|/srv/data/owl/results/|' /etc/cron.d/wattlab-results-backup`.
 
-## Cooling (S24, 2026-05-13)
-9 fans total: **5 case** (the 5th re-enabled via a Y-splitter off an existing header — had been left deactivated), **2 GPU** (integrated on the RX 7800 XT), **1 CPU** (the board header can drive a 2nd if thermals warrant), **1 PSU internal**. The case + CPU fans run a BIOS curve (quiet below ~70 °C; never observed ramping in any OWL run) and are **not Linux-controllable** — no super-I/O sensor driver (`nct6775`/`it87`/…), the only platform hwmon is an empty `asus` node. So they're an effectively fixed-airflow constant; only the GPU fans (`amdgpu` hwmon) expose PWM. The whole envelope is inside the P110 boundary — the extra fan added ~1-2 W (the S24 thermal-recovery probe puts steady idle at ~56-58 W, vs the old ~51-54 W; combined NVMe + fan). See WattLab `CHANGE_REQUESTS_CLOSED.md` CR-005 for the full fan-control investigation.
+## GPU (swapped 2026-05-29, S36 — CR-060)
+**NVIDIA RTX 5080, 16 GB VRAM** — NVENC (video) + CUDA (AI; torch `2.11.0+cu128`). Replaced the AMD Radeon RX 7800 XT (VAAPI/ROCm); the swap was Pixop-driven (CUDA-only partner pipeline). `gpu.py` auto-detected the new card with zero code edits, as designed. **Idle wall power post-swap: ~79 W** (display-blanked; ~101 W with active display — display-state-sensitive), vs ~51–58 W across the AMD era. The frozen AMD pre-swap baseline (energy + VMAF, n=10 benchmark) lives in WattLab `docs/gpu_swap_amd_baseline.md`; the swap/rollback procedure (ROCm wheel pins + Mesa hold) in `docs/gpu_swap_checklist.md`.
+
+## Cooling (S24, 2026-05-13 — fan census predates the GPU swap)
+9 fans total: **5 case** (the 5th re-enabled via a Y-splitter off an existing header — had been left deactivated), **2 GPU** (integrated; counted on the RX 7800 XT — the RTX 5080 brings its own), **1 CPU** (the board header can drive a 2nd if thermals warrant), **1 PSU internal**. The case + CPU fans run a BIOS curve (quiet below ~70 °C; never observed ramping in any OWL run) and are **not Linux-controllable** — no super-I/O sensor driver (`nct6775`/`it87`/…), the only platform hwmon is an empty `asus` node. So they're an effectively fixed-airflow constant; only the GPU fans exposed PWM (via `amdgpu` hwmon in the AMD era). The whole envelope is inside the P110 boundary — the extra fan added ~1-2 W (the S24 thermal-recovery probe put steady idle at ~56-58 W, vs the old ~51-54 W; combined NVMe + fan — both AMD-era figures; see the GPU section for the post-swap ~79 W). See WattLab `CHANGE_REQUESTS_CLOSED.md` CR-005 for the full fan-control investigation.
 
 ## Other Users
 dom, marisol, simon, tania — home dirs exist but unreadable by gos user.
+
+## External Access Incidents & DNS
+
+### Bouygues Bbox shared-IPv4 / CGNAT incident — 2026-06-01
+Bouygues moved the Bbox to a **shared IPv4** (CGNAT), limiting forwardable ports to **24576–32767** — which killed public 80/443 and took `wattlab.greeningofstreaming.org` offline. External HTTPS has since been restored (externally confirmed reachable 2026-06-11). **If it recurs:** request a free **dedicated IPv4** from Bouygues; plan B is a Linode-hosted Caddy reverse proxy fronting GoS1.
+
+### DuckDNS auto-updater — now on GoS1
+Runs on GoS1 at `/home/gos/duckdns/duck.sh` via the `gos` crontab, every 5 minutes (`*/5 * * * *`, verified 2026-06-11). The previous updater ran off-box and **silently failed** during the 2026-06-01 outage — same lesson as the backup incident below: silent background jobs need a visible failure signal.
 
 ## Nextcloud Backup (Hetzner Storage Share)
 - **URL:** https://nx92576.your-storageshare.de

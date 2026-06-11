@@ -1,8 +1,10 @@
 # WattLab — Testing Strategy
 
+*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (615 tests). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
+
 ## Philosophy
 
-Three tiers, each with a clear time budget and a clear coverage scope. The goal is the **sweet spot** where tests get *run*, not avoided. A 30-second smoke that runs every push is worth more than a 30-minute suite that runs once a quarter.
+Three tiers, each with a clear time budget and a clear coverage scope. The goal is the **sweet spot** where tests get *run*, not avoided. A 7-second suite that runs before every push is worth more than a 30-minute suite that runs once a quarter.
 
 We deliberately do **not** test:
 - Real ffmpeg / LLM / image measurements — require GPU + minutes of wall time + actual heat. Validated by accumulated `results/*.json` history.
@@ -14,126 +16,47 @@ These are covered by Tier 3 manual checks before high-stakes use.
 
 ---
 
-## Tier 1 — Automated smoke (~30 seconds)
+## Tier 1 — Full pytest suite (~7 seconds)
 
 **When:** Before every push. Run as a habit, not as a gate.
-**Catches:** "I broke an import" · "an endpoint is 500-ing" · "JSON shape changed" · "settings file got corrupted."
-**Where:** `scripts/smoke.sh` (to be written; outline below).
+**Catches:** "I broke an import" · "an endpoint is 500-ing" · "JSON shape changed" · "a template token didn't get baked" · "the JS bundle has a syntax error."
 
 ```bash
-# Smoke test outline — implement as a single bash script
-set -e
-BASE=http://127.0.0.1:8000
-# CR-001 task #10: WATTLAB_GATE_PASSWORD retired. Loopback hits Lab tier
-# automatically — no cookie needed.
-
-# 1. Module imports
-cd /home/gos/wattlab/wattlab_service && python3 -c \
-    "import main, persist, rag, llm, video, image_gen, power, settings, sources"
-
-# 2. Page routes return 200 (HTML pages — assert content-length > 1000)
-for p in "" /video /llm /image /rag /demo /methodology /queue-status /settings; do
-    code=$(curl -sS -o /dev/null -w "%{http_code}" "$BASE$p")
-    [ "$code" = "200" ] || { echo "FAIL: $p returned $code"; exit 1; }
-done
-
-# 3. Sign-in page renders for unauthenticated visitors
-curl -sS "$BASE/auth/sign-in" | grep -q "WattLab" || { echo "FAIL: /auth/sign-in"; exit 1; }
-
-# 4. Static asset serves
-curl -sS -o /dev/null -w "%{http_code}\n" "$BASE/static/owl.svg" | grep -q "^200$"
-
-# 5. JSON endpoints — assert valid JSON + expected keys
-for ep in /live /power /queue /rag/index-status /rag/corpus-list; do
-    curl -sS "$BASE$ep" | python3 -m json.tool > /dev/null \
-        || { echo "FAIL: $ep not JSON"; exit 1; }
-done
-
-# 6. Pure-function unit checks
-python3 -c "
-import sys; sys.path.insert(0, '/home/gos/wattlab/wattlab_service')
-from rag import confidence
-# known inputs → expected flags
-assert confidence(50.0, 15, 50.0)['flag'] == '🟢', 'confidence green'
-assert confidence(0.5, 3, 50.0)['flag'] == '🔴', 'confidence red'
-print('confidence OK')
-"
-
-# 7. Settings round-trip
-python3 -c "
-import sys; sys.path.insert(0, '/home/gos/wattlab/wattlab_service')
-import settings
-s = settings.load()
-assert 'baseline_polls' in s and 'rag_corpus_path' in s
-print('settings OK')
-"
-
-echo 'SMOKE OK'
+cd wattlab_service && pytest tests/
+# 615 passed in ~7s
 ```
 
-**Failure mode:** exit 1 on first failure with a one-line message. Don't try to recover.
+**Where it lives:** `wattlab_service/tests/` — 36 test files (~6,700 lines) plus `conftest.py`.
+
+**Import-path note:** run pytest from inside `wattlab_service/` (or point it at `wattlab_service/tests/`). The suite's `tests/conftest.py` inserts `wattlab_service/` onto `sys.path` so tests can `import persist`, `import settings`, etc. Running bare `pytest` from the repo root collects nothing useful.
+
+**What it covers** (by family — file names are descriptive):
+- **Routes + access tiers** — `test_auth.py`, `test_audience.py`, `test_capabilities.py`, `test_queue_control.py`: FastAPI TestClient against the real app; sign-in flow, capability gating, queue actions.
+- **Measurement-adjacent pure logic** — `test_confidence.py`, `test_cooldown.py`, `test_sensors.py`, `test_vmaf.py`, `test_encode_norm.py`: the CI confidence model, cooldown dispatch, sensor parsing — everything around the measurement that doesn't need hardware.
+- **Result contract + persistence** — `test_result_envelope.py`, `test_persist_visitor_scope.py`, `test_persist_history.py`, `test_delete_result.py`: the mode→renderer contract (`docs/result_envelope.md`), CSV/JSON export shape, visitor scoping.
+- **Factorisation guards** — `test_js_bundling.py`, `test_ui_config.py`, `test_gpu_ui_factorisation.py`, `test_page_model_defaults.py`: source-level guards that ban known regression classes (hardcoded cooldown labels, hardcoded GPU/encoder names, hardcoded model keys, JS syntax errors via `node --check`).
+
+**⚠ Known gotcha — tests run as Lab tier.** pytest's TestClient connects from loopback, which the audience layer resolves to **Lab** (full access). Anonymous/Member behaviour — CR-026 visitor-scoping 404s, lock badges, gated uploads — never surfaces by default; any test of those paths must construct the tier explicitly, and any reasoning about "the tests pass so anonymous is fine" is wrong by construction. (This bit us in S37: a `/findings` 404 affecting every non-Lab visitor was invisible to a green suite.)
+
+**Failure mode:** fix before pushing. The suite has been kept green after every commit since it existed; don't break that property.
 
 ---
 
-## Tier 2 — Integration smoke (~2-5 minutes)
+## Tier 2 — Targeted deep runs (~seconds, on demand)
 
-**When:** Before merging anything that touches `persist.py`, `rag.py`, `settings.py`, or the JSON/CSV shape.
-**Catches:** "Persistence shape drifted" · "CSV no longer parses" · "RAG corpus_list out of sync with collection."
-**Where:** `scripts/integration.sh` (to be written).
+**When:** Before merging anything that touches `persist.py`, the result envelope, settings, or a measurement-adjacent module — run the relevant family with everything you changed in scope, plus any differential checks.
+**Catches:** "Persistence shape drifted" · "a mode summarises differently than the renderer expects" · "a settings key fell out of sync."
 
 ```bash
-# Integration test outline
-set -e
-cd /home/gos/wattlab
-
-# 1. Persistence round-trip — for each job_type, construct minimal dict,
-#    save_result, load_result, assert equality on key fields, to_csv, parse.
-python3 -c "
-import sys, csv, io, json
-sys.path.insert(0, 'wattlab_service')
-from persist import save_result, load_result, to_csv
-
-# Minimal valid LLM result fixture
-fixture = {
-    'mode': 'single',
-    'model_label': 'TinyLlama',
-    'task_label': 'T3',
-    'inference': {'output_tokens': 50, 'duration_s': 1.2,
-                  'tokens_per_sec': 41.6, 'response': 'test answer'},
-    'energy': {'w_base': 52.0, 'w_task': 60.0, 'delta_w': 8.0,
-               'delta_e_wh': 0.003, 'mwh_per_token': 0.06,
-               'poll_count': 2, 'confidence': {'flag': '🟡', 'label': 'yellow'}},
-    'thermals': {'cpu_base': 45.0, 'gpu_base': 38.0},
-}
-saved = save_result('llm', 'TEST_FIXTURE', fixture)
-loaded = load_result('llm', 'TEST_FIXTURE')
-assert loaded['inference']['response'] == 'test answer', 'response roundtrip'
-csv_text = to_csv('llm', loaded)
-rows = list(csv.DictReader(io.StringIO(csv_text)))
-assert rows and rows[0]['response'] == 'test answer', 'CSV response column'
-saved.unlink()  # cleanup
-print('persistence + CSV OK')
-"
-
-# 2. RAG corpus_list reads ChromaDB metadata correctly
-python3 -c "
-import sys
-sys.path.insert(0, 'wattlab_service')
-from rag import corpus_list, check_index
-check_index()
-docs = corpus_list()
-assert isinstance(docs, list)
-if docs:
-    assert all('name' in d and 'indexed' in d for d in docs)
-    print(f'corpus_list OK: {len(docs)} docs, {sum(d[\"indexed\"] for d in docs)} indexed')
-else:
-    print('corpus_list OK (empty corpus)')
-"
-
-echo 'INTEGRATION OK'
+cd wattlab_service
+pytest tests/test_result_envelope.py tests/test_persist_visitor_scope.py   # result-contract work
+pytest tests/ -k "cooldown or confidence"                                  # measurement-protocol work
+pytest tests/ -k "js_bundling or ui_config"                                # template/JS work
 ```
 
-**Note:** does NOT trigger a full RAG rebuild (slow, expensive). Reads existing ChromaDB. If you need to test build_index end-to-end, add a separate `scripts/rag-rebuild-test.sh` against a 1-PDF fixture corpus dir — but that's a once-per-quarter check, not part of routine.
+The heavyweight differential check for envelope changes — re-summarising every stored result on disk and diffing (used to validate the S42 `_SUMMARISERS` dispatch against all 274 results: 0 diffs) — is a once-per-contract-change exercise, not part of routine. See `docs/result_envelope.md` for what counts as a contract change.
+
+**Monkeypatch note (post-S42 refactor):** orchestration names live in the twelve `routes_*.py` modules, with compat aliases re-exported from `main`. When patching in tests, **patch the `routes_*` module that binds the name**, not `main` — patching the alias doesn't affect the binding the route actually calls.
 
 ---
 
@@ -147,7 +70,7 @@ echo 'INTEGRATION OK'
 - [ ] Owl + "WattLab ← Home" wordmark at top of every page (except the `/auth/*` flow)
 - [ ] Sub-labels readable on phone (no `#555` ghost text)
 - [ ] `/methodology` shows owl + GoS logo in topbar **and** the auth chip top-right (CR-021)
-- [ ] `/queue-status` shows the owl wordmark via `_BACK` **and** the auth chip top-right
+- [ ] `/queue-status` shows the owl wordmark via the shared chrome **and** the auth chip top-right
 - [ ] Footer on every page shows the **Methodology →** link and the GitHub-issues link
 - [ ] Anonymous tier: sign-in chip is the prominent CTA variant (filled accent background, ⚿ glyph, 0.85rem)
 - [ ] Member/Lab: chip is the recessive status pill
@@ -162,7 +85,7 @@ echo 'INTEGRATION OK'
 - [ ] Download both CSV and JSON — both parse, CSV has `output_size_mb` column
 
 ### LLM flow (1 min)
-- [ ] `/llm` → TinyLlama → T3 → Run
+- [ ] `/llm` → smallest model in the panel → T3 → Run
 - [ ] Streaming output appears word-by-word
 - [ ] mWh/token shown after completion
 - [ ] Download CSV — has `response` column with full text (multi-line, properly quoted)
@@ -171,7 +94,7 @@ echo 'INTEGRATION OK'
 - [ ] `/rag` → green dot, "Index ready · N chunks"
 - [ ] Click "Browse corpus documents" — list expands, shows ●/○ indicators per doc
 - [ ] Question textarea pre-filled with "What is REM (Remote Energy Measurement)?"
-- [ ] Run **Compare 3 modes** with TinyLlama → progress shows "⏱ Cooling down" between modes
+- [ ] Run **Compare 3 modes** with the default model → progress shows "⏱ Cooling down" between modes
 - [ ] No negative `mWh/tok` values in any mode (would indicate cooldown bug regression)
 - [ ] Phi-4 single run → answer mentions GoS streaming workflows (encoder, origin, packager, telco)
 
@@ -203,7 +126,7 @@ echo 'INTEGRATION OK'
 For tagged releases (`v1.x.y`):
 - [ ] Run Tier 1, 2, 3 in order
 - [ ] Variance calibration (`/settings → Run variance calibration`) — completes 🟢
-- [ ] `df -h /home/gos/wattlab` — > 10 GB free for next month of results
+- [ ] `df -h /srv/data` — > 10 GB free for next month of results
 - [ ] `git status` clean (or only intentional untracked)
 - [ ] `JOURNAL.md`, `CLAUDE.md`, `README.md` updated
 
@@ -215,7 +138,7 @@ For tagged releases (`v1.x.y`):
 |---|---|
 | Typo, comment, doc-only | Tier 1 |
 | CSS-only / colour palette / spacing | Tier 1 + visual spot-check on `/`, `/video`, `/rag` |
-| Logic change in a single module | Tier 1 + Tier 2 (if module is in scope) |
+| Logic change in a single module | Tier 1 + Tier 2 (relevant family) |
 | Schema / persistence / endpoint shape | Tier 1 + Tier 2 |
 | Anything HTML / JS visible | Tier 1 + relevant Tier 3 flow |
 | Pre-demo / pre-feedback-push / pre-release | All three tiers |
@@ -226,4 +149,4 @@ For tagged releases (`v1.x.y`):
 
 - **Not a CI gate.** Nothing here runs in GitHub Actions. WattLab is single-server, single-maintainer; CI overhead would slow us more than it'd help. If we ever onboard a contributor, that's the trigger to wire Tier 1 into a pre-push hook.
 - **Not exhaustive.** We test plumbing, not measurements. Measurement correctness is validated by accumulated runs in `results/*.json` and by the variance calibration framework.
-- **Not static.** When a bug bites in production, add a Tier 1 or Tier 2 line that would have caught it. When a Tier 3 step never finds anything for six months, delete it.
+- **Not static.** When a bug bites in production, add a test that would have caught it (the factorisation-guard family exists exactly this way). When a Tier 3 step never finds anything for six months, delete it.

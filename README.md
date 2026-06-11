@@ -6,7 +6,7 @@ Built by [Greening of Streaming](https://greeningofstreaming.org), a French NGO 
 
 **Live instance:** [wattlab.greeningofstreaming.org](https://wattlab.greeningofstreaming.org)
 
-**Current release:** `v0.8.6` · [Report an issue or feature request](https://github.com/greeningofstreaming/wattlab/issues)
+**Current release:** `v0.8.7` · [Report an issue or feature request](https://github.com/greeningofstreaming/wattlab/issues)
 
 ---
 
@@ -43,11 +43,13 @@ These exclusions are deliberate. Scope statements appear on every result.
 | Component | Spec |
 |---|---|
 | CPU | AMD Ryzen 9 7900, 24 cores |
-| GPU | AMD Radeon RX 7800 XT, 12 GB VRAM (ROCm) |
+| GPU | NVIDIA RTX 5080, 16 GB VRAM (NVENC / CUDA) |
 | RAM | 61 GB |
 | OS | Ubuntu 24, kernel 6.17 |
 | Power meter | Tapo P110 smart plug (mains, 1s polling) |
-| Idle draw | ~51–54 W |
+| Idle draw | ~79 W (display-blanked) |
+
+GPU swapped from an AMD Radeon RX 7800 XT in May 2026; AMD-era baselines and measurements are preserved in [`docs/gpu_swap_amd_baseline.md`](docs/gpu_swap_amd_baseline.md).
 
 ---
 
@@ -88,24 +90,27 @@ The capability matrix is product copy on `/demo` step 6, and lives in code at `w
 
 ## Running locally
 
-Requires GoS1 or equivalent hardware (P110 plug, ROCm GPU optional).
+Requires GoS1 or equivalent hardware (P110 plug, GPU optional — NVENC/CUDA or VAAPI/ROCm auto-detected).
 
 ```bash
-cd wattlab_service
-pip install -r requirements.txt   # see CLAUDE.md for full package list
+pip install -r requirements.txt   # at repo root; see CLAUDE.md for full package list
 cp .env.example .env              # add TAPO_EMAIL, TAPO_PASSWORD, TAPO_P110_IP
+cd wattlab_service
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 The service runs as a systemd unit on GoS1 (`systemctl status wattlab`).
 
+**Run the tests:** `cd wattlab_service && pytest tests/` — 615 tests (the suite must be run from `wattlab_service/`; its `conftest.py` sets up the import path).
+
 ---
 
 ## Documentation
 
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — module map and request/job flows (best orientation doc; start here)
 - [`WATTLAB_SPEC.md`](WATTLAB_SPEC.md) — original v0.2 product spec (April 2026, mostly delivered; current architecture in `CLAUDE.md`)
 - [`JOURNAL.md`](JOURNAL.md) — session-by-session build log with findings
-- [`TESTING.md`](TESTING.md) — three-tier testing strategy (smoke / integration / manual)
+- [`TESTING.md`](TESTING.md) — three-tier testing strategy (pytest suite + manual checklist)
 - [`STAGING.md`](STAGING.md) — staging mode (swap onto a feature branch with a maintenance page)
 - [`bin/README.md`](bin/README.md) — operator-facing shell scripts (`stage-on`, `stage-off`, `probe-thermal-recovery`, `owl-maintenance-watchdog`)
 - [`systemd/README.md`](systemd/README.md) — systemd unit files for OWL services
