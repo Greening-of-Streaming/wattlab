@@ -1587,3 +1587,61 @@ def test_enhance_page_stage_map_includes_normalize():
     # normalize + its idle wait are distinct strip positions before baseline
     assert "normalize:0" in r.text and "'normalize-idle':1" in r.text
     assert "baseline:2" in r.text
+
+
+def test_pacer_and_docker_use_nut_pipe_for_normalized(tmp_path, monkeypatch):
+    """Compare paces normalized inputs through a NUT pipe (mpegts can't carry
+    FFV1); normal sources keep the verified mpegts path."""
+    (tmp_path / "presets").mkdir(exist_ok=True)
+    (tmp_path / "presets" / "p.args").write_text("-c hevc")
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    assert pixop._pipe_format("clip.mov") == "mpegts"
+    assert pixop._pipe_format("normalized_clip.nut") == "nut"
+    pacer = pixop.build_pacer_cmd("normalized_clip.nut")
+    assert " ".join(pacer).endswith("-f nut -")
+    dock = pixop.build_docker_cmd("normalized_clip.nut", "p.args", "o.mp4", live=True)
+    assert "--input-format nut -i -" in " ".join(dock)
+    # unchanged for normal sources
+    assert " ".join(pixop.build_pacer_cmd("clip.mov")).endswith("-f mpegts -")
+
+
+def test_compare_normalizes_despite_1x_pacing(tmp_path, monkeypatch):
+    """The live-refusal is about the single run's 'Serve as Live' claim;
+    compare paces for measurement-window reasons and must normalize + run."""
+    (tmp_path / "presets").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "presets" / "up.args").write_text("--output-res 1920x1080\n--cbr 12000\n")
+    (tmp_path / "input").mkdir(exist_ok=True)
+    (tmp_path / "input" / "clip.mov").write_text("x")
+    _mock_harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(pixop, "probe_normalization",
+                        lambda p: {"needed": True, "vfr": True,
+                                   "reasons": ["variable frame rate (…)"],
+                                   "pix_fmt": "yuv420p", "target_fps": "25",
+                                   "audio_codec": None})
+
+    def fake_normalize(input_name, probe, c=None, log_path=None):
+        (tmp_path / "input" / "normalized_clip.nut").write_bytes(b"n")
+        return {"performed": True, "reasons": probe["reasons"],
+                "source": input_name, "normalized_name": "normalized_clip.nut",
+                "preview_name": None, "target_fps": "25", "audio": "none",
+                "duration_s": 1.0, "size_mb": 0.1, "cmd": "ffmpeg …",
+                "energy_note": "…"}
+
+    monkeypatch.setattr(pixop, "normalize_input", fake_normalize)
+    pacers = []
+
+    def fake_run(cmd, t, pacer_cmd=None, log_path=None):
+        pacers.append(pacer_cmd)
+        return {"success": True, "returncode": 0, "duration_s": 20.0,
+                "docker_cmd": " ".join(cmd), "live": pacer_cmd is not None,
+                "stdout_tail": "", "stderr_tail": "", "encode_stats": None,
+                "log_file": None}
+
+    monkeypatch.setattr(pixop, "run_transcode_subprocess", fake_run)
+    res = asyncio.run(pixop.run_enhance_compare_measurement(
+        "clip.mov", "up.args", "jc", {"jc": {}}, live=True))
+    assert res["input_normalization"]["performed"] is True
+    # ML pass paced through a NUT pipe; ffmpeg pass reads the file directly
+    assert pacers[0] is not None and " ".join(pacers[0]).endswith("-f nut -")
+    assert pacers[1] is None
+    assert not (tmp_path / "input" / "normalized_clip.nut").exists()

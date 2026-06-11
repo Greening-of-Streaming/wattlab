@@ -730,6 +730,13 @@ def read_preset_args(preset_path) -> list[str]:
     return args
 
 
+def _pipe_format(input_name: str) -> str:
+    """Pipe container for the 1× pacer: mpegts for normal sources, NUT for the
+    normalized FFV1 intermediate (mpegts can't carry FFV1; NUT pipes fine and
+    NVEncC's libavformat reader takes either)."""
+    return "nut" if str(input_name).lower().endswith(".nut") else "mpegts"
+
+
 def build_pacer_cmd(input_name: str, c: Optional[dict] = None) -> list[str]:
     """Host-side 1x "faucet" for live mode: ffmpeg -re stream-copies the input's
     compressed packets to stdout at native frame rate. `-c copy` means NO decode,
@@ -738,7 +745,8 @@ def build_pacer_cmd(input_name: str, c: Optional[dict] = None) -> list[str]:
     c = c or config()
     inp, _, _ = _workdir_paths(c)
     ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
-    return [ff, "-re", "-i", str(inp / input_name), "-c", "copy", "-f", "mpegts", "-"]
+    return [ff, "-re", "-i", str(inp / input_name), "-c", "copy",
+            "-f", _pipe_format(input_name), "-"]
 
 
 def build_docker_cmd(input_name: str, preset_name: str, output_name: str,
@@ -781,7 +789,7 @@ def build_docker_cmd(input_name: str, preset_name: str, output_name: str,
         c["image_tag"],
         *preset_args,
     ]
-    cmd += (["--input-format", "mpegts", "-i", "-"] if live
+    cmd += (["--input-format", _pipe_format(input_name), "-i", "-"] if live
             else ["-i", f"/mnt/host/input/{input_name}"])
     cmd += ["-o", f"/mnt/host/output/{output_name}"]
     return cmd
@@ -1471,6 +1479,11 @@ async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
     which can't carry the FFV1 intermediate — and a paced run with a hidden
     pre-conversion wouldn't be the live scenario it claims to measure.
 
+    `live` here means the USER's "Serve as Live" claim (single run) — the
+    compare flow paces at 1× too, but as a measurement-window tactic, so it
+    calls with live=False and normalized inputs pace through a NUT pipe
+    (see _pipe_format).
+
     The normalization burst is real CPU work right before the measured pass's
     baseline, so it ends with the SAME idle-wait the compare flow runs between
     its two passes (`cooldown_between_runs`). The dispatcher needs a floor to
@@ -1649,7 +1662,11 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
     input_path = inp / input_name
     # Pre-normalization (see run_enhance_measurement) — ONE pass feeding both
     # sides, so the comparison stays apples-to-apples on the identical input.
-    norm = await _maybe_normalize(input_name, c, jobs, job_id, live)
+    # live=False here even though compare paces at 1×: compare's pacing is a
+    # measurement-window tactic (a batch ffmpeg pass is too short for a
+    # reliable confidence flag), NOT a "live channel" claim — so a normalized
+    # input is fine and pipes via NUT instead of mpegts.
+    norm = await _maybe_normalize(input_name, c, jobs, job_id, live=False)
     enc_input = norm.get("normalized_name") or input_name
     enc_path = inp / enc_input
 
