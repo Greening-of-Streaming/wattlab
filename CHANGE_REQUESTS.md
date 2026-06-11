@@ -235,7 +235,7 @@ Focus mode addresses the *power side* of background noise (timers that wake core
 
 ### Decision frame (the honest core)
 
-The P110 cloud-API quantisation bounds RT's likely win to **≲1 percentage point of variance** — marginal alone, *necessary* if a higher-resolution power path ever lands. **The power-measurement landscape is in motion under CR-065 (dual P110) — re-read this calculus after it settles; don't predict it here.** Worth a 30-minute team discussion before any work.
+The P110 cloud-API quantisation bounds RT's likely win to **≲1 percentage point of variance** — marginal alone, *necessary* if a higher-resolution power path ever lands. **The power-measurement landscape moved under CR-065 (dual P110, closed 2026-06-11: ~2 fresh samples/s via two staggered meters) — re-read this calculus against the dual-meter reality.** Worth a 30-minute team discussion before any work.
 
 ---
 
@@ -292,7 +292,7 @@ Spec-doc ownership: Tania the encoding-spec subsection of `WATTLAB_SPEC.md`, own
 
 ## CR-031 · Deployment portability (DB / power source / containerisation)
 
-**Status:** captured 2026-05-04 (post-meeting). Medium priority. One CR, three sub-sections (they share the question *what does it take to run OWL somewhere other than GoS1?*) — each with its own state: **§1 open decision (the Track A gate) · §2 cheap wins shipped, full backend parked behind CR-065 · §3 nothing built, externally driven.**
+**Status:** captured 2026-05-04 (post-meeting). Medium priority. One CR, three sub-sections (they share the question *what does it take to run OWL somewhere other than GoS1?*) — each with its own state: **§1 open decision (the Track A gate) · §2 cheap wins shipped, meter registry landed via CR-065 (closed), full backend still parked · §3 nothing built, externally driven.**
 **Triggered by:** team meeting 2026-05-04; board 2026-05-11 reinforced §3 (rack hosting — Linode, or Mike's Akamai open-rack offer in Virginia).
 
 #### §1 Persistence — STATUS: open decision, and the gate for Track A (CR-003, CR-007 analytics)
@@ -308,7 +308,7 @@ Decision criteria: if the historical-carbon work (now CR-007 Stage 1) and the ca
 
 The deferred full shape: `power.py` becomes a dispatcher (`POWER_SOURCE` = tapo | pdu | synthetic) over `power_tapo.py` / `power_pdu.py` / `power_synthetic.py`. Board-added requirements (2026-05-11): every backend declares its **meter resolution**, and confidence must visibly degrade when resolution is coarser than the task ("you cannot be 🟢 on a 4 s encode measured by a 60 s meter" — *resolution-aware confidence is required behaviour, not a watch-out*); the interface must express **one primary reading plus N attributable sub-readings** (utility-grade meter + per-plug PDU stack, Mike's rack model).
 
-**⚠ CR-065 (in flight, owned by a parallel session) is rewriting `power.py`** — meter registry, cached KLAP handles, a shared baseline/task sampler. That registry is a step *toward* this backend (CR-065 says so itself) but is not the protocol. **Do not design or build §2 until CR-065 lands; re-scope this section against the post-CR-065 `power.py`.**
+**CR-065 (closed 2026-06-11) rewrote `power.py`** — meter registry (`_meter_ips`, index 0 = primary), cached KLAP handles, ONE shared baseline/task sampler the modules delegate to. That registry is a step *toward* this backend but is not the protocol. **Any §2 design starts from the post-CR-065 `power.py`** — and inherits its hard constraint: KLAP sessions are exclusive per device, so a PowerBackend must own its meter's session outright.
 
 #### §3 Containerisation — STATUS: nothing built; timeline externally driven (Mike's rack / Linode)
 
@@ -581,32 +581,6 @@ Smallest-footprint flow change in the findings chain that touches the *most-visi
 
 ---
 
-## CR-065 · Dual daisy-chained P110 — staggered polling for ~2× fresh samples
-
-**Status:** logged 2026-06-11; Phase 1 pre-test PASSED same day (2.5× fresh-sample gain — `bin/probe-dual-meter`, `docs/dual_meter_pretest_findings.md`); Phase 2 integration shipped same evening (meter registry + cached KLAP handles, shared sampler in power.py, ci2 combine, `energy.meters` block, `{METER_CADENCE}` token; live-verified against both plugs). **Remaining to close: service restart + variance recalibration under normal ambient (owner).**
-**Triggered by:** owner idea 2026-06-11 — daisy-chain a second P110 and alternate polls to halve the effective sampling interval, with a side benefit of hedging single-meter calibration risk.
-
-### Problem
-
-Analysis of the 30 most recent stored results shows 22.5% of consecutive 1s power samples are byte-identical at 10 mW resolution — the P110's local-API `current_power` only refreshes every ~1.3–1.6s, so OWL's 1s polling already loses ~⅕ of polls to stale reads. Short tasks (e.g. 12-poll GPU encodes) pay the price in confidence: n_task is small and a fifth of it is duplicates.
-
-### Agreed direction
-
-1. **Topology:** wall → outer plug → inner plug → GoS1. Inner measures the server alone and is the primary/absolute-W meter (`TAPO_P110_IP`); outer (`TAPO_P110_IP_2`, optional — absent = exact single-meter behavior) sees server + inner-plug self-draw, which cancels in per-meter ΔW.
-2. **Phase 1 (done):** `bin/probe-dual-meter` pre-test — fresh-sample gain, inner-plug self-draw stability, cross-meter ΔW agreement, latency/jitter. Gate: ≥~1.5× fresh gain, stable offset, ΔW agreement, latency p95 ≪ stagger slot.
-3. **Phase 2 (gated):** meter registry + cached KLAP handles in power.py (side win: kills the per-poll handshake); ONE shared baseline/task sampler the four measurement modules delegate to; per-meter ΔW combined (mean, `SE = √(SE_a²+SE_b²)/2`, `method: "ci2"`); `baseline_samples_w`/`task_samples_w` keep their exact current meaning (inner meter) with a new optional `energy.meters` block; honest cadence copy via a `{METER_CADENCE}` token (claim "fresh samples/s", never "0.5-second intervals"); recal after. Full step list in the approved plan + pre-test findings doc.
-4. **KLAP sessions are exclusive per device** (pre-test discovery): every fresh handshake invalidates other sessions on that plug — the registry's cached handles must rebuild on 403/SessionTimeout, and nothing else may poll a registered meter out-of-band.
-
-### Relationship to CR-031 §2
-
-The meter registry is a step *toward* the deferred PowerBackend abstraction, not the protocol itself — PDU/IPMI/synthetic backends stay out of scope here.
-
-### Lab look & feel constraint
-
-No new UI elements; only serve-time wording (meter name already tokenized, cadence token added). Result-card layout unchanged.
-
----
-
 ## Unverified reports (compressed 2026-06-11; re-checked same day — the GosOne→OWL sweep item closed by S43's doc pass)
 
 The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, team meeting 2026-05-04, board meeting 2026-05-11) were compressed 2026-06-11: every item that was marked resolved, absorbed into a CR, or is a meeting note recorded elsewhere (JOURNAL.md / board notes / CR cross-refs) was deleted. The genuinely unresolved residue — **all three possibly mooted by the S42 routes refactor; verify with the named 5–15 min spike before deleting**:
@@ -619,7 +593,7 @@ The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, 
 
 ## Groupings & dependencies (rewritten 2026-06-11 — restructure pass: CR-018 merged into CR-007, CR-064 closed, CR-029 §4/§6 extracted)
 
-The **15 active CRs** cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
+The **14 active CRs** cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
 
 ### Track A — Storage / analytics (Tania-elevated 2026-05-07)
 
@@ -636,7 +610,7 @@ Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a l
 
 ### Track C — In flight / awaiting review
 
-- **CR-065** dual daisy-chained P110 — **in flight, owned by a parallel session; hands off from this backlog.** Its `power.py` rewrite gates any CR-031 §2 design.
+- *(CR-065 dual daisy-chained P110 — closed 2026-06-11 same-day; its power.py meter registry is the launchpad for any CR-031 §2 design.)*
 - **CR-057** home-page findings-first repositioning — drafted, **awaiting lab UX review**; ~half a day of mechanical work behind `findings_enabled`; non-blocking.
 
 ### Track D — Operator quality-of-life (small, independent)

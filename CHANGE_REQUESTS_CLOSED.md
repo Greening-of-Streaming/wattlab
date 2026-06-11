@@ -1932,3 +1932,29 @@ Tier 2 (cached month-resolution Eco2mix history + `carbon.historical_intensity(z
 1. **Jon/Tania review session** → page sheds the "UNDER DEVELOPMENT" banner (the banner in the code is the standing reminder).
 2. **`hdr_4k` stays in `pixop._COMBO_EXCLUSIONS`** — at ~3% VRAM headroom it would be flaky. Unblocks via the desktop→Raphael-iGPU move (owner op; changes idle baseline → **variance recalibration required after**) and/or Pixop's memory-tuning env vars (asked on Slack). Repro log for Jon: `/srv/data/owl/pixop/logs/repro_hdr4k.log`.
 3. **`dnn_scaling` at ~×4.5** (480p→4K) — on Pixop; possibly the same VRAM ceiling (×2.25 confirmed working).
+
+---
+
+## CR-065 · Dual daisy-chained P110 — staggered polling for ~2× fresh samples
+
+**Status:** ✅ closed 2026-06-11 — logged, pre-tested, integrated, recalibrated and producing dual-meter results inside one day. Commits: `3573bec` (Phase 1 pre-test, gate PASSED at 2.5× fresh-sample gain), `695b982` (Phase 2 integration), `6b84bc2` (firmware root-cause addendum). Canonical record: `docs/dual_meter_pretest_findings.md`; first production result `results/enhance/2026-06-11_76b45c71.json` (ci2, per-meter ΔW within 0.4%).
+
+**Triggered by:** owner idea 2026-06-11 — daisy-chain a second P110 and alternate polls to halve the effective sampling interval, with a side benefit of hedging single-meter calibration risk.
+
+### Problem (as logged)
+
+Analysis of the 30 most recent stored results showed 22.5% of consecutive 1s power samples byte-identical at 10 mW resolution — the P110's local-API `current_power` only refreshes every ~1.3–1.6s, so OWL's 1s polling lost ~⅕ of polls to stale reads, and short tasks paid for it in confidence.
+
+### What shipped
+
+Topology wall → `.159` (outer, original) → `.91` (inner, primary) → GoS1; `bin/probe-dual-meter` pre-test with gate criteria (gain 2.50×, ΔW agreement ~1%, latency p95 40 ms); power.py meter registry + per-meter cached KLAP handles (rebuild-on-403; killed the per-poll handshake) + ONE shared baseline/task sampler all five modules delegate to; per-meter ΔW mean-combine (`method: "ci2"`, `SE = √(SE₁²+SE₂²)/2`, n_task gates stay on primary poll count); optional `energy.meters` block with `baseline_samples_w`/`w_base`/`w_task` keeping their exact historical inner-meter meaning; fail-soft `meters: {degraded: true}`; `{METER_CADENCE}`/`{METER_TOPOLOGY_ROW}` serve-time tokens (never claims "0.5-second intervals"); variance recal on the new primary (idle 2.18%, n=20 — the honest floor; the old meter's stale duplicates had compressed it to 1.84%). Tests 648 → 662.
+
+### Discoveries worth remembering
+
+1. **The two plugs are unequal samplers, and it's firmware, not wear:** both hw 1.0; the SLOW unit (1.5s refresh, perfect 1,2,1,2 stale pattern) runs the NEWER fw 1.4.0 (Oct 2025); the fast unit (zero dups in 601 polls, ≥1 Hz) runs 1.3.1 (Jun 2024). Falsifiable: if the inner plug updates to 1.4.0 its dup rate should jump to ~33%. Don't casually firmware-update the meters; re-run the probe after any update.
+2. **KLAP sessions are exclusive per device** — any fresh handshake invalidates other sessions on that plug. Cached handles rebuild on 403; nothing may poll a registered meter out-of-band (probe requires the service stopped).
+3. Inner-plug self-draw as seen by the outer meter: ~0.65 W ± 0.14 at idle — measurement infrastructure isn't free.
+
+### Relationship to CR-031 §2
+
+The meter registry is a step *toward* the deferred PowerBackend abstraction, not the protocol — PDU/IPMI/synthetic backends remain CR-031 §2 scope.

@@ -3,12 +3,13 @@
 # Last updated: 2026-06-11 (Session 46 — CR-065 BOTH phases: pre-test PASSED (2.5× fresh gain) AND
 #   integration shipped — power.py meter registry + cached KLAP handles + ONE shared sampler (5 modules
 #   delegate), per-meter ΔW combine (confidence method ci2), energy.meters block, {METER_CADENCE} token.
-#   Tests 662. Service restart PENDING (S44 + CR-065); variance recal after restart.)
+#   Tests 662. CR-065 CLOSED same day (recal done: idle 2.18%). Restart PENDING only for the
+#   /enhance-run preview fix (4c8384c).)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 15 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - CHANGE_REQUESTS.md — 14 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
 #   - TESTING.md — pytest suite (662 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
