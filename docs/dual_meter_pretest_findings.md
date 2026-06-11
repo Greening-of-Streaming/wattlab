@@ -85,9 +85,18 @@ measurement would have FAILED until that app toggle — not just degraded.
 (owner, 2026-06-11) and meter firmware is part of the measurement setup —
 after ANY deliberate plug update, re-run `bin/probe-dual-meter` (or the fw
 probe) and re-check duplicate rates before trusting fresh-sample arithmetic.
-Open follow-up: fw 1.4.6 (adds MWh units — TP-Link is actively reworking
-energy monitoring in this line) — test on the sacrificial plug when the
-rollout reaches it.
+Follow-up measured (2026-06-12): **fw 1.4.6 (Build 260309, adds MWh
+units) is equally slow** — 33.39% dups, plateaus {1: 200, 2: 200}, same
+~69 W load (`results/diagnostics/p110_fw_fw146_20260612_010802.{csv,json}`).
+Caveat: measured on a DIFFERENT P110 hardware variant (owner-spotted:
+EU sells two form factors; the 1.4.6 unit has no earth prong). The variants
+report identical `model`/`hw_ver` but distinct `hw_id`/`oem_id`
+(earthless `2FB30EF5…`/`18BDC6C7…` vs earthed `CFA3B64E…`/`5CCAC70B…`)
+and run separate firmware tracks — which is why the app can call a 1.4.0
+plug "up-to-date" while offering 1.4.6 to another. Net picture: every
+post-2024 firmware measured on either variant refreshes at exactly 1.5 s;
+only 1.3.1 (Jun 2024) samples at ≥1 Hz. The inner meter's 1.3.1 is
+effectively irreplaceable — keep auto-update off.
 
 Consequence: even **single-meter** operation improves by 1.5× just by making
 the new plug primary — done 2026-06-11 (`.env` swap, `TAPO_P110_IP=.91`).
