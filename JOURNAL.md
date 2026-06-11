@@ -62,7 +62,20 @@ docs/result_envelope.md; ARCHITECTURE/GOS1_INFRA one-liners. 14 new tests
 ui-config token) → **662**. Live-verified end-to-end against both plugs
 (outer−inner ≈ +0.8 W as the pre-test predicted; method ci2 on real data).
 **To close CR-065: Ben restarts wattlab, then one variance recalibration
-from /settings under normal ambient.**
+from /settings under normal ambient.** (Both done same evening — recal
+20:22, idle 2.18% n=20 — the honest floor: the old meter's stale dups had
+compressed measured variance to 1.84%.)
+
+**Late fix — /enhance-run input preview.** After a compare run the page-level
+input preview sat dead below the card (the element is created at page load and
+never refreshed; the hygiene pause at run-start plus the evening's service
+restart left it in MEDIA_ERR_NETWORK with nothing re-setting src) — while the
+card's own three fresh players played the same URLs fine. Fix: renderCompare()
+hides the page-level preview (the compare card carries its own Source cell —
+redundant, Ben's observation); single-run completion revives it via
+updateInputPreview() (the single card has no source player); updateInputPreview()
+adds vid.load() so a dead element always recovers on selection change.
+Verified via headless Chromium with the stored 76b45c71 result.
 
 Continuation of the S44 day. Four threads: Pixop naming, queue toggle, the first
 energy-vs-quality learnings from real UGC runs, and the degradation-ladder fixture

@@ -632,6 +632,7 @@ function updateInputPreview() {
   var pv = opt ? opt.getAttribute('data-preview') : null;
   var nf = opt ? opt.getAttribute('data-norm') : null;
   vid.src = '/enhance-run/input/' + encodeURIComponent(pv || sel.value);
+  vid.load();  // recover from MEDIA_ERR_NETWORK (e.g. service restart mid-session)
   if (note) {
     var msgs = [];
     if (nf) msgs.push('Will be normalized before measurement (' + nf + ') — runs outside the energy window.');
@@ -710,6 +711,7 @@ async function pollJob(jobId) {
       renderResult(data.result);
       document.getElementById('runBtn').disabled = false;
       loadPrevRuns();
+      updateInputPreview();  // revive the preview paused at startRun()
     } else if (data.status === 'error') {
       document.getElementById('status').innerHTML =
         '<div style="color:var(--err)">Error: ' + data.error + '</div>';
@@ -1096,6 +1098,10 @@ function renderCompare(meas) {
   card.innerHTML = renderCompareHtml(meas);
   card.style.display = 'block';
   _wireNativeVids(card);
+  // The compare card has its own Source cell — the page-level input preview
+  // below would duplicate it (and may be dead after the hygiene pause /
+  // a service restart). Hidden until the next input-selection change.
+  document.getElementById('input-preview').style.display = 'none';
 }
 function renderCompareHtml(meas) {
   var ml = meas.ml || {}, ff = meas.ffmpeg || {};
