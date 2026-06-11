@@ -1391,13 +1391,26 @@ async def _measured_pass(*, c: dict, job_id: str, jobs: Optional[dict],
     }
 
 
+# Pre-normalization power snapshot: 3 polls, a settle REFERENCE for the
+# post-normalize idle wait — not a measurement baseline (those stay at
+# baseline_polls inside the measured pass).
+_NORM_REF_POLLS = 3
+
+
 async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
                            job_id: str, live: bool) -> dict:
     """Probe-and-normalize bracket shared by both run flavours. Runs BEFORE
     focus/baseline so the ffmpeg cost stays outside every measured window.
     Live 1× mode refuses inputs that need it: the pacer stream-copies mpegts,
     which can't carry the FFV1 intermediate — and a paced run with a hidden
-    pre-conversion wouldn't be the live scenario it claims to measure."""
+    pre-conversion wouldn't be the live scenario it claims to measure.
+
+    The normalization burst is real CPU work right before the measured pass's
+    baseline, so it ends with the SAME idle-wait the compare flow runs between
+    its two passes (`cooldown_between_runs`). The dispatcher needs a floor to
+    settle back to and no baseline exists yet — so the floor is a short power
+    snapshot taken BEFORE normalization starts, when the box is as close to
+    idle as this run will see (the inter-pass equivalent: pass 1's w_base)."""
     inp, _, _ = _workdir_paths(c)
     probe = probe_normalization(inp / input_name)
     if not probe["needed"]:
@@ -1411,9 +1424,14 @@ async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
     if jobs is not None:
         jobs[job_id]["stage"] = "normalize"
         jobs[job_id]["substage"] = "normalize"
+    ref = await measure_baseline(polls=_NORM_REF_POLLS)
     log_path = _logs_dir(c) / f"{job_id}_normalize.log"
-    return await asyncio.get_event_loop().run_in_executor(
+    norm = await asyncio.get_event_loop().run_in_executor(
         None, lambda: normalize_input(input_name, probe, c, log_path=log_path))
+    norm["cooldown"] = await cooldown_between_runs(
+        fixed_seconds=c["cooldown_s"], reference_w=ref["w_base"],
+        stage="normalize", jobs=jobs, job_id=job_id)
+    return norm
 
 
 async def run_enhance_measurement(input_name: str, preset_name: str,

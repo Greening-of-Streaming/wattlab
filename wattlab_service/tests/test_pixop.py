@@ -1411,8 +1411,15 @@ def test_run_enhance_measurement_normalizes_and_cleans_up(tmp_path, monkeypatch)
         return [{"t": 1.0, "watts": 120.0, "cpu_tctl": 60.0,
                  "gpu_junction": 70.0, "gpu_ppt_w": 200.0}]
 
+    cooldowns = []
+
+    async def fake_cooldown(**kw):
+        cooldowns.append(kw)
+        return {"method": "idle", "waited_s": 4.0, "settled": True}
+
     monkeypatch.setattr(pixop, "measure_baseline", fake_baseline)
     monkeypatch.setattr(pixop, "poll_during_task", fake_poll)
+    monkeypatch.setattr(pixop, "cooldown_between_runs", fake_cooldown)
     monkeypatch.setattr(pixop, "probe_output_stream", lambda p: {"codec": "hevc"})
     monkeypatch.setattr(pixop, "_probe_input", lambda p: (30.0, 30.0))
     monkeypatch.setattr(pixop, "probe_vqa_nr", lambda p, c=None: None)
@@ -1456,6 +1463,12 @@ def test_run_enhance_measurement_normalizes_and_cleans_up(tmp_path, monkeypatch)
     assert str(captured["log_path"]).endswith("jn_partner.log")
     # bulky intermediate never outlives the run
     assert not (tmp_path / "input" / "normalized_clip.nut").exists()
+    # the normalization burst ends with the SAME idle-wait dispatcher the
+    # compare flow uses between passes, floored at the pre-normalize snapshot
+    assert len(cooldowns) == 1
+    assert cooldowns[0]["reference_w"] == 50.0
+    assert cooldowns[0]["stage"] == "normalize"
+    assert res["result"]["input_normalization"]["cooldown"]["settled"] is True
 
 
 def test_run_enhance_measurement_live_refuses_normalization(tmp_path, monkeypatch):

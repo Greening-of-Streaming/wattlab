@@ -27,6 +27,12 @@ Live 1× mode refuses inputs needing normalization (the mpegts pacer can't carry
 a hidden pre-conversion wouldn't be the live scenario it claims to measure). The bulky
 intermediate is deleted at run end + swept on TTL if a crash orphans it. Provenance
 stamped on every result (`input_normalization`, + `normalized_stream` when performed).
+**Post-normalize idle wait (owner ask, same session):** the normalization burst is CPU
+work right before the measured pass's baseline, so it ends with the SAME
+`cooldown_between_runs` idle-wait the compare flow runs between its passes — floored at a
+3-poll power snapshot taken before normalization starts (the dispatcher needs a settle
+reference and no baseline exists yet; the snapshot is the pre-baseline equivalent of
+pass 1's `w_base`). Wait result stamped at `input_normalization.cooldown`.
 **Verified on the real failures:** the VFR night clip (declared 24.83 / average 21.08 fps,
 previously rc 1 at frame 427) → rc 0, 914 frames; a synthesized `yuvj422p` MJPEG clip
 (the swept 2005-camera file's failure mode) → flagged, normalized, rc 0. NVEncC decodes
