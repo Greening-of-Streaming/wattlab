@@ -97,8 +97,10 @@ async def mockups_index(request: Request):
 <h1>Anonymous landing — scenarios</h1>
 <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
   Companion to the 2026-06 anonymous-landing audit (<span style="font-family:monospace">
-  docs/anon_landing_audit_2026-06.md</span>). Three ways the front door could work for
-  visitors who arrive from the GoS website or LinkedIn and don't yet know GoS or OWL.</p>
+  docs/anon_landing_audit_2026-06.md</span>). Two separate decisions about how OWL meets
+  visitors who arrive from the GoS website or LinkedIn and don't yet know GoS or OWL:
+  what the home page is (A vs B), and how LinkedIn posts enter the site (C, yes/no).</p>
+<h2 style="margin-top:1.25rem">Decision 1 — the home page itself (pick one, or counter-propose)</h2>
 <ul class="mock-list" style="list-style:none">
   <li><a href="{_PREFIX}/scenario-a">Scenario A — Polished tour (status quo + fixes)</a><br>
       <span style="color:var(--text-3);font-size:0.82rem">Keep the Guided Tour as the landing;
@@ -106,12 +108,15 @@ async def mockups_index(request: Request):
   <li><a href="{_PREFIX}/scenario-b">Scenario B — Findings-first landing</a><br>
       <span style="color:var(--text-3);font-size:0.82rem">Lead with live power + citable findings;
       tour one click away. Best front door for both audiences; a new surface to maintain.</span></li>
+</ul>
+<h2>Decision 2 — separate &amp; complementary: LinkedIn post entry points</h2>
+<ul class="mock-list" style="list-style:none">
   <li><a href="{_PREFIX}/scenario-c">Scenario C — Per-finding campaign pages</a><br>
-      <span style="color:var(--text-3);font-size:0.82rem">Each LinkedIn post deep-links one finding,
-      dressed with a who-we-are band. One finding = one post; homepage unchanged.</span></li>
+      <span style="color:var(--text-3);font-size:0.82rem">Not a home-page alternative: each LinkedIn
+      post deep-links ONE finding page, dressed with a who-we-are band for visitors arriving without
+      context. One finding = one post. Works with either A or B.</span></li>
 </ul>
 <p style="color:var(--text-3);font-size:0.82rem;line-height:1.6;max-width:560px">
-  B and C combine naturally (B fixes the front door, C gives the lab a posting engine).
   The current live landing is the <a href="/demo" style="color:var(--accent)">Guided Tour</a>.</p>
 """
     return _mock_page(request, "Landing scenarios", body)
@@ -214,9 +219,11 @@ async def mockup_scenario_c(request: Request):
     body = f"""
 <h1>Scenario C — Per-finding campaign page</h1>
 <p style="color:var(--text-3);font-size:0.85rem;max-width:560px;line-height:1.65;margin-bottom:1.5rem">
-  Each LinkedIn post links straight to ONE finding page. The finding page gains the
-  who-we-are band below (shown to visitors arriving without context) and proper link-preview
-  metadata. One finding = one post = a natural publishing cadence. Mock of the assembled page:</p>
+  <strong style="color:var(--text-2)">Not a home-page alternative</strong> — this is about how
+  LinkedIn posts enter the site, and it combines with either home-page scenario. Each post links
+  straight to ONE finding page. The finding page gains the who-we-are band below (shown to
+  visitors arriving without context) and proper link-preview metadata. One finding = one post =
+  a natural publishing cadence. Mock of the assembled page:</p>
 
 <div style="border:1px solid var(--border);padding:1.5rem;max-width:640px">
   <div style="border-left:2px solid var(--accent);padding-left:0.85rem;margin-bottom:1.25rem">
@@ -249,8 +256,9 @@ async def mockup_scenario_c(request: Request):
 </div>
 
 <div class="scenario-note">
-  Pro: deep links outperform homepage links on social; the homepage stays untouched.
-  Con: the front door itself stays tour-shaped for cold traffic from the GoS website.
+  Pro: deep links outperform homepage links on social, and one-finding-one-post gives the lab
+  a publishing cadence. Cost: each post needs a finding worth posting — the cadence is set by
+  the bench, not the calendar. Decide this independently of the A-vs-B home-page choice.
   <br><a href="{_PREFIX}" style="color:var(--accent)">&larr; All scenarios</a>
 </div>
 """

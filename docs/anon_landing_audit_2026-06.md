@@ -104,6 +104,12 @@ patterns. Not a marketing decision, but it gates the campaign date.
 
 ### Tier 1 — needs Marketing Lab input (the scenarios)
 
+These are **two separate decisions**: A vs B are alternatives for the home page itself;
+C is independent of that choice — it's about how LinkedIn posts enter the site, and it
+combines with either A or B.
+
+**Decision 1 — the home page (A vs B, or counter-propose):**
+
 **Scenario A — "Polished tour" (minimum, ~0.5 session after Tier 0)**
 Keep the tour as the anonymous landing. Add a one-line GoS identity sentence under the hero,
 expand OWL once ("Online WattLab"), and let marketing supply the share-card image + description.
@@ -120,17 +126,20 @@ The tour stays intact one click away.
 - *Con:* a new surface to maintain; needs marketing's call on hierarchy (findings vs. live demo
   vs. membership).
 
-**Scenario C — "Per-finding campaign links" (near-zero homepage change)**
-Keep the landing as-is (Scenario A fixes only). Each LinkedIn post links **directly to one
-finding page** (`/findings/<slug>`), which gets a small "What is OWL / who is GoS" header band
-+ share metadata per finding + a "see it measured live" CTA into the tour/demo.
+**Decision 2 — LinkedIn entry points (yes/no, independent of Decision 1):**
+
+**Scenario C — "Per-finding campaign links" (no homepage change)**
+Each LinkedIn post links **directly to one finding page** (`/findings/<slug>`), which gets a
+small "What is OWL / who is GoS" header band + share metadata per finding + a "see it measured
+live" CTA into the tour/demo.
 - *Pro:* one finding = one post = a natural posting cadence for the lab; deep links outperform
   homepage links on social; findings pages already render well (they even have the viewport tag).
-- *Con:* homepage stays mismatched for cold traffic arriving via the GoS website link.
+- *Cost:* each post needs a finding worth posting — the cadence is set by the bench, not the
+  calendar.
 
-**Recommendation:** B + C together is the full version (C gives the lab a posting engine, B
-fixes the front door for the GoS-website referral). If we must pick one first, do **C** — it's
-the fastest path to a good-looking first post — and decide on B with real referral data.
+**Recommendation:** decide A-vs-B for the front door (my lean: B for cold traffic), and say yes
+to C regardless — it's the fastest path to a good-looking first post and doesn't depend on the
+home-page choice.
 
 ### Questions for Veronika's lab
 1. Conversion goal for an interested stranger: membership lead, follow/newsletter, or
