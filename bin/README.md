@@ -241,3 +241,12 @@ CR-015. One-shot script, designed to be invoked by `systemd/owl-maintenance-watc
 - **Manual heartbeat works too.** `touch /tmp/owl-maintenance` from a shell extends the window without making an HTTP request — useful when SSH'd in but not actively browsing.
 - **The watchdog only writes when it actually fires.** The journal stays quiet during normal operation; expect a single line per stage-off event.
 - **Disable temporarily.** `sudo systemctl stop owl-maintenance-watchdog.timer` — useful if the timer fires mid-test and you want to debug without the rug pulled.
+
+## usage-report
+
+Aggregate OWL usage from data already on disk — zero new collection, no
+privacy surface. Reads every stored result's `visitor_key` and prints
+counts only (no IPs or emails ever appear): owner vs member vs anonymous
+runs, per-ISO-week trend, non-owner activity by workload type.
+`--weeks N` limits the window. Pre-CR-026 results (no key) count as
+owner (Lab) — historically accurate, it was all bench work then.

@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""OWL usage report from data already on disk — zero new collection.
+
+Reads every stored result's `visitor_key` (CR-026: 'a:<ip>' Anonymous,
+'m:<email>' Member, None Lab/pre-CR-026) and prints AGGREGATES ONLY:
+no IPs, no emails ever appear in the output. Distinct identities are
+counted, not listed. Owner = Lab runs + the owner's member account.
+
+Usage: bin/usage-report [--weeks N]   (default: all history)
+"""
+import argparse
+import collections
+import datetime as dt
+import json
+from pathlib import Path
+
+RESULTS = Path("/srv/data/owl/results")
+OWNER_MEMBER = "m:bs@ctoic.net"   # owner's working email (counts as owner)
+
+
+def classify(vk):
+    if vk is None:
+        return "owner (Lab)"
+    if vk == OWNER_MEMBER:
+        return "owner (member acct)"
+    if vk.startswith("m:"):
+        return "member"
+    if vk.startswith("a:"):
+        return "anonymous"
+    return "unknown"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--weeks", type=int, default=None,
+                    help="limit to the last N ISO weeks")
+    args = ap.parse_args()
+
+    rows = []
+    for p in RESULTS.glob("*/*.json"):
+        try:
+            d = json.loads(p.read_text())
+        except Exception:
+            continue
+        saved = d.get("saved_at") or p.stem[:10]
+        day = str(saved)[:10]
+        try:
+            week = dt.date.fromisoformat(day).strftime("%G-W%V")
+        except ValueError:
+            continue
+        rows.append((week, day, p.parent.name, classify(d.get("visitor_key")),
+                     d.get("visitor_key")))
+
+    if not rows:
+        print("no results found")
+        return
+    rows.sort()
+    if args.weeks:
+        keep = sorted({r[0] for r in rows})[-args.weeks:]
+        rows = [r for r in rows if r[0] in keep]
+
+    total = len(rows)
+    by_class = collections.Counter(r[3] for r in rows)
+    owner = by_class["owner (Lab)"] + by_class["owner (member acct)"]
+    distinct_members = len({r[4] for r in rows if r[3] == "member"})
+    distinct_anon = len({r[4] for r in rows if r[3] == "anonymous"})
+
+    print(f"OWL usage — {total} stored measurement runs, "
+          f"{rows[0][1]} → {rows[-1][1]}\n")
+    print(f"  owner:               {owner:4d}  ({owner/total:5.1%})")
+    print(f"  other members:       {by_class['member']:4d}  "
+          f"({distinct_members} distinct member account(s))")
+    print(f"  anonymous visitors:  {by_class['anonymous']:4d}  "
+          f"({distinct_anon} distinct source(s))")
+
+    print("\nPer ISO week (runs by class):")
+    weeks = collections.defaultdict(collections.Counter)
+    for w, _, typ, cls, _ in rows:
+        weeks[w][cls] += 1
+        weeks[w]["total"] += 1
+    print(f"  {'week':10s} {'total':>5} {'owner':>6} {'member':>7} {'anon':>5}")
+    for w in sorted(weeks):
+        c = weeks[w]
+        own = c["owner (Lab)"] + c["owner (member acct)"]
+        print(f"  {w:10s} {c['total']:5d} {own:6d} {c['member']:7d} {c['anonymous']:5d}")
+
+    print("\nNon-owner activity by workload type:")
+    t = collections.Counter(r[2] for r in rows if r[3] in ("member", "anonymous"))
+    if not t:
+        print("  (none)")
+    for typ, n in t.most_common():
+        print(f"  {typ:12s} {n}")
+
+    print("\nLatest non-owner run:", max((r[1] for r in rows
+          if r[3] in ("member", "anonymous")), default="never"))
+
+
+if __name__ == "__main__":
+    main()
