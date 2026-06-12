@@ -7,6 +7,48 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 50 — 2026-06-13
+
+**Marketing email finalised + scenario framing sharpened** (with Ben, several passes):
+mockup index now presents TWO decisions — Decision 1 "do we even need a dedicated
+landing page?" (A = today's tour, polished / B = findings-first front page) and
+Decision 2 (C = per-finding LinkedIn deep-links, explicitly "not a home-page
+alternative", combines with either). Audit doc reframed to match. Service restarted
+by Ben → S48/S49 stack live; email links verified live before send.
+
+**Findings embed bug (owner report):** the S48 sweet-spot finding's 16 enhance-type
+source embeds all errored ("no renderer for type=enhance") — embed dispatch knew only
+video/llm/image/rag AND /findings/source rejected the type. Shipped `wlRenderEnhanceCard`
+(single + enhance_compare shapes), registered in both dispatch maps (also fixes /results
+expand on enhance rows), allowed the type on the source endpoint, and added the card CSS
+findings pages never had (embeds rendered unstyled for every type since the feature
+shipped). Guard test: every type cited by the published catalog must be fetchable AND
+renderable — fails at publish time, not on the live page. (001cb1e)
+
+**Compare-panel sort** (owner ask): LLM/RAG compare tables now sort small → large by
+parameter count at render time (covers stored results). (fd493de)
+
+**Confidence question answered (no code change):** qwen3:1.7b's 🔴 in the last
+/llm/compare is NOT a meter problem — ci2 dual-meter was active, p(above idle)=0.90;
+it failed the ≥4-task-polls gate (2.9 s generation ≈ 3 polls). Poll gates deliberately
+stay on the primary meter (task-duration proxy, S46). Real lever: longer generation for
+small models. Also surfaced: mistral-nemo + phi4 answered the compare quiz in 2 tokens —
+their mWh/token in that run is meaningless; a minimum-generation floor for compare mode
+is the candidate fix (offered, not yet asked).
+
+**PCE-AAC paced-path workaround (Jon's reply: container ffmpeg upgrade has no timeline;
+he prescribed ingest-side audio transcode):** new audio-only pre-remux in pixop —
+`-c:v copy` (video bit-identical, md5-verified on a real fixture) + AAC re-encode to a
+standard channel config, pre-baseline so energy stays clean. 6-ch sources keep 5.1 via
+explicit channelmap (PCE streams have NO defined layout — ffmpeg's aac encoder refused
+the real fixture; mocks alone would have shipped that bug), others downmix to stereo.
+Live 1× runs on 5.1-AAC content work again (audio remux ≠ the FFV1 live-claim guard,
+which stands); compares keep their pacing instead of falling back un-paced; upload
+notice gains a paced-audio line. (fa6cfda) **687 tests. Pending: one paced container
+verification run (Ben budgets it); Ben to Slack Jon re hdr_4k memory-tuning env vars.**
+
+---
+
 ## Session 49 — 2026-06-12 (afternoon)
 
 **Anonymous-landing audit** (Ben prepping GoS-website + LinkedIn pointers; audience =
