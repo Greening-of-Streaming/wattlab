@@ -1141,6 +1141,9 @@ function renderCompareHtml(meas) {
 
   return '<div class="rc-header">Compare · AI vs traditional upscale' + (meas.live ? ' · Live 1×' : '')
         + (meas.target_res ? ' · ' + meas.target_res : '') + '</div>'
+    + (meas.paced_fallback
+        ? '<div style="color:var(--warn);font-size:0.74rem;margin-bottom:0.4rem">⚠ ' + meas.paced_fallback + '</div>'
+        : '')
     + fail
     + ratioRow
     + '<div style="display:flex;gap:0.8rem;flex-wrap:wrap;margin:0.6rem 0 0.4rem">'

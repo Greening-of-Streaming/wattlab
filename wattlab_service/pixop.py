@@ -760,6 +760,26 @@ def read_preset_args(preset_path) -> list[str]:
     return args
 
 
+def _paced_audio_risk(path) -> Optional[str]:
+    """Reason-string when an input's audio cannot survive the paced (mpegts)
+    path: multi-channel AAC arrives as ADTS with PCE-based channel config,
+    which the container's bundled ffmpeg can't remux into mp4
+    (`aac_adtstoasc` — observed rc 1, 0-byte outputs, 2026-06-12). Fail-soft
+    None (no audio / probe failure / safe codec ⇒ no risk)."""
+    try:
+        r = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=codec_name,channels", "-of", "json",
+             str(path)], capture_output=True, text=True, timeout=10)
+        s = (json.loads(r.stdout).get("streams") or [{}])[0]
+        if s.get("codec_name") == "aac" and int(s.get("channels") or 0) > 2:
+            return (f"{s.get('channels')}-channel AAC audio cannot be remuxed "
+                    "by the container on the paced path (aac_adtstoasc/PCE)")
+    except Exception:
+        pass
+    return None
+
+
 def _pipe_format(input_name: str) -> str:
     """Pipe container for the 1× pacer: mpegts for normal sources, NUT for the
     normalized FFV1 intermediate (mpegts can't carry FFV1; NUT pipes fine and
@@ -1570,6 +1590,12 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         raise RuntimeError(f"unknown preset: {preset_name!r}")
 
     inp, out, pre = _workdir_paths(c)
+    if live:
+        risk = _paced_audio_risk(inp / input_name)
+        if risk:
+            raise RuntimeError(
+                f"Live 1× mode can't run this input: {risk}. "
+                "Run it un-paced (batch) instead.")
     # Pre-normalization (Jon's 2026-06-11 prescription) — BEFORE the baseline,
     # so its CPU cost is outside the energy window. The measured pass then
     # encodes the normalized intermediate; the original is what the result's
@@ -1701,6 +1727,16 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
 
     inp, out, pre = _workdir_paths(c)
     input_path = inp / input_name
+    # Compare pacing is a measurement-window tactic, not a live claim — so a
+    # paced-path audio risk degrades gracefully to an un-paced run, stamped on
+    # the result (owner report 2026-06-12: every UI compare on the 5.1-AAC
+    # ladder fixtures died rc 1 in the container's mp4 mux).
+    paced_fallback = None
+    if live:
+        risk = _paced_audio_risk(input_path)
+        if risk:
+            live = False
+            paced_fallback = risk + " — ran un-paced instead"
     # Pre-normalization (see run_enhance_measurement) — ONE pass feeding both
     # sides, so the comparison stays apples-to-apples on the identical input.
     # live=False here even though compare paces at 1×: compare's pacing is a
@@ -1807,6 +1843,7 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
             "source_vqa": source_vqa,
             "input_stream": input_stream,
             "input_normalization": norm,
+            "paced_fallback": paced_fallback,
             "ml": ml,
             "ffmpeg": ff,
             "comparison": comparison,

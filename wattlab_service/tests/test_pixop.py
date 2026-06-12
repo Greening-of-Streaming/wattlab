@@ -1791,3 +1791,51 @@ def test_ladder_page_no_chart_without_data(tmp_path, monkeypatch):
     assert "Quality gain vs source quality" not in r.text
     assert "quality gain vs energy cost" not in r.text
     assert "chart.umd" not in r.text                       # no dead script load
+
+
+# ═══ Paced-path audio risk (PCE-AAC, owner reports 2026-06-12) ════════════════
+
+def test_paced_audio_risk_detects_multichannel_aac(monkeypatch):
+    monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
+        {"codec_type": "audio", "codec_name": "aac", "channels": 6}]))
+    assert "AAC" in pixop._paced_audio_risk("x.mp4")
+    monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
+        {"codec_type": "audio", "codec_name": "aac", "channels": 2}]))
+    assert pixop._paced_audio_risk("x.mp4") is None
+
+
+def test_compare_falls_back_unpaced_on_audio_risk(tmp_path, monkeypatch):
+    (tmp_path / "presets").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "presets" / "up.args").write_text("--output-res 1920x1080\n--cbr 12000\n")
+    (tmp_path / "input").mkdir(exist_ok=True)
+    (tmp_path / "input" / "clip.mov").write_text("x")
+    _mock_harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(pixop, "_paced_audio_risk", lambda p: "6-channel AAC …")
+    pacers = []
+
+    def fake_run(cmd, t, pacer_cmd=None, log_path=None):
+        pacers.append(pacer_cmd)
+        return {"success": True, "returncode": 0, "duration_s": 20.0,
+                "docker_cmd": " ".join(cmd), "live": pacer_cmd is not None,
+                "stdout_tail": "", "stderr_tail": "", "encode_stats": None,
+                "log_file": None}
+
+    monkeypatch.setattr(pixop, "run_transcode_subprocess", fake_run)
+    res = asyncio.run(pixop.run_enhance_compare_measurement(
+        "clip.mov", "up.args", "jp", {"jp": {}}, live=True))
+    assert res["paced_fallback"] and "un-paced" in res["paced_fallback"]
+    assert pacers[0] is None            # ML pass ran UN-paced despite live=True
+    assert res["live"] is False         # envelope live flag follows the fallback
+
+
+def test_single_run_live_refuses_audio_risk(tmp_path, monkeypatch):
+    _stage(tmp_path, preset=True, inp=True, license=True)
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    monkeypatch.setattr(pixop, "preflight",
+                        lambda c=None: {"ok_transcode": True,
+                                        "inputs": ["clip.mov"], "presets": ["p.args"],
+                                        "reasons": []})
+    monkeypatch.setattr(pixop, "_paced_audio_risk", lambda p: "6-channel AAC …")
+    with pytest.raises(RuntimeError, match="un-paced"):
+        asyncio.run(pixop.run_enhance_measurement(
+            "clip.mov", "p.args", "jr", {"jr": {}}, live=True))
