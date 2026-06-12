@@ -191,6 +191,25 @@ Measures whether two daisy-chained Tapo P110s (wall → outer → inner → GoS1
 
 ---
 
+## probe-p110-fw — single-plug refresh-rate probe (CR-065 follow-up)
+
+Polls ONE P110 at 1 Hz for `--minutes` (raw mW) and reports the consecutive-duplicate rate, plateau histogram and latency — the firmware refresh-rate fingerprint. Used 2026-06-12 to confirm that plug firmware ≥1.4.0 slows the local-API metering refresh from ≥1 Hz to exactly 1.5 s (before/after on a sacrificial plug; full story in `docs/dual_meter_pretest_findings.md`).
+
+```bash
+~/wattlab/bin/probe-p110-fw --ip 192.168.1.X --label fw131_before --minutes 10
+```
+
+**Output:** `results/diagnostics/p110_fw_<label>_<ts>.{csv,json}` + printed summary. Interpretation: ~0% duplicates = fast firmware (≥1 Hz refresh); ~33% with a 1,2,1,2 plateau pattern = 1.5 s refresh.
+
+### Things to know
+
+- **Run it after ANY plug firmware update, before trusting the meter** — and keep the Tapo app closed during the run: the app polls plugs directly over the LAN and steals the probe's session (the script survives via rebuild-with-backoff, but every steal costs samples).
+- **Safe to run against non-OWL plugs while measurements are in flight** — it never touches the registered meters. Do NOT point it at `TAPO_P110_IP`/`TAPO_P110_IP_2` while the service is up (KLAP sessions are exclusive per device).
+- **Give the target plug a live, nonzero load** — an off device reads a constant 0 mW and the duplicate analysis can't distinguish stale from constant.
+- Newer firmware may 403 the local API until "Third-Party Compatibility" is toggled in the app (Me → Third-Party Services).
+
+---
+
 ## owl-maintenance-watchdog — auto-lower the staging flag
 
 CR-015. One-shot script, designed to be invoked by `systemd/owl-maintenance-watchdog.timer` (every minute). Closes the "I forgot to run `stage-off`" failure mode of CR-011 staging.

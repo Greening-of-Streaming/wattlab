@@ -7,6 +7,35 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 47 — 2026-06-12 (after midnight)
+
+The CR-065 firmware hypothesis, settled by experiment — plus the member email.
+
+**fw refresh-rate hypothesis CONFIRMED (`bin/probe-p110-fw`, new).** A sacrificial
+third P110 (shipped on the fast fw 1.3.1, metering Ben's screen + MacBook at
+~69 W): 0.0% duplicates in 600 polls at 1 Hz. Updated to fw 1.4.0 — same plug,
+same load, half an hour apart: 33.44% duplicates, plateaus {1: 199, 2: 200},
+latency unchanged. The 1.5 s refresh is the firmware, full stop; matches the
+production outer plug byte-for-byte. Two side discoveries: (1) fw 1.4.0 403-locks
+the local API until the app's Third-Party-Compatibility toggle is cycled — an
+unattended auto-update on the primary meter would have STOPPED measurements,
+not degraded them (auto-update now off on the meters; firmware is formally part
+of the measurement setup); (2) "P110" is two distinct EU hardware variants
+(owner-spotted by the missing earth prong; distinct `hw_id`/`oem_id` under
+identical model/hw_ver strings) on separate firmware tracks — and the latest
+fw 1.4.6 (Mar 2026, measured on the second variant) is equally slow at 1.5 s.
+Every firmware measured from mid-2024 on is slow; the inner meter's 1.3.1 is
+effectively irreplaceable. Plan: acquire + bench-verify 1.3.1 spares (cold spare
+for the inner first; outer upgrade opportunistically at a natural power-down —
+worth ~10% tighter CIs). Data: `results/diagnostics/p110_fw_*`; findings doc
+updated; closed CR-065 record updated to final state.
+
+**WattLab-group email** drafted/iterated with Ben (the half-day-manual vs
+10-minute-harness framing is his). Vendor naming policy applied repo-wide:
+facts about firmware versions stay, vendor name out of anything critical.
+
+---
+
 ## Session 46 — 2026-06-11 (evening)
 
 CR-065 logged and Phase 1 executed in one session: the owner's dual-meter idea

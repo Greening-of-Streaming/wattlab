@@ -1,10 +1,10 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-11 (Session 46 — CR-065 BOTH phases: pre-test PASSED (2.5× fresh gain) AND
-#   integration shipped — power.py meter registry + cached KLAP handles + ONE shared sampler (5 modules
-#   delegate), per-meter ΔW combine (confidence method ci2), energy.meters block, {METER_CADENCE} token.
-#   Tests 662. CR-065 CLOSED same day (recal done: idle 2.18%). Restart PENDING only for the
-#   /enhance-run preview fix (4c8384c).)
+# Last updated: 2026-06-12 (Session 47 — P110 fw experiment: ≥1.4.0 slows metering refresh to 1.5s,
+#   CONFIRMED on a sacrificial plug (bin/probe-p110-fw); fw 1.4.0 also 403-locks the local API until an
+#   app toggle; two EU P110 hw variants (hw_id/oem_id). Meter firmware = part of the measurement setup;
+#   auto-update OFF; inner plug's fw 1.3.1 is irreplaceable — acquire bench-verified spares.
+#   Tests 662. Restart PENDING only for the /enhance-run preview fix (4c8384c).)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
@@ -143,6 +143,7 @@ CHANGE_REQUESTS_CLOSED.md.
 - S44 (06-11): CR-064 Jon's answers — conditional input normalization (pre-baseline, energy-clean) + per-job logs; hdr_4k = 96.8% VRAM (OOM theory). →628.
 - S45 (06-11 pm): Pixop named (member-contributed framing) · queue pause toggle · UGC energy-vs-quality learnings · degradation ladder frozen (test_content/degraded/). →648.
 - S46 (06-11 eve): CR-065 complete — pre-test PASSED (2.5× fresh gain, probe + findings doc) then integration: meter registry/cached handles, shared sampler, ci2 combine, energy.meters, cadence token. →662.
+- S47 (06-12): P110 fw experiment (bin/probe-p110-fw) — fw≥1.4.0 = 1.5s refresh CONFIRMED + local-API lockout + two EU hw variants; meter fw is measurement setup, 1.3.1 irreplaceable, get spares.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""One-off CR-065 follow-up: P110 firmware refresh-rate hypothesis test.
+
+Polls ONE plug at 1 Hz for --minutes, raw mW, and reports duplicate rate +
+plateau histogram + latency. Run once on ship firmware, update fw via the
+Tapo app, run again with a new --label. Outputs to results/diagnostics/.
+Does not touch the OWL meters (.91/.159) — safe while a sweep runs.
+"""
+import argparse
+import asyncio
+import csv
+import json
+import statistics
+import sys
+import time
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path("/home/gos/wattlab")
+sys.path.insert(0, str(HERE / "wattlab_service"))
+from dotenv import dotenv_values  # noqa: E402
+from tapo import ApiClient        # noqa: E402
+
+
+async def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ip", default="192.168.1.196")
+    ap.add_argument("--minutes", type=float, default=10)
+    ap.add_argument("--label", required=True, help="e.g. fw131_before / fw140_after")
+    args = ap.parse_args()
+
+    cfg = dotenv_values(HERE / ".env")
+    client = ApiClient(cfg["TAPO_EMAIL"], cfg["TAPO_PASSWORD"])
+    dev = await client.p110(args.ip)
+    info = await dev.get_device_info()
+    fw = info.fw_ver
+    print(f"plug {args.ip} ({info.nickname}) hw={info.hw_ver} fw={fw}", flush=True)
+
+    rows, lat = [], []
+    rebuilds = 0
+    t0 = time.monotonic()
+    next_t = t0
+    n_polls = int(args.minutes * 60)
+    for i in range(n_polls):
+        t_send = time.monotonic()
+        try:
+            e = await asyncio.wait_for(dev.get_energy_usage(), timeout=5)
+            mw = e.current_power
+        except Exception:
+            # session stolen (403) or connection reset — rebuild with backoff,
+            # never die: gaps only dilute the dup-rate stats slightly
+            dev = None
+            for _ in range(10):
+                try:
+                    await asyncio.sleep(1)
+                    client = ApiClient(cfg["TAPO_EMAIL"], cfg["TAPO_PASSWORD"])
+                    dev = await asyncio.wait_for(client.p110(args.ip), timeout=8)
+                    break
+                except Exception:
+                    continue
+            rebuilds += 1
+            if dev is None:
+                print("  meter unreachable after 10 rebuild attempts", flush=True)
+                break
+            next_t = time.monotonic()
+            continue
+        t_recv = time.monotonic()
+        lat.append((t_recv - t_send) * 1000)
+        rows.append({"t_rel_s": round(t_recv - t0, 3), "power_mw": mw,
+                     "latency_ms": round((t_recv - t_send) * 1000, 1)})
+        if i % 60 == 0:
+            print(f"  {i}/{n_polls} polls · {mw/1000:.3f} W", flush=True)
+        next_t += 1.0
+        delay = next_t - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        else:
+            next_t = time.monotonic()
+
+    vals = [r["power_mw"] for r in rows]
+    dups = sum(1 for a, b in zip(vals, vals[1:]) if a == b)
+    plateaus = Counter()
+    run = 1
+    for a, b in zip(vals, vals[1:]):
+        run = run + 1 if a == b else (plateaus.update([run]), 1)[1]
+    plateaus[run] += 1
+    lat_s = sorted(lat)
+    summary = {
+        "label": args.label, "ip": args.ip, "fw_ver": fw, "hw_ver": info.hw_ver,
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "n": len(vals), "rebuilds": rebuilds,
+        "dup_rate": round(dups / max(len(vals) - 1, 1), 4),
+        "plateaus": dict(sorted(plateaus.items())),
+        "mean_w": round(statistics.mean(vals) / 1000, 3),
+        "std_w": round(statistics.stdev(vals) / 1000, 3) if len(vals) > 1 else 0,
+        "latency_ms_p50": round(lat_s[len(lat_s) // 2], 1),
+        "latency_ms_p95": round(lat_s[int(len(lat_s) * 0.95)], 1),
+    }
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out = HERE / "results" / "diagnostics" / f"p110_fw_{args.label}_{ts}"
+    with open(f"{out}.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["t_rel_s", "power_mw", "latency_ms"])
+        w.writeheader()
+        w.writerows(rows)
+    Path(f"{out}.json").write_text(json.dumps(summary, indent=2))
+    print(json.dumps(summary, indent=2))
+    print(f"raw → {out}.csv")
+
+asyncio.run(main())

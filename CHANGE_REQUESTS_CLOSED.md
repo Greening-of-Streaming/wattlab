@@ -1951,7 +1951,7 @@ Topology wall → `.159` (outer, original) → `.91` (inner, primary) → GoS1; 
 
 ### Discoveries worth remembering
 
-1. **The two plugs are unequal samplers, and it's firmware, not wear:** both hw 1.0; the SLOW unit (1.5s refresh, perfect 1,2,1,2 stale pattern) runs the NEWER fw 1.4.0 (Oct 2025); the fast unit (zero dups in 601 polls, ≥1 Hz) runs 1.3.1 (Jun 2024). Falsifiable: if the inner plug updates to 1.4.0 its dup rate should jump to ~33%. Don't casually firmware-update the meters; re-run the probe after any update.
+1. **The two plugs are unequal samplers, and it's firmware, not wear — CONFIRMED 2026-06-12 by controlled before/after on a sacrificial third plug** (`bin/probe-p110-fw`): fw 1.3.1 (Jun 2024) = 0% dups / ≥1 Hz; fw 1.4.0 (Oct 2025) = 33.4% dups / exactly 1.5 s, on the same plug, same load, half an hour apart. The latest fw 1.4.6 (Mar 2026, different P110 hardware variant — distinct `hw_id`/`oem_id` under the same model string) is equally slow; every firmware measured from mid-2024 on meters at 1.5 s. fw 1.4.0 also locks the local API behind the app's Third-Party-Compatibility toggle — an unattended auto-update on the primary would have STOPPED measurements, not degraded them. Auto-update is OFF on the meters; firmware is part of the measurement setup; re-probe after any deliberate update. Full data + write-up in `docs/dual_meter_pretest_findings.md`.
 2. **KLAP sessions are exclusive per device** — any fresh handshake invalidates other sessions on that plug. Cached handles rebuild on 403; nothing may poll a registered meter out-of-band (probe requires the service stopped).
 3. Inner-plug self-draw as seen by the outer meter: ~0.65 W ± 0.14 at idle — measurement infrastructure isn't free.
 

@@ -13,8 +13,8 @@ rates; KLAP session exclusivity) materially shape the integration.
 Analysis of the 30 most recent stored results (2026-06-10/11) showed 22.5%
 of consecutive 1s power samples byte-identical at 10 mW resolution —
 impossible as real collisions, so the P110's local-API `current_power` was
-inferred to refresh only every ~1.3–1.6s. (TP-Link's published "5s" figure
-is the app/cloud path, not the local API.) Hypothesis: a second,
+inferred to refresh only every ~1.3–1.6s. (The published "5s" refresh
+figure refers to the app/cloud path, not the local API.) Hypothesis: a second,
 independently clocked meter in series roughly doubles fresh samples.
 
 ## Setup
