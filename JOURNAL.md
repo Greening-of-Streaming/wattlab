@@ -7,6 +7,42 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 49 — 2026-06-12 (afternoon)
+
+**Anonymous-landing audit** (Ben prepping GoS-website + LinkedIn pointers; audience =
+unlogged members + interested strangers who don't know GoS/OWL). Deliverable for
+Veronika's Marketing Lab: `docs/anon_landing_audit_2026-06.md` + screenshots. Verdict:
+desktop Welcome fold is strong; three launch-blockers — (1) no viewport meta anywhere
+(phones rendered desktop-width at ~1/3 scale; LinkedIn traffic is mostly mobile);
+(2) zero meta/OG tags (shared links render bare — share-card design/wording needs
+Marketing input, still open); (3) tour copy asserted things that stopped being true:
+"Mistral 7B via Ollama ROCm" while the button runs qwen3:4b on CUDA, old variance-rule
+confidence sentence contradicting the CI step, "full pipeline results pending first
+run", hardcoded P110/`812 MB` facts.
+
+**Truth pass shipped (890b712):** tour copy now bakes from live sources at request
+time — LLM/RAG model name+size from `llm.MODELS` (new `DEMO_LLM_MODEL` const +
+`curated.CANONICAL_RAG_MODEL`; the JS form fields bake from the SAME constants, so
+copy and button can't diverge again), GPU encoders/runtime via `_gpu_enc`/`_gpu_runtime`,
+video-source facts from `sources.PRELOADED`, image detail from the model catalog,
+meter wording via cadence tokens. Hand-typed "previous result" numbers removed — the
+Result panels already hydrate the latest stored run. `ui.render_page` now ships
+charset+viewport on every page (ad-hoc benchmark tags dropped); image_gen
+compare-models scope string routes through `gpu.BACKEND.device_label()` (was
+"RX 7800 XT, ROCm"). Guard: `tests/test_demo_copy.py` (model-copy/button agreement,
+vendor-flip wording, unreplaced-token leak). **682 tests. Restart pending** (stacks on
+S48's: tour fixes + /preview routes go live together).
+
+**Marketing mockups (TEMPORARY):** `routes_mockups.py` — three watermarked, noindexed,
+zero-JS scenario pages at the unguessable `/preview-c5d9b3be` prefix (index +
+A polished-tour, B findings-first landing, C per-finding campaign page with mock
+LinkedIn share card). Real live findings/power data, nothing runnable. Delete the
+module + main.py registration once the lab picks a direction. Open for Marketing:
+conversion goal, share-card design, homepage-vs-deep-link posting, GoS identity
+sentence (draft-marked on the mockups).
+
+---
+
 ## Session 48 — 2026-06-12 (overnight, autonomous)
 
 **Upscale sweet-spot sweep executed end-to-end** on the fresh dual-P110 instrument

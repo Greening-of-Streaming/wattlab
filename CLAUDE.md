@@ -1,10 +1,10 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-12 (Session 47 — P110 fw experiment: ≥1.4.0 slows metering refresh to 1.5s,
-#   CONFIRMED on a sacrificial plug (bin/probe-p110-fw); fw 1.4.0 also 403-locks the local API until an
-#   app toggle; two EU P110 hw variants (hw_id/oem_id). Meter firmware = part of the measurement setup;
-#   auto-update OFF; inner plug's fw 1.3.1 is irreplaceable — acquire bench-verified spares.
-#   Tests 662. Restart PENDING only for the /enhance-run preview fix (4c8384c).)
+# Last updated: 2026-06-12 (Session 49 — anonymous-landing audit for Marketing Lab + /demo truth pass:
+#   tour copy now bakes from live sources (model/GPU/source/meter — guard test_demo_copy.py), viewport
+#   meta global via render_page, TEMPORARY Marketing mockups at /preview-c5d9b3be (delete after lab
+#   decision). OG/share-card meta tags still open pending Marketing wording — LinkedIn launch-blocker.
+#   Tests 682. Restart PENDING (stacks S48 /enhance-run/ladder + S49 tour fixes + mockups).)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
@@ -145,6 +145,7 @@ CHANGE_REQUESTS_CLOSED.md.
 - S46 (06-11 eve): CR-065 complete — pre-test PASSED (2.5× fresh gain, probe + findings doc) then integration: meter registry/cached handles, shared sampler, ci2 combine, energy.meters, cadence token. →662.
 - S47 (06-12): P110 fw experiment (bin/probe-p110-fw) — fw≥1.4.0 = 1.5s refresh CONFIRMED + local-API lockout + two EU hw variants; meter fw is measurement setup, 1.3.1 irreplaceable, get spares.
 - S48 (06-12 night): upscale sweet-spot sweep (16 runs, all 🟢, dual-meter) → finding `upscale-sweetspot-degraded-sources` + /enhance-run/ladder subpage (chart + fixtures). Restart pending. →668.
+- S49 (06-12 pm): anonymous-landing audit (`docs/anon_landing_audit_2026-06.md`) + /demo truth pass (copy bakes from live model/GPU/source registries) + global viewport meta + TEMP Marketing mockups `/preview-c5d9b3be`. OG tags open. →682.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
