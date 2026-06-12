@@ -1748,6 +1748,13 @@ def test_ladder_page_graceful_without_data(tmp_path, monkeypatch):
     assert '<div class="finding-band">' not in r.text      # no finding yet
 
 
+def test_ladder_page_has_owl_dark_styles(tmp_path, monkeypatch):
+    import routes_enhance as re_mod
+    monkeypatch.setattr(re_mod, "_LADDER_DIR", tmp_path)
+    r = client.get("/enhance-run/ladder", headers=LAB)
+    assert "background: var(--bg)" in r.text   # was white — owner report 2026-06-12
+
+
 def test_enhance_page_links_to_ladder():
     r = client.get("/enhance-run", headers=LAB)
     assert '/enhance-run/ladder' in r.text
@@ -1767,6 +1774,10 @@ def test_ladder_page_chart_renders_with_sweep_data(tmp_path, monkeypatch):
     r = client.get("/enhance-run/ladder", headers=LAB)
     assert r.status_code == 200
     assert "chart.js" in r.text or "chart.umd" in r.text   # house library loaded
+    # the owner-specified sweet-spot chart: gain (y) vs energy cost (x),
+    # resolution as colour, content as shape — top-left is the sweet spot
+    assert "quality gain vs energy cost" in r.text
+    assert "SD input" in r.text and "4K input" in r.text
     assert "Quality gain vs source quality" in r.text
     assert "BBB (synthetic)" in r.text and "Meridian (cinematic)" in r.text
     # data baked from the same json the table uses
@@ -1778,4 +1789,5 @@ def test_ladder_page_no_chart_without_data(tmp_path, monkeypatch):
     monkeypatch.setattr(re_mod, "_LADDER_DIR", tmp_path)
     r = client.get("/enhance-run/ladder", headers=LAB)
     assert "Quality gain vs source quality" not in r.text
+    assert "quality gain vs energy cost" not in r.text
     assert "chart.umd" not in r.text                       # no dead script load

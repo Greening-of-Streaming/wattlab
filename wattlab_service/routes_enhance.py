@@ -1393,6 +1393,13 @@ def _ladder_videos_html() -> str:
 
 
 _LADDER_STYLES = """
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: var(--bg); color: var(--text);
+           max-width: 980px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { color: var(--accent); margin-bottom: 0.25rem; font-size: 1.45rem; }
+    .subtitle { color: var(--text-3); font-size: 0.82rem; margin-bottom: 1.25rem;
+                letter-spacing: 0.04em; }
+    h2 { margin: 1.5rem 0 0.6rem; }
     .lead-band { color: var(--text-3); font-size: 0.85rem; line-height: 1.6;
                  border-left: 2px solid var(--accent); padding-left: 0.9rem;
                  margin-bottom: 1.5rem; }
@@ -1418,53 +1425,102 @@ _LADDER_STYLES = """
 
 
 def _ladder_chart_html(sweep: dict) -> str:
-    """The sweet-spot curve: ΔVQA (y) against source quality (x), one series
-    per content class (BBB synthetic / Meridian cinematic) + the real-UGC
-    anchor points. Chart.js (house library), data baked serve-side from
-    sweep_summary.json — same source as the table, so they can't drift.
-    Rendered only once measured data exists (lab look: one compact canvas)."""
+    """Two charts, both serve-side baked from sweep_summary.json (same source
+    as the table — they cannot drift).
+
+    1. THE SWEET-SPOT CHART (owner-specified axes, 2026-06-12): quality gain
+       (y, ΔVQA) against energy cost (x, Wh) — "where do we see the best
+       quality improvements for the smallest energy cost" is literally the
+       top-left of the plot. The other two axes ride along as encodings:
+       input resolution = colour, content = point shape, source quality in
+       the tooltip with the ΔVQA/Wh efficiency.
+    2. The gain-vs-source-quality curve (how badness drives the gain).
+    """
     runs = sweep.get("runs") or {}
-    series = {"bbb": [], "meridian": [], "anchors": []}
+
+    def res_class(name: str) -> str:
+        if "544x408" in name or "_sd_" in name:
+            return "sd"
+        if "Night" in name or "_hd_" in name:
+            return "hd"
+        return "fourk"   # ref_4k / 4k_dirty
+
+    def shape(name: str) -> str:
+        if name.startswith("bbb_"):
+            return "circle"
+        if name.startswith("meridian_"):
+            return "triangle"
+        return "star"    # real-UGC anchors
+
+    cost = {"sd": [], "hd": [], "fourk": []}
+    curve = {"bbb": [], "meridian": [], "anchors": []}
     for name, r in runs.items():
-        if r.get("vqa_in") is None or r.get("delta_vqa") is None:
+        if r.get("delta_vqa") is None or r.get("delta_e_wh") is None:
             continue
-        pt = {"x": r["vqa_in"], "y": r["delta_vqa"],
-              "label": f"{name} · {r.get('delta_e_wh','?')} Wh"}
-        key = ("bbb" if name.startswith("bbb_") else
-               "meridian" if name.startswith("meridian_") else "anchors")
-        series[key].append(pt)
-    if not (series["bbb"] or series["meridian"]):
+        eff = r.get("vqa_per_wh")
+        tip = (f"{name} · in {r.get('vqa_in')} · +{r['delta_vqa']} VQA · "
+               f"{r['delta_e_wh']} Wh · {eff if eff is not None else '?'} ΔVQA/Wh")
+        cost[res_class(name)].append({"x": r["delta_e_wh"], "y": r["delta_vqa"],
+                                      "label": tip, "ptStyle": shape(name)})
+        ckey = ("bbb" if name.startswith("bbb_") else
+                "meridian" if name.startswith("meridian_") else "anchors")
+        curve[ckey].append({"x": r.get("vqa_in"), "y": r["delta_vqa"], "label": tip})
+    if not (cost["sd"] or cost["hd"] or cost["fourk"]):
         return ""
-    for k in series:
-        series[k].sort(key=lambda p: p["x"])
-    data = json.dumps(series)
+    for k in curve:
+        curve[k].sort(key=lambda pt: pt["x"])
+    cost_json, curve_json = json.dumps(cost), json.dumps(curve)
     return f"""
-<h2 style="font-size:0.85rem;color:var(--text-3)">Quality gain vs source quality (4K target)</h2>
+<h2 style="font-size:0.85rem;color:var(--text-3)">The sweet spot &mdash; quality gain vs energy cost (4K target)</h2>
+<div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.4rem">
+  Up and left is better. Colour = input resolution &middot; shape = content
+  (&#9679; BBB synthetic, &#9650; Meridian cinematic, &#9733; real UGC) &middot;
+  hover for source quality and &Delta;VQA/Wh.
+</div>
+<div style="max-width:680px;margin-bottom:1.5rem"><canvas id="sweetspot"></canvas></div>
+
+<h2 style="font-size:0.85rem;color:var(--text-3)">Quality gain vs source quality</h2>
 <div style="max-width:680px;margin-bottom:1.5rem"><canvas id="curve"></canvas></div>
 <script>
-const S = {data};
-const mk = (label, pts, color, dash) => ({{
+Chart.defaults.color = '#888';
+Chart.defaults.borderColor = '#222';
+const COST = {cost_json};
+const CURVE = {curve_json};
+const tip = {{ callbacks: {{ label: ctx => ctx.raw.label }} }};
+const costDs = (label, pts, color) => ({{
   label, data: pts, borderColor: color, backgroundColor: color,
-  showLine: label !== 'Real UGC (anchors)', borderDash: dash || [],
-  pointRadius: 4, tension: 0.25, fill: false }});
-new Chart(document.getElementById('curve'), {{
+  pointStyle: pts.map(p => p.ptStyle), pointRadius: 6, showLine: false }});
+new Chart(document.getElementById('sweetspot'), {{
   type: 'scatter',
   data: {{ datasets: [
-    mk('BBB (synthetic)', S.bbb, '#00ff99'),
-    mk('Meridian (cinematic)', S.meridian, '#66aaff'),
-    mk('Real UGC (anchors)', S.anchors, '#ffaa00'),
+    costDs('SD input', COST.sd, '#00ff99'),
+    costDs('HD input', COST.hd, '#66aaff'),
+    costDs('4K input', COST.fourk, '#ff6666'),
   ]}},
   options: {{
     scales: {{
-      x: {{ title: {{ display: true, text: 'source quality (NR-VQA in)' }},
-            grid: {{ color: '#222' }} }},
-      y: {{ title: {{ display: true, text: 'quality gain (ΔVQA)' }},
-            grid: {{ color: '#222' }} }}
+      x: {{ title: {{ display: true, text: 'energy cost (Wh, 45 s clip)' }}, grid: {{ color: '#222' }} }},
+      y: {{ title: {{ display: true, text: 'quality gain (ΔVQA)' }}, grid: {{ color: '#222' }} }}
     }},
-    plugins: {{
-      legend: {{ labels: {{ boxWidth: 12, font: {{ size: 10 }} }} }},
-      tooltip: {{ callbacks: {{ label: ctx => ctx.raw.label }} }}
-    }}
+    plugins: {{ legend: {{ labels: {{ boxWidth: 12, font: {{ size: 10 }}, usePointStyle: false }} }}, tooltip: tip }}
+  }}
+}});
+const curveDs = (label, pts, color, line) => ({{
+  label, data: pts, borderColor: color, backgroundColor: color,
+  showLine: line, pointRadius: 4, tension: 0.25, fill: false }});
+new Chart(document.getElementById('curve'), {{
+  type: 'scatter',
+  data: {{ datasets: [
+    curveDs('BBB (synthetic)', CURVE.bbb, '#00ff99', true),
+    curveDs('Meridian (cinematic)', CURVE.meridian, '#66aaff', true),
+    curveDs('Real UGC (anchors)', CURVE.anchors, '#ffaa00', false),
+  ]}},
+  options: {{
+    scales: {{
+      x: {{ title: {{ display: true, text: 'source quality (NR-VQA in)' }}, grid: {{ color: '#222' }} }},
+      y: {{ title: {{ display: true, text: 'quality gain (ΔVQA)' }}, grid: {{ color: '#222' }} }}
+    }},
+    plugins: {{ legend: {{ labels: {{ boxWidth: 12, font: {{ size: 10 }} }} }}, tooltip: tip }}
   }}
 }});
 </script>
