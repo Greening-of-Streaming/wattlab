@@ -1790,6 +1790,7 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
         # the outputs actually differ. All decode-only; runs after the lock is gone.
         if jobs is not None:
             jobs[job_id]["stage"] = "analyse"
+            jobs[job_id]["substage"] = "complexity (SI/TI ×3)"
         # All analyse-stage probes run in the EXECUTOR — see the single-run
         # note: synchronous SI/TI + AB metrics + triple VQA on 4K files block
         # the event loop for many minutes otherwise (stage strip freeze + 429s).
@@ -1811,7 +1812,7 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
         # NR quality (CompressedVQA-HDR) — scores source + both outputs
         # independently. Terminal like the probes above; all fields nullable.
         if jobs is not None:
-            jobs[job_id]["substage"] = "vqa"
+            jobs[job_id]["substage"] = "quality scoring (NR ×3)"
         source_vqa = await loop.run_in_executor(
             None, lambda: probe_vqa_nr(input_path, c))
         ml["result"]["vqa"] = (await loop.run_in_executor(

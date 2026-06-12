@@ -1009,10 +1009,16 @@ async function pollCompare(jobId) {
       setTimeout(function(){ pollCompare(jobId); }, 3000);
     } else {
       var idx = _cmpStageIdx(data.stage || 'ml', data.substage || '');
+      // Analyse heartbeat: the terminal probes take minutes on 4K files —
+      // name the running sub-step so "slow" never reads as "stuck" again.
+      var sub = (data.stage === 'analyse' && data.substage)
+          ? '<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.3rem">analysing: '
+            + data.substage + ' — minutes on 4K files</div>' : '';
       wlRenderProgress({
         header: 'Comparing — do not close this tab',
         stagesHtml: wlStageList(WL_CMP_STAGES, idx),
         watts: watts,
+        extraHtml: sub,
         cooldownData: data,
       });
       var inCooldown = (data.substage || '') === 'cooldown' && data.cooldown_waited_s != null;
