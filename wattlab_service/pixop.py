@@ -1790,24 +1790,28 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
         # the outputs actually differ. All decode-only; runs after the lock is gone.
         if jobs is not None:
             jobs[job_id]["stage"] = "analyse"
-            jobs[job_id]["substage"] = "complexity (SI/TI ×3)"
-        # All analyse-stage probes run in the EXECUTOR — see the single-run
-        # note: synchronous SI/TI + AB metrics + triple VQA on 4K files block
-        # the event loop for many minutes otherwise (stage strip freeze + 429s).
+            jobs[job_id]["substage"] = "complexity + A/B metrics (parallel)"
+        # All analyse-stage probes run in the EXECUTOR (event-loop freeze fix)
+        # and the ffmpeg-bound ones run CONCURRENTLY — they are independent
+        # decode-only subprocesses on a 24-core box, and sequentially they
+        # made analyse 10-15 min even for HD outputs (owner report
+        # 2026-06-12). Terminal stage: no measurement-window constraint.
         loop = asyncio.get_event_loop()
         ml_ok = bool((ml["result"].get("transcode") or {}).get("success") and ml["result"].get("output_name"))
         ff_ok = bool((ff["result"].get("transcode") or {}).get("success") and ff["result"].get("output_name"))
+        ml_cx, ff_cx, source_complexity, ab_quality = await asyncio.gather(
+            loop.run_in_executor(None, lambda: probe_complexity(out / ml_output, c))
+            if ml_ok else asyncio.sleep(0, result=None),
+            loop.run_in_executor(None, lambda: probe_complexity(out / ff_output, c))
+            if ff_ok else asyncio.sleep(0, result=None),
+            loop.run_in_executor(None, lambda: probe_complexity(input_path, c)),
+            loop.run_in_executor(None, lambda: probe_ab_quality(out / ml_output, out / ff_output))
+            if (ml_ok and ff_ok) else asyncio.sleep(0, result=None),
+        )
         if ml_ok:
-            ml["result"]["complexity"] = await loop.run_in_executor(
-                None, lambda: probe_complexity(out / ml_output, c))
+            ml["result"]["complexity"] = ml_cx
         if ff_ok:
-            ff["result"]["complexity"] = await loop.run_in_executor(
-                None, lambda: probe_complexity(out / ff_output, c))
-        source_complexity = await loop.run_in_executor(
-            None, lambda: probe_complexity(input_path, c))
-        ab_quality = (await loop.run_in_executor(
-            None, lambda: probe_ab_quality(out / ml_output, out / ff_output))
-        ) if (ml_ok and ff_ok) else None
+            ff["result"]["complexity"] = ff_cx
 
         # NR quality (CompressedVQA-HDR) — scores source + both outputs
         # independently. Terminal like the probes above; all fields nullable.
