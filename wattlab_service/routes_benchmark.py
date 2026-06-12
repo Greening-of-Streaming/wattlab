@@ -114,7 +114,6 @@ async def benchmark_list_page(request: Request):
     # benchmark pages — previously the chrome-less findings-style shell.
     return HTMLResponse(ui.render_page(
         request, "Benchmark runs", body,
-        head='    <meta name="viewport" content="width=device-width,initial-scale=1">\n',
         styles=(
             'body{background:var(--bg);color:var(--text)}'
             '.finding-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
@@ -173,7 +172,6 @@ async def benchmark_detail_page(bid: str, request: Request):
     # in tail so the embeds keep working.
     return HTMLResponse(ui.render_page(
         request, f"Benchmark {html_lib.escape(bid)}", body,
-        head='    <meta name="viewport" content="width=device-width,initial-scale=1">\n',
         styles=('body{background:var(--bg);color:var(--text)}'
                 '.bench-wrap{max-width:900px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'),
         tail=_RESULT_JS + _BENCH_HYDRATE_JS))

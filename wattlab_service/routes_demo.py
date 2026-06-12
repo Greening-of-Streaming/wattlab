@@ -9,20 +9,61 @@ Phase 3 per-feature route module — chrome from ui.py, never import main.
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
+import curated
 import findings as findings_mod
+import llm as llm_mod
 import settings as cfg
+import sources
 import ui
 from capabilities import requires, PUBLIC_PAGE
+from image_gen import IMAGE_MODELS
 from power import meter_display_name, meter_cadence_label
 from routes_findings import _findings_catalog_rows_html, _FINDINGS_CATALOG_CSS
 from ui import (GOS_URL, JOIN_GOS_URL, _BETA_CHIP, _CONF_HELP_WIDGET,
                 _PROGRESS_JS, _RESULT_JS, _gpu_display_name, _gpu_enc,
-                _tier_indicator_html)
+                _gpu_runtime, _tier_indicator_html)
 
 router = APIRouter()
 
 
 # --- Demo mode ---
+
+# Single source of truth for what the demo buttons actually run. The tour
+# copy AND the JS form fields both bake from these at request time, so the
+# page can never describe a model/source the button doesn't run (the way
+# the copy still said "Mistral 7B via Ollama ROCm" months after the demo
+# moved to qwen3:4b on CUDA). RAG follows curated.CANONICAL_RAG_MODEL.
+DEMO_LLM_MODEL = "qwen3:4b"
+DEMO_VIDEO_SOURCE = "meridian_120s"
+DEMO_IMAGE_MODEL = "sd-turbo"   # /image/start server-side default
+
+
+def _llm_model_label(key: str) -> str:
+    """'Qwen3 4B' from the live model registry; fail-soft to the raw key if
+    the model is currently disabled or uninstalled (the demo run itself
+    would fail too — the copy just mustn't lie about what it runs)."""
+    m = llm_mod.MODELS.get(key)
+    return m["label"] if m else key
+
+
+def _llm_model_size(key: str) -> str:
+    m = llm_mod.MODELS.get(key)
+    return m.get("size", "?") if m else "?"
+
+
+def _demo_video_source_desc() -> str:
+    """Registry description of the demo clip ('3840×2160 · 59.94fps · …'),
+    so the tour's source facts track sources.py, not hand-typed numbers."""
+    e = sources.PRELOADED.get(DEMO_VIDEO_SOURCE) or {}
+    return e.get("description") or e.get("label") or DEMO_VIDEO_SOURCE
+
+
+def _demo_image_detail() -> str:
+    """'CPU, 8 steps, 512×512' from the live image-model catalog."""
+    m = IMAGE_MODELS.get(DEMO_IMAGE_MODEL)
+    if not m:
+        return "CPU"
+    return f"CPU, {m['cpu_steps']} steps, {m['size_px']}&times;{m['size_px']}"
 
 _DEMO_STYLES = f"""
   *{{box-sizing:border-box;margin:0;padding:0}}
@@ -225,18 +266,20 @@ _DEMO_HTML = f"""
   <div class="band">
     <div class="band-label">What we're doing</div>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px;margin-bottom:0.75rem">
-      Encoding a 4K clip (Meridian, Netflix Open Content, CC BY 4.0) to 1080p H.264 —
-      once in software (libx264, CPU only) and once as a full GPU pipeline
-      (hardware decode + encode via {{GPU_H264_ENC}}). Same source. Same quality target.
-      P110 sampled every second throughout.
+      Encoding a 2-minute 4K clip (Meridian, Netflix Open Content, CC BY 4.0) to 1080p —
+      once in software on the CPU and once as a full GPU pipeline (hardware decode +
+      scale + encode via {{GPU_H265_ENC}}, or {{GPU_AV1_ENC}} on the AV1 chip).
+      Same source. Same per-codec bitrate target.
+      {{METER_NAME}} sampled at {{METER_CADENCE}} throughout.
     </p>
     <details>
       <summary>How this is measured</summary>
       <p>{{BASELINE_POLLS}}s idle baseline before each run. {{VIDEO_COOLDOWN_S}}s thermal cooldown between CPU and GPU.
-      Energy = ΔW × duration / 3600. Confidence 🟢 = ΔW &gt; {{CONF_GREEN_X}}× noise and ≥ {{CONF_GREEN_POLLS}} polls.</p>
-      <p>Source: 812 MB, 4K. Encode time ~2–3 min CPU, ~90s GPU (full pipeline).
-      Previous runs (partial pipeline): CPU 174s / 4.06 Wh · GPU 114s / 4.42 Wh.
-      Full pipeline results pending first run.</p>
+      Energy = ΔW × duration / 3600. Confidence: each run carries a per-run confidence
+      interval — 🟢 needs ≥95% confidence above idle and ≥ {{CONF_GREEN_POLLS}} task polls
+      (the full story is the Confidence step, later in the tour).</p>
+      <p>Source: {{DEMO_VIDEO_SOURCE_DESC}}.
+      The Result panel below always shows the most recent stored run.</p>
     </details>
   </div>
 
@@ -287,7 +330,7 @@ _DEMO_HTML = f"""
         Entering beta · exploratory</div>
       That was the production-grade GoS measurement — video transcoding is what
       we report on with confidence. The next three steps cover exploratory AI
-      workloads (LLM, image, RAG): less mature, signal can sit below the P110
+      workloads (LLM, image, RAG): less mature, signal can sit below the meter's
       floor on small tasks, and quality / faithfulness matter alongside energy.
       Stop here if you only wanted the streaming-impact story.
     </div>
@@ -314,21 +357,24 @@ _DEMO_HTML = f"""
   <div class="band">
     <div class="band-label">What we're doing</div>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px;margin-bottom:0.75rem">
-      Running a fixed prompt (T3 Long — network energy attribution briefing)
-      through Mistral 7B cold: model unloaded before baseline so we capture
-      the true first-request cost. GPU inference via Ollama ROCm.
+      Running a fixed prompt (T3, long generation — a technical briefing on network
+      energy attribution) through {{DEMO_LLM_MODEL_LABEL}} cold: model unloaded before
+      baseline so we capture the true first-request cost.
+      GPU inference via Ollama ({{GPU_RUNTIME}}).
     </p>
     <details>
       <summary>How this is measured</summary>
-      <p>Model unloaded from VRAM. 3s settle. 10s idle baseline. Single inference run.
+      <p>Model unloaded from VRAM. 3s settle. {{BASELINE_POLLS}}s idle baseline. Single inference run.
       {{METER_NAME}} at {{METER_CADENCE}}. Primary metric: mWh per output token.</p>
-      <p>Model: Mistral 7B (4.4 GB). Previous result: 0.94 mWh/tok, ~47 tok/s.</p>
+      <p>Model: {{DEMO_LLM_MODEL_LABEL}} ({{DEMO_LLM_MODEL_SIZE}}).
+      The Result panel below always shows the most recent stored run.</p>
     </details>
     <details>
       <summary>Why mWh per token?</summary>
       <p>Token count varies between models and prompts, so raw Wh figures aren't
-      comparable. Energy per token lets us place TinyLlama (0.06 mWh/tok) and
-      Mistral 7B (0.94 mWh/tok) on the same axis — a ~15× difference.</p>
+      comparable. Energy per token puts a 1-billion-parameter model and a
+      20-billion-parameter model on the same axis, so model size can be traded
+      off against energy directly. The Findings step carries the citable numbers.</p>
     </details>
   </div>
 
@@ -337,7 +383,7 @@ _DEMO_HTML = f"""
     <div id="llm-action">
       <div class="btn-row" id="llm-btns" style="display:none">
         <button class="btn btn-primary" id="btn-run-llm" onclick="runDemoLLM()">
-          Run a standard LLM generation (Mistral 7B · cold · T3 prompt · ~3&thinsp;min)</button>
+          Run a standard LLM generation ({{DEMO_LLM_MODEL_LABEL}} · cold · T3 prompt · ~3&thinsp;min)</button>
       </div>
       <div id="llm-status"></div>
     </div>
@@ -369,15 +415,15 @@ _DEMO_HTML = f"""
   <div class="band">
     <div class="band-label">What we're doing</div>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px;margin-bottom:0.75rem">
-      Running SD-Turbo (stabilityai/sd-turbo, CPU, 8 steps, 512×512) with a
+      Running SD-Turbo (stabilityai/sd-turbo, {{DEMO_IMAGE_DETAIL}}) with a
       randomly modified prompt — the colour modifier changes each run to prove
       the image is generated live, not replayed from cache.
     </p>
     <details>
       <summary>How this is measured</summary>
-      <p>10s idle baseline. CPU diffusion run. {{METER_NAME}} at {{METER_CADENCE}}.
+      <p>{{BASELINE_POLLS}}s idle baseline. CPU diffusion run. {{METER_NAME}} at {{METER_CADENCE}}.
       Metric: Wh per image = ΔW × generation_time / 3600.</p>
-      <p>Previous result: 0.21 Wh/image, 12s, ~30W delta above idle.</p>
+      <p>The Result panel below always shows the most recent stored run.</p>
     </details>
   </div>
 
@@ -416,13 +462,13 @@ _DEMO_HTML = f"""
   <div class="band">
     <div class="band-label">What we're doing</div>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px;margin-bottom:0.75rem">
-      Running three modes back-to-back on Mistral 7B: baseline (no retrieval),
+      Running three modes back-to-back on {{DEMO_RAG_MODEL_LABEL}}: baseline (no retrieval),
       RAG (small corpus), and RAG Large (with re-ranking).
       Same question, same model, same hardware — only the retrieval pipeline changes.
     </p>
     <details>
       <summary>How this is measured</summary>
-      <p>Each mode: 10s idle baseline, inference with {{METER_NAME}} at {{METER_CADENCE}}.
+      <p>Each mode: {{BASELINE_POLLS}}s idle baseline, inference with {{METER_NAME}} at {{METER_CADENCE}}.
       Metric: mWh per output token. ChromaDB embeddings via sentence-transformers.
       Corpus: academic papers on streaming energy.</p>
     </details>
@@ -431,7 +477,7 @@ _DEMO_HTML = f"""
   <div>
     <div class="band-label">Result</div>
     <div id="rag-btns" class="btn-row" style="display:none">
-      <button class="btn btn-primary" onclick="runDemoRAG()">Run a standard RAG energy test (Mistral 7B · 3-mode · ~10&thinsp;min)</button>
+      <button class="btn btn-primary" onclick="runDemoRAG()">Run a standard RAG energy test ({{DEMO_RAG_MODEL_LABEL}} · 3-mode · ~10&thinsp;min)</button>
     </div>
     <div id="rag-status"></div>
     <p class="limitation">Scope: device layer only (GoS1). Network excluded.
@@ -455,7 +501,7 @@ _DEMO_HTML = f"""
     <div class="band-label">The problem</div>
     <p style="color:var(--text-2);line-height:1.8;max-width:560px">
       Not every measurement we take is equally trustworthy.
-      System noise — P110 quantisation, OS jitter, Wi-Fi polling variance — is real.
+      System noise — {{METER_NAME}} quantisation, OS jitter, Wi-Fi polling variance — is real.
       A task that adds a small delta above baseline might be signal or artefact.
       We need a principled way to say which.
     </p>
@@ -820,7 +866,7 @@ async function runDemoVideo() {{
       elapsed: 0,
     }});
     const form = new FormData();
-    form.append('source_key', 'meridian_120s');
+    form.append('source_key', '{{DEMO_VIDEO_SOURCE_KEY}}');
     form.append('preset', selectedDemoCodec === 'av1' ? 'av1_both' : 'h265_both');
     const resp = await fetch('/video/use-source', {{method:'POST', body:form}});
     const data = await resp.json();
@@ -907,7 +953,7 @@ async function runDemoLLM() {{
       extraHtml: '<div class="stream-box" id="stream-box" style="margin-top:0.75rem"></div>',
     }});
     const form = new FormData();
-    form.append('model_key', 'qwen3:4b');
+    form.append('model_key', '{{DEMO_LLM_MODEL_KEY}}');
     form.append('task_key', 'T3');
     form.append('repeats', '1');
     form.append('warm', 'false');
@@ -1047,7 +1093,7 @@ async function runDemoRAG() {{
       elapsed: 0,
     }});
     const form = new FormData();
-    form.append('model_key', 'qwen3:4b');
+    form.append('model_key', '{{DEMO_RAG_MODEL_KEY}}');
     // No `question` field — server uses curated.CANONICAL_RAG_QUESTION,
     // which keeps the call Anonymous-OK (CR-001 capability dispatch).
     const resp = await fetch('/rag/run-compare', {{method:'POST', body:form}});
@@ -1398,15 +1444,23 @@ async def demo_page(request: Request):
                            styles=_DEMO_STYLES, body=_DEMO_HTML)
             .replace("{BASELINE_POLLS}",     str(s.get("baseline_polls",     "—")))
             .replace("{VIDEO_COOLDOWN_S}",   str(s.get("video_cooldown_s",   "—")))
-            .replace("{CONF_GREEN_X}",       str(s.get("variance_green_x",   "—")))
-            .replace("{CONF_YELLOW_X}",      str(s.get("variance_yellow_x",  "—")))
             .replace("{CONF_GREEN_POLLS}",   str(s.get("conf_green_polls",   "—")))
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
             .replace("{BETA_CHIP}",          _BETA_CHIP)
             .replace("{TIER_INDICATOR}",     _tier_indicator_html(request))
             .replace("{UPLOAD_MEMBER_MB}",   str(member_cap_mb))
-            .replace("{GPU_H264_ENC}",       _gpu_enc("h264"))
+            .replace("{GPU_H265_ENC}",       _gpu_enc("h265"))
+            .replace("{GPU_AV1_ENC}",        _gpu_enc("av1"))
+            .replace("{GPU_RUNTIME}",        _gpu_runtime())
             .replace("{GPU_DISPLAY_NAME}",   _gpu_display_name())
+            .replace("{DEMO_LLM_MODEL_KEY}",   DEMO_LLM_MODEL)
+            .replace("{DEMO_LLM_MODEL_LABEL}", _llm_model_label(DEMO_LLM_MODEL))
+            .replace("{DEMO_LLM_MODEL_SIZE}",  _llm_model_size(DEMO_LLM_MODEL))
+            .replace("{DEMO_RAG_MODEL_KEY}",   curated.CANONICAL_RAG_MODEL)
+            .replace("{DEMO_RAG_MODEL_LABEL}", _llm_model_label(curated.CANONICAL_RAG_MODEL))
+            .replace("{DEMO_VIDEO_SOURCE_KEY}",  DEMO_VIDEO_SOURCE)
+            .replace("{DEMO_VIDEO_SOURCE_DESC}", _demo_video_source_desc())
+            .replace("{DEMO_IMAGE_DETAIL}",  _demo_image_detail())
             .replace("{METER_NAME}",         meter_display_name())
             .replace("{METER_CADENCE}",      meter_cadence_label())
             .replace("{FINDINGS_PANEL}",     findings_panel_html))

@@ -596,7 +596,7 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
         "analysis": analysis,
         "floor_reference_w": floor_reference_w,
         "cooldowns": cooldowns,
-        "scope": (f"Device layer only (GoS1). GPU (RX 7800 XT, ROCm). "
+        "scope": (f"Device layer only (GoS1). GPU ({gpu.BACKEND.device_label()}). "
                   f"{len(results)} models compared at each model's native "
                   f"compare_steps/compare_batch from the catalog. Same prompt "
                   f"+ seed. Between models the runner waits for the system "

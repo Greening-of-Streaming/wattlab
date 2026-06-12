@@ -491,6 +491,8 @@ def render_page(request: Request, title: str, body: str, *,
     return f"""<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
   <title>OWL — {title}</title>
 {head}    <style>
