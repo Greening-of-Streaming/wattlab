@@ -102,12 +102,13 @@ async def mockups_index(request: Request):
   what the home page is (A vs B), and how LinkedIn posts enter the site (C, yes/no).</p>
 <h2 style="margin-top:1.25rem">Decision 1 — the home page itself (pick one, or counter-propose)</h2>
 <ul class="mock-list" style="list-style:none">
-  <li><a href="{_PREFIX}/scenario-a">Scenario A — Polished tour (status quo + fixes)</a><br>
-      <span style="color:var(--text-3);font-size:0.82rem">Keep the Guided Tour as the landing;
-      add a one-line identity statement. Cheapest; weakest fit for 60-second social traffic.</span></li>
-  <li><a href="{_PREFIX}/scenario-b">Scenario B — Findings-first landing</a><br>
-      <span style="color:var(--text-3);font-size:0.82rem">Lead with live power + citable findings;
-      tour one click away. Best front door for both audiences; a new surface to maintain.</span></li>
+  <li><a href="{_PREFIX}/scenario-a">Scenario A — No separate landing page (today's behaviour, polished)</a><br>
+      <span style="color:var(--text-3);font-size:0.82rem">Visitors land directly on the Guided
+      Tour's Welcome step, as they do now; add a one-line identity statement. Cheapest; weakest
+      fit for 60-second social traffic.</span></li>
+  <li><a href="{_PREFIX}/scenario-b">Scenario B — Dedicated findings-first landing</a><br>
+      <span style="color:var(--text-3);font-size:0.82rem">A real front page: live power + citable
+      findings, tour one click away. Best for cold traffic; a new surface to maintain.</span></li>
 </ul>
 <h2>Decision 2 — separate &amp; complementary: LinkedIn post entry points</h2>
 <ul class="mock-list" style="list-style:none">
@@ -126,11 +127,12 @@ async def mockups_index(request: Request):
             dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def mockup_scenario_a(request: Request):
     body = f"""
-<h1>Scenario A — Polished tour</h1>
+<h1>Scenario A — No separate landing page</h1>
 <p style="color:var(--text-3);font-size:0.85rem;max-width:560px;line-height:1.65">
-  The Guided Tour stays as the anonymous landing. The stale-copy and mobile fixes have
-  already shipped; the only addition is an identity statement so a stranger knows whose
-  numbers these are. Below: the Welcome hero, before and after.</p>
+  This is the "do we even need a dedicated landing page?" option: anonymous visitors land
+  directly on the Guided Tour's Welcome step, exactly as they do today. The stale-copy and
+  mobile fixes have already shipped; the only addition is an identity statement so a stranger
+  knows whose numbers these are. Below: the Welcome hero, before and after.</p>
 
 <h2>Today</h2>
 <div style="border:1px solid var(--border);padding:1.25rem;max-width:600px">
