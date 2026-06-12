@@ -452,7 +452,7 @@ _ENHANCE_RUN_STYLES = """
 
 _ENHANCE_RUN_HTML = """
 <h1><span style="color:var(--warn)">UNDER DEVELOPMENT</span> Video enhancement <span style="color:var(--warn)">GoS ONLY</span> <span style="font-size:0.7rem;color:var(--warn)">&middot; Lab</span></h1>
-<div class="subtitle">Hidden &middot; member-contributed AI enhancement &middot; energy measurement</div>
+<div class="subtitle">Hidden &middot; member-contributed AI enhancement &middot; energy measurement &middot; <a href="/enhance-run/ladder" style="color:var(--accent)">sweet-spot ladder &rarr;</a></div>
 
 <div class="lead-band">
   Measures the <strong>energy cost</strong> of AI video enhancement
@@ -1320,6 +1320,209 @@ async def enhance_run_page(request: Request):
 async def enhance_self_test():
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, pixop.self_test)
+
+
+# ── /enhance-run/ladder — the degradation-ladder library + sweet-spot page ───
+# Owner ask 2026-06-11: a subpage off /enhance-run showing the upscale
+# sweet-spot finding plus view/download of the 12 fixture videos. Data-driven
+# from the canonical files (manifest.json frozen with the library;
+# sweep_summary.json baked by the analysis) — the page renders gracefully
+# while either is absent, so it can ship ahead of the data and never drift
+# from it. Same gate as the parent page.
+
+_LADDER_DIR = Path("/srv/data/owl/test_content/degraded")
+_LADDER_RUNGS = ["ref_4k", "4k_dirty", "hd_clean", "hd_dirty", "sd_clean", "sd_dirty"]
+_LADDER_FINDING_SLUG = "upscale-sweetspot-degraded-sources"
+
+
+def _ladder_data() -> tuple[dict, dict]:
+    """(manifest, sweep_summary) — {} for whichever is absent. Fail-soft."""
+    out = []
+    for name in ("manifest.json", "sweep_summary.json"):
+        try:
+            out.append(json.loads((_LADDER_DIR / name).read_text()))
+        except Exception:
+            out.append({})
+    return out[0], out[1]
+
+
+def _ladder_table_html(manifest: dict, sweep: dict) -> str:
+    """One row per rung per source: recipe facts from the manifest + measured
+    energy/ΔVQA from the sweep summary (em-dash while pending)."""
+    files = manifest.get("files") or {}
+    runs = sweep.get("runs") or {}
+    rows = []
+    for src in ("bbb", "meridian"):
+        for rung in _LADDER_RUNGS:
+            name = f"{src}_{rung}.mp4"
+            f = files.get(name) or {}
+            r = runs.get(name) or {}
+            dash = "&mdash;"
+            rows.append(
+                "<tr>"
+                f"<td>{html_lib.escape(name)}</td>"
+                f"<td>{f.get('width','?')}&times;{f.get('height','?')}</td>"
+                f"<td>{round(f.get('bit_rate',0)/1e6,2) if f.get('bit_rate') else '?'} Mbps</td>"
+                f"<td>{f.get('vqa_nr', dash)}</td>"
+                f"<td>{r.get('vqa_out', dash)}</td>"
+                f"<td>{r.get('delta_vqa', dash)}</td>"
+                f"<td>{r.get('delta_e_wh', dash)}</td>"
+                f"<td>{r.get('confidence', dash)}</td>"
+                "</tr>")
+    return ("<table class='ladder'><thead><tr>"
+            "<th>clip</th><th>res</th><th>bitrate</th><th>NR-VQA in</th>"
+            "<th>NR-VQA out (4K)</th><th>&Delta;VQA</th><th>&Delta;E (Wh)</th><th>conf</th>"
+            "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+
+
+def _ladder_videos_html() -> str:
+    """View/download grid for the 12 fixtures, served via the existing
+    member-gated /enhance-run/input route (they are staged inputs)."""
+    cells = []
+    for src in ("bbb", "meridian"):
+        for rung in _LADDER_RUNGS:
+            name = f"{src}_{rung}.mp4"
+            url = f"/enhance-run/input/{html_lib.escape(name)}"
+            cells.append(
+                "<div class='vcell'>"
+                f"<div class='vname'>{html_lib.escape(name)}</div>"
+                f"<video controls preload='none' src='{url}'></video>"
+                f"<a href='{url}' download>&#11015; download</a>"
+                "</div>")
+    return "<div class='vgrid'>" + "".join(cells) + "</div>"
+
+
+_LADDER_STYLES = """
+    .lead-band { color: var(--text-3); font-size: 0.85rem; line-height: 1.6;
+                 border-left: 2px solid var(--accent); padding-left: 0.9rem;
+                 margin-bottom: 1.5rem; }
+    table.ladder { border-collapse: collapse; width: 100%; font-size: 0.78rem;
+                   margin-bottom: 1.5rem; }
+    table.ladder th { text-align: left; color: var(--text-4); font-weight: 400;
+                      text-transform: uppercase; font-size: 0.66rem;
+                      letter-spacing: 0.05em; padding: 0.3rem 0.6rem 0.3rem 0;
+                      border-bottom: 1px solid var(--border); }
+    table.ladder td { padding: 0.3rem 0.6rem 0.3rem 0;
+                      border-bottom: 1px solid var(--border); color: var(--text-2); }
+    .vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+             gap: 1rem; margin-bottom: 1.5rem; }
+    .vcell video { width: 100%; background: #000; }
+    .vcell .vname { color: var(--text-3); font-size: 0.72rem; margin-bottom: 0.25rem; }
+    .vcell a { color: var(--accent); font-size: 0.72rem; text-decoration: none; }
+    .finding-band { background: rgba(0,255,153,0.06); border: 1px solid var(--border-2);
+                    padding: 0.8rem 1rem; margin-bottom: 1.5rem; font-size: 0.85rem; }
+    .footer-note { color: var(--text-4); font-size: 0.78rem; line-height: 1.6;
+                   border-left: 2px solid var(--border-2); padding-left: 0.9rem;
+                   margin-top: 2.5rem; }
+"""
+
+
+def _ladder_chart_html(sweep: dict) -> str:
+    """The sweet-spot curve: ΔVQA (y) against source quality (x), one series
+    per content class (BBB synthetic / Meridian cinematic) + the real-UGC
+    anchor points. Chart.js (house library), data baked serve-side from
+    sweep_summary.json — same source as the table, so they can't drift.
+    Rendered only once measured data exists (lab look: one compact canvas)."""
+    runs = sweep.get("runs") or {}
+    series = {"bbb": [], "meridian": [], "anchors": []}
+    for name, r in runs.items():
+        if r.get("vqa_in") is None or r.get("delta_vqa") is None:
+            continue
+        pt = {"x": r["vqa_in"], "y": r["delta_vqa"],
+              "label": f"{name} · {r.get('delta_e_wh','?')} Wh"}
+        key = ("bbb" if name.startswith("bbb_") else
+               "meridian" if name.startswith("meridian_") else "anchors")
+        series[key].append(pt)
+    if not (series["bbb"] or series["meridian"]):
+        return ""
+    for k in series:
+        series[k].sort(key=lambda p: p["x"])
+    data = json.dumps(series)
+    return f"""
+<h2 style="font-size:0.85rem;color:var(--text-3)">Quality gain vs source quality (4K target)</h2>
+<div style="max-width:680px;margin-bottom:1.5rem"><canvas id="curve"></canvas></div>
+<script>
+const S = {data};
+const mk = (label, pts, color, dash) => ({{
+  label, data: pts, borderColor: color, backgroundColor: color,
+  showLine: label !== 'Real UGC (anchors)', borderDash: dash || [],
+  pointRadius: 4, tension: 0.25, fill: false }});
+new Chart(document.getElementById('curve'), {{
+  type: 'scatter',
+  data: {{ datasets: [
+    mk('BBB (synthetic)', S.bbb, '#00ff99'),
+    mk('Meridian (cinematic)', S.meridian, '#66aaff'),
+    mk('Real UGC (anchors)', S.anchors, '#ffaa00'),
+  ]}},
+  options: {{
+    scales: {{
+      x: {{ title: {{ display: true, text: 'source quality (NR-VQA in)' }},
+            grid: {{ color: '#222' }} }},
+      y: {{ title: {{ display: true, text: 'quality gain (ΔVQA)' }},
+            grid: {{ color: '#222' }} }}
+    }},
+    plugins: {{
+      legend: {{ labels: {{ boxWidth: 12, font: {{ size: 10 }} }} }},
+      tooltip: {{ callbacks: {{ label: ctx => ctx.raw.label }} }}
+    }}
+  }}
+}});
+</script>
+"""
+
+
+@router.get("/enhance-run/ladder", response_class=HTMLResponse,
+            dependencies=[Depends(requires(ENHANCE_RUN))])
+async def enhance_ladder_page(request: Request):
+    manifest, sweep = _ladder_data()
+    c = pixop.config()
+    s = cfg.load()
+    finding_html = ""
+    if sweep.get("finding_headline"):
+        link = (f' &mdash; <a href="/findings/{_LADDER_FINDING_SLUG}" '
+                'style="color:var(--accent)">full finding &rarr;</a>'
+                if s.get("findings_enabled") else "")
+        finding_html = ('<div class="finding-band"><strong>Finding.</strong> '
+                        + html_lib.escape(sweep["finding_headline"]) + link + '</div>')
+    body = f"""
+<h1>Upscale sweet spot &middot; degradation-ladder library</h1>
+<div class="subtitle">companion to <a href="/enhance-run" style="color:var(--accent)">/enhance-run</a> &middot; fixtures + measured results</div>
+
+<div class="lead-band">
+  Twelve 45-second fixtures &mdash; six quality rungs from each of two open-content
+  masters (Big Buck Bunny, Netflix Meridian) &mdash; degraded with documented,
+  reproducible recipes (resolution drops; temporal noise into a 2-pass starved
+  encode), then upscaled to 4K with {html_lib.escape(c['partner_name'])} under OWL's
+  standard energy measurement. The question: where is the energy-to-quality-gain
+  sweet spot as source quality varies? Recipes, checksums and scores are frozen in
+  the library manifest; the real-UGC clips on /enhance-run anchor the synthetic
+  ladder to reality.
+</div>
+
+{finding_html}
+
+{_ladder_chart_html(sweep)}
+
+<h2 style="font-size:0.85rem;color:var(--text-3)">The ladder &mdash; recipes and measured results</h2>
+{_ladder_table_html(manifest, sweep)}
+
+<h2 style="font-size:0.85rem;color:var(--text-3)">The twelve fixtures &mdash; view / download</h2>
+{_ladder_videos_html()}
+
+<div class="footer-note">
+  Sources: Big Buck Bunny (Blender Foundation, CC-BY; best practical public copy) and
+  Meridian (Netflix Open Content, CC-BY-4.0; md5-verified against the official mp4).
+  Degradation recipes and sha-256 checksums: <code>manifest.json</code> in the library
+  directory. Quality scores are CompressedVQA-HDR (no-reference, relative indicator)
+  plus full-reference PSNR/SSIM against each source's reference cut &mdash; possible
+  here, uniquely, because the ladder is generated from known masters. Energy figures
+  follow the published <a href="/methodology">methodology</a>.
+</div>
+"""
+    head = (f'<script src="{ui.CHARTJS_URL}"></script>\n'
+            if sweep.get("runs") else "")
+    return ui.render_page(request, "Upscale sweet spot · ladder library",
+                          styles=_LADDER_STYLES, head=head, body=body)
 
 
 def _upload_is_ephemeral(input_name: str) -> bool:

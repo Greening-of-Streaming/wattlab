@@ -1708,3 +1708,74 @@ def test_upload_reports_normalization_verdict(tmp_path, monkeypatch):
     d = r.json()
     assert d["normalization"]["needed"] is True
     assert "yuvj422p" in d["normalization"]["reasons"][0]
+
+
+# ═══ /enhance-run/ladder — sweet-spot library subpage (owner ask 2026-06-11) ══
+
+def test_ladder_page_blocked_for_anonymous():
+    r = client.get("/enhance-run/ladder", headers=ANON)
+    assert r.status_code == 403
+
+
+def test_ladder_page_renders_with_manifest(tmp_path, monkeypatch):
+    import json
+    import routes_enhance as re_mod
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "files": {"bbb_ref_4k.mp4": {"vqa_nr": 9.58, "width": 3840,
+                                     "height": 2160, "bit_rate": 25_970_000}}}))
+    (tmp_path / "sweep_summary.json").write_text(json.dumps({
+        "finding_headline": "The dirtier the source, the better the Wh buys quality.",
+        "runs": {"bbb_ref_4k.mp4": {"vqa_out": 9.6, "delta_vqa": 0.02,
+                                    "delta_e_wh": 11.2, "confidence": "🟢"}}}))
+    monkeypatch.setattr(re_mod, "_LADDER_DIR", tmp_path)
+    r = client.get("/enhance-run/ladder", headers=LAB)
+    assert r.status_code == 200
+    assert "degradation-ladder library" in r.text
+    assert "9.58" in r.text and "11.2" in r.text          # manifest + sweep data
+    assert "The dirtier the source" in r.text             # finding band
+    # all 12 fixtures present with view + download via the gated input route
+    assert r.text.count("/enhance-run/input/") >= 24      # video src + download link
+    assert "meridian_sd_dirty.mp4" in r.text
+    assert "Pixop Live" in r.text                          # partner naming carried over
+
+
+def test_ladder_page_graceful_without_data(tmp_path, monkeypatch):
+    import routes_enhance as re_mod
+    monkeypatch.setattr(re_mod, "_LADDER_DIR", tmp_path)   # empty dir
+    r = client.get("/enhance-run/ladder", headers=LAB)
+    assert r.status_code == 200
+    assert "&mdash;" in r.text or "—" in r.text            # pending dashes
+    assert '<div class="finding-band">' not in r.text      # no finding yet
+
+
+def test_enhance_page_links_to_ladder():
+    r = client.get("/enhance-run", headers=LAB)
+    assert '/enhance-run/ladder' in r.text
+
+
+def test_ladder_page_chart_renders_with_sweep_data(tmp_path, monkeypatch):
+    import json
+    import routes_enhance as re_mod
+    (tmp_path / "sweep_summary.json").write_text(json.dumps({
+        "runs": {"bbb_sd_dirty.mp4": {"vqa_in": 5.45, "vqa_out": 7.56,
+                                      "delta_vqa": 2.11, "delta_e_wh": 14.8,
+                                      "confidence": "🟢"},
+                 "meridian_hd_clean.mp4": {"vqa_in": 9.49, "vqa_out": 9.6,
+                                           "delta_vqa": 0.11, "delta_e_wh": 12.0,
+                                           "confidence": "🟢"}}}))
+    monkeypatch.setattr(re_mod, "_LADDER_DIR", tmp_path)
+    r = client.get("/enhance-run/ladder", headers=LAB)
+    assert r.status_code == 200
+    assert "chart.js" in r.text or "chart.umd" in r.text   # house library loaded
+    assert "Quality gain vs source quality" in r.text
+    assert "BBB (synthetic)" in r.text and "Meridian (cinematic)" in r.text
+    # data baked from the same json the table uses
+    assert "5.45" in r.text and "2.11" in r.text
+
+
+def test_ladder_page_no_chart_without_data(tmp_path, monkeypatch):
+    import routes_enhance as re_mod
+    monkeypatch.setattr(re_mod, "_LADDER_DIR", tmp_path)
+    r = client.get("/enhance-run/ladder", headers=LAB)
+    assert "Quality gain vs source quality" not in r.text
+    assert "chart.umd" not in r.text                       # no dead script load

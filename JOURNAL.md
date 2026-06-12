@@ -7,6 +7,41 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 48 — 2026-06-12 (overnight, autonomous)
+
+**Upscale sweet-spot sweep executed end-to-end** on the fresh dual-P110 instrument
+(recal'd same evening; GPU variance 0.91%): 12 frozen ladder fixtures + 2 real-UGC
+anchors → SDR/4K singles + 2 Lanczos compares, **all 🟢**, driven through the live
+queue by a resumable orchestrator (survived one death from the service's
+VQA-stage event-loop blocking — poll retries added). ~330 Wh total.
+
+**Finding shipped:** `docs/findings/upscale-sweetspot-degraded-sources.md` (16 cited
+results). Headlines: (1) energy is set by INPUT resolution (~45 Wh per 45 s 4K-in
+clip, ~12–15 Wh HD/SD-in) — predictable before running; (2) quality gain is set by
+source badness — >100× ΔVQA-per-Wh spread, sweet spot = worst content, pristine-4K
+re-processing buys nothing at max cost; (3) synthetic (BBB) vs cinematic (Meridian)
+identical on NR axis, cinematic restores ~20 VMAF points more faithfully on the worst
+rung; (4) "looking better ≠ being restored" — NR-near-pristine outputs round-trip at
+VMAF 47–81 (FR vs masters possible uniquely because rungs descend from known refs;
+doubles as the first CompressedVQA-HDR validation data). Anchors land ON the synthetic
+curve — the degradation recipes are validated against reality. AI vs Lanczos: 2–5×
+the quality gain at ~23× the energy; Lanczos helped synthetic rungs slightly but
+HURT the real 2005 UGC — artifact-character dependent.
+
+**Subpage shipped:** `/enhance-run/ladder` — finding band, Chart.js ΔVQA-vs-source-VQA
+curve (3 series incl. anchors), full recipes/results table, view/download grid for all
+12 fixtures; data-driven from `manifest.json` + `sweep_summary.json` (graceful while
+absent). Linked from /enhance-run's subtitle. **Restart needed to expose the route.**
+
+**Ops notes:** compare runs on the fixtures initially ran 1×-paced and FAILED in the
+container's mp4 mux (`aac_adtstoasc`: PCE-based AAC channel config — the fixtures'
+5.1 native-AAC audio breaks the paced mpegts path; one for Jon's list), clobbering two
+single-run outputs to 0 bytes (same output name); redone un-paced, artifacts
+regenerated, FR re-scored. Demo findings-preview test un-brittled (asserts newest-3
+contract instead of a hardcoded slug). Tests **668**.
+
+---
+
 ## Session 47 — 2026-06-12 (after midnight)
 
 The CR-065 firmware hypothesis, settled by experiment — plus the member email.

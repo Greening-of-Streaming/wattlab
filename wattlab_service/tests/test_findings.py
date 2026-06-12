@@ -339,8 +339,13 @@ def test_demo_findings_step_shows_catalog_preview_when_enabled():
     body = r.text
     # Body-of-evidence framing copy
     assert "body of evidence" in body
-    # The AV1 finding row link is present in the preview
-    assert f'href="/findings/{AV1_SLUG}"' in body
+    # The preview links the catalog's newest three findings (the actual
+    # contract — was a hardcoded AV1 slug, which broke whenever a newer
+    # finding landed; fixed 2026-06-12 when the sweet-spot finding did).
+    newest = sorted(findings.list_all(), key=lambda f: f.last_refined,
+                    reverse=True)[:3]
+    for f in newest:
+        assert f'href="/findings/{f.slug}"' in body
     # The "See all findings" catalog link is present
     assert "See all findings" in body
     # Window flag is set (so the JS session-echo skips overwriting)

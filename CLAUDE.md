@@ -144,6 +144,7 @@ CHANGE_REQUESTS_CLOSED.md.
 - S45 (06-11 pm): Pixop named (member-contributed framing) · queue pause toggle · UGC energy-vs-quality learnings · degradation ladder frozen (test_content/degraded/). →648.
 - S46 (06-11 eve): CR-065 complete — pre-test PASSED (2.5× fresh gain, probe + findings doc) then integration: meter registry/cached handles, shared sampler, ci2 combine, energy.meters, cadence token. →662.
 - S47 (06-12): P110 fw experiment (bin/probe-p110-fw) — fw≥1.4.0 = 1.5s refresh CONFIRMED + local-API lockout + two EU hw variants; meter fw is measurement setup, 1.3.1 irreplaceable, get spares.
+- S48 (06-12 night): upscale sweet-spot sweep (16 runs, all 🟢, dual-meter) → finding `upscale-sweetspot-degraded-sources` + /enhance-run/ladder subpage (chart + fixtures). Restart pending. →668.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
