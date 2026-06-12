@@ -435,19 +435,23 @@ def build_preview_cmd(normalized_name: str, preview_name: str,
 
 def build_normalize_cmd(input_name: str, normalized_name: str, target_fps: str,
                         audio_codec: Optional[str],
-                        c: Optional[dict] = None) -> list[str]:
+                        c: Optional[dict] = None,
+                        force_audio_reencode: bool = False) -> list[str]:
     """The Jon-prescribed lossless pre-conversion: yuv444p10le (a superset of
     any input — no chroma or bit-depth loss) + `fps` at the detected rate
     (VFR→CFR with clean timestamps, so `--avsync forcecfr` stays valid), FFV1
     in NUT. Audio copies when the downstream mp4 mux accepts the codec, else
-    transcodes to AAC (video stays lossless; audio is not the measurand)."""
+    transcodes to AAC (video stays lossless; audio is not the measurand).
+    `force_audio_reencode` overrides the copy branch: a codec-safe stream can
+    still carry a PCE-based channel config the container's paced-path mux
+    can't rewrite (aac_adtstoasc) — re-encoding writes a standard config."""
     c = c or config()
     inp, _, _ = _workdir_paths(c)
     ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
     cmd = [ff, "-y", "-i", str(inp / input_name),
            "-vf", f"fps={target_fps}", "-pix_fmt", "yuv444p10le",
            "-c:v", "ffv1"]
-    if audio_codec in _MP4_SAFE_AUDIO:
+    if audio_codec in _MP4_SAFE_AUDIO and not force_audio_reencode:
         cmd += ["-c:a", "copy"]
     elif audio_codec:
         cmd += ["-c:a", "aac", "-b:a", "192k"]
@@ -457,8 +461,85 @@ def build_normalize_cmd(input_name: str, normalized_name: str, target_fps: str,
     return cmd
 
 
+def _audio_remux_name(input_name: str) -> str:
+    """Same container as the source (the pacer/encoder read it identically);
+    only the audio stream differs."""
+    p = Path(input_name)
+    return f"audiofix_{p.stem}{p.suffix}"
+
+
+def build_audio_remux_cmd(input_name: str, remuxed_name: str,
+                          c: Optional[dict] = None,
+                          channels: Optional[int] = None) -> list[str]:
+    """Audio-only pre-remux (Jon's prescribed workaround, 2026-06-13): the
+    video stream is COPIED bit-identically — the measurand is untouched —
+    while multi-channel AAC is re-encoded, which replaces the PCE-based
+    channel config with a standard one the container's paced-path mp4 mux
+    accepts. Deliberately NOT the full FFV1 normalization: that lossless
+    intermediate is justified only when the video itself needs fixing.
+
+    A PCE stream usually has NO defined channel layout (that's why it needed
+    a PCE), and ffmpeg's aac encoder refuses layout-less input — verified on
+    the S48 ladder fixtures ('Unsupported channel layout "6 channels"').
+    6-channel sources are mapped by index onto a standard 5.1 layout (the
+    whole known population: BBB/Meridian master audio); anything else
+    downmixes to stereo — audio is a viewer convenience, not the measurand."""
+    c = c or config()
+    inp, _, _ = _workdir_paths(c)
+    ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
+    cmd = [ff, "-y", "-i", str(inp / input_name), "-c:v", "copy"]
+    if channels == 6:
+        cmd += ["-af", "channelmap=map=0|1|2|3|4|5:channel_layout=5.1",
+                "-c:a", "aac", "-b:a", "256k"]
+    else:
+        cmd += ["-ac", "2", "-c:a", "aac", "-b:a", "192k"]
+    return cmd + [str(inp / remuxed_name)]
+
+
+def remux_audio(input_name: str, risk_reason: str,
+                c: Optional[dict] = None, log_path=None) -> dict:
+    """Run the audio-only pre-remux synchronously (callers put it BEFORE the
+    focus/baseline bracket, same as normalize_input — pre-measurement work
+    must never enter a measured window). Returns a provenance dict with the
+    SAME key shape as normalize_input (`normalized_name` is what the run
+    encodes) so every downstream consumer — enc_input selection, result
+    stamping, intermediate cleanup — works unchanged. No preview proxy: the
+    video stream is the original, so the source preview already shows it."""
+    c = c or config()
+    inp, _, _ = _workdir_paths(c)
+    remuxed = _audio_remux_name(input_name)
+    channels = _audio_channels(inp / input_name)
+    cmd = build_audio_remux_cmd(input_name, remuxed, c, channels=channels)
+    t0 = time.time()
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=c["docker_timeout_s"])
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"audio remux timed out after {c['docker_timeout_s']}s")
+    _write_log(log_path, cmd, r.stdout, r.stderr)
+    out_path = inp / remuxed
+    if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+        out_path.unlink(missing_ok=True)
+        raise RuntimeError("audio remux failed: " + (r.stderr or "")[-_TAIL:])
+    return {
+        "performed": True,
+        "kind": "audio_remux",
+        "reasons": [risk_reason],
+        "source": input_name,
+        "normalized_name": remuxed,
+        "preview_name": None,
+        "audio": "aac 5.1" if channels == 6 else "aac stereo (downmix)",
+        "duration_s": round(time.time() - t0, 1),
+        "size_mb": round(out_path.stat().st_size / 1024 / 1024, 2),
+        "cmd": " ".join(cmd),
+        "energy_note": "audio remux runs before the baseline window — "
+                       "its cost is excluded from all energy figures; "
+                       "the video stream is copied bit-identically",
+    }
+
+
 def normalize_input(input_name: str, probe: dict, c: Optional[dict] = None,
-                    log_path=None) -> dict:
+                    log_path=None, force_audio_reencode: bool = False) -> dict:
     """Run the pre-conversion synchronously (callers put it BEFORE the focus/
     baseline bracket — its CPU draw must never enter a measured window) and
     return the provenance dict stamped on the result. Raises RuntimeError on
@@ -469,7 +550,8 @@ def normalize_input(input_name: str, probe: dict, c: Optional[dict] = None,
     target_fps = probe.get("target_fps") or "30"
     normalized = _normalized_name(input_name)
     cmd = build_normalize_cmd(input_name, normalized, target_fps,
-                              probe.get("audio_codec"), c)
+                              probe.get("audio_codec"), c,
+                              force_audio_reencode=force_audio_reencode)
     t0 = time.time()
     try:
         r = subprocess.run(cmd, capture_output=True, text=True,
@@ -509,7 +591,8 @@ def normalize_input(input_name: str, probe: dict, c: Optional[dict] = None,
         "preview_name": preview,
         "target_fps": target_fps,
         "source_pix_fmt": probe.get("pix_fmt"),
-        "audio": ("copy" if probe.get("audio_codec") in _MP4_SAFE_AUDIO
+        "audio": ("copy" if (probe.get("audio_codec") in _MP4_SAFE_AUDIO
+                             and not force_audio_reencode)
                   else ("aac" if probe.get("audio_codec") else "none")),
         "duration_s": round(time.time() - t0, 1),
         "size_mb": round(out_path.stat().st_size / 1024 / 1024, 2),
@@ -758,6 +841,20 @@ def read_preset_args(preset_path) -> list[str]:
         if line:
             args.extend(line.split())
     return args
+
+
+def _audio_channels(path) -> Optional[int]:
+    """First audio stream's channel count, fail-soft None (the remux then
+    takes its generic stereo-downmix branch)."""
+    try:
+        r = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=channels", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=10)
+        return int((json.loads(r.stdout).get("streams") or [{}])[0]
+                   .get("channels") or 0) or None
+    except Exception:
+        return None
 
 
 def _paced_audio_risk(path) -> Optional[str]:
@@ -1526,7 +1623,8 @@ _NORM_REF_POLLS = 3
 
 
 async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
-                           job_id: str, live: bool) -> dict:
+                           job_id: str, live: bool,
+                           audio_risk: Optional[str] = None) -> dict:
     """Probe-and-normalize bracket shared by both run flavours. Runs BEFORE
     focus/baseline so the ffmpeg cost stays outside every measured window.
     Live 1× mode refuses inputs that need it: the pacer stream-copies mpegts,
@@ -1543,13 +1641,23 @@ async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
     its two passes (`cooldown_between_runs`). The dispatcher needs a floor to
     settle back to and no baseline exists yet — so the floor is a short power
     snapshot taken BEFORE normalization starts, when the box is as close to
-    idle as this run will see (the inter-pass equivalent: pass 1's w_base)."""
+    idle as this run will see (the inter-pass equivalent: pass 1's w_base).
+
+    `audio_risk` (a `_paced_audio_risk` reason) requests the lighter
+    audio-only remux (Jon's prescribed workaround for the container's
+    aac_adtstoasc/PCE limit, 2026-06-13): video stream copied bit-identically,
+    multi-channel AAC re-encoded to a standard channel config so the paced
+    path's mp4 mux succeeds. Unlike the FFV1 intermediate this IS allowed
+    under a Live claim — a real live deployment would normalise audio at
+    ingest exactly the same way, the video measurand is untouched, and the
+    remux is stamped on the result. When the full normalization runs anyway,
+    the risk just forces its audio branch to re-encode instead of copy."""
     inp, _, _ = _workdir_paths(c)
     probe = probe_normalization(inp / input_name)
-    if not probe["needed"]:
+    if not probe["needed"] and not audio_risk:
         return {"performed": False, "reasons": [], "vfr": probe.get("vfr", False),
                 "source_pix_fmt": probe.get("pix_fmt")}
-    if live:
+    if live and probe["needed"]:
         raise RuntimeError(
             "this input needs pre-normalization ("
             + "; ".join(probe["reasons"])
@@ -1559,8 +1667,16 @@ async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
         jobs[job_id]["substage"] = "normalize"
     ref = await measure_baseline(polls=_NORM_REF_POLLS)
     log_path = _logs_dir(c) / f"{job_id}_normalize.log"
-    norm = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: normalize_input(input_name, probe, c, log_path=log_path))
+    if probe["needed"]:
+        norm = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: normalize_input(input_name, probe, c, log_path=log_path,
+                                          force_audio_reencode=bool(audio_risk)))
+        if audio_risk:
+            norm["reasons"] = list(norm.get("reasons") or []) + [audio_risk]
+    else:
+        norm = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: remux_audio(input_name, audio_risk, c,
+                                      log_path=log_path))
     # Own stage key so the strip advances to the toggle-aware idle label
     # while the wait runs (it was invisible inside "normalize" — fast settles
     # outran the page's 2 s poll).
@@ -1590,17 +1706,16 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         raise RuntimeError(f"unknown preset: {preset_name!r}")
 
     inp, out, pre = _workdir_paths(c)
-    if live:
-        risk = _paced_audio_risk(inp / input_name)
-        if risk:
-            raise RuntimeError(
-                f"Live 1× mode can't run this input: {risk}. "
-                "Run it un-paced (batch) instead.")
+    # Paced-path audio risk (PCE-AAC) no longer declines the run: the input
+    # gets Jon's prescribed audio-only remux inside _maybe_normalize (video
+    # bit-identical, audio re-encoded), so 5.1-AAC content runs paced again.
+    audio_risk = _paced_audio_risk(inp / input_name) if live else None
     # Pre-normalization (Jon's 2026-06-11 prescription) — BEFORE the baseline,
     # so its CPU cost is outside the energy window. The measured pass then
     # encodes the normalized intermediate; the original is what the result's
     # input_stream records.
-    norm = await _maybe_normalize(input_name, c, jobs, job_id, live)
+    norm = await _maybe_normalize(input_name, c, jobs, job_id, live,
+                                  audio_risk=audio_risk)
     enc_input = norm.get("normalized_name") or input_name
     output_name = _output_name(input_name, preset_name)
     cmd = build_docker_cmd(enc_input, preset_name, output_name, c, live=live,
@@ -1727,23 +1842,23 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
 
     inp, out, pre = _workdir_paths(c)
     input_path = inp / input_name
-    # Compare pacing is a measurement-window tactic, not a live claim — so a
-    # paced-path audio risk degrades gracefully to an un-paced run, stamped on
-    # the result (owner report 2026-06-12: every UI compare on the 5.1-AAC
-    # ladder fixtures died rc 1 in the container's mp4 mux).
+    # Paced-path audio risk (PCE-AAC) used to degrade compares to un-paced
+    # (owner report 2026-06-12: every UI compare on the 5.1-AAC ladder
+    # fixtures died rc 1 in the container's mp4 mux). Jon's prescribed
+    # workaround (2026-06-13) lands in _maybe_normalize instead: audio-only
+    # remux (or a forced audio re-encode when the full normalization runs
+    # anyway), so the compare keeps its 1× pacing. `paced_fallback` stays in
+    # the envelope (nullable) for the stored results that predate the fix.
     paced_fallback = None
-    if live:
-        risk = _paced_audio_risk(input_path)
-        if risk:
-            live = False
-            paced_fallback = risk + " — ran un-paced instead"
+    audio_risk = _paced_audio_risk(input_path) if live else None
     # Pre-normalization (see run_enhance_measurement) — ONE pass feeding both
     # sides, so the comparison stays apples-to-apples on the identical input.
     # live=False here even though compare paces at 1×: compare's pacing is a
     # measurement-window tactic (a batch ffmpeg pass is too short for a
     # reliable confidence flag), NOT a "live channel" claim — so a normalized
     # input is fine and pipes via NUT instead of mpegts.
-    norm = await _maybe_normalize(input_name, c, jobs, job_id, live=False)
+    norm = await _maybe_normalize(input_name, c, jobs, job_id, live=False,
+                                  audio_risk=audio_risk)
     enc_input = norm.get("normalized_name") or input_name
     enc_path = inp / enc_input
 

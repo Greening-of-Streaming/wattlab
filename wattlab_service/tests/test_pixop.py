@@ -1520,7 +1520,7 @@ def test_run_enhance_measurement_normalizes_and_cleans_up(tmp_path, monkeypatch)
                                    "pix_fmt": "yuv420p", "target_fps": "30000/1001",
                                    "audio_codec": "aac"})
 
-    def fake_normalize(input_name, probe, c=None, log_path=None):
+    def fake_normalize(input_name, probe, c=None, log_path=None, **kw):
         (tmp_path / "input" / "normalized_clip.nut").write_bytes(b"n" * 10)
         return {"performed": True, "reasons": probe["reasons"],
                 "source": input_name, "normalized_name": "normalized_clip.nut",
@@ -1647,7 +1647,7 @@ def test_compare_normalizes_despite_1x_pacing(tmp_path, monkeypatch):
                                    "pix_fmt": "yuv420p", "target_fps": "25",
                                    "audio_codec": None})
 
-    def fake_normalize(input_name, probe, c=None, log_path=None):
+    def fake_normalize(input_name, probe, c=None, log_path=None, **kw):
         (tmp_path / "input" / "normalized_clip.nut").write_bytes(b"n")
         return {"performed": True, "reasons": probe["reasons"],
                 "source": input_name, "normalized_name": "normalized_clip.nut",
@@ -1804,14 +1804,26 @@ def test_paced_audio_risk_detects_multichannel_aac(monkeypatch):
     assert pixop._paced_audio_risk("x.mp4") is None
 
 
-def test_compare_falls_back_unpaced_on_audio_risk(tmp_path, monkeypatch):
+def test_compare_keeps_pacing_via_audio_remux(tmp_path, monkeypatch):
+    """Jon's workaround (2026-06-13): an audio-risk input no longer degrades
+    the compare to un-paced — the audio-only remux runs pre-baseline and the
+    1× pacing is kept, feeding both passes the remuxed file."""
     (tmp_path / "presets").mkdir(parents=True, exist_ok=True)
     (tmp_path / "presets" / "up.args").write_text("--output-res 1920x1080\n--cbr 12000\n")
     (tmp_path / "input").mkdir(exist_ok=True)
     (tmp_path / "input" / "clip.mov").write_text("x")
     _mock_harness(monkeypatch, tmp_path)
     monkeypatch.setattr(pixop, "_paced_audio_risk", lambda p: "6-channel AAC …")
-    pacers = []
+
+    def fake_remux(input_name, risk, c=None, log_path=None):
+        (tmp_path / "input" / "audiofix_clip.mov").write_text("x")
+        return {"performed": True, "kind": "audio_remux", "reasons": [risk],
+                "source": input_name, "normalized_name": "audiofix_clip.mov",
+                "preview_name": None, "audio": "aac", "duration_s": 1.0,
+                "size_mb": 1.0, "cmd": "ffmpeg …", "energy_note": "…"}
+
+    monkeypatch.setattr(pixop, "remux_audio", fake_remux)
+    pacers, inputs = [], []
 
     def fake_run(cmd, t, pacer_cmd=None, log_path=None):
         pacers.append(pacer_cmd)
@@ -1823,22 +1835,123 @@ def test_compare_falls_back_unpaced_on_audio_risk(tmp_path, monkeypatch):
     monkeypatch.setattr(pixop, "run_transcode_subprocess", fake_run)
     res = asyncio.run(pixop.run_enhance_compare_measurement(
         "clip.mov", "up.args", "jp", {"jp": {}}, live=True))
-    assert res["paced_fallback"] and "un-paced" in res["paced_fallback"]
-    assert pacers[0] is None            # ML pass ran UN-paced despite live=True
-    assert res["live"] is False         # envelope live flag follows the fallback
+    assert res["paced_fallback"] is None        # no degradation any more
+    assert res["live"] is True
+    assert pacers[0] is not None                # ML pass stayed paced
+    assert "audiofix_clip.mov" in " ".join(pacers[0])   # …on the remuxed file
+    assert res["input_normalization"]["kind"] == "audio_remux"
+    # intermediate cleaned up after the run
+    assert not (tmp_path / "input" / "audiofix_clip.mov").exists()
 
 
-def test_single_run_live_refuses_audio_risk(tmp_path, monkeypatch):
+def test_single_run_live_remuxes_audio_risk(tmp_path, monkeypatch):
+    """Live 1× no longer declines PCE-AAC inputs — it remuxes the audio
+    pre-baseline and runs paced on the remuxed file."""
     _stage(tmp_path, preset=True, inp=True, license=True)
-    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    _mock_harness(monkeypatch, tmp_path)
     monkeypatch.setattr(pixop, "preflight",
                         lambda c=None: {"ok_transcode": True,
                                         "inputs": ["clip.mov"], "presets": ["p.args"],
                                         "reasons": []})
     monkeypatch.setattr(pixop, "_paced_audio_risk", lambda p: "6-channel AAC …")
+
+    def fake_remux(input_name, risk, c=None, log_path=None):
+        (tmp_path / "input" / "audiofix_clip.mov").write_text("x")
+        return {"performed": True, "kind": "audio_remux", "reasons": [risk],
+                "source": input_name, "normalized_name": "audiofix_clip.mov",
+                "preview_name": None, "audio": "aac", "duration_s": 1.0,
+                "size_mb": 1.0, "cmd": "ffmpeg …", "energy_note": "…"}
+
+    monkeypatch.setattr(pixop, "remux_audio", fake_remux)
+    pacers = []
+
+    def fake_run(cmd, t, pacer_cmd=None, log_path=None):
+        pacers.append(pacer_cmd)
+        return {"success": True, "returncode": 0, "duration_s": 20.0,
+                "docker_cmd": " ".join(cmd), "live": pacer_cmd is not None,
+                "stdout_tail": "", "stderr_tail": "", "encode_stats": None,
+                "log_file": None}
+
+    monkeypatch.setattr(pixop, "run_transcode_subprocess", fake_run)
+    res = asyncio.run(pixop.run_enhance_measurement(
+        "clip.mov", "p.args", "jr", {"jr": {}}, live=True))
+    assert pacers[0] is not None and "audiofix_clip.mov" in " ".join(pacers[0])
+    assert res["result"]["input_normalization"]["kind"] == "audio_remux"
+
+
+def test_single_run_live_still_refuses_video_normalization(tmp_path, monkeypatch):
+    """The FFV1 guard is untouched: a Live claim on an input whose VIDEO
+    needs normalizing still declines (a paced run on a hidden lossless
+    pre-conversion wouldn't be the live scenario it claims to measure)."""
+    _stage(tmp_path, preset=True, inp=True, license=True)
+    _mock_harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(pixop, "preflight",
+                        lambda c=None: {"ok_transcode": True,
+                                        "inputs": ["clip.mov"], "presets": ["p.args"],
+                                        "reasons": []})
+    monkeypatch.setattr(pixop, "_paced_audio_risk", lambda p: None)
+    monkeypatch.setattr(pixop, "probe_normalization",
+                        lambda p: {"needed": True, "reasons": ["variable frame rate (…)"],
+                                   "vfr": True, "pix_fmt": "yuv420p",
+                                   "target_fps": "30", "audio_codec": "aac"})
     with pytest.raises(RuntimeError, match="un-paced"):
         asyncio.run(pixop.run_enhance_measurement(
             "clip.mov", "p.args", "jr", {"jr": {}}, live=True))
+
+
+def test_build_audio_remux_cmd_copies_video(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    # 6 channels → mapped onto a standard 5.1 layout (PCE streams have no
+    # defined layout and ffmpeg's aac encoder refuses layout-less input —
+    # verified on the S48 ladder fixtures).
+    cmd = pixop.build_audio_remux_cmd("clip.mov", "audiofix_clip.mov",
+                                      _cfg(tmp_path), channels=6)
+    joined = " ".join(cmd)
+    assert "-c:v copy" in joined            # measurand untouched
+    assert "channel_layout=5.1" in joined
+    assert "-c:a aac" in joined
+    assert joined.endswith(f"{tmp_path}/input/audiofix_clip.mov")
+    # anything else (or unknown) downmixes to stereo
+    cmd = pixop.build_audio_remux_cmd("clip.mov", "audiofix_clip.mov",
+                                      _cfg(tmp_path), channels=8)
+    assert "-ac 2" in " ".join(cmd)
+
+
+def test_build_normalize_cmd_forced_audio_reencode(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    # aac is MP4-safe → copies by default…
+    cmd = pixop.build_normalize_cmd("in.mov", "n.nut", "25", "aac",
+                                    _cfg(tmp_path))
+    assert "-c:a copy" in " ".join(cmd)
+    # …but the PCE risk forces a re-encode even for a safe codec.
+    cmd = pixop.build_normalize_cmd("in.mov", "n.nut", "25", "aac",
+                                    _cfg(tmp_path), force_audio_reencode=True)
+    assert "-c:a aac" in " ".join(cmd)
+
+
+def test_remux_audio_provenance(tmp_path, monkeypatch):
+    c = _cfg(tmp_path)
+    _stage(tmp_path, inp=True)
+    monkeypatch.setattr(pixop, "config", lambda: c)
+
+    def fake_run(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"mov" * 100)
+
+        class R:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    monkeypatch.setattr(pixop, "_audio_channels", lambda p: 6)
+    log = tmp_path / "logs" / "j1_normalize.log"
+    n = pixop.remux_audio("clip.mov", "6-channel AAC …", c, log_path=log)
+    assert n["performed"] is True and n["kind"] == "audio_remux"
+    assert n["normalized_name"] == "audiofix_clip.mov"
+    assert n["audio"] == "aac 5.1" and n["reasons"] == ["6-channel AAC …"]
+    assert "before the baseline window" in n["energy_note"]
+    assert (tmp_path / "input" / "audiofix_clip.mov").exists()
 
 
 # ═══ Restart resilience: job_status disk recovery (owner reports 2026-06-12) ═

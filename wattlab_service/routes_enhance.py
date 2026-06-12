@@ -927,6 +927,10 @@ async function uploadClip() {
       + (willNorm
           ? '<div style="color:var(--warn);font-size:0.76rem;margin-top:0.2rem">Will be normalized before measurement ('
             + normWhy + ') — runs outside the energy window.</div>'
+          : '')
+      + (d.paced_audio_remux
+          ? '<div style="color:var(--warn);font-size:0.76rem;margin-top:0.2rem">Paced runs re-encode the audio first ('
+            + d.paced_audio_remux + ') — video untouched, runs outside the energy window.</div>'
           : '');
   } catch(e) {
     document.getElementById('status').innerHTML = '<div style="color:var(--err)">' + e + '</div>';
@@ -1834,9 +1838,15 @@ async def enhance_upload(request: Request, file: UploadFile = File(...),
     # NOW that the run will start with a normalize stage, and why. Live probe,
     # never persisted — see pixop.input_norm_flags.
     nf = pixop.probe_normalization(path)
+    # Paced-audio verdict (Jon's workaround, 2026-06-13): multi-channel AAC
+    # gets an audio-only remux before paced runs instead of declining them.
+    # Separate field — it only applies to paced/compare runs, so it mustn't
+    # masquerade as a general normalization reason.
+    audio_risk = pixop._paced_audio_risk(path)
     return {"name": name, "duration_s": dur, "input_stream": stream,
             "normalization": {"needed": bool(nf.get("needed")),
-                              "reasons": nf.get("reasons") or []}}
+                              "reasons": nf.get("reasons") or []},
+            "paced_audio_remux": audio_risk}
 
 
 @router.delete("/enhance-run/input/{name}",
