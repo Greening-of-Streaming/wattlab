@@ -350,7 +350,14 @@
   // their own rich renderers; this is the shared read-only view used when a
   // stored compare result is embedded (e.g. the benchmark detail page).
   function wlRenderComparePanel(r){
-    var models = r.models || [];
+    // Render-time sort small → large by parameter count ("1.7B" → 1.7), so
+    // the panel reads as a size ladder regardless of execution order (which
+    // follows the enabled-models registry). Unknown sizes sink to the end.
+    // Sorting here covers LLM and RAG compares, stored results included.
+    var models = (r.models || []).slice().sort(function(a, b){
+      var pa = parseFloat(a && a.params), pb = parseFloat(b && b.params);
+      return (isFinite(pa) ? pa : Infinity) - (isFinite(pb) ? pb : Infinity);
+    });
     var prompt = r.full_prompt || r.prompt || r.question || '';
     var expected = r.expected || '';
     var cheapest = r.cheapest_correct_key || null;
