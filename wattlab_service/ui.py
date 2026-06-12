@@ -368,15 +368,31 @@ _BASE_STYLES = (
 )
 
 
+# Findings footer link (owner ask 2026-06-12). Rendered per-request so it
+# follows the `findings_enabled` flag — the same single-bool rollback that
+# 404s the /findings routes also removes the footer link (no dead links).
+_FINDINGS_LINK = (
+    '<div style="margin-top:0.75rem;font-family:monospace;font-size:0.72rem;color:var(--text-5)">'
+    'Citable results backed by stored measurements: '
+    '<a href="/findings" '
+    'style="color:var(--text-3);text-decoration:none;border-bottom:1px solid var(--border)">'
+    'Beta: Findings &rarr;</a></div>'
+)
+
 _FOOTER = (
     f'{_BASE_STYLES}'
     f'<footer style="margin-top:3rem;padding-top:1rem;border-top:1px solid var(--panel)">'
-    f'{_LOGO}{_METHODOLOGY_LINK}{_ISSUES_LINK}'
+    f'{_LOGO}{_METHODOLOGY_LINK}<!--FINDINGS-->{_ISSUES_LINK}'
     f'<div style="margin-top:0.75rem;color:var(--text-5);font-size:0.68rem;'
     f'font-family:monospace">{version.version_string()}</div>'
     f'</footer>'
     f'{_QUEUE_BADGE}{_LIVE_JS}{_CARBON_JS}'
 )
+
+
+def _footer() -> str:
+    link = _FINDINGS_LINK if cfg.load().get("findings_enabled", False) else ""
+    return _FOOTER.replace("<!--FINDINGS-->", link)
 
 
 # Confidence flag popover — inject into any page that shows .conf-badge elements.
@@ -483,7 +499,7 @@ def render_page(request: Request, title: str, body: str, *,
 </head>
 <body>
 {header}{body}
-{_FOOTER}{tail}
+{_footer()}{tail}
 </body>
 </html>"""
 

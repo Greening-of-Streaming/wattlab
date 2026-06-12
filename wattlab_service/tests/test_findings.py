@@ -375,3 +375,24 @@ def test_demo_findings_step_falls_back_when_disabled(monkeypatch):
     # in buildSummary()'s early-return guard — that's fine; what gates the
     # behaviour is whether the server sets it to true.)
     assert "OWL_FINDINGS_CATALOG_ENABLED = true" not in body
+
+
+# --- footer Findings link (owner ask 2026-06-12) ----------------------------
+
+def test_footer_findings_link_present_when_enabled():
+    r = client.get("/video")
+    assert 'href="/findings"' in r.text
+    assert "Beta: Findings" in r.text
+
+
+def test_footer_findings_link_follows_flag(monkeypatch):
+    real_load = cfg.load
+    def disabled_load():
+        d = real_load()
+        d["findings_enabled"] = False
+        return d
+    monkeypatch.setattr(cfg, "load", disabled_load)
+    import ui
+    monkeypatch.setattr(ui.cfg, "load", disabled_load)
+    r = client.get("/video")
+    assert "Beta: Findings" not in r.text   # no dead link when rolled back
