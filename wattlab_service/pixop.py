@@ -1102,16 +1102,84 @@ def _aggregate_frame_sizes(frames: list) -> Optional[dict]:
     }
 
 
-def probe_siti(path, c: Optional[dict] = None) -> Optional[dict]:
-    """SI/TI of a clip via ffmpeg's `siti` filter. Fail-soft to None."""
-    ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
+# Windowed SI/TI sampling (Tania report 2026-06-12: full-clip SI/TI ran >4×
+# file length in HD — unworkable past a minute). Windows of CONSECUTIVE
+# frames keep TI's P.910 semantics (every-Nth-frame sampling would inflate
+# TI into motion-over-N-frames); spreading them through the clip keeps the
+# summary representative; running them in parallel caps wall-clock at one
+# window's decode regardless of clip length.
+_SITI_WINDOWS = 4
+_SITI_WINDOW_S = 8.0
+
+
+def _clip_duration_s(path) -> Optional[float]:
+    """Container-declared duration, fail-soft None (→ full SI/TI pass)."""
     try:
-        r = subprocess.run([ff, "-i", str(path), "-vf", "siti=print_summary=1",
-                            "-f", "null", "-"], capture_output=True, text=True,
+        r = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-show_entries", "format=duration",
+             "-of", "json", str(path)], capture_output=True, text=True,
+            timeout=15)
+        return float((json.loads(r.stdout).get("format") or {}).get("duration"))
+    except Exception:
+        return None
+
+
+def _siti_pass(path, ss: Optional[float] = None, t: Optional[float] = None,
+               c: Optional[dict] = None) -> Optional[dict]:
+    """One SI/TI decode pass, optionally windowed (-ss/-t). Fail-soft None."""
+    ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
+    cmd = [ff]
+    if ss is not None:
+        cmd += ["-ss", f"{ss:.2f}"]
+    cmd += ["-i", str(path)]
+    if t is not None:
+        cmd += ["-t", f"{t:.2f}"]
+    cmd += ["-vf", "siti=print_summary=1", "-f", "null", "-"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
                            timeout=_SITI_COMPLEXITY_TIMEOUT_S)
     except Exception:
         return None
     return _parse_siti_summary(r.stderr or "")
+
+
+def probe_siti(path, c: Optional[dict] = None) -> Optional[dict]:
+    """SI/TI of a clip via ffmpeg's `siti` filter. Clips longer than the
+    sampling span are measured over _SITI_WINDOWS evenly-spread windows of
+    consecutive frames, decoded in parallel; shorter clips get the full pass.
+    The `siti_sampling` key stamps which path produced the numbers, so a
+    windowed summary is never mistaken for a full-clip one. Fail-soft None."""
+    dur = _clip_duration_s(path)
+    span = _SITI_WINDOWS * _SITI_WINDOW_S
+    if dur is None or dur <= span:
+        out = _siti_pass(path, c=c)
+        if out:
+            out["siti_sampling"] = "full"
+        return out
+    step = (dur - _SITI_WINDOW_S) / (_SITI_WINDOWS - 1)
+    offsets = [i * step for i in range(_SITI_WINDOWS)]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=_SITI_WINDOWS) as ex:
+        parts = list(ex.map(
+            lambda ss: _siti_pass(path, ss=ss, t=_SITI_WINDOW_S, c=c), offsets))
+    parts = [p for p in parts if p]
+    if not parts:
+        return None
+
+    def _mean(key):
+        vals = [p[key] for p in parts if p.get(key) is not None]
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    def _max(key):
+        vals = [p[key] for p in parts if p.get(key) is not None]
+        return max(vals) if vals else None
+
+    return {
+        "si_mean": _mean("si_mean"), "si_max": _max("si_max"),
+        "ti_mean": _mean("ti_mean"), "ti_max": _max("ti_max"),
+        "siti_sampling": f"{len(parts)}×{_SITI_WINDOW_S:.0f}s windows of "
+                         f"consecutive frames, evenly spread",
+    }
 
 
 def probe_frame_stats(path) -> Optional[dict]:

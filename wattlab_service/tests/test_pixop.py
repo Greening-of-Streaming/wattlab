@@ -1973,3 +1973,58 @@ def test_job_status_recovers_done_result_from_disk(tmp_path, monkeypatch):
 def test_enhance_page_handles_not_found_polls():
     r = client.get("/enhance-run", headers=LAB)
     assert r.text.count("no longer tracked") == 2   # single + compare loops
+
+
+# ═══ SI/TI windowed sampling (Tania report: full-clip SI/TI >4× file length) ═
+
+def test_probe_siti_short_clip_full_pass(monkeypatch):
+    monkeypatch.setattr(pixop, "_clip_duration_s", lambda p: 20.0)
+    calls = []
+
+    def fake_pass(path, ss=None, t=None, c=None):
+        calls.append((ss, t))
+        return {"si_mean": 30.0, "si_max": 80.0, "ti_mean": 5.0, "ti_max": 20.0}
+
+    monkeypatch.setattr(pixop, "_siti_pass", fake_pass)
+    out = pixop.probe_siti("short.mp4")
+    assert calls == [(None, None)]              # one full pass, no windowing
+    assert out["siti_sampling"] == "full"
+    assert out["si_mean"] == 30.0
+
+
+def test_probe_siti_long_clip_windows_spread_and_aggregate(monkeypatch):
+    """120s clip → 4 windows of consecutive frames evenly spread (first at 0,
+    last ending at clip end), decoded via _siti_pass; means average, maxes max.
+    TI semantics hold because each window is consecutive frames — every-Nth
+    sampling would inflate TI into motion-over-N-frames."""
+    monkeypatch.setattr(pixop, "_clip_duration_s", lambda p: 120.0)
+    calls = []
+
+    def fake_pass(path, ss=None, t=None, c=None):
+        calls.append((ss, t))
+        i = len(calls)
+        return {"si_mean": 10.0 * i, "si_max": 50.0 + i,
+                "ti_mean": 2.0 * i, "ti_max": 10.0 + i}
+
+    monkeypatch.setattr(pixop, "_siti_pass", fake_pass)
+    out = pixop.probe_siti("long.mp4")
+    assert len(calls) == pixop._SITI_WINDOWS
+    offsets = sorted(ss for ss, t in calls)
+    assert offsets[0] == 0.0
+    assert abs(offsets[-1] + pixop._SITI_WINDOW_S - 120.0) < 0.01   # last window ends at EOF
+    assert all(t == pixop._SITI_WINDOW_S for ss, t in calls)
+    assert out["si_mean"] == 25.0               # mean of 10/20/30/40
+    assert out["si_max"] == 54.0                # max of 51..54
+    assert "windows" in out["siti_sampling"]
+
+
+def test_probe_siti_windows_fail_soft(monkeypatch):
+    monkeypatch.setattr(pixop, "_clip_duration_s", lambda p: 120.0)
+    monkeypatch.setattr(pixop, "_siti_pass", lambda *a, **kw: None)
+    assert pixop.probe_siti("long.mp4") is None
+    # partial failures aggregate over the surviving windows
+    seq = iter([None, {"si_mean": 10.0, "si_max": 50.0, "ti_mean": 2.0, "ti_max": 10.0},
+                None, None])
+    monkeypatch.setattr(pixop, "_siti_pass", lambda *a, **kw: next(seq))
+    out = pixop.probe_siti("long.mp4")
+    assert out["si_mean"] == 10.0 and "1×" in out["siti_sampling"]
