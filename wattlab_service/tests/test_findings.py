@@ -396,3 +396,29 @@ def test_footer_findings_link_follows_flag(monkeypatch):
     monkeypatch.setattr(ui.cfg, "load", disabled_load)
     r = client.get("/video")
     assert "Beta: Findings" not in r.text   # no dead link when rolled back
+
+
+def test_every_cited_result_type_is_embeddable():
+    """The class of bug behind 'no renderer for type=enhance' (S49): a
+    finding can cite any result type, so every type actually cited by the
+    published catalog must (1) be accepted by the /findings/source endpoint
+    and (2) have a renderer entry in the finding page's hydrate dispatch.
+    Both checks run against every published finding, so the next new result
+    type fails here at publish time, not on the live page."""
+    cited_types = {rid.split("/", 1)[0]
+                   for f in findings.list_all() for rid in f.source_result_ids}
+    assert cited_types, "expected at least one cited source result"
+    for f in findings.list_all():
+        page = client.get(f"/findings/{f.slug}")
+        assert page.status_code == 200
+        for t in cited_types:
+            assert f"{t}: window.wlRender" in page.text, (
+                f"finding page hydrate JS has no renderer entry for type {t!r}"
+            )
+    for f in findings.list_all():
+        for rid in f.source_result_ids:
+            t, tail = rid.split("/", 1)
+            r = client.get(f"/findings/source/{t}/{tail.split('_')[-1]}/download.json")
+            assert r.status_code == 200, (
+                f"finding {f.slug!r}: cited source {rid!r} not downloadable ({r.status_code})"
+            )

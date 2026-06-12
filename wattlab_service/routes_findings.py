@@ -145,7 +145,8 @@ def _finding_page_html(f, public_base_url: str) -> str:
     video: window.wlRenderVideoCard,
     llm: window.wlRenderLLMCard,
     image: window.wlRenderImageCard,
-    rag: window.wlRenderRAGCard
+    rag: window.wlRenderRAGCard,
+    enhance: window.wlRenderEnhanceCard
   };
   for (const el of els) {
     const rid = el.dataset.resultId;
@@ -204,6 +205,17 @@ def _finding_page_html(f, public_base_url: str) -> str:
           '.finding-prose strong{color:var(--text)}'
           '.finding-footer{margin-top:1.5rem;padding-top:0.85rem;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-4);font-family:monospace;line-height:1.7}'
           '.finding-footer a{color:var(--text-3);text-decoration:underline}'
+          # Embedded source-measurement cards reuse the shared wl-result.js
+          # renderers, whose classes are styled per page — same rules as
+          # /demo's _DEMO_STYLES card block, sans the f-string brace doubling.
+          '.result-card{border:1px solid var(--border-2);padding:1.5rem;margin-top:1.5rem}'
+          '.result-card .headline{font-size:1rem;color:var(--text);line-height:1.6;margin-bottom:1rem}'
+          '.kpi-row{display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1rem}'
+          '.kpi{flex:1;min-width:120px}'
+          '.kpi .val{font-family:monospace;font-size:1.4rem;color:var(--accent)}'
+          '.kpi .lbl{font-size:0.72rem;color:var(--text-4);margin-top:0.2rem}'
+          '.conf-badge{display:inline-block;font-size:0.75rem;color:var(--text-3);margin-top:0.5rem}'
+          '.prev-note{color:var(--text-5);font-size:0.75rem;font-family:monospace;margin-top:0.5rem}'
         '</style>'
         '</head><body style="background:var(--bg)">'
         f'<div class="finding-wrap">'
@@ -444,7 +456,7 @@ async def finding_page(slug: str, request: Request):
 @router.get("/findings/source/{job_type}/{job_id}/download.json",
          dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def finding_source_result(job_type: str, job_id: str):
-    if job_type not in ("video", "llm", "image"):
+    if job_type not in ("video", "llm", "image", "enhance"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
     # Set of (type, token) the published catalog cites, with token normalised
     # the same way the embed JS / result_download_url do (bare job_id = last

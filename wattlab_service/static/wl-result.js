@@ -594,7 +594,8 @@
           video: window.wlRenderVideoCard,
           llm:   window.wlRenderLLMCard,
           rag:   window.wlRenderRAGCard,
-          image: window.wlRenderImageCard
+          image: window.wlRenderImageCard,
+          enhance: window.wlRenderEnhanceCard
         };
         var renderer = renderers[kind];
         if (!renderer) {
@@ -771,6 +772,88 @@
             + wlCarbonStrip(wh, (r.model_label || 'Image generation') + ' · single', e.delta_t_s, savedG)
             + '</div>';
     }
+    return html;
+  };
+
+  // ─── Enhance (/enhance-run · Pixop pipeline) ──────────────────────────────
+  // Compact card for enhance results — findings cite these (S48 sweet-spot
+  // sweep) and /results lists them. Unlike image/llm, the enhance envelope
+  // nests its payload under `.result`, so normalise first.
+  window.wlRenderEnhanceCard = function(opts){
+    var r = (opts && opts.result) || {};
+    var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
+    if (r.mode === 'enhance_compare') {
+      // AI-vs-ffmpeg-filter compare run: top-level envelope with `ml` and
+      // `ffmpeg` sub-envelopes plus a precomputed `comparison` block.
+      var cp = r.comparison || {};
+      var mlR = (r.ml && r.ml.result) || {};
+      var ffR = (r.ffmpeg && r.ffmpeg.result) || {};
+      var mlC = mlR.energy && mlR.energy.confidence;
+      var ffC = ffR.energy && ffR.energy.confidence;
+      var fLbl = r.ff_filter || 'ffmpeg';
+      var q = '';
+      if (mlR.vqa && mlR.vqa.score != null && ffR.vqa && ffR.vqa.score != null) {
+        q = '<div style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)">'
+          + 'Quality (' + (mlR.vqa.model || 'NR-VQA') + '): AI ' + _f(mlR.vqa.score, 2)
+          + ' vs ' + fLbl + ' ' + _f(ffR.vqa.score, 2)
+          + (r.source_vqa && r.source_vqa.score != null
+              ? ' · source ' + _f(r.source_vqa.score, 2) : '')
+          + '</div>';
+      }
+      html += '<div class="result-card">'
+            + '<p class="headline">AI upscale vs ' + fLbl + ' — '
+            +   (r.input_name || '?') + ' → ' + (r.target_res || '?') + '</p>'
+            + '<div class="kpi-row">'
+            +   '<div class="kpi"><div class="val">' + _f(cp.ml_delta_e_wh, 2) + ' Wh</div><div class="lbl">AI pipeline</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(cp.ff_delta_e_wh, 2) + ' Wh</div><div class="lbl">' + fLbl + '</div></div>'
+            +   '<div class="kpi"><div class="val">' + _f(cp.energy_ratio, 1) + '×</div><div class="lbl">energy ratio</div></div>'
+            + '</div>'
+            + ((mlC || ffC)
+                ? '<div class="conf-badge">'
+                  + (mlC ? mlC.flag + ' AI' : '') + (mlC && ffC ? ' · ' : '')
+                  + (ffC ? ffC.flag + ' ' + fLbl : '') + '</div>' : '')
+            + q
+            + (cp.quality_note
+                ? '<div style="margin-top:0.4rem;font-size:0.72rem;color:var(--text-4)">'
+                  + cp.quality_note + '</div>' : '')
+            + '</div>';
+      return html;
+    }
+    var d = r.result || r;
+    var e = d.energy;
+    if (!e) return html + _wlBadRecord('Enhance', r);
+    var savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
+    var io = (d.input_name || '?') + ' → ' + (d.output_name || '?');
+    var st = d.stream || {};
+    var outFmt = (st.width && st.height ? st.width + '×' + st.height : '')
+               + (st.codec ? ' ' + st.codec : '')
+               + (d.output_size_mb != null ? ' · ' + _f(d.output_size_mb, 0) + ' MB' : '');
+    var vqaHtml = '';
+    if (d.vqa && d.vqa.score != null) {
+      var src = d.source_vqa && d.source_vqa.score != null ? d.source_vqa.score : null;
+      var delta = src != null ? d.vqa.score - src : null;
+      vqaHtml = '<div style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)">'
+              + 'Quality (' + (d.vqa.model || 'NR-VQA') + '): '
+              + (src != null ? _f(src, 2) + ' → ' : '')
+              + _f(d.vqa.score, 2)
+              + (delta != null ? ' (Δ ' + (delta >= 0 ? '+' : '') + _f(delta, 2) + ')' : '')
+              + '</div>';
+    }
+    html += '<div class="result-card">'
+          + '<p class="headline">' + (d.preset_label || 'Enhancement run') + '</p>'
+          + '<div style="font-size:0.78rem;color:var(--text-3);font-family:monospace;'
+          +   'margin-bottom:0.85rem">' + io
+          +   (outFmt ? '<br>output: ' + outFmt : '') + '</div>'
+          + '<div class="kpi-row">'
+          +   '<div class="kpi"><div class="val">' + _f(e.delta_e_wh, 2) + ' Wh</div><div class="lbl">energy</div></div>'
+          +   '<div class="kpi"><div class="val">' + _f(e.delta_t_s, 0) + 's</div><div class="lbl">duration</div></div>'
+          +   '<div class="kpi"><div class="val">' + _f(e.delta_w, 1) + ' W</div><div class="lbl">delta above idle</div></div>'
+          + '</div>'
+          + (e.confidence ? '<div class="conf-badge">' + e.confidence.flag + ' '
+                          + e.confidence.label + '</div>' : '')
+          + vqaHtml
+          + wlCarbonStrip(e.delta_e_wh, (d.preset_label || 'Enhance') + ' · single', e.delta_t_s, savedG)
+          + '</div>';
     return html;
   };
 })();
