@@ -1839,3 +1839,24 @@ def test_single_run_live_refuses_audio_risk(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="un-paced"):
         asyncio.run(pixop.run_enhance_measurement(
             "clip.mov", "p.args", "jr", {"jr": {}}, live=True))
+
+
+# ═══ Restart resilience: job_status disk recovery (owner reports 2026-06-12) ═
+
+def test_job_status_recovers_done_result_from_disk(tmp_path, monkeypatch):
+    import json
+    import persist
+    import runtime
+    (tmp_path / "enhance").mkdir(parents=True)
+    (tmp_path / "enhance" / "2026-06-12_cafe1234.json").write_text(
+        json.dumps({"mode": "enhance_compare", "job_id": "cafe1234"}))
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    r = runtime.job_status("cafe1234")
+    assert r["status"] == "done" and r["recovered_from_disk"] is True
+    assert r["result"]["mode"] == "enhance_compare"
+    assert runtime.job_status("not-on-disk")["status"] == "not_found"
+
+
+def test_enhance_page_handles_not_found_polls():
+    r = client.get("/enhance-run", headers=LAB)
+    assert r.text.count("no longer tracked") == 2   # single + compare loops

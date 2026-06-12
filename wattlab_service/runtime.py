@@ -55,5 +55,24 @@ async def sensors_poller():
 
 
 def job_status(job_id: str) -> dict:
-    return {**jobs.get(job_id, {"status": "not_found"}),
+    return {**(jobs.get(job_id) or _recover_from_disk(job_id)),
             "watts": power_cache["watts"]}
+
+
+def _recover_from_disk(job_id: str) -> dict:
+    """Restart resilience (owner reports 2026-06-12, ×2): a service restart
+    wipes the in-memory jobs dict, so any page left open polling its job got
+    `not_found` forever and the progress widget never resolved — even though
+    the result had persisted. If a stored result exists for the id, answer
+    `done` with it; only truly unknown ids stay not_found. Fail-soft."""
+    import json
+    from persist import RESULTS_DIR
+    try:
+        if job_id and job_id.replace("-", "").isalnum():
+            for p in RESULTS_DIR.glob(f"*/*_{job_id}.json"):
+                return {"status": "done", "stage": "done",
+                        "recovered_from_disk": True,
+                        "result": json.loads(p.read_text())}
+    except Exception:
+        pass
+    return {"status": "not_found"}

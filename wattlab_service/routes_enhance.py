@@ -712,6 +712,14 @@ async function pollJob(jobId) {
       document.getElementById('runBtn').disabled = false;
       loadPrevRuns();
       updateInputPreview();  // revive the preview paused at startRun()
+    } else if (data.status === 'not_found') {
+      // service restarted while this page was open and no stored result
+      // exists — stop polling instead of spinning forever
+      document.getElementById('status').innerHTML =
+        '<div style="color:var(--warn);font-size:0.82rem">This job is no longer tracked '
+        + '(service restarted). If it completed, its result is under Previous runs.</div>';
+      document.getElementById('runBtn').disabled = false;
+      loadPrevRuns();
     } else if (data.status === 'error') {
       document.getElementById('status').innerHTML =
         '<div style="color:var(--err)">Error: ' + data.error + '</div>';
@@ -996,6 +1004,15 @@ async function pollCompare(jobId) {
     if (data.status === 'done') {
       document.getElementById('status').innerHTML = '';
       renderCompare(data.result);
+      document.getElementById('runBtn').disabled = false;
+      updateCompareGate();
+      loadPrevRuns();
+    } else if (data.status === 'not_found') {
+      // service restarted while this page was open and no stored result
+      // exists — stop polling instead of spinning forever
+      document.getElementById('status').innerHTML =
+        '<div style="color:var(--warn);font-size:0.82rem">This job is no longer tracked '
+        + '(service restarted). If it completed, its result is under Previous runs.</div>';
       document.getElementById('runBtn').disabled = false;
       updateCompareGate();
       loadPrevRuns();
