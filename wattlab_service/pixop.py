@@ -1601,11 +1601,18 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         if jobs is not None:
             jobs[job_id]["stage"] = "probe"
             jobs[job_id]["substage"] = "vqa"
-        res["result"]["source_vqa"] = probe_vqa_nr(inp / input_name, c)
+        # Terminal probes run in the EXECUTOR: they are minutes of synchronous
+        # subprocess work, and on the event loop they froze every HTTP response
+        # (stage strip stuck on the previous stage, poll pile-up tripping
+        # nginx's 3-conn cap into 429s — owner report 2026-06-12).
+        loop = asyncio.get_event_loop()
+        res["result"]["source_vqa"] = await loop.run_in_executor(
+            None, lambda: probe_vqa_nr(inp / input_name, c))
         output_path = out / output_name
         tc_ok = bool((res["result"].get("transcode") or {}).get("success")
                      and output_path.exists())
-        res["result"]["vqa"] = probe_vqa_nr(output_path, c) if tc_ok else None
+        res["result"]["vqa"] = (await loop.run_in_executor(
+            None, lambda: probe_vqa_nr(output_path, c))) if tc_ok else None
         # CR-064 provenance — the exact args used + where the preset came from +
         # what the input actually was (never drives behaviour; record-keeping).
         res["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
@@ -1747,22 +1754,34 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
         # the outputs actually differ. All decode-only; runs after the lock is gone.
         if jobs is not None:
             jobs[job_id]["stage"] = "analyse"
+        # All analyse-stage probes run in the EXECUTOR — see the single-run
+        # note: synchronous SI/TI + AB metrics + triple VQA on 4K files block
+        # the event loop for many minutes otherwise (stage strip freeze + 429s).
+        loop = asyncio.get_event_loop()
         ml_ok = bool((ml["result"].get("transcode") or {}).get("success") and ml["result"].get("output_name"))
         ff_ok = bool((ff["result"].get("transcode") or {}).get("success") and ff["result"].get("output_name"))
         if ml_ok:
-            ml["result"]["complexity"] = probe_complexity(out / ml_output, c)
+            ml["result"]["complexity"] = await loop.run_in_executor(
+                None, lambda: probe_complexity(out / ml_output, c))
         if ff_ok:
-            ff["result"]["complexity"] = probe_complexity(out / ff_output, c)
-        source_complexity = probe_complexity(input_path, c)
-        ab_quality = probe_ab_quality(out / ml_output, out / ff_output) if (ml_ok and ff_ok) else None
+            ff["result"]["complexity"] = await loop.run_in_executor(
+                None, lambda: probe_complexity(out / ff_output, c))
+        source_complexity = await loop.run_in_executor(
+            None, lambda: probe_complexity(input_path, c))
+        ab_quality = (await loop.run_in_executor(
+            None, lambda: probe_ab_quality(out / ml_output, out / ff_output))
+        ) if (ml_ok and ff_ok) else None
 
         # NR quality (CompressedVQA-HDR) — scores source + both outputs
         # independently. Terminal like the probes above; all fields nullable.
         if jobs is not None:
             jobs[job_id]["substage"] = "vqa"
-        source_vqa = probe_vqa_nr(input_path, c)
-        ml["result"]["vqa"] = probe_vqa_nr(out / ml_output, c) if ml_ok else None
-        ff["result"]["vqa"] = probe_vqa_nr(out / ff_output, c) if ff_ok else None
+        source_vqa = await loop.run_in_executor(
+            None, lambda: probe_vqa_nr(input_path, c))
+        ml["result"]["vqa"] = (await loop.run_in_executor(
+            None, lambda: probe_vqa_nr(out / ml_output, c))) if ml_ok else None
+        ff["result"]["vqa"] = (await loop.run_in_executor(
+            None, lambda: probe_vqa_nr(out / ff_output, c))) if ff_ok else None
 
         # CR-064 provenance — exact AI-side args + preset origin + what the input
         # actually was. The ffmpeg side's full command is already in its

@@ -130,8 +130,8 @@ var WL_RAG_STAGES   = ['Baseline poll (' + WL_CFG.baseline_s + 's)', 'Inference 
 // figure; it ends with an idle wait back to the pre-normalize floor (the
 // toggle-aware label, same as the compare flow's inter-pass step). Clean
 // inputs pass straight through both stages.
-var WL_ENHANCE_STAGES = ['Normalize', WL_CFG.idle_label, 'Baseline (' + WL_CFG.baseline_s + 's)', 'Transcoding', 'Probe', 'Done'];
+var WL_ENHANCE_STAGES = ['Normalize', WL_CFG.idle_label, 'Baseline (' + WL_CFG.baseline_s + 's)', 'Transcoding', 'Probe'];
 // Enhance compare flow: two measured passes, each followed by an idle/cooldown
 // step. WL_CFG.idle_label is the toggle-aware label baked above ("Wait for Idle"
 // when wait-for-idle is on, else "Idle").
-var WL_CMP_STAGES = ['AI / ML enhance', WL_CFG.idle_label, 'Traditional (ffmpeg)', 'Analyse', 'Done'];
+var WL_CMP_STAGES = ['AI / ML enhance', WL_CFG.idle_label, 'Traditional (ffmpeg)', 'Analyse'];

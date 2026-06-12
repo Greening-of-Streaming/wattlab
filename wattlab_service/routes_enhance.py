@@ -592,7 +592,7 @@ _ENHANCE_RUN_HTML = """
 
 <script>
 function _enhStageIdx(stage) {
-  var m = {normalize:0, 'normalize-idle':1, baseline:2, transcoding:3, probe:4, done:5};
+  var m = {normalize:0, 'normalize-idle':1, baseline:2, transcoding:3, probe:4, done:4};
   return m[stage] != null ? m[stage] : 0;
 }
 // 1× sizing note: videos with .wl-1x render at native size (capped at the
@@ -933,7 +933,7 @@ async function uploadClip() {
 // cooldown — nothing is measured after it — so there's no second idle step.
 //   0 AI/ML enhance · 1 idle · 2 Traditional (ffmpeg) · 3 Analyse · 4 Done
 function _cmpStageIdx(stage, substage) {
-  if (stage === 'done') return 4;
+  if (stage === 'done') return 3;
   if (stage === 'analyse') return 3;
   if (stage === 'ffmpeg') return 2;
   return substage === 'cooldown' ? 1 : 0;   // 'ml' / starting
