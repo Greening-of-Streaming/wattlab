@@ -1,10 +1,11 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-13 (Session 50 — Marketing email sent (A-vs-B + C framing); findings enhance-
-#   embed renderer + card CSS (was "no renderer for type=enhance"); compare panels sort by model size;
-#   PCE-AAC paced-path workaround per Jon: audio-only pre-remux (video md5-identical, 5.1 kept via
-#   channelmap, pre-baseline) — Live/compare run paced on 5.1-AAC again; container verification run
-#   pending (Ben budgets). Tests 687. Restart PENDING (post-fa6cfda JS+pixop changes).)
+# Last updated: 2026-06-15 (Session 51 — conference-demo pre-flight (Ben demoing OWL live, REMOTE: reach
+#   it via SSH tunnel, NOT the public host; "demo lock" = CR-011 `bin/stage-on` staging mode, no separate
+#   flag). GDPR anonymous-analytics bundle ccb77a9: cookie-less visit counter (analytics.py, /audience
+#   hidden Lab page), IP pseudonymisation (visitor_key now keyed-hash, never raw IP — 7 legacy files
+#   migrated), /privacy notice. Tests 702. Restart PENDING (post-fa6cfda + ccb77a9; tomorrow's stage-on
+#   clears it).)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
@@ -116,7 +117,8 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 ## Services & URLs
 wattlab (systemd, port 8000, 1 worker — restart needs the OWNER: not in Claude's sudoers) · ollama (11434).
 LAN `http://192.168.1.62:8000` · public `https://wattlab.greeningofstreaming.org` (nginx + certbot).
-Pages: `/video /llm /rag /image /demo /findings /benchmark /enhance-run /settings /queue-status /methodology /carbon`.
+Pages: `/video /llm /rag /image /demo /findings /benchmark /enhance-run /settings /queue-status /methodology /carbon /privacy`.
+Hidden: `/audience` (Lab-only visit dashboard — anonymous aggregate counts from analytics.py; not in any nav).
 Auth tiers (CR-001): Anonymous (public) · Member (magic-link, allowlist `data/members.json`) · Lab (LAN/loopback).
 Policy lives ONLY in `capabilities.py`; routes never compare tiers. Tests run as Lab — reason about
 Anonymous/Member explicitly; probe Anonymous with a real public IP header like 8.8.8.8 (Python ≥3.12.4 counts
@@ -147,6 +149,7 @@ CHANGE_REQUESTS_CLOSED.md.
 - S48 (06-12 night): upscale sweet-spot sweep (16 runs, all 🟢, dual-meter) → finding `upscale-sweetspot-degraded-sources` + /enhance-run/ladder subpage (chart + fixtures). Restart pending. →668.
 - S49 (06-12 pm): anonymous-landing audit (`docs/anon_landing_audit_2026-06.md`) + /demo truth pass (copy bakes from live model/GPU/source registries) + global viewport meta + TEMP Marketing mockups `/preview-c5d9b3be`. OG tags open. →682.
 - S50 (06-13): Marketing email out (A-vs-B home page + C deep-links) · findings enhance-embed renderer + card CSS · compare panels sorted by model size · PCE-AAC audio-only pre-remux (Jon's workaround; paced runs on 5.1-AAC restored, verification run pending). →687.
+- S51 (06-15): conference-demo pre-flight (demo lock = stage-on staging mode; remote = SSH tunnel) · GDPR anonymous-analytics: visit counter (analytics.py) + /audience (hidden Lab) + IP pseudonymisation (no raw IP on disk, 7 legacy files migrated) + /privacy notice. →702. (ccb77a9)
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

@@ -7,6 +7,38 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 51 — 2026-06-15
+
+**Conference-demo pre-flight (Ben demoing OWL live, remote):** verified server
+health (services active, queue idle ~78W, all pages 200), confirmed the Guided
+Tour (/demo) and /methodology are operational + current (S49 truth-pass holding;
+only nit = methodology footer date 2026-06-09, left as-is). Reminder captured:
+the "demo lock" is CR-011 staging mode (`bin/stage-on` → nginx 503 for public,
+owner via LAN/SSH tunnel) — there is no separate demo-lock flag (CR-001b was
+folded into CR-011). Critical gotcha for a remote demo: must reach OWL via the
+SSH tunnel (`ssh -L 8000:localhost:8000 … -p 2222`), not the public hostname.
+
+**GDPR anonymous-analytics bundle (ccb77a9)** — make OWL safe to invite external
+traffic to. Audit first found the real gap: anonymous `visitor_key` was persisted
+as `a:<raw IP>` (CR-026), and 2 external IPs were already on disk across 7 result
+files — personal data, no notice. Fixed end-to-end:
+- `analytics.py`: cookie-less aggregate visit counter (day → tier → path), no
+  IP/cookie/UA → anonymous statistics outside GDPR (Recital 26). Recorded by an
+  HTML-GET middleware in main.py; kill switch `analytics_enabled` (default on).
+- `analytics.hash_ip`: truncate IP to /24 (v4) / /48 (v6) then HMAC-SHA256 under
+  the server secret, 16 hex. `queue_control.visitor_key` now emits `a:<token>` so
+  CR-026 own-results scoping survives without a raw address touching disk.
+  `bin/anonymise-visitor-ips.py` (idempotent) migrated the 7 legacy files — 0 raw
+  IPs remaining.
+- `/privacy` (routes_privacy.py, public, footer-linked): GDPR Art. 13 notice.
+- `/audience` (routes_audience.py, hidden Lab-only): visit dashboard, external
+  (anonymous) vs member vs lab broken out — the traction view.
+- Tests: +test_analytics.py (12); updated the 2 test_queue_control cases that
+  pinned raw-IP visitor_key. **702 pass.** Goes live on next restart (tomorrow's
+  stage-on); stored-IP migration already applied independently.
+
+---
+
 ## Session 50 — 2026-06-13
 
 **Marketing email finalised + scenario framing sharpened** (with Ben, several passes):
