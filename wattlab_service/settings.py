@@ -4,6 +4,9 @@ from pathlib import Path
 SETTINGS_FILE = Path("/home/gos/wattlab/settings.json")
 
 DEFAULTS = {
+    # Kill switch for anonymous aggregate visit counting (analytics.py — no
+    # IP/cookie/UA stored; the /audience dashboard reads it). ON by default.
+    "analytics_enabled": True,
     "baseline_polls": 10,
     "video_cooldown_s": 60,
     "llm_rest_s": 10,

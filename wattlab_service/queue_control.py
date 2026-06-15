@@ -31,7 +31,8 @@ def visitor_key(request) -> Optional[str]:
 
     - Lab tier      → None (uncapped).
     - Member tier   → 'm:<lowercased email>'.
-    - Anonymous     → 'a:<X-Real-IP or client.host>'; '' if neither known.
+    - Anonymous     → 'a:<pseudonymised-IP token>' (truncated + keyed-hashed,
+                      never the raw address — analytics.hash_ip); 'a:' if no IP.
 
     queue_control depending on audience+auth is fine: both sit at the
     spine layer, neither imports queue_control. Kept at the bottom of
@@ -56,10 +57,14 @@ def visitor_key(request) -> Optional[str]:
         except Exception:
             email = ""
         return f"m:{email.strip().lower()}"
-    # Anonymous
+    # Anonymous — pseudonymise the IP: a raw address must never reach disk
+    # (GDPR). analytics.hash_ip truncates to /24 (v4) / /48 (v6) then keyed-
+    # hashes, giving a stable-per-subnet token that still scopes a visitor to
+    # their own results (CR-026) without being reversible to the address.
     ip = (request.headers.get("x-real-ip") if request.headers else None) or (
         request.client.host if request.client else "")
-    return f"a:{ip}"
+    import analytics as _an
+    return f"a:{_an.hash_ip(ip)}"
 
 
 def _visitor_cap(visitor_key: Optional[str]) -> Optional[int]:

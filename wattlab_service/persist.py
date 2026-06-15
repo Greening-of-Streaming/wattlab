@@ -22,8 +22,10 @@ def save_result(job_type: str, job_id: str, data: dict,
     The intensity in use at save time is recorded inline so historical
     results stay accurate even if the live grid mix changes later.
 
-    `visitor_key` (CR-026) — Anonymous → 'a:<ip>', Member → 'm:<email>',
-    Lab → None. Persisted so list_results / load_result can scope to
+    `visitor_key` (CR-026) — Anonymous → 'a:<pseudonymised-IP token>' (keyed
+    hash of the truncated IP, never the raw address — analytics.hash_ip),
+    Member → 'm:<email>', Lab → None. Persisted so list_results / load_result
+    can scope to
     own-jobs for non-Lab visitors. Pre-CR-026 results have no key and
     are invisible to non-Lab listings.
 

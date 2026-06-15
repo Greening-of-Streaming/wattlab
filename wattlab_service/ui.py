@@ -326,6 +326,15 @@ _ISSUES_LINK = (
 )
 
 
+_PRIVACY_LINK = (
+    '<div style="margin-top:0.75rem;font-family:monospace;font-size:0.72rem;color:var(--text-5)">'
+    'No tracking cookies; aggregate, anonymous visit counts only: '
+    '<a href="/privacy" '
+    'style="color:var(--text-3);text-decoration:none;border-bottom:1px solid var(--border)">'
+    'Privacy &rarr;</a></div>'
+)
+
+
 # Single source of truth for content colors, panel/border tones, and base
 # readability rules. CSS variables defined in :root cascade globally, so any
 # inline `style="color:var(--text-3)"` resolves correctly regardless of where
@@ -382,7 +391,7 @@ _FINDINGS_LINK = (
 _FOOTER = (
     f'{_BASE_STYLES}'
     f'<footer style="margin-top:3rem;padding-top:1rem;border-top:1px solid var(--panel)">'
-    f'{_LOGO}{_METHODOLOGY_LINK}<!--FINDINGS-->{_ISSUES_LINK}'
+    f'{_LOGO}{_METHODOLOGY_LINK}<!--FINDINGS-->{_ISSUES_LINK}{_PRIVACY_LINK}'
     f'<div style="margin-top:0.75rem;color:var(--text-5);font-size:0.68rem;'
     f'font-family:monospace">{version.version_string()}</div>'
     f'</footer>'

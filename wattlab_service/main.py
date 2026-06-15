@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
 
+import analytics
 import audience
 import carbon
 import queue_control
@@ -41,6 +42,7 @@ app = FastAPI()
 # Phase 3: per-feature route modules. Each owns its routes + page template +
 # run_*_job orchestration; main.py assembles them. They import shared state
 # from runtime.py and chrome from ui.py — never from main.
+import routes_audience
 import routes_auth
 import routes_benchmark
 import routes_demo
@@ -50,15 +52,16 @@ import routes_image
 import routes_llm
 import routes_methodology
 import routes_mockups   # TEMPORARY — Marketing Lab landing mockups, delete with the module
+import routes_privacy
 import routes_rag
 import routes_results
 import routes_settings
 import routes_video
 
-for _feature in (routes_auth, routes_benchmark, routes_demo, routes_enhance,
-                 routes_findings, routes_image, routes_llm, routes_methodology,
-                 routes_mockups, routes_rag, routes_results, routes_settings,
-                 routes_video):
+for _feature in (routes_audience, routes_auth, routes_benchmark, routes_demo,
+                 routes_enhance, routes_findings, routes_image, routes_llm,
+                 routes_methodology, routes_mockups, routes_privacy, routes_rag,
+                 routes_results, routes_settings, routes_video):
     app.include_router(_feature.router)
 
 # Serve bundled assets (owl logo, favicon, wl-*.js bundles) from
@@ -114,6 +117,23 @@ async def _maintenance_keepalive(request: Request, call_next):
             # Never let the keepalive crash a real request.
             pass
     return await call_next(request)
+
+
+@app.middleware("http")
+async def _record_visit(request: Request, call_next):
+    """Anonymous aggregate visit counting (analytics.py). Records a page view
+    only for successful HTML GETs — the content-type gate naturally excludes
+    /static, /live polling, JSON endpoints and redirects. No IP/cookie/UA is
+    stored; only (day → tier → path) counts. Best-effort, never blocks a
+    request. Kill switch: settings `analytics_enabled`."""
+    response = await call_next(request)
+    try:
+        if (request.method == "GET" and response.status_code == 200
+                and "text/html" in response.headers.get("content-type", "")):
+            analytics.record_visit(request.url.path, audience.tier(request).name.lower())
+    except Exception:
+        pass
+    return response
 
 
 @app.exception_handler(CapabilityError)

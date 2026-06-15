@@ -269,17 +269,25 @@ def _stub_request(headers=None, cookies=None, client_host=""):
     return _StubReq()
 
 
-def test_visitor_key_anonymous_uses_x_real_ip():
+def test_visitor_key_anonymous_pseudonymises_x_real_ip():
     # 8.8.8.8 chosen because Python's ipaddress.is_private flags TEST-NET
     # ranges (203.0.113/24) as private — they'd resolve to Lab here.
+    # GDPR: the raw IP must never become the key — it's truncated + keyed-hashed
+    # (analytics.hash_ip), so the token is stable but not the address.
+    import analytics
     req = _stub_request(headers={"x-real-ip": "8.8.8.8"})
-    assert queue_control.visitor_key(req) == "a:8.8.8.8"
+    key = queue_control.visitor_key(req)
+    assert key == f"a:{analytics.hash_ip('8.8.8.8')}"
+    assert "8.8.8.8" not in key
 
 
 def test_visitor_key_anonymous_falls_back_to_client_host():
-    """No X-Real-IP header (no nginx in front) → use client.host."""
+    """No X-Real-IP header (no nginx in front) → use client.host, pseudonymised."""
+    import analytics
     req = _stub_request(headers={}, client_host="1.1.1.1")
-    assert queue_control.visitor_key(req) == "a:1.1.1.1"
+    key = queue_control.visitor_key(req)
+    assert key == f"a:{analytics.hash_ip('1.1.1.1')}"
+    assert "1.1.1.1" not in key
 
 
 def test_visitor_key_lab_returns_none():
