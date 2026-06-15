@@ -862,9 +862,9 @@ def test_generate_presets_full_matrix(tmp_path):
     c = _cfg(tmp_path)
     _stage_templates(tmp_path)
     combos = pixop.generate_presets(c)
-    # hdr_4k is excluded: sdr_to_hdr=on aborts pixop-live at a 4K target
-    # (2026-06-10 bisect) — pending Jon's input-agnostic HDR template.
-    assert set(combos) == {"sdr_sd", "sdr_hd", "sdr_4k", "hdr_sd", "hdr_hd"}
+    # All six generate now — hdr_4k was un-excluded 2026-06-16 (runs reliably
+    # under the memory-throttle env vars; see test_combo_env_throttle).
+    assert set(combos) == {"sdr_sd", "sdr_hd", "sdr_4k", "hdr_sd", "hdr_hd", "hdr_4k"}
     # Substitution: ONLY --output-res and --cbr change; template lines survive.
     f = tmp_path / "presets" / combos["sdr_4k"]["preset"]
     text = f.read_text()
@@ -905,7 +905,7 @@ def test_resolve_combo(tmp_path, monkeypatch):
     _stage_templates(tmp_path)
     combo = pixop.resolve_combo("hdr", "hd")
     assert combo["preset"] == "generated/owl_hdr_hd_20mbps.args"
-    assert pixop.resolve_combo("hdr", "4k") is None    # excluded (known-bad)
+    assert pixop.resolve_combo("hdr", "4k")["preset"] == "generated/owl_hdr_4k_35mbps.args"
     assert pixop.resolve_combo("sdr", "8k") is None
     assert pixop.resolve_combo("dolby", "hd") is None
 
@@ -913,6 +913,40 @@ def test_resolve_combo(tmp_path, monkeypatch):
 def test_preset_origin():
     assert pixop.preset_origin("generated/owl_sdr_hd_20mbps.args") == "generated"
     assert pixop.preset_origin("nvencc_fhd_709_20mbps.args") == "staged"
+
+
+def test_combo_env_throttle(tmp_path, monkeypatch):
+    """The memory throttle is scoped to the hdr_4k combo ONLY — every other
+    combo, and staged/custom presets, run bare (so their energy stays
+    comparable to history)."""
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    _stage_templates(tmp_path)
+    hdr4k = pixop.resolve_combo("hdr", "4k")["preset"]
+    env = pixop.combo_env(hdr4k)
+    assert env == {"PIXOP_ASYNC_CAPACITY_SCALE": "0.5",
+                   "PIXOP_SR_PROCESSING_THREADS": "2"}
+    # Key derivation + the no-throttle cases.
+    assert pixop.preset_combo_key(hdr4k) == "hdr_4k"
+    assert pixop.combo_env("generated/owl_sdr_4k_35mbps.args") == {}
+    assert pixop.combo_env("generated/owl_hdr_hd_20mbps.args") == {}
+    assert pixop.combo_env("nvencc_fhd_pq_20mbps.args") == {}   # staged
+    assert pixop.combo_env("custom/custom_abc123.args") == {}   # custom
+
+
+def test_build_docker_cmd_injects_hdr4k_throttle(tmp_path, monkeypatch):
+    """The throttle env vars reach the docker command for hdr_4k, and ONLY
+    for hdr_4k — a sibling 4K combo (sdr_4k) stays bare."""
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    _stage_templates(tmp_path)
+    pixop.generate_presets(_cfg(tmp_path))   # write the generated/*.args files
+    hdr = " ".join(pixop.build_docker_cmd(
+        "clip.mov", "generated/owl_hdr_4k_35mbps.args", "o.mp4"))
+    assert "-e PIXOP_ASYNC_CAPACITY_SCALE=0.5" in hdr
+    assert "-e PIXOP_SR_PROCESSING_THREADS=2" in hdr
+    sdr = " ".join(pixop.build_docker_cmd(
+        "clip.mov", "generated/owl_sdr_4k_35mbps.args", "o.mp4"))
+    assert "PIXOP_ASYNC_CAPACITY_SCALE" not in sdr
+    assert "PIXOP_SR_PROCESSING_THREADS" not in sdr
 
 
 def test_generated_preset_spec_and_compare_gate(tmp_path, monkeypatch):
@@ -936,7 +970,7 @@ def test_preflight_includes_combos(tmp_path, monkeypatch):
     _stage(tmp_path, preset=True, inp=True, license=True)
     _stage_templates(tmp_path)
     pf = pixop.preflight()
-    assert len(pf["combos"]) == 5     # 6 minus the excluded hdr_4k
+    assert len(pf["combos"]) == 6     # all six combos generate (hdr_4k un-excluded)
     assert pixop._preset_known("generated/owl_sdr_hd_20mbps.args", pf)
     assert pixop._preset_known("p.args", pf)
     assert not pixop._preset_known("evil.args", pf)

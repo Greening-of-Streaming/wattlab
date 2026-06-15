@@ -1,11 +1,15 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-15 (Session 51 — conference-demo pre-flight (Ben demoing OWL live, REMOTE: reach
-#   it via SSH tunnel, NOT the public host; "demo lock" = CR-011 `bin/stage-on` staging mode, no separate
-#   flag). GDPR anonymous-analytics bundle ccb77a9: cookie-less visit counter (analytics.py, /audience
-#   hidden Lab page), IP pseudonymisation (visitor_key now keyed-hash, never raw IP — 7 legacy files
-#   migrated), /privacy notice. Tests 702. Restart PENDING (post-fa6cfda + ccb77a9; tomorrow's stage-on
-#   clears it).)
+# Last updated: 2026-06-16 (Session 52 — HDR→4K enhancement UNBLOCKED. Measured Jon's pixop-live memory-
+#   throttle env vars (PIXOP_ASYNC_CAPACITY_SCALE=0.5 + PIXOP_SR_PROCESSING_THREADS=2 — `_COMBO_ENV`):
+#   drop HDR→4K peak VRAM 94%→85% at NO measurable energy/throughput cost (within run-to-run noise; Jon's
+#   "perf will decrease" warning didn't hold on single-stream 4K SR). So `pixop._COMBO_EXCLUSIONS` now
+#   empty; hdr_4k runs with the throttle applied in build_docker_cmd for hdr_4k ONLY (combo_env), result
+#   stamps `pixop_env`, page shows a "mild throttle" note + tooltip, /methodology carries a reduced-
+#   capacity note. Also: /enhance-run progress bar now feeds `elapsed` to wlRenderProgress (was only on
+#   the placeholder teaser); compare-vs-ffmpeg HDR-disable got a hover tooltip. VRAM insight: peak tracks
+#   OUTPUT res + model, NOT scale ratio (480p→4K 90% < 1080p→4K 94%). NB image still 2026.06.10 (==06.12
+#   on VRAM; Jon's 06-15 FFmpeg-8.1 build NOT pulled). Tests 704. Restart DONE 01:26.)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
@@ -150,6 +154,7 @@ CHANGE_REQUESTS_CLOSED.md.
 - S49 (06-12 pm): anonymous-landing audit (`docs/anon_landing_audit_2026-06.md`) + /demo truth pass (copy bakes from live model/GPU/source registries) + global viewport meta + TEMP Marketing mockups `/preview-c5d9b3be`. OG tags open. →682.
 - S50 (06-13): Marketing email out (A-vs-B home page + C deep-links) · findings enhance-embed renderer + card CSS · compare panels sorted by model size · PCE-AAC audio-only pre-remux (Jon's workaround; paced runs on 5.1-AAC restored, verification run pending). →687.
 - S51 (06-15): conference-demo pre-flight (demo lock = stage-on staging mode; remote = SSH tunnel) · GDPR anonymous-analytics: visit counter (analytics.py) + /audience (hidden Lab) + IP pseudonymisation (no raw IP on disk, 7 legacy files migrated) + /privacy notice. →702. (ccb77a9)
+- S52 (06-16): HDR→4K enhancement unblocked — measured Jon's memory-throttle env vars (VRAM 94→85%, energy/throughput cost within noise), applied to hdr_4k combo ONLY (`_COMBO_ENV`/combo_env), `_COMBO_EXCLUSIONS` emptied, methodology + page "mild throttle" note/tooltip · /enhance-run progress bar fed `elapsed` · compare-disable HDR tooltip. →704.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

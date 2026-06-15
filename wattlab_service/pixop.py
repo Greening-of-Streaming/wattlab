@@ -620,13 +620,28 @@ _OUTPUT_FORMATS = ("sdr", "hdr")
 _GENERATED_DIR = "generated"
 _CUSTOM_DIR = "custom"   # power-user-edited args bodies, one file per run
 
-# Known-bad combos, excluded from generation until Jon's input-agnostic HDR
-# template lands. 2026-06-10 bisect (1080p SDR input, GoS promo):
-# `sdr_to_hdr=on` aborts pixop-live (rc 134, std::runtime_error immediately
-# after the ×2 AOTI model loads) ONLY at a 4K target — SDR→4K, HDR→SD and
-# HDR→HD all pass. An excluded combo simply doesn't generate, so the UI shows
-# it as "not available yet" and Run disables. CR-064 open question #1.
-_COMBO_EXCLUSIONS = {"hdr_4k"}
+# Combos excluded from generation (don't generate → UI shows "not available
+# yet", Run disables). Empty now: hdr_4k was excluded 2026-06-10 because
+# `sdr_to_hdr=on` aborted pixop-live (rc 134) at a 4K target — a GPU-VRAM
+# ceiling (peak ~94%, one allocation from the crash). The measured A/B of
+# 2026-06-16 showed it runs reliably once the memory pressure is throttled, so
+# instead of hiding the combo OWL runs it with Jon's env vars (see _COMBO_ENV).
+_COMBO_EXCLUSIONS: set = set()
+
+# Per-combo extra pixop-live env vars, applied at run time (build_docker_cmd).
+# ONLY hdr_4k needs the memory throttle — Jon's 2026-06-15 prescription, which
+# the 2026-06-16 A/B measured to drop HDR→4K peak VRAM 94%→85% (~2.5 GB
+# headroom) at NO measurable energy or throughput cost (within run-to-run noise
+# on both — full table in CHANGE_REQUESTS_CLOSED CR-064). Every other combo
+# runs bare so its energy stays comparable to history; the throttled HDR→4K
+# run carries an as-measured note (the regime differs from the default-tuned
+# passes even though this workload's numbers didn't move).
+_COMBO_ENV = {
+    "hdr_4k": {
+        "PIXOP_ASYNC_CAPACITY_SCALE": "0.5",   # input-buffer scale (default 1.5)
+        "PIXOP_SR_PROCESSING_THREADS": "2",    # concurrent SR threads (default 5)
+    },
+}
 
 
 def _combo_preset_name(fmt: str, target: str, kbps: int) -> str:
@@ -707,6 +722,9 @@ def generate_presets(c: Optional[dict] = None) -> dict:
                     "res": res,
                     "mbps": kbps // 1000,
                     "template": c[f"template_{fmt}"],
+                    # True when this combo runs with the memory-throttle env
+                    # vars (hdr_4k) — drives the page's "mild throttle" note.
+                    "throttled": f"{fmt}_{tkey}" in _COMBO_ENV,
                     # Raw file text (comments included) — pre-fills the
                     # advanced args editor on the page.
                     "args": text,
@@ -724,6 +742,24 @@ def resolve_combo(output_format: str, sr_target: str,
     if fmt not in _OUTPUT_FORMATS or tgt not in _SR_TARGETS:
         return None
     return generate_presets(c).get(f"{fmt}_{tgt}")
+
+
+def preset_combo_key(preset_name) -> Optional[str]:
+    """'<fmt>_<target>' for a generated combo preset name, else None (staged /
+    custom presets aren't combos). Pure name match — no disk access."""
+    name = str(preset_name)
+    for fmt in _OUTPUT_FORMATS:
+        for tgt, (_, _, kbps) in _SR_TARGETS.items():
+            if name == _combo_preset_name(fmt, tgt, kbps):
+                return f"{fmt}_{tgt}"
+    return None
+
+
+def combo_env(preset_name) -> dict:
+    """Extra pixop-live env vars a combo needs at run time (the hdr_4k memory
+    throttle — see _COMBO_ENV). Empty dict for every other combo and for
+    staged/custom presets, so only HDR→4K runs throttled."""
+    return dict(_COMBO_ENV.get(preset_combo_key(preset_name) or "", {}))
 
 
 # --- Preflight --------------------------------------------------------------
@@ -933,9 +969,12 @@ def build_docker_cmd(input_name: str, preset_name: str, output_name: str,
         "-e", "NVIDIA_DRIVER_CAPABILITIES=all",
         "-e", "UCX_ERROR_SIGNALS=SIGILL,SIGBUS,SIGFPE",
         "-e", "PIXOP_LOG_MODE=TERMINAL",
-        c["image_tag"],
-        *preset_args,
     ]
+    # Per-combo memory throttle (hdr_4k only — see combo_env / _COMBO_ENV).
+    # Empty for every other preset, so this is a no-op except on HDR→4K.
+    for k, v in combo_env(preset_name).items():
+        cmd += ["-e", f"{k}={v}"]
+    cmd += [c["image_tag"], *preset_args]
     cmd += (["--input-format", _pipe_format(input_name), "-i", "-"] if live
             else ["-i", f"/mnt/host/input/{input_name}"])
     cmd += ["-o", f"/mnt/host/output/{output_name}"]
@@ -1826,6 +1865,10 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
         # what the input actually was (never drives behaviour; record-keeping).
         res["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
         res["result"]["preset_origin"] = preset_origin(preset_name)
+        # Memory-throttle env vars applied to this combo (hdr_4k only), or None —
+        # so the result records that this run was NOT default-tuned (its energy
+        # carries the as-measured caveat; see /methodology).
+        res["result"]["pixop_env"] = combo_env(preset_name) or None
         res["result"]["input_stream"] = probe_input_stream(inp / input_name)
         res["result"]["input_normalization"] = norm
         if norm.get("performed"):

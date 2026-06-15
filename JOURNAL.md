@@ -7,6 +7,64 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 52 — 2026-06-16
+
+**HDR→4K enhancement unblocked (CR-064 residual #2 closed).** Jon's 2026-06-15
+email answered the open question on the `hdr_4k` combo — excluded since
+2026-06-10 because `sdr_to_hdr=on` aborted pixop-live (rc 134) at a 4K target,
+a GPU-VRAM ceiling (~94% peak, one allocation from the crash). He prescribed two
+pipeline env vars: `PIXOP_ASYNC_CAPACITY_SCALE=0.5` (input-buffer scale, default
+1.5) + `PIXOP_SR_PROCESSING_THREADS=2` (concurrent SR threads, default 5),
+warning throughput would drop.
+
+**Measured them first (no OWL edits, `/tmp/owl_envvar_test.py` + `owl_sd4k_test.py`,
+OWL's own baseline/poll/confidence harness, image `2026.06.10`, all arms 🟢):**
+- `bbb_hd_clean` 1080p→4K (×2 SR): HDR→4K default peaked **94.0%** VRAM, throttled
+  **84.9%** (−1.45 GB); SDR→4K 57.9%→51.0%. fps/wall/ΔW/ΔE all within run-to-run
+  noise (≤1%) — **Jon's perf warning did NOT materialise** on single-stream 4K SR
+  (compute-bound, not buffer/thread-bound).
+- `meridian_sd_dirty` 480p→4K (×4.5 SR), batch AND Live: default **89.9%**,
+  throttled **79.7%**, all rc=0. **Could not reproduce a reported hard failure**
+  (input needs no normalization, so the test matched the page path exactly).
+- **VRAM insight (corrects an earlier assumption):** peak VRAM tracks OUTPUT
+  resolution + model footprint, NOT the scale ratio — the ×4.5 480p case (90%)
+  uses *less* than the ×2 1080p case (94%). So 1080p→4K is the VRAM-worst combo.
+- **Live == batch** for VRAM (the `-re` pacer blocks on the pipe, bounding the
+  input buffer — backpressure-OOM hypothesis disproved).
+- **Image `2026.06.12` == `2026.06.10`** to the megabyte on VRAM (no ceiling
+  shift). Jon's 2026-06-15 FFmpeg-8.1 build is NOT pulled to the box; OWL still
+  runs `2026.06.10`.
+
+**Decision (owner): un-block coupled with the throttle, not bare** — the combo
+borderline-passes at default but ~90–94% is one unlucky allocation from rc 134;
+the throttle (→~80–85%) is what makes it dependable, and it's free on energy.
+
+**Shipped (`pixop.py` / `routes_enhance.py` / `routes_methodology.py`):**
+- `_COMBO_EXCLUSIONS` now empty; `_COMBO_ENV` maps `hdr_4k` → the two env vars;
+  `preset_combo_key`/`combo_env` helpers; `build_docker_cmd` injects them for
+  `hdr_4k` ONLY (every other combo runs bare — energy stays comparable to
+  history); result stamps `pixop_env`; combos carry a `throttled` flag.
+- `/methodology` "4K HDR — reduced-capacity note" (94%→85%, sub-noise A/B,
+  settings recorded in JSON, applies only to this combo).
+- Page combo-line "mild throttle applied (hardware memory limit) — energy
+  unaffected" note + a hover tooltip on the compare button explaining why
+  compare-vs-ffmpeg is HDR-disabled (no apples-to-apples SDR→HDR baseline).
+- **Progress-bar parity fix:** `/enhance-run` used the shared `wlRenderProgress`
+  but never fed it `elapsed` in the real poll loops (only the placeholder
+  teaser did) — so the bar showed stages but no clock unlike `/video`. Added
+  `enhRunStart` (set at submit in `startRun`/`startCompare`), passed
+  `elapsed: Date.now() - enhRunStart` into both real renders.
+
+Tests: 702 → **704** (`test_combo_env_throttle`,
+`test_build_docker_cmd_injects_hdr4k_throttle`; three exclusion assertions
+updated). Full record in CHANGE_REQUESTS_CLOSED CR-064 residual #2.
+
+**Exit condition:** if Jon's new FFmpeg-8.1 build (or a later one) lowers the
+default-env VRAM ceiling, drop the `hdr_4k` entry from `_COMBO_ENV` to run it
+bare (re-test first).
+
+---
+
 ## Session 51 — 2026-06-15
 
 **Conference-demo pre-flight (Ben demoing OWL live, remote):** verified server

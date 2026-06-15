@@ -230,6 +230,11 @@ var STAGES = ['Baseline (illustrative)', 'Inference running', 'Cooldown', 'Compl
 
 var fakeTimer = null;
 var fakeStart = null;
+// Wall-clock start of the REAL measured run/compare (set at submit, matching
+// /video's startTime) — fed to wlRenderProgress so the shared progress bar
+// shows "Elapsed:" like the other pages. Null until a run starts (and for a
+// job reconnected after a reload — elapsed just stays hidden then).
+var enhRunStart = null;
 
 function startEnhance(key) {
   if (fakeTimer) { clearInterval(fakeTimer); fakeTimer = null; }
@@ -542,7 +547,7 @@ _ENHANCE_RUN_HTML = """
         <option value="bicubic">bicubic</option>
       </select>
     </div>
-    <div>
+    <div id="cmpWrap">
       <button class="secondary" id="cmpBtn" onclick="startCompare()"{RUN_DISABLED}>Compare vs ffmpeg (always 1&times; speed)</button>
     </div>
   </div>
@@ -668,6 +673,7 @@ async function startRun() {
   var input = document.getElementById('inSel').value;
   var combo = _selCombo();
   if (!input || !combo) return;
+  enhRunStart = Date.now();
   document.getElementById('runBtn').disabled = true;
   document.getElementById('result-card').style.display = 'none';
   document.getElementById('selftest-out').innerHTML = '';
@@ -733,6 +739,7 @@ async function pollJob(jobId) {
         header: 'Measuring — do not close this tab',
         stagesHtml: wlStageList(WL_ENHANCE_STAGES, idx),
         watts: watts,
+        elapsed: enhRunStart ? Date.now() - enhRunStart : null,
         cooldownData: data,
       });
       setTimeout(function(){ pollJob(jobId); }, 2000);
@@ -872,10 +879,19 @@ function combosChanged() {
   var combo = _selCombo();
   var line = document.getElementById('combo-line');
   if (line) {
-    line.textContent = combo
-      ? ('Target ' + combo.res.replace('x', '×') + ' · ' + combo.mbps
-         + ' Mbps CBR · preset ' + combo.preset)
-      : 'This combination is not available yet.';
+    if (combo) {
+      var msg = 'Target ' + combo.res.replace('x', '×') + ' · ' + combo.mbps
+                + ' Mbps CBR · preset ' + combo.preset;
+      // Honest UX (owner ask): a combo near the GPU memory ceiling runs with a
+      // mild pipeline throttle rather than being hidden. Says so, plainly.
+      if (combo.throttled) {
+        msg += ' · <span style="color:var(--warn)">mild throttle applied '
+             + '(hardware memory limit) — energy unaffected, see methodology</span>';
+      }
+      line.innerHTML = msg;
+    } else {
+      line.textContent = 'This combination is not available yet.';
+    }
   }
   var box = document.getElementById('argsBox');
   if (box) box.value = combo ? (combo.args || '') : '';
@@ -957,15 +973,24 @@ function updateCompareGate() {
   var combo = _selCombo();
   var hdr = _selFmt() === 'hdr';
   btn.disabled = !(RUN_ENABLED && combo && !hdr);
-  gate.textContent = (RUN_ENABLED && hdr)
-    ? ' · HDR output has no apples-to-apples ffmpeg baseline, so compare is disabled for it.'
+  var why = (RUN_ENABLED && hdr)
+    ? 'HDR output has no apples-to-apples ffmpeg baseline — libswscale can\\'t replicate an SDR→HDR tone-map, so the energy comparison would be misleading. Disabled for HDR; the SDR combos compare fine.'
     : '';
+  gate.textContent = why ? (' · ' + why) : '';
+  // Native tooltip on the WRAPPER (a disabled button suppresses its own hover
+  // events in Chrome, so the title must sit on a parent that still gets them).
+  var wrap = document.getElementById('cmpWrap');
+  if (wrap) {
+    wrap.title = why;
+    wrap.style.cursor = why ? 'help' : '';   // hover cue: intentional, not dead
+  }
 }
 async function startCompare() {
   var input = document.getElementById('inSel').value;
   var combo = _selCombo();
   var ff = document.getElementById('ffSel').value;
   if (!input || !combo) return;
+  enhRunStart = Date.now();
   document.getElementById('cmpBtn').disabled = true;
   document.getElementById('runBtn').disabled = true;
   document.getElementById('result-card').style.display = 'none';
@@ -1039,6 +1064,7 @@ async function pollCompare(jobId) {
         header: 'Comparing — do not close this tab',
         stagesHtml: wlStageList(WL_CMP_STAGES, idx),
         watts: watts,
+        elapsed: enhRunStart ? Date.now() - enhRunStart : null,
         extraHtml: sub,
         cooldownData: data,
       });
