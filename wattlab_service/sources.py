@@ -93,7 +93,7 @@ SOURCES = [
         "credit": "Maks Berc, via Wikimedia Commons",
         "license": "CC BY 3.0",
         "source_url": "https://commons.wikimedia.org/wiki/File:Downhill_bike_park_Kranjska_Gora.webm",
-        "vignette": None,
+        "vignette": "/static/source_vignettes/kranjska.jpg",
         "variants": [
             {
                 "key": "kranjska_120s",
