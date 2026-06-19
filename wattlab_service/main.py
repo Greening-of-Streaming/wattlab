@@ -45,6 +45,7 @@ app = FastAPI()
 import routes_audience
 import routes_auth
 import routes_benchmark
+import routes_budget   # DEMO — transcode-budget calculator (CR-003 × CR-045 V2); illustrative data
 import routes_demo
 import routes_enhance
 import routes_findings
@@ -58,7 +59,7 @@ import routes_results
 import routes_settings
 import routes_video
 
-for _feature in (routes_audience, routes_auth, routes_benchmark, routes_demo,
+for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_demo,
                  routes_enhance, routes_findings, routes_image, routes_llm,
                  routes_methodology, routes_mockups, routes_privacy, routes_rag,
                  routes_results, routes_settings, routes_video):

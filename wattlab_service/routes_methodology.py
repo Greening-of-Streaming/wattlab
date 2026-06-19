@@ -383,6 +383,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <a href="#diagnostics">Diagnostics</a>
     <a href="#hardware">Hardware</a>
     <a href="#tests">Test types</a>
+    <a href="#energy-budget">Energy budget</a>
     <a href="#limits">Limitations</a>
     <a href="#carbon">CO&#x2082;e</a>
     <a href="#open">Open questions</a>
@@ -618,6 +619,27 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   </ul>
 
   <p><strong>Framing (GoS Language Lab position paper, Jan 2026):</strong> AI in streaming is <strong>neither inherently sustainable nor unsustainable</strong> &mdash; type, size and deployment decide net impact. The type matters enormously: streaming leans on <strong>small specialised CNNs</strong> (per-title encoding, scene classification, super-resolution) that are orders of magnitude cheaper than the general-purpose LLMs and diffusion models these tabs measure as an upper bound. OWL measures the energy AI <strong>adds</strong> (inference only); it does not measure the infrastructure energy AI <strong>avoids</strong> through better compression, caching or routing &mdash; both halves are needed for net impact, and OWL has the first. Each AI result is also shown as a multiple of a real video encode (the pinned canonical H.265&nbsp;GPU encode of Meridian-120s) so the number stays anchored to a streaming workload rather than floating free. Full framing: <a href="{POSITION_PAPER_URL}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Language Lab AI position paper &rarr;</a>.</p>
+
+  <h2 id="energy-budget">Energy budget &amp; encode parity</h2>
+
+  <p>Operators rarely ask &ldquo;how small can the file be.&rdquo; They fix a <strong>quality target</strong> &mdash; most often VMAF&nbsp;92 &mdash; and then try to <strong>hit that quality for the least energy</strong>. The <a href="/video/budget" style="color:var(--accent);text-decoration:none">transcode budget calculator</a> answers the inverse: given an energy budget, how many minutes of video can you push at your target VMAF, on which hardware, with which codec?</p>
+
+  <p>That calculator runs on a <strong>measured calibration table</strong>, built under the same protocol as every other OWL test. For a fixed source we sweep an ABR bitrate ladder across each codec (H.264&nbsp;/&nbsp;H.265&nbsp;/&nbsp;AV1) on both the CPU encoder (libx264&nbsp;/&nbsp;libx265&nbsp;/&nbsp;libsvtav1) and the GPU encoder (NVENC), measuring wall energy and &mdash; as a terminal pass &mdash; VMAF. For a chosen target VMAF we read the bitrate that hits it off the measured curve, and the watt-hours per minute that bitrate costs.</p>
+
+  <h3>Encode parity &mdash; is the GPU really &ldquo;worse&rdquo;?</h3>
+  <p>Operators often say hardware encoders score lower than software, &ldquo;especially for AV1.&rdquo; To test that fairly we measure the GPU twice at each bitrate &mdash; once with OWL&rsquo;s current NVENC arguments (<em>baseline</em>) and once with a quality-knob bundle (<em>tuned</em>: <code>-preset p7 -multipass 2 -spatial-aq -temporal-aq -rc-lookahead</code>, B-frame references) &mdash; so the VMAF difference, and its energy cost, are <strong>measured rather than asserted</strong>. What the first full run (90 encodes, all&nbsp;&#x1F7E2;) showed:</p>
+  <ul style="margin: 12px 0 18px 20px; font-size: 14px; line-height: 1.7;">
+    <li><strong>Energy:</strong> NVENC uses <strong>2.5&ndash;4.4&times; less energy per minute</strong> of video than the CPU encoder &mdash; and the win is <em>speed</em>, not lower draw: instantaneous wattage is similar (~70&nbsp;W either way); the GPU simply finishes far sooner.</li>
+    <li><strong>Parity:</strong> the &ldquo;GPU is worse, especially AV1&rdquo; effect is real but <strong>only on low-complexity content at low bitrate</strong> (AV1 on Big Buck Bunny trailed by up to ~9 VMAF at 1&nbsp;Mbps). On high-complexity content (Meridian) the gap nearly vanishes &mdash; and NVENC AV1 actually <em>beats</em> libsvtav1 at its default preset at mid-to-high bitrate.</li>
+    <li><strong>Tuning, measured and rejected:</strong> the &ldquo;tuned&rdquo; bundle cost <strong>1.6&ndash;2.8&times; the energy</strong> and <em>lowered</em> VMAF for H.264 and AV1 (adaptive quantisation trades a fidelity metric like VMAF for perceptual quality). So the live encode path keeps the baseline NVENC config; we do not pay energy to make the metric worse.</li>
+  </ul>
+
+  <h3>What an &ldquo;ABR ladder&rdquo; means here</h3>
+  <p>A real delivery encodes the same source at several resolutions so a player can adapt to bandwidth. The calculator&rsquo;s &ldquo;full ABR ladder&rdquo; unit is a <strong>5-rung</strong> ladder: 1080p (the quality-anchor rung, whose bitrate is set by the VMAF target) plus fixed lower rungs at 720p&nbsp;/&nbsp;540p&nbsp;/&nbsp;480p&nbsp;/&nbsp;360p (lower rungs scale per codec). Ladder energy is the sum of all five rungs; the &ldquo;1080p only&rdquo; unit is the top rung alone.</p>
+
+  <p>The calibration is keyed by a <strong>hardware fingerprint</strong> (GPU, CPU, ffmpeg version) and is re-runnable from the Lab when the encode hardware changes &mdash; e.g. when dedicated ASIC/FPGA transcode cards arrive &mdash; so a hardware swap produces a new dataset rather than silently reusing stale numbers. Full method note: <code>docs/encode_parity_calibration_2026-06.md</code>.</p>
+
+  <div class="open-q"><span class="marker">&#9658;</span><span><strong>Fast encoders vs 1&nbsp;Hz sampling.</strong> An NVENC encode of a 30&nbsp;s clip finishes in a few seconds &mdash; too few 1&nbsp;Hz power samples for a tight interval. The calibration repeats each encode back-to-back until at least ~20&nbsp;s of wall-clock has elapsed, then normalises energy by total content encoded. Clip length itself (30&nbsp;s) follows the quality/energy literature (&gt;15&nbsp;s to clear encoder start-up overhead; &ge;10&nbsp;s for a representative VMAF).</span></div>
 
   <h2 id="limits">Known Limitations</h2>
 

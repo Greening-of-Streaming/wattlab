@@ -10,8 +10,15 @@ Contents:
   job_status() — the shared /<feature>/job/{id} response shape.
 """
 import asyncio
+from pathlib import Path
 
 from power import get_power_watts, read_sensors_dict
+
+# Mirrors queue_control.PAUSE_FLAG. When the queue is paused, an operator/tool
+# owns the box (e.g. the encode-parity harness measuring from a separate
+# process) — the 5s meter poll backs off so it does not contend for the P110's
+# exclusive KLAP session. Local path check avoids an import cycle.
+_PAUSE_FLAG = Path("/tmp/owl-paused")
 
 jobs: dict = {}
 
@@ -35,7 +42,10 @@ power_cache: dict = {
 async def power_poller():
     while True:
         try:
-            power_cache["watts"] = await get_power_watts()
+            # Back off the meter while paused so a separate measuring process
+            # (encode-parity harness) owns the P110 without KLAP-session ping-pong.
+            if not _PAUSE_FLAG.exists():
+                power_cache["watts"] = await get_power_watts()
         except Exception:
             pass  # keep stale value on transient errors
         await asyncio.sleep(5)

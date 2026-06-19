@@ -93,6 +93,12 @@ DEFAULTS = {
     "vmaf_enabled": True,
     "vmaf_n_subsample": 1,   # score every Nth frame (TEMPORAL only). 1 = full.
     "vmaf_n_threads": 12,    # libvmaf worker threads (box has 24 cores).
+    # Operator quality target — the VMAF an encode should hit while minimising
+    # energy. 92 is the figure operators most often cite. Anchors the
+    # /video/budget calculator and the encode-parity/calibration study (the
+    # quality the CPU/GPU recipes are tuned and compared at). Display/analysis
+    # anchor only — does NOT alter what /video encodes per-run.
+    "target_vmaf": 92,
     # Pixop partner GPU transcode/upscale (hidden /enhance-run page, Lab-only).
     # The pixop/live image wraps NVEncC; its license is baked INTO the image
     # (/opt/pixop/license.jwt) so OWL supplies NONE. OWL owns its own workdir

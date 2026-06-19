@@ -7,6 +7,67 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 53 — 2026-06-18/19
+
+**Encode-parity & energy-quality calibration — built the harness, ran the first full
+campaign, wired the budget page to real data.** Operators fix a VMAF target (commonly
+92) and minimise energy to hit it. Two questions: (1) can the GPU encoder reach the
+CPU's VMAF — operators say no, "especially AV1"; (2) given an energy budget, how much
+video can I push at target VMAF (the `/video/budget` page). Both need one measured
+table: per (hardware, codec, quality) → bitrate that hits the target, VMAF, Wh/min.
+
+**New harness `parity.py` + `bin/run-encode-parity`** (importable so the bin driver
+and the new `/reconfigure` route share it). Sweeps codec × {CPU, GPU baseline, GPU
+tuned} × bitrate ladder × {BBB, Meridian}, 1080p, through the real measured path
+(`run_single`-style energy + terminal VMAF). Live `/video` gpu.py args UNTOUCHED —
+"tuned" is injected via custom args. Key build decisions:
+- **30s clips** (clip-length literature: >15s energy floor, 10s quality convention,
+  30s sweet spot). But NVENC is so fast a 30s encode finishes in seconds → too few
+  1 Hz power samples. Fix: **repeat the encode back-to-back until ≥20s wall-clock**,
+  normalise energy by total content. Result: all 90 rows 🟢 (20–27 samples each).
+- **Per-row checkpointing** + `complete` flag (a crash mid-run leaves a valid partial).
+- **Operational model: pause, don't stop.** Added a guard so `runtime.power_poller`
+  backs off the 5s meter poll while `/tmp/owl-paused` is set — UI stays up, harness
+  owns the P110. Needed one service restart to deploy (done this session).
+
+**First full run (90 encodes, 79 min, all 🟢)** —
+`results/calibration/encode_parity_nvenc_24c_2026-06-18.json`:
+- **Energy:** NVENC **2.5–4.4× less Wh/min** than CPU (h265 biggest: 0.16 vs 0.71) —
+  the win is SPEED not lower draw (ΔW ~70W for both; GPU just finishes sooner).
+- **Parity:** the "GPU worse, especially AV1" effect is real but ONLY on
+  low-complexity content at low bitrate (AV1/BBB gap up to −8.9 VMAF). On Meridian the
+  gap vanishes and **NVENC AV1 beats libsvtav1** (default preset) at mid-high bitrate.
+- **Tuned NVENC bundle measured and REJECTED for live:** costs 1.6–2.8× energy AND
+  lowers VMAF for h264/av1 (AQ trades metric fidelity for perceptual distribution);
+  only helps h265 at low bitrate. **Recommendation: do NOT flip the live GPU args.**
+
+**`/video/budget` now measured.** `budget_data.py` loads the artifact, interpolates
+the VMAF-vs-achieved-bitrate curves, picks the better GPU profile per codec
+(all → baseline), and the page auto-flips illustrative→measured once a *complete*
+artifact exists (honest banner: 1080p single-rendition, projected ASIC). Null-safe JS.
+
+**`target_vmaf` (default 92) added to `/settings`** (Encoding section). **Method note
+`docs/encode_parity_calibration_2026-06.md`** (Tania-readable, with the literature +
+results). **`/video/budget/reconfigure`** (Lab-only) — status + one-button re-cal that
+launches the proven harness (pause→run→un-pause); built for when the NetInt cards land.
+
+**Budget-page polish + ABR ladder (same session, cont.):** codec pulled out of the
+constraints group into its own **"compare codecs"** axis (it's a comparison dimension,
+not a constraint — Ben). **5-rung ABR ladder** defined and built end-to-end: 1080p
+(VMAF-target, swept) + fixed 720p@2800 / 540p@1600 / 480p@1100 / 360p@800 (H.264 kbps;
+H.265 ×0.6, AV1 ×0.5). Ladder Wh/min = top-rung@target + Σ lower rungs; lower rungs
+measured on cpu + gpu_baseline only (tuned rejected), so `--ladder` adds just 48 encodes
+and MERGES into the existing artifact (no re-running the 90). `budget_data.py` computes
+`ladder_add`; the "Full ABR ladder" toggle is additive on measured data and auto-disables
+until ladder data exists. New **`/methodology#energy-budget`** section (operator question,
+parity findings, ladder definition, fast-encoder caveat); the budget page links straight
+to it. ARCHITECTURE.md updated (parity.py, budget_data.py).
+
+Tests 704. Committed + pushed. ⚠ ONE service restart still pending to load the new
+budget/methodology/reconfigure code. The 48-encode ladder pass runs after this (merges
+into the artifact; page auto-shows the 5-rung ladder once present). Formal `/findings`
+entry deferred (lab-review gated). settings.json excluded from the commit (live state).
+
 ## Session 52 — 2026-06-16
 
 **HDR→4K enhancement unblocked (CR-064 residual #2 closed).** Jon's 2026-06-15

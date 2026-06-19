@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Driver for the encode-parity / calibration harness (wattlab_service/parity.py).
+
+Usage:
+  bin/run-encode-parity --print-only --full     # show every recipe command, no encode
+  bin/run-encode-parity --dry                    # plumbing test: real encodes + VMAF,
+                                                  #   SYNTHETIC energy, no meter, no focus mode
+  bin/run-encode-parity --full [--duration 30]   # full metered matrix (default 30s clips)
+
+REAL runs (--full without --dry) need the meter to themselves:
+  1. Pause the queue so no in-service job runs and the 5s power poller backs off:
+       touch /tmp/owl-paused        (or the /queue-status toggle)
+     NB requires the runtime.power_poller pause-guard to be deployed (one service
+     restart). Without it, stop the service instead: sudo systemctl stop wattlab
+  2. Run this. 3. Un-pause (rm /tmp/owl-paused) or restart the service.
+"""
+import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "wattlab_service"))
+import parity  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(parity.main(sys.argv[1:])))

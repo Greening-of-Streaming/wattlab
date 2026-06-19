@@ -1,15 +1,23 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-16 (Session 52 — HDR→4K enhancement UNBLOCKED. Measured Jon's pixop-live memory-
-#   throttle env vars (PIXOP_ASYNC_CAPACITY_SCALE=0.5 + PIXOP_SR_PROCESSING_THREADS=2 — `_COMBO_ENV`):
-#   drop HDR→4K peak VRAM 94%→85% at NO measurable energy/throughput cost (within run-to-run noise; Jon's
-#   "perf will decrease" warning didn't hold on single-stream 4K SR). So `pixop._COMBO_EXCLUSIONS` now
-#   empty; hdr_4k runs with the throttle applied in build_docker_cmd for hdr_4k ONLY (combo_env), result
-#   stamps `pixop_env`, page shows a "mild throttle" note + tooltip, /methodology carries a reduced-
-#   capacity note. Also: /enhance-run progress bar now feeds `elapsed` to wlRenderProgress (was only on
-#   the placeholder teaser); compare-vs-ffmpeg HDR-disable got a hover tooltip. VRAM insight: peak tracks
-#   OUTPUT res + model, NOT scale ratio (480p→4K 90% < 1080p→4K 94%). NB image still 2026.06.10 (==06.12
-#   on VRAM; Jon's 06-15 FFmpeg-8.1 build NOT pulled). Tests 704. Restart DONE 01:26.)
+# Last updated: 2026-06-19 (Session 53 — ENCODE-PARITY & ENERGY-QUALITY CALIBRATION. New harness `parity.py`
+#   + `bin/run-encode-parity` (importable; shared by the new /reconfigure route): sweeps codec × {CPU, GPU
+#   baseline, GPU tuned} × bitrate × {BBB, Meridian}, 1080p, via the real measured path + terminal VMAF.
+#   Live /video gpu.py args UNTOUCHED (tuned injected as custom args). 30s clips; NVENC too fast for 1Hz so
+#   REPEAT-to-≥20s wall-clock then normalise by content → all 90 rows 🟢. Per-row checkpoint + `complete`.
+#   "Pause don't stop": runtime.power_poller backs off the 5s meter poll while /tmp/owl-paused set.
+#   First full run (90 enc, 79 min, all 🟢; results/calibration/encode_parity_nvenc_24c_2026-06-18.json):
+#   NVENC 2.5–4.4× less Wh/min than CPU (win = SPEED not draw); the "GPU worse esp. AV1" gap is real ONLY
+#   on low-complexity/low-bitrate (AV1/BBB up to −8.9 VMAF) — on Meridian it vanishes & NVENC AV1 BEATS
+#   libsvtav1. Tuned NVENC bundle measured & REJECTED for live (1.6–2.8× energy AND lower VMAF for h264/av1;
+#   AQ trades metric fidelity). /video/budget now auto-flips illustrative→measured via budget_data.py.
+#   target_vmaf=92 on /settings. Method note docs/encode_parity_calibration_2026-06.md. /video/budget/
+#   reconfigure (Lab) = one-button re-cal for NetInt. THEN: codec pulled out to its own "compare codecs"
+#   axis; 5-rung ABR ladder (1080p target + 720/540/480/360 fixed, codec-scaled) built end-to-end —
+#   ladder Wh/min = top@target + Σ lower rungs; `--ladder` merges +48 encodes into the artifact (no
+#   re-run); new /methodology#energy-budget section the budget page links to. Tests 704. COMMITTED+PUSHED.
+#   ⚠ ONE restart still pending to load budget/methodology/reconfigure code; 48-encode ladder pass runs
+#   after. Formal /findings entry deferred (lab-review). settings.json excluded from commit (live state).)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
@@ -155,6 +163,7 @@ CHANGE_REQUESTS_CLOSED.md.
 - S50 (06-13): Marketing email out (A-vs-B home page + C deep-links) · findings enhance-embed renderer + card CSS · compare panels sorted by model size · PCE-AAC audio-only pre-remux (Jon's workaround; paced runs on 5.1-AAC restored, verification run pending). →687.
 - S51 (06-15): conference-demo pre-flight (demo lock = stage-on staging mode; remote = SSH tunnel) · GDPR anonymous-analytics: visit counter (analytics.py) + /audience (hidden Lab) + IP pseudonymisation (no raw IP on disk, 7 legacy files migrated) + /privacy notice. →702. (ccb77a9)
 - S52 (06-16): HDR→4K enhancement unblocked — measured Jon's memory-throttle env vars (VRAM 94→85%, energy/throughput cost within noise), applied to hdr_4k combo ONLY (`_COMBO_ENV`/combo_env), `_COMBO_EXCLUSIONS` emptied, methodology + page "mild throttle" note/tooltip · /enhance-run progress bar fed `elapsed` · compare-disable HDR tooltip. →704.
+- S53 (06-18/19): encode-parity & energy-quality calibration — `parity.py`+`bin/run-encode-parity` harness (repeat-to-20s for NVENC sampling, per-row checkpoint, pause-not-stop poller guard); first 90-encode run (all 🟢) → NVENC 2.5–4.4× less Wh/min than CPU, GPU-worse-esp-AV1 gap is low-complexity/low-bitrate only (Meridian: NVENC AV1 beats libsvtav1), tuned NVENC bundle REJECTED for live (more energy, lower VMAF) · /video/budget auto-flips to measured (`budget_data.py`) · target_vmaf=92 on /settings · method note + /video/budget/reconfigure (Lab re-cal). Tests 704. ⚠ 1 restart pending. →704.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
