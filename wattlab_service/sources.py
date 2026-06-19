@@ -21,6 +21,7 @@ SOURCES = [
     {
         "id": "gos",
         "name": "GoS promo",
+        "character": "Promo / motion graphics — text & sharp edges, very high spatial detail (SI ~57, TI ~8)",
         "credit": "Greening of Streaming",
         "license": None,  # in-house
         "source_url": None,
@@ -38,6 +39,7 @@ SOURCES = [
     {
         "id": "meridian",
         "name": "Meridian 4K",
+        "character": "Cinematic live-action — soft, shallow depth-of-field, dark scenes; low spatial detail (SI ~13, TI ~2), compresses easily",
         "credit": "Netflix Open Content (opencontent.netflix.com)",
         "license": "CC BY 4.0",
         "source_url": "https://opencontent.netflix.com/",
@@ -62,6 +64,7 @@ SOURCES = [
     {
         "id": "bbb",
         "name": "Big Buck Bunny 4K",
+        "character": "3D animation — sharp edges, flat gradients, high detail & motion (SI ~33, TI ~6); banding-prone, harder to compress to a VMAF target",
         "credit": "Blender Foundation / Peach Open Movie Project (peach.blender.org)",
         "license": "CC BY 3.0",
         "source_url": "https://peach.blender.org/",
@@ -209,6 +212,7 @@ def get_grouped_sources() -> list:
         out.append({
             "id":         src["id"],
             "name":       src["name"],
+            "character":  src.get("character"),
             "credit":     src["credit"],
             "license":    src.get("license"),
             "source_url": src.get("source_url"),

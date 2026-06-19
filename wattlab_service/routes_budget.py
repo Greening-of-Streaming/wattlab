@@ -114,8 +114,8 @@ def _demo_fixture() -> dict:
             "illustrative": True,
             "ladder": "4-rung ABR (1080p / 720p / 540p / 360p)",
             "unit": "Wh per minute of source · full ladder",
-            "clip_low": "Big Buck Bunny (low spatial complexity)",
-            "clip_high": "Meridian (high spatial complexity)",
+            "clip_low": "Meridian (soft live-action — low SI/TI)",
+            "clip_high": "Big Buck Bunny (sharp 3D animation — high SI/TI)",
             "single_fraction": _SINGLE_FRACTION,
         },
         "vmaf_targets": _VMAF_TARGETS,
@@ -189,8 +189,10 @@ _STYLES = """
     .bar-row .name small { display: block; color: var(--text-4); font-size: 0.66rem; }
     .bar-track { background: rgba(255,255,255,0.04); border-radius: 3px; height: 30px; position: relative; }
     .bar-fill { background: var(--accent); height: 100%; border-radius: 3px; min-width: 2px;
-                transition: width 0.25s ease; display: flex; align-items: center; }
+                transition: width 0.25s ease; display: flex; align-items: center; overflow: hidden; }
     .bar-fill span { color: #001a10; font-size: 0.72rem; font-weight: 700; padding-left: 0.5rem; white-space: nowrap; }
+    .bar-lbl-out { position: absolute; top: 0; line-height: 30px; color: var(--text-2);
+                   font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
     .bar-row.projected .bar-fill { background: repeating-linear-gradient(45deg,#0a5,#0a5 6px,#084 6px,#084 12px); }
     .bar-row.projected .name, .bar-row.dq .name { color: var(--text-4); }
     .bar-row.dq .bar-track { background: rgba(255,255,255,0.02); }
@@ -257,8 +259,8 @@ def _body(fix: dict) -> str:
   <div class="ctl">
     <label class="h">spatial complexity</label>
     <div class="seg" id="complexity">
-      <button data-v="low" class="on">Low &middot; BBB</button>
-      <button data-v="high">High &middot; Meridian</button>
+      <button data-v="low" class="on">Low &middot; Meridian</button>
+      <button data-v="high">High &middot; BBB</button>
     </div>
   </div>
   <div class="ctl">
@@ -369,8 +371,13 @@ function render() {{
     }}
     const w = Math.max(2, (c.hours / maxHours) * 100);
     const lbl = `${{fmtH(c.hours)}} h · ${{c.wh.toFixed(2)}} Wh/min · ${{c.br}} kbps`;
-    return `<div class="bar-row ${{cls}}">${{name}}<div class="bar-track">`
-      + `<div class="bar-fill" style="width:${{w}}%"><span>${{lbl}}</span></div></div></div>`;
+    // Label inside the fill (dark on accent) only when the bar is wide enough to
+    // hold it; otherwise outside, right of the fill (light on the dark track) so it
+    // never becomes dark-text-on-dark-background on the shorter bars.
+    const inside = w >= 45;
+    const fill = `<div class="bar-fill" style="width:${{w}}%">${{inside ? `<span>${{lbl}}</span>` : ''}}</div>`;
+    const out = inside ? '' : `<span class="bar-lbl-out" style="left:calc(${{w}}% + 6px)">${{lbl}}</span>`;
+    return `<div class="bar-row ${{cls}}">${{name}}<div class="bar-track">${{fill}}${{out}}</div></div>`;
   }}).join('');
   document.getElementById('bars').innerHTML = bars;
 }}

@@ -86,6 +86,12 @@ def _video_source_picker_html() -> str:
             f'{thumb_html}{label_html}'
             f'</div>'
         )
+        if src.get("character"):
+            parts.append(
+                f'<div style="font-size:0.72rem;color:var(--text-5);'
+                f'line-height:1.5;margin:-0.2rem 0 0.5rem 0;font-style:italic">'
+                f'{src["character"]}</div>'
+            )
         for v in src["variants"]:
             key = v["key"]
             parts.append(

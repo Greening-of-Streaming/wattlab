@@ -300,3 +300,27 @@ figure: the multiple depends on whether you mean one rendition or a whole ladder
   more conservative (§4 caveat 2).
 - Lower ladder rungs are reported by energy only — their VMAF (lower resolution vs the
   1080p reference) is not the quality anchor; the top rung carries the VMAF target.
+
+### 9.6 Content complexity (SI/TI) — the "low/high" labels were inverted
+
+The budget page originally labelled BBB "low complexity" and Meridian "high" (the
+clips' loose reputations). Measured ITU-T P.910 SI/TI (`pixop.probe_siti`, 2026-06-19)
+says the opposite — and explains why BBB needs ~2× the bitrate of Meridian to hit
+VMAF 92:
+
+| Clip (120s master) | SI mean | TI mean |
+|--------------------|--------:|--------:|
+| Big Buck Bunny     | **33.0** | 6.2 |
+| Meridian           | **13.1** | 1.7 |
+| GoS promo (50s)    | **56.9** | 7.9 |
+
+BBB (sharp 3D animation, flat gradients, motion) is genuinely high-complexity; Meridian
+(soft cinematic, shallow DoF, dark) is low; the GoS promo (text/graphics) is the most
+spatially demanding of the three. The real-world rule (more complexity → more bitrate
+for the same quality) held all along — only the labels were wrong. Fixed: the
+`/video/budget` complexity toggle now reads **Low · Meridian / High · BBB**, and the
+`/video` source picker carries SI/TI-backed content keywords per clip.
+
+> ⚠ This contradicts the longstanding "Meridian = high spatial complexity" framing in
+> `CLAUDE.md` and elsewhere. That framing should be revisited against SI/TI (separate
+> from this study, since the findings catalog is lab-review-gated).

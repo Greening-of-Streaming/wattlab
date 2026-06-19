@@ -18,7 +18,12 @@ from pathlib import Path
 ARTIFACT_GLOB = str(Path(__file__).resolve().parent.parent
                     / "results" / "calibration" / "encode_parity_*.json")
 
-_CLIP_COMPLEXITY = {"bbb_120s": "low", "meridian_120s": "high"}
+# Complexity by MEASURED ITU-T P.910 SI/TI (2026-06-19): BBB (SI~33) is the
+# high-complexity clip, Meridian (SI~13, soft cinematic) the low one — the opposite
+# of the clips' loose reputations, and the reason higher-complexity correctly costs
+# more bitrate to hit a VMAF target.
+_CLIP_COMPLEXITY = {"meridian_120s": "low", "bbb_120s": "high"}
+_COMPLEXITY_CLIP = {v: k for k, v in _CLIP_COMPLEXITY.items()}
 _CODEC_LABEL = {"h264": "H.264", "h265": "H.265", "av1": "AV1"}
 
 
@@ -156,8 +161,8 @@ def build_recipes(artifact: dict, vmaf_targets: list) -> dict | None:
                 "max_vmaf": max_vmaf, "available": True, "projected": False,
                 "wh_low": wh_low, "wh_high": wh_high,
                 "br_low": br_low, "br_high": br_high,
-                "ladder_add_low": ladder_add(ladder_profile[device], codec, "bbb_120s"),
-                "ladder_add_high": ladder_add(ladder_profile[device], codec, "meridian_120s"),
+                "ladder_add_low": ladder_add(ladder_profile[device], codec, _COMPLEXITY_CLIP["low"]),
+                "ladder_add_high": ladder_add(ladder_profile[device], codec, _COMPLEXITY_CLIP["high"]),
                 "measured_profile": profile,
             })
     if not recipes:
@@ -198,8 +203,8 @@ def measured_fixture(vmaf_targets: list, asic_recipes: list, classes: list,
             "have_ladder": bool(have_ladder),
             "ladder": ladder_lbl,
             "unit": unit,
-            "clip_low": "Big Buck Bunny (low spatial complexity)",
-            "clip_high": "Meridian (high spatial complexity)",
+            "clip_low": "Meridian (soft live-action — low SI/TI)",
+            "clip_high": "Big Buck Bunny (sharp 3D animation — high SI/TI)",
             "gpu_profile": built["gpu_choice"],
             "asic_projected": True,
         },
