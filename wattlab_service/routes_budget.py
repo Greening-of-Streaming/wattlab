@@ -24,14 +24,16 @@ Reversible: this whole module + its one line in main.py's include loop are the
 only places that touch the topic. No measurement-spine code, no settings, no
 persistence, no schema change.
 """
+import csv
 import glob
+import io
 import json
 import os
 import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import ui
 import audience
@@ -193,6 +195,12 @@ _STYLES = """
     .bar-fill span { color: #001a10; font-size: 0.72rem; font-weight: 700; padding-left: 0.5rem; white-space: nowrap; }
     .bar-lbl-out { position: absolute; top: 0; line-height: 30px; color: var(--text-2);
                    font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+    .data-bar { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; margin: 1.2rem 0 0.5rem; }
+    .dl-csv { font-family: monospace; font-size: 0.8rem; color: var(--accent);
+              border: 1px solid var(--accent); border-radius: 4px; padding: 0.4rem 0.9rem;
+              text-decoration: none; }
+    .dl-csv:hover { background: var(--accent); color: #001a10; }
+    .data-note { color: var(--text-5); font-size: 0.72rem; }
     .bar-row.projected .bar-fill { background: repeating-linear-gradient(45deg,#0a5,#0a5 6px,#084 6px,#084 12px); }
     .bar-row.projected .name, .bar-row.dq .name { color: var(--text-4); }
     .bar-row.dq .bar-track { background: rgba(255,255,255,0.02); }
@@ -239,6 +247,14 @@ def _band(fix: dict) -> str:
 
 def _body(fix: dict) -> str:
     fix_json = json.dumps(fix)
+    # Raw-data download only when the page is on measured data (nothing to export
+    # for the illustrative fixture). Lab users also get the re-calibrate link.
+    measured = not fix["meta"].get("illustrative", True)
+    csv_btn = (
+        '<div class="data-bar">'
+        '<a class="dl-csv" href="/video/budget/data.csv" download>&#8681; Download raw data (CSV)</a>'
+        '<span class="data-note">every measured encode &mdash; bitrate, VMAF, Wh/min, confidence</span>'
+        '</div>' if measured else '')
     return f"""
 <h1>Transcode budget &middot; what fits in your energy budget?</h1>
 <div class="subtitle">CR-003 (iso-energy) &times; CR-045 V2 (target VMAF) &middot; companion to <a href="/video" style="color:var(--accent)">/video</a></div>
@@ -289,6 +305,7 @@ def _body(fix: dict) -> str:
 
 <div id="headline" class="headline"></div>
 <div id="bars" class="bars"></div>
+{csv_btn}
 
 <h2 class="sec">Device classes</h2>
 <div class="class-help">Generic hardware classes &mdash; click a class to see example hardware. Specific named models can be measured and listed as a comparison.</div>
@@ -454,6 +471,53 @@ async def budget_page(request: Request):
         fix = demo
     title = "Transcode budget" if not fix["meta"].get("illustrative", True) else "Transcode budget (demo)"
     return ui.render_page(request, title, styles=_STYLES, body=_body(fix))
+
+
+def _artifact_csv():
+    """(filename, csv_text) of the latest measured artifact's per-encode rows, or None.
+    One leading `# …` provenance comment line, then a clean CSV table."""
+    path = budget_data.latest_artifact_path()
+    if not path:
+        return None
+    a = json.loads(Path(path).read_text())
+    rows = a.get("rows", [])
+    if not rows:
+        return None
+    fp = a.get("fingerprint", {})
+    hw = f"{(fp.get('cpu') or {}).get('model', '?')} / {(fp.get('gpu') or {}).get('name', '?')}"
+    ff = fp.get("ffmpeg_version", "?")
+    when = a.get("generated_at", "?")
+    cols = ["clip", "codec", "profile", "encoder_kind", "rung", "height_p",
+            "target_bitrate_kbps", "achieved_bitrate_kbps", "vmaf", "wh_per_min_video",
+            "delta_w", "delta_e_wh_total", "delta_t_s", "n_encodes", "content_s",
+            "poll_count", "confidence_flag"]
+    buf = io.StringIO()
+    buf.write(f"# OWL encode-parity calibration · {hw} · {ff} · measured {when} "
+              f"· method: /methodology#energy-budget\n")
+    w = csv.writer(buf)
+    w.writerow(cols)
+    for r in rows:
+        ach = r.get("achieved_bitrate_bps")
+        w.writerow([
+            r.get("clip"), r.get("codec"), r.get("profile"), r.get("encoder_kind"),
+            r.get("rung", "sweep"), r.get("height", 1080),
+            r.get("target_bitrate_kbps"), round(ach / 1000) if ach else "",
+            r.get("vmaf"), r.get("wh_per_min_video"), r.get("delta_w"),
+            r.get("delta_e_wh_total"), r.get("delta_t_s"), r.get("n_encodes"),
+            r.get("content_s"), r.get("poll_count"), r.get("confidence_flag"),
+        ])
+    return Path(path).stem + ".csv", buf.getvalue()
+
+
+@router.get("/video/budget/data.csv", dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def budget_data_csv(request: Request):
+    out = _artifact_csv()
+    if not out:
+        return Response("No measured calibration data yet.", media_type="text/plain",
+                        status_code=404)
+    fname, body = out
+    return Response(body, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 # ---------------------------------------------------------------------------
