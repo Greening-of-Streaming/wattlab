@@ -1,9 +1,25 @@
 # GoS1 Infrastructure & Backup Context
 # Companion to CLAUDE.md (which covers WattLab project specifics)
-# Last updated: 2026-06-11 (GPU swap recorded; 2026-06-01 CGNAT incident + DuckDNS updater move added)
+# Last updated: 2026-06-19 (box moved to the basement; server + both Tapo plugs given fixed Bbox IPs)
 
 ## Owner
 Ben Schwarz (bs@ctoic.net / EURL CTO INNOVATION CONSULTING / SIREN 508109337)
+
+## Physical Location (2026-06-19)
+GoS1 was relocated to the **basement** — cooler and far less exposed to heatwaves (a fresh
+one is starting in France as of this date). This directly improves **measurement stability**:
+the variance calibration is ambient-sensitive (idle noise floor swings 2–6× in heat waves —
+see WattLab `variance_calibration_ambient_sensitive` memory / CLAUDE.md), so a cooler, steadier
+ambient means calibration and energy runs are more repeatable and the "don't calibrate during a
+heatwave" caveat is largely mitigated. Re-confirm the idle floor at the new location with a fresh
+variance calibration, since the absolute idle baseline may shift slightly with ambient temp.
+
+## Network — fixed IPs (2026-06-19)
+The **server and both Tapo P110 plugs now have fixed/reserved IPs** on the Bbox router (DHCP
+reservations), so they no longer risk re-assignment on lease renewal or router reboot. Addresses
+unchanged: GoS1 server `.62`, outer plug `.159`, inner/primary plug `.91`. This removes a latent
+failure mode for the meter `.env` (`TAPO_P110_IP` / `TAPO_P110_IP_2`) and the external-access /
+DuckDNS path — they were previously DHCP and could have drifted.
 
 ## Disk Layout (May 2026 — two NVMe SSDs)
 

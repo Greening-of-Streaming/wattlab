@@ -53,12 +53,15 @@
 - Idle power: **~79 W display-blanked / ~101 W active display** since the GPU swap (+20 W vs AMD era ~57 W) —
   idle↔load crossover means the swap is a capability/quality upgrade, not a same-workload energy win.
 - Variance calibration: live values in `settings.json` (recal 2026-06-10: idle 1.84%, n=20, cooldown 50s).
-  Ambient-sensitive (2–6× swing in heat waves) — calibrate under normal ambient only.
+  Ambient-sensitive (2–6× swing in heat waves) — calibrate under normal ambient only. **Box moved to the
+  basement 2026-06-19 (cooler, heatwave-resilient → steadier ambient); re-confirm the idle floor there.**
+- Location: **basement since 2026-06-19** (cooler/stable; see GOS1_INFRA.md).
 
 ## Network Topology
 Bbox Wi-Fi 7 (192.168.1.x) ── GoS1 ethernet `.62` · MacBook Wi-Fi · Tapo P110 ×2 daisy-chained (CR-065):
 wall → `.159` (outer, original) → `.91` (inner, primary, "GoS1b-server") → GoS1
-(External-access incidents + DuckDNS updater: see GOS1_INFRA.md.)
+(Server + both plugs now have **fixed/reserved Bbox IPs** — 2026-06-19. External-access incidents +
+DuckDNS updater: see GOS1_INFRA.md.)
 
 ## Thermal Sensors
 - One source of truth: `power.read_sensors_dict()` → `{cpu_tctl, gpu_junction, gpu_ppt_w}`; per-module
