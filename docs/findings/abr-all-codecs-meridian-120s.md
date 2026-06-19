@@ -19,6 +19,7 @@ caveats:
   - "CLAUDE.md prose lists slightly different aggregate numbers (e.g. H.264 CPU 0.83 Wh, GPU 0.37 Wh; H.265 GPU 15s exact). Numbers in this finding are taken verbatim from the stored result file `video/e18a9d57.json` and may diverge from prose written elsewhere."
   - "Cross-codec comparison uses different per-codec bitrate targets (the ABR ladder), not equal bitrate. A within-codec CPU vs GPU comparison is apples-to-apples; the across-codec column is not."
   - "VMAF profile / GOP / B-frame structure on CPU and GPU paths is not yet validated as equivalent — see CR-029 (Tania-led)."
+  - "Meridian is now MEASURED (2026-06-19, ITU-T P.910 SI/TI) to be LOW spatial complexity (SI ~13 / TI ~2, vs Big Buck Bunny SI ~33 / TI ~6) — an easy-to-encode clip, the opposite of its earlier 'high complexity' reputation. So the bitrate→VMAF points here (e.g. 'VMAF 92 at 2 Mbps H.265') are EASY-CONTENT figures and do not generalise — harder content needs more bitrate for the same VMAF. The headline GPU-vs-CPU energy ratios are within-clip and unaffected by this."
 ---
 
 # What was measured

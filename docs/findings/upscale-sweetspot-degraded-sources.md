@@ -2,7 +2,7 @@
 slug: upscale-sweetspot-degraded-sources
 version: 1
 first_measured: 2026-06-12
-last_refined: 2026-06-12
+last_refined: 2026-06-19
 headline: "AI upscaling to 4K pays off where content is worst: restoring degraded SD buys ~20× more quality per Wh than polishing clean HD — and re-processing pristine 4K buys nothing at the highest energy cost"
 claim_short: "SD-dirty → 4K: +2.1 NR-VQA for 14.8 Wh · HD-clean → 4K: +0.23 for 11.9 Wh · pristine 4K → 4K: ±0.0 for 44 Wh (45 s / 60 fps clips, all 🟢)"
 confidence: green
@@ -34,6 +34,7 @@ caveats:
   - "Full-reference scores (PSNR/SSIM/VMAF-4K) are computed against the best practical public copies of the masters (~8–9.5 Mbps H.264 distribution encodes), not true mezzanines."
   - "Per-Wh efficiency comparisons are restricted to the uniform ladder (identical 45 s / 60 fps clips); the real-UGC anchors differ in duration and frame rate, so they anchor the quality curve, not the energy column."
   - "The NR metric rewards plausible detail, not fidelity: outputs that score near-pristine NR can sit 15+ VMAF points below the master (see 'Looking better is not being restored')."
+  - "CONFOUND on learning #3's *attribution* (not its observation): SI/TI measured 2026-06-19 shows BBB is markedly higher spatial/temporal complexity than Meridian (SI ~33 / TI ~6 vs ~13 / ~2). So BBB restoring less faithfully than Meridian may be because BBB is intrinsically HARDER content, not (only) because the model is camera-trained. The observation (Meridian restores more faithfully at every rung) stands; the 'trained on camera content' explanation is now one of two plausible causes. The headline sweet-spot result is unaffected."
 ---
 
 # The result, in one sentence
@@ -69,7 +70,7 @@ All fourteen runs returned 🟢 confidence on the dual-meter instrument (recalib
 
 **2. Quality gain is a property of the input's badness.** With cost fixed per rung, ΔVQA rises monotonically as source quality falls — from ±0.0 (pristine) to +2.1 (worst). The per-Wh spread across the ladder exceeds **100×** (0.142 vs ~0.001). The economic reading: an operator with a restoration budget should spend it on the worst material first, and **never** on already-good 4K, where the same energy buys literally nothing.
 
-**3. Synthetic and cinematic content behave the same — on the NR axis.** The BBB (synthetic animation) and Meridian (cinematic camera) curves overlap within ~0.2 ΔVQA at every matched rung, and their energy columns are near-identical. The difference appears on the **full-reference** axis: Meridian restores more faithfully at every rung (round-trip VMAF 97.6 vs 93.2 on the pristine refs; 67.6 vs 47.4 on the worst rung — a 20-point gap) — consistent with a restoration model trained predominantly on camera content. Perceived improvement is content-agnostic; fidelity recovery is not.
+**3. Synthetic and cinematic content behave the same — on the NR axis.** The BBB (synthetic animation) and Meridian (cinematic camera) curves overlap within ~0.2 ΔVQA at every matched rung, and their energy columns are near-identical. The difference appears on the **full-reference** axis: Meridian restores more faithfully at every rung (round-trip VMAF 97.6 vs 93.2 on the pristine refs; 67.6 vs 47.4 on the worst rung — a 20-point gap) — consistent with a restoration model trained predominantly on camera content **(though BBB's higher measured spatial/temporal complexity — SI ~33 vs ~13 — is an alternative explanation: harder content is harder to restore faithfully; see caveats)**. Perceived improvement is content-agnostic; fidelity recovery is not.
 
 **4. Looking better is not being restored.** The NR scores say enhanced SD-clean output is "near-pristine" (9.01–9.02, within 0.6 of the actual masters); the full-reference scores say those same outputs sit at VMAF 67.7–81.0 against their masters — and the worst rung's output, NR-scored a respectable 7.56, round-trips at VMAF 47.4. The enhancement manufactures plausible detail that a no-reference metric (and plausibly a viewer) rewards, but the original information is not recovered. OWL's standing position — perceptual quality of super-resolution is for the viewer to judge — survives contact with this data: the energy buys *palatability*, not *fidelity*, and the two metrics quantify the difference for the first time on this rig.
 

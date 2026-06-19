@@ -17,6 +17,7 @@ caveats:
   - "Cross-codec VMAF in this run is NOT apples-to-apples — H.264 / H.265 / AV1 ran at different per-codec bitrate targets (4 / 2 / 1.5 Mbps ABR ladder). Only the within-AV1 CPU-vs-GPU comparison at the same 1500 kbps is a fair quality read."
   - "Tiny clips (≤~4 s) fall below the P110 measurement floor for this comparison and correctly flag 🔴; this finding requires ≥10 s of GPU encode runtime."
   - "av1_vaapi hit the 1500 kbps bitrate target (20.3 MB file). libsvtav1 undershot to ~967 kbps actual (14.5 MB file) yet still scored higher VMAF — so SVT-AV1 is markedly more bit-efficient, and the hardware encoder buys its speed/energy advantage by giving up compression quality."
+  - "Meridian is now MEASURED (2026-06-19, ITU-T P.910 SI/TI) to be LOW spatial complexity (SI ~13 / TI ~2) — an easy clip. This HW-vs-SW tradeoff is therefore measured on easy content; on harder content the ~2-VMAF gap and the bit-efficiency penalty may differ (the finding already flags content-sensitivity). The within-AV1 same-1500-kbps comparison on this clip is unaffected. NB this is the frozen AMD-era result (RX 7800 XT / av1_vaapi); it is NOT contradicted by the 2026-06 RTX-5080 NVENC parity run, which is a different encoder."
 ---
 
 # The result, in one sentence
