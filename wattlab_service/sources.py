@@ -86,6 +86,31 @@ SOURCES = [
             },
         ],
     },
+    {
+        "id": "kranjska",
+        "name": "Downhill MTB (Kranjska Gora)",
+        "character": "Fast-action sport — POV downhill mountain biking; extreme spatial & temporal complexity (SI ~101, TI ~45), the hardest-to-compress source on the bench · © Maks Berc (CC BY 3.0)",
+        "credit": "Maks Berc, via Wikimedia Commons",
+        "license": "CC BY 3.0",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Downhill_bike_park_Kranjska_Gora.webm",
+        "vignette": None,
+        "variants": [
+            {
+                "key": "kranjska_120s",
+                "label": "2 min extract",
+                "description": "1920×1440 · 30fps · VP9 · 2min · ~173MB · high temporal complexity",
+                "length": "extract",
+                "path": Path("/home/gos/wattlab/test_content/kranjska_dh_120s.webm"),
+            },
+            {
+                "key": "kranjska_full",
+                "label": "Full 6:40",
+                "description": "1920×1440 · 30fps · VP9 · 6:40 · ~661MB · ⚠ long run",
+                "length": "full",
+                "path": Path("/home/gos/wattlab/test_content/kranjska_dh.webm"),
+            },
+        ],
+    },
 ]
 
 

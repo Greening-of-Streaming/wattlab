@@ -12,9 +12,9 @@ import sources
 
 # --- shape of the new schema ---
 
-def test_sources_has_three_parents():
+def test_sources_parents_in_canonical_order():
     ids = [s["id"] for s in sources.SOURCES]
-    assert ids == ["gos", "meridian", "bbb"]
+    assert ids == ["gos", "meridian", "bbb", "kranjska"]
 
 
 def test_every_parent_has_name_credit_variants():
@@ -127,14 +127,14 @@ def test_get_all_sources_preserves_parent_then_variant_order():
     flat = sources.get_all_sources()
     keys = [s["key"] for s in flat]
     assert keys == ["gos_in_50s", "meridian_120s", "meridian_4k",
-                    "bbb_120s", "bbb_4k"]
+                    "bbb_120s", "bbb_4k", "kranjska_120s", "kranjska_full"]
 
 
 # --- get_grouped_sources (new accessor for the picker) ---
 
 def test_get_grouped_sources_returns_parent_blocks():
     g = sources.get_grouped_sources()
-    assert [p["id"] for p in g] == ["gos", "meridian", "bbb"]
+    assert [p["id"] for p in g] == ["gos", "meridian", "bbb", "kranjska"]
 
 
 def test_get_grouped_sources_each_parent_has_variants_field():
