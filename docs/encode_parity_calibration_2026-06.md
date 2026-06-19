@@ -275,10 +275,28 @@ VMAF-target operator the bundle is the wrong trade on two axes (quality and ener
 the current baseline NVENC config. (If a future workflow optimises for *subjective*
 quality rather than VMAF, revisit `-spatial-aq` for H.265 specifically.)
 
-### 9.4 Caveats specific to this run
+### 9.4 ABR ladder (48 lower-rung encodes, all 🟢)
 
-- Single 30 s segment per source, single 1080p rung. The Meridian "AV1 GPU beats CPU"
-  result is at **libsvtav1's default preset** — a slower SVT preset would likely
-  reclaim the lead; this is a default-vs-default comparison, not SVT's ceiling.
+Full 5-rung ladder energy at VMAF 92, low-complexity (Wh/min of source):
+
+| Codec | CPU 1080p-only | CPU full ladder | GPU 1080p-only | GPU full ladder |
+|-------|---------------:|----------------:|---------------:|----------------:|
+| H.264 | 0.329 | 1.027 | 0.163 | 0.732 |
+| H.265 | 0.674 | 1.905 | 0.167 | 0.791 |
+| AV1   | 0.410 | 1.365 | 0.166 | 0.741 |
+
+**The GPU advantage narrows across the ladder.** At 1080p-only the GPU is up to 4.0×
+cheaper (H.265: 0.674 vs 0.167); on the full 5-rung ladder it is ~1.4–2.4× cheaper
+(H.265: 1.905 vs 0.791 ≈ 2.4×). The lower rungs are cheap on *both* encoders, so they
+dilute the headline 1080p gap — worth stating when quoting a single "GPU is N× greener"
+figure: the multiple depends on whether you mean one rendition or a whole ladder.
+
+### 9.5 Caveats specific to this run
+
+- Single 30 s segment per source. The Meridian "AV1 GPU beats CPU" result is at
+  **libsvtav1's default preset** — a slower SVT preset would likely reclaim the lead;
+  this is a default-vs-default comparison, not SVT's ceiling.
 - VMAF mean pooling; on these mixed-complexity clips the 5th-percentile read would be
   more conservative (§4 caveat 2).
+- Lower ladder rungs are reported by energy only — their VMAF (lower resolution vs the
+  1080p reference) is not the quality anchor; the top rung carries the VMAF target.

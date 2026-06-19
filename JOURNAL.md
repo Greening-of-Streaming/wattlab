@@ -63,10 +63,13 @@ until ladder data exists. New **`/methodology#energy-budget`** section (operator
 parity findings, ladder definition, fast-encoder caveat); the budget page links straight
 to it. ARCHITECTURE.md updated (parity.py, budget_data.py).
 
-Tests 704. Committed + pushed. ⚠ ONE service restart still pending to load the new
-budget/methodology/reconfigure code. The 48-encode ladder pass runs after this (merges
-into the artifact; page auto-shows the 5-rung ladder once present). Formal `/findings`
-entry deferred (lab-review gated). settings.json excluded from the commit (live state).
+Tests 704. Committed + pushed (e124bf1). The 48-encode ladder pass then ran (all 🟢,
+merged → 138-row artifact, has_ladder set, page auto-shows the 5-rung ladder). Full-
+ladder VMAF-92 low-complexity Wh/min: H.264 cpu 1.03 / gpu 0.73, H.265 1.91 / 0.79,
+AV1 1.37 / 0.74 — the GPU advantage NARROWS across the ladder (~4× at 1080p-only →
+~1.4–2.4× full ladder; lower rungs are cheap on both). System back online (un-paused).
+⚠ ONE service restart still pending to load the budget/methodology/reconfigure code.
+Formal `/findings` entry deferred (lab-review gated). settings.json excluded (live state).
 
 ## Session 52 — 2026-06-16
 
