@@ -1,5 +1,4 @@
 """
-Video-enhancement routes — /video-enhance (CR-042 placeholder) and the
 hidden /enhance-run partner-transcode harness (CR-063, Pixop).
 
 Phase 3 of the 2026-06 refactor: per-feature route module. Orchestration
@@ -454,7 +453,7 @@ _ENHANCE_RUN_STYLES = """
 """
 
 _ENHANCE_RUN_HTML = """
-<h1><span style="color:var(--warn)">UNDER DEVELOPMENT</span> Video enhancement <span style="color:var(--warn)">GoS ONLY</span> <span style="font-size:0.7rem;color:var(--warn)">&middot; Lab</span></h1>
+<h1><span style="color:var(--warn)">UNDER DEVELOPMENT</span> Video enhancement <span style="color:var(--warn)">GoS ONLY</span></h1>
 <div class="subtitle">Hidden &middot; member-contributed AI enhancement &middot; energy measurement &middot; <a href="/enhance-run/ladder" style="color:var(--accent)">sweet-spot ladder &rarr;</a></div>
 
 <div class="lead-band">
