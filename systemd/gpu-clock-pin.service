@@ -1,0 +1,46 @@
+# Pin the RTX 5080 SM clock to the energy-efficient knee for NVENC transcode.
+#
+# WHY: NVENC is fixed-function; the CUDA decode+scale stage idle-waits on the
+# encoder. GPU Boost over-clocks those cores for no throughput gain, wasting
+# ~9-12% energy and making energy float with ambient temperature. Pinning the
+# SM clock at the knee (2572 MHz, measured S54 — see
+# docs/findings/gpu-boost-overclocks-fixed-function-nvenc.md and
+# results/calibration/gpu_clock_sweep_2026-06-20.json) removes both effects.
+#
+# INSTALL (owner, needs root):
+#   sudo cp systemd/gpu-clock-pin.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gpu-clock-pin.service
+# VERIFY:
+#   nvidia-smi --query-gpu=clocks.sm,clocks.max.sm --format=csv   # SM capped at ~2572
+# REVERT:
+#   sudo systemctl disable --now gpu-clock-pin.service
+#   sudo nvidia-smi -rgc
+#
+# RECONFIRM after pinning: re-run the /video/budget /reconfigure calibration so
+# the GPU energy column reflects the pinned state.
+
+[Unit]
+Description=Pin NVIDIA RTX 5080 SM clock to NVENC efficiency knee (2572 MHz)
+# Order AFTER nvidia-persistenced: it brings the GPU fully up and creates the
+# device nodes, so nvidia-smi is guaranteed to work by the time we run. Do NOT
+# order After=multi-user.target while also WantedBy it — that is contradictory
+# and can make the oneshot fire before the driver is ready at boot (it then
+# fails silently and no lock is applied).
+After=nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# -lgc <min>,<max>: cap the boost CEILING at 2572 (the efficiency knee) but
+# keep the floor at the GPU's lowest supported clock (180 MHz) so it still
+# downclocks to its ~18 W idle P8 state. Using a single value (or min==max)
+# would PIN the clock high and raise idle draw ~5 W around the clock — net
+# negative for a mostly-idle bench. We want a ceiling, not a fixed clock.
+ExecStartPre=/usr/bin/nvidia-smi -pm 1
+ExecStart=/usr/bin/nvidia-smi -lgc 180,2572
+ExecStop=/usr/bin/nvidia-smi -rgc
+
+[Install]
+WantedBy=multi-user.target

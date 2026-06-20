@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 
 import curated
 import findings as findings_mod
+import gpu
 import llm as llm_mod
 import settings as cfg
 import sources
@@ -24,6 +25,27 @@ from ui import (GOS_URL, JOIN_GOS_URL, _BETA_CHIP, _CONF_HELP_WIDGET,
                 _gpu_runtime, _tier_indicator_html)
 
 router = APIRouter()
+
+
+# Findings are frozen as-measured and legitimately name the hardware they ran
+# on (the AMD-era av1_vaapi finding keeps "vaapi" forever). The /demo teaser,
+# however, is live serve-time chrome that must match the running backend — a
+# finding whose *visible* row names the other backend's encoder reads as a
+# copy-leak, not provenance, and trips the GPU-wording guards. So the teaser
+# hides findings whose rendered surface (headline + claim_short — the only
+# fields _findings_catalog_rows_html shows; scope/tags are NOT rendered) names
+# the OTHER encoder family. The full /findings catalog still lists everything.
+# Routes the live family through gpu.BACKEND.stamp(), per the GPU-copy rule.
+_FOREIGN_BACKEND_TOKENS = {"nvenc": ("vaapi", "rocm"), "vaapi": ("nvenc", "cuda")}
+
+
+def _finding_matches_live_backend(f) -> bool:
+    live_enc = (gpu.BACKEND.stamp() or {}).get("encode", "")
+    foreign = _FOREIGN_BACKEND_TOKENS.get(live_enc, ())
+    if not foreign:
+        return True
+    rendered = (f.headline + " " + f.claim_short).lower()
+    return not any(tok in rendered for tok in foreign)
 
 
 # --- Demo mode ---
@@ -216,6 +238,28 @@ _DEMO_HTML = f"""
     OWL measures the real energy cost of video transcoding and AI inference —
     using a calibrated smart plug, not estimates. Every number on this page
     comes from a live measurement on GoS1, a server in our lab in France.
+  </p>
+
+  <p style="color:var(--text-2);line-height:1.8;max-width:560px">
+    OWL is built by <strong>Greening of Streaming</strong> &mdash; a global,
+    member-driven non-profit working to reduce the energy footprint of streaming.
+  </p>
+
+  <details>
+    <summary>About Greening of Streaming</summary>
+    <p><strong>Mission.</strong> Reduce the environmental impact of streaming
+    through energy-efficient solutions and industry collaboration.</p>
+    <p><strong>No greenwashing.</strong> Every public claim is backed by
+    verifiable data and real-world implementation.</p>
+    <p>A network of member organisations collaborating through Labs &mdash;
+    working groups that produce research, build measurement tools like OWL, and
+    publish recommendations. Membership is open across the streaming ecosystem.</p>
+  </details>
+
+  <p style="margin-top:0.5rem;font-size:0.9rem">
+    <a href="{GOS_URL}" target="_blank" rel="noopener"
+       style="color:var(--accent);text-decoration:none;border-bottom:1px solid var(--border-2);padding-bottom:1px">
+      Learn more at greeningofstreaming.org &rarr;</a>
   </p>
 
   <div class="big-metric" id="live-watts">— W</div>
@@ -1420,7 +1464,7 @@ async def demo_page(request: Request):
     if s.get("findings_enabled", False):
         catalog_items = findings_mod.list_all()
         catalog_items.sort(key=lambda f: f.last_refined, reverse=True)
-        preview = catalog_items[:3]
+        preview = [f for f in catalog_items if _finding_matches_live_backend(f)][:3]
         rows_html = _findings_catalog_rows_html(preview)
         if not preview:
             rows_html = (
