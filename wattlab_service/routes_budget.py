@@ -333,6 +333,9 @@ function recipeCalc(r) {{
   const whArr = r['wh_' + state.complexity] || [];
   const brArr = r['br_' + state.complexity] || [];
   const br = brArr[i], whBase = whArr[i];
+  // Distinguish "not measured for this content at all" (whole tier null — e.g.
+  // sport before its calibration run) from "measured but can't hit the floor".
+  const hasData = brArr.some(x => x != null) && whArr.some(x => x != null);
   // Reachable for THIS complexity: the ceiling clears the floor AND the measured
   // curve actually produced a point (null = target not hit for this content).
   const qualifies = floor <= r.max_vmaf && br != null && whBase != null;
@@ -350,7 +353,7 @@ function recipeCalc(r) {{
     }}
   }}
   const hours = qualifies && state.budget > 0 && wh > 0 ? state.budget / wh / 60 : 0;
-  return {{ floor, qualifies, wh, br, hours }};
+  return {{ floor, qualifies, hasData, wh, br, hours }};
 }}
 
 function render() {{
@@ -375,8 +378,12 @@ function render() {{
       + `VMAF-${{floor}} video &mdash; on <b>${{best.r.device_label}}</b> with ${{best.r.codec_label}} `
       + `(${{best.c.wh.toFixed(2)}} Wh/min, ${{unitName()}}).`;
   }} else {{
-    hl.innerHTML = `No <em>available</em> encoder can reach VMAF ${{floor}} for this content `
-      + `&mdash; loosen the floor or wait for the projected hardware.`;
+    const anyMeasured = rows.some(x => !x.r.projected && x.c.hasData);
+    hl.innerHTML = anyMeasured
+      ? `No <em>available</em> encoder can reach VMAF ${{floor}} for this content `
+        + `&mdash; loosen the floor or wait for the projected hardware.`
+      : `This content hasn't been measured yet &mdash; only projected hardware is shown. `
+        + `Measured recipes appear after the next calibration run.`;
   }}
 
   const bars = rows.map(({{ r, c }}) => {{
@@ -384,8 +391,10 @@ function render() {{
     const name = `<div class="name">${{r.device_label}}<small>${{r.codec_label}}`
       + (r.projected ? ' · projected' : '') + `</small></div>`;
     if (!c.qualifies) {{
-      return `<div class="bar-row dq">${{name}}<div class="reason">can't reach VMAF ${{c.floor}} `
-        + `(max about ${{r.max_vmaf}})</div></div>`;
+      const why = c.hasData
+        ? `can't reach VMAF ${{c.floor}} (max about ${{r.max_vmaf}})`
+        : `not yet measured for this content`;
+      return `<div class="bar-row dq">${{name}}<div class="reason">${{why}}</div></div>`;
     }}
     const w = Math.max(2, (c.hours / maxHours) * 100);
     const lbl = `${{fmtH(c.hours)}} h · ${{c.wh.toFixed(2)}} Wh/min · ${{c.br}} kbps`;
