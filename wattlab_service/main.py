@@ -277,6 +277,7 @@ async def index(request: Request):
     <div class="nav">
         <div class="nav-tour"><a href="/demo">◆ Guided Tour</a></div>
         <div class="nav-video"><a href="/video">▶ Video transcode</a></div>
+        <div class="nav-video"><a href="/enhance-run">✦ ML Video Enhancement</a></div>
         <div class="nav-label">Beta · exploratory</div>
         <div class="nav-beta-note">
             Energy / quality / faithfulness tradeoffs we're investigating.<br>
@@ -286,7 +287,6 @@ async def index(request: Request):
             <a href="/image">Image generation <span class="beta-tag">BETA</span></a>
             <a href="/llm">LLM inference <span class="beta-tag">BETA</span></a>
             <a href="/rag">RAG energy test <span class="beta-tag">BETA</span></a>
-            <a href="/video-enhance">Video enhancement <span class="beta-tag">Concept demo</span></a>
         </div>
         <div class="nav-util">
             <a href="/queue-status">⏱ Queue</a>

@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 import audience
 import pixop
@@ -323,13 +323,11 @@ function showResult(key) {
 """
 
 
-@router.get("/video-enhance", response_class=HTMLResponse,
-         dependencies=[Depends(requires(PUBLIC_PAGE))])
+@router.get("/video-enhance", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_enhance_page(request: Request):
-    return (ui.render_page(request, "Video Enhancement (placeholder)",
-                           styles=_VIDEO_ENHANCE_STYLES,
-                           body=_VIDEO_ENHANCE_HTML)
-            .replace("{PROGRESS_JS}",      _PROGRESS_JS))
+    # The CR-042 concept-demo placeholder was retired (2026-06-20) once the real
+    # /enhance-run harness shipped. Redirect any stale links to the live page.
+    return RedirectResponse(url="/enhance-run", status_code=302)
 
 
 # ── Hidden member-gated AI-enhancement measurement (Pixop Live) ──────────────

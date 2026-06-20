@@ -152,6 +152,18 @@ async def video_page(request: Request):
             '</div>'
         )
 
+    # Operator tool: given an energy budget, how many hours of video at a target
+    # VMAF, by hardware + codec. Always shown (not gated on findings_enabled).
+    budget_link_html = (
+        '<div style="margin-bottom:1.25rem;font-size:0.82rem;color:var(--text-3);'
+        'border-left:2px solid var(--accent);padding-left:0.75rem">'
+        '⚡ <a href="/video/budget" style="color:var(--accent);text-decoration:none">'
+        'Transcode options for a set energy budget →</a>'
+        '<div style="font-size:0.72rem;color:var(--text-5);margin-top:0.15rem">'
+        'How many hours of video fit a given Wh budget, by hardware &amp; codec at a target VMAF.</div>'
+        '</div>'
+    )
+
     return _bake_durations(ui.render_page(request, "Video Test", styles=f"""
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: monospace; background: var(--bg); color: var(--text);
@@ -238,6 +250,8 @@ async def video_page(request: Request):
     </div>
 
     {findings_beta_html}
+
+    {budget_link_html}
 
     <details style="margin-bottom:1.5rem;border-left:2px solid #222;padding-left:1rem">
         <summary style="cursor:pointer;color:var(--text-3);font-size:0.82rem;list-style:none;outline:none">
