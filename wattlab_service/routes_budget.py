@@ -49,9 +49,13 @@ _VMAF_TARGETS = [88, 90, 92, 94, 96]
 # show diminishing returns (the last few VMAF points cost a lot of bits/energy).
 _BR_VMAF_MULT = [0.60, 0.78, 1.00, 1.45, 2.40]
 _WH_VMAF_MULT = [0.70, 0.85, 1.00, 1.30, 1.80]
-# High-complexity content (Meridian) vs low (BBB): more bits to push, more
-# compute to find them.
-_COMPLEXITY = {"low": {"br": 1.0, "wh": 1.0}, "high": {"br": 1.7, "wh": 1.5}}
+# Content complexity multipliers vs the low anchor: more bits to push, more
+# compute to find them. Three measured tiers — low (Meridian, SI~13/TI~2), high
+# (BBB, SI~33/TI~6), sport (Kranjska downhill MTB, SI~101/TI~45). Sport measured
+# to need ~3–4× the bitrate of Meridian for VMAF 92 (~12 Mbps h264 vs ~3 Mbps).
+_COMPLEXITY = {"low":   {"br": 1.0, "wh": 1.0},
+               "high":  {"br": 1.7, "wh": 1.5},
+               "sport": {"br": 3.5, "wh": 2.8}}
 # Single top rendition as a fraction of the full ABR ladder's cost.
 _SINGLE_FRACTION = 0.55
 
@@ -106,10 +110,12 @@ def _demo_fixture() -> dict:
                 "max_vmaf": maxv[dev][codec],
                 "available": available,
                 "projected": projected,
-                "wh_low":  [round(base_wh * m * _COMPLEXITY["low"]["wh"], 3) for m in _WH_VMAF_MULT],
-                "wh_high": [round(base_wh * m * _COMPLEXITY["high"]["wh"], 3) for m in _WH_VMAF_MULT],
-                "br_low":  [round(base_br * m * _COMPLEXITY["low"]["br"]) for m in _BR_VMAF_MULT],
-                "br_high": [round(base_br * m * _COMPLEXITY["high"]["br"]) for m in _BR_VMAF_MULT],
+                "wh_low":   [round(base_wh * m * _COMPLEXITY["low"]["wh"], 3) for m in _WH_VMAF_MULT],
+                "wh_high":  [round(base_wh * m * _COMPLEXITY["high"]["wh"], 3) for m in _WH_VMAF_MULT],
+                "wh_sport": [round(base_wh * m * _COMPLEXITY["sport"]["wh"], 3) for m in _WH_VMAF_MULT],
+                "br_low":   [round(base_br * m * _COMPLEXITY["low"]["br"]) for m in _BR_VMAF_MULT],
+                "br_high":  [round(base_br * m * _COMPLEXITY["high"]["br"]) for m in _BR_VMAF_MULT],
+                "br_sport": [round(base_br * m * _COMPLEXITY["sport"]["br"]) for m in _BR_VMAF_MULT],
             })
     return {
         "meta": {
@@ -118,6 +124,7 @@ def _demo_fixture() -> dict:
             "unit": "Wh per minute of source · full ladder",
             "clip_low": "Meridian (soft live-action — low SI/TI)",
             "clip_high": "Big Buck Bunny (sharp 3D animation — high SI/TI)",
+            "clip_sport": "Kranjska Gora downhill MTB (high SI/TI — sport)",
             "single_fraction": _SINGLE_FRACTION,
         },
         "vmaf_targets": _VMAF_TARGETS,
@@ -273,17 +280,11 @@ def _body(fix: dict) -> str:
     <div>&ge; <span id="vmafRead" class="vmaf-read">92</span></div>
   </div>
   <div class="ctl">
-    <label class="h">spatial complexity</label>
+    <label class="h">content complexity</label>
     <div class="seg" id="complexity">
-      <button data-v="low" class="on">Low &middot; Meridian</button>
-      <button data-v="high">High &middot; BBB</button>
-    </div>
-  </div>
-  <div class="ctl">
-    <label class="h">temporal complexity</label>
-    <div class="seg">
-      <button class="on">Standard</button>
-      <button disabled title="sports clip — not implemented yet">High &middot; sport (soon)</button>
+      <button data-v="low" class="on" title="Meridian — soft live-action, SI~13/TI~2">Low &middot; Meridian</button>
+      <button data-v="high" title="Big Buck Bunny — sharp 3D animation, SI~33/TI~6">High &middot; BBB</button>
+      <button data-v="sport" title="Kranjska Gora downhill MTB — high spatial AND temporal, SI~101/TI~45">Sport &middot; MTB</button>
     </div>
   </div>
   <div class="ctl">
@@ -329,8 +330,8 @@ function unitName() {{
 function recipeCalc(r) {{
   const i = state.vmafIdx;
   const floor = FIX.vmaf_targets[i];
-  const whArr = state.complexity === 'low' ? r.wh_low : r.wh_high;
-  const brArr = state.complexity === 'low' ? r.br_low : r.br_high;
+  const whArr = r['wh_' + state.complexity] || [];
+  const brArr = r['br_' + state.complexity] || [];
   const br = brArr[i], whBase = whArr[i];
   // Reachable for THIS complexity: the ceiling clears the floor AND the measured
   // curve actually produced a point (null = target not hit for this content).
@@ -340,7 +341,7 @@ function recipeCalc(r) {{
     if (FIX.meta.illustrative === false) {{
       // Measured: whBase is the 1080p top rung. Full ladder ADDS the measured lower
       // rungs (fixed-bitrate); single = top rung only.
-      const add = (state.complexity === 'low' ? r.ladder_add_low : r.ladder_add_high) || 0;
+      const add = r['ladder_add_' + state.complexity] || 0;
       wh = whBase + (state.unit === 'ladder' ? add : 0);
     }} else {{
       // Illustrative: the fixture anchor IS the full ladder; single is a fraction.
@@ -440,7 +441,8 @@ document.getElementById('sponsor').textContent = FIX.sponsorship_note;
 const _measured = FIX.meta.illustrative === false;
 document.getElementById('footnote').innerHTML =
   `Unit: ${{FIX.meta.unit}} &mdash; ${{FIX.meta.ladder}}. Content: `
-  + `${{FIX.meta.clip_low}} vs ${{FIX.meta.clip_high}}. `
+  + `${{FIX.meta.clip_low}}, ${{FIX.meta.clip_high}}`
+  + (FIX.meta.clip_sport ? `, ${{FIX.meta.clip_sport}}` : ``) + `. `
   + (_measured
       ? `Wh/min and bitrate are interpolated from the measured VMAF-vs-bitrate points; a target above a `
         + `recipe's measured ceiling shows as "can't reach". GPU figures use the better of the baseline / `

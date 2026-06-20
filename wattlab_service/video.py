@@ -854,6 +854,11 @@ async def _attach_vmaf(sides: list, input_path: Path, job_id: str,
         jobs[job_id]["stage"] = "vmaf"
         jobs[job_id]["vmaf_total"] = len(scorable)
         jobs[job_id]["vmaf_done"] = 0
+    # Scored SERIALLY on purpose. Concurrency was measured (S54) to give zero
+    # speedup: a single libvmaf pass already saturates memory bandwidth on this box
+    # (n_threads=24 is no faster than 12; two concurrent passes each run at half
+    # speed → 2× total). The only real lever is vmaf_n_subsample, but it biases the
+    # score ~1 VMAF on high-motion content, so it's left off for calibration fidelity.
     loop = asyncio.get_event_loop()
     for r in scorable:
         out = UPLOAD_DIR / f"{job_id}_{r['preset_key']}_out.mp4"

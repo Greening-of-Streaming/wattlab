@@ -69,10 +69,16 @@ ARTIFACT_DIR = Path(__file__).resolve().parent.parent / "results" / "calibration
 TRIM_DIR = Path("/tmp/wattlab_parity_clips")
 SCHEMA = "encode-parity/v1"
 
-# Canonical reference clips (low vs high spatial/temporal complexity).
+# Canonical reference clips, by MEASURED ITU-T P.910 SI/TI (2026-06-19), NOT by
+# their loose reputations: Meridian is LOW complexity (SI~13 / TI~2, soft
+# cinematic), BBB is HIGH spatial (SI~33 / TI~6, sharp 3D animation), and the
+# Kranjska downhill-MTB clip is the SPORT tier — high spatial AND high temporal
+# (SI~101 / TI~45). Higher complexity correctly needs more bitrate to hit a VMAF
+# target (sport ~12 Mbps h264 for VMAF 92 vs Meridian's ~3 Mbps).
 CLIPS = {
-    "bbb_120s":      Path("/home/gos/wattlab/test_content/bbb_120s.mp4"),       # low
-    "meridian_120s": Path("/home/gos/wattlab/test_content/meridian_120s.mp4"),  # high
+    "meridian_120s": Path("/home/gos/wattlab/test_content/meridian_120s.mp4"),  # low
+    "bbb_120s":      Path("/home/gos/wattlab/test_content/bbb_120s.mp4"),        # high
+    "kranjska_120s": Path("/home/gos/wattlab/test_content/kranjska_dh_120s.mp4"),  # sport
 }
 
 CPU_ENCODER = {"h264": "libx264", "h265": "libx265", "av1": "libsvtav1"}
@@ -212,13 +218,19 @@ class Campaign:
                                      # 0 = single encode (dry/plumbing).
     ladder_rungs: list = field(default_factory=list)  # lower ABR rungs [(height, h264_kbps)]
                                      # measured fixed-bitrate on cpu + gpu_baseline only.
+    clip_bitrates: dict = field(default_factory=dict)  # {clip_key: {codec: [kbps]}} per-clip
+                                     # sweep override (e.g. sport's taller ladder); clips not
+                                     # listed fall back to self.bitrates.
+
+    def _bitrates_for(self, clip_key: str) -> dict:
+        return self.clip_bitrates.get(clip_key, self.bitrates)
 
     def recipes(self):
         """Yield recipe dicts in a stable order: first the 1080p VMAF-target SWEEP
         (all profiles), then the fixed-bitrate LADDER lower rungs (cpu + gpu_baseline)."""
         for clip_key in self.clips:
             for codec in self.codecs:
-                for bps in self.bitrates.get(codec, []):
+                for bps in self._bitrates_for(clip_key).get(codec, []):
                     for profile in self.profiles:
                         for rep in range(self.reps):
                             yield {"clip": clip_key, "codec": codec, "profile": profile,
@@ -243,6 +255,16 @@ FULL_BITRATES = {
     "av1":  [1000, 1800, 2800, 4000, 6000],
 }
 
+# Sport (high SI/TI) needs ~3–4× the bitrate to reach the same VMAF, so the normal
+# ladder tops out BELOW the VMAF-92 target for it. Measured h264 curve on Kranjska:
+# 4 Mbps→70, 8→86, 12→~92, 16→96.5. These taller ladders keep the target interior
+# to the measured range for all three codecs (h265 ~0.6×, av1 ~0.5× of h264).
+SPORTS_BITRATES = {
+    "h264": [4000, 8000, 12000, 16000, 20000],
+    "h265": [2500, 5000, 7500, 10000, 13000],
+    "av1":  [2000, 4000, 6000, 8000, 11000],
+}
+
 
 def dry_campaign() -> Campaign:
     """Tiny plumbing test: one codec, all three profiles, one bitrate, short clip."""
@@ -258,10 +280,12 @@ def full_campaign(duration_s: Optional[int]) -> Campaign:
     """Full matrix: 1080p VMAF-target sweep (parity) + the lower ABR-ladder rungs."""
     s = cfg.load()
     return Campaign(
-        clips=["bbb_120s", "meridian_120s"],
+        clips=["meridian_120s", "bbb_120s", "kranjska_120s"],
         codecs=["h264", "h265", "av1"],
         profiles=["cpu", "gpu_baseline", "gpu_tuned"],
-        bitrates=FULL_BITRATES, duration_s=duration_s,
+        bitrates=FULL_BITRATES,
+        clip_bitrates={"kranjska_120s": SPORTS_BITRATES},
+        duration_s=duration_s,
         baseline_polls=int(s.get("baseline_polls", 10)),
         cooldown_s=int(s.get("video_cooldown_s", 60)), reps=1,
         min_task_s=20.0, ladder_rungs=list(_LADDER_LOWER),
@@ -273,7 +297,7 @@ def ladder_campaign(duration_s: Optional[int]) -> Campaign:
     existing parity run without re-measuring the 90 sweep encodes."""
     s = cfg.load()
     return Campaign(
-        clips=["bbb_120s", "meridian_120s"],
+        clips=["meridian_120s", "bbb_120s", "kranjska_120s"],
         codecs=["h264", "h265", "av1"],
         profiles=[],                      # no 1080p sweep
         bitrates={}, duration_s=duration_s,

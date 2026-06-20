@@ -22,8 +22,12 @@ ARTIFACT_GLOB = str(Path(__file__).resolve().parent.parent
 # high-complexity clip, Meridian (SI~13, soft cinematic) the low one — the opposite
 # of the clips' loose reputations, and the reason higher-complexity correctly costs
 # more bitrate to hit a VMAF target.
-_CLIP_COMPLEXITY = {"meridian_120s": "low", "bbb_120s": "high"}
+# Three measured complexity tiers: low (Meridian, SI~13/TI~2), high (BBB,
+# SI~33/TI~6), sport (Kranjska downhill-MTB, SI~101/TI~45 — high spatial AND
+# temporal). Sport needs a taller bitrate sweep to reach VMAF 92 (parity.SPORTS_BITRATES).
+_CLIP_COMPLEXITY = {"meridian_120s": "low", "bbb_120s": "high", "kranjska_120s": "sport"}
 _COMPLEXITY_CLIP = {v: k for k, v in _CLIP_COMPLEXITY.items()}
+_TIERS = ("low", "high", "sport")
 _CODEC_LABEL = {"h264": "H.264", "h265": "H.265", "av1": "AV1"}
 
 
@@ -135,12 +139,12 @@ def build_recipes(artifact: dict, vmaf_targets: list) -> dict | None:
         for codec in codecs:
             profile = device_profiles[device](codec)
             sel = [r for r in sweep if r["codec"] == codec and r["profile"] == profile]
-            by_cx = {"low": [], "high": []}
+            by_cx = {t: [] for t in _TIERS}
             for r in sel:
                 cx = _CLIP_COMPLEXITY.get(r["clip"])
-                if cx:
+                if cx in by_cx:
                     by_cx[cx].append(r)
-            if not by_cx["low"] and not by_cx["high"]:
+            if not any(by_cx[t] for t in _TIERS):
                 continue
 
             def arrays(cx_rows):
@@ -150,21 +154,23 @@ def build_recipes(artifact: dict, vmaf_targets: list) -> dict | None:
                 whs = [_wh_at_bitrate(cx_rows, b) if b else None for b in brs]
                 return brs, whs
 
-            br_low, wh_low = arrays(by_cx["low"])
-            br_high, wh_high = arrays(by_cx["high"])
+            br = {t: arrays(by_cx[t])[0] for t in _TIERS}
+            wh = {t: arrays(by_cx[t])[1] for t in _TIERS}
             max_vmaf = round(max((r["vmaf"] for r in sel), default=0))
-            recipes.append({
+            rec = {
                 "device": device,
                 "device_label": {"cpu": "CPU · general-purpose cores",
                                  "gpu": "GPU · hardware encoder"}[device],
                 "codec": codec, "codec_label": _CODEC_LABEL.get(codec, codec.upper()),
                 "max_vmaf": max_vmaf, "available": True, "projected": False,
-                "wh_low": wh_low, "wh_high": wh_high,
-                "br_low": br_low, "br_high": br_high,
-                "ladder_add_low": ladder_add(ladder_profile[device], codec, _COMPLEXITY_CLIP["low"]),
-                "ladder_add_high": ladder_add(ladder_profile[device], codec, _COMPLEXITY_CLIP["high"]),
                 "measured_profile": profile,
-            })
+            }
+            for t in _TIERS:
+                rec[f"wh_{t}"] = wh[t]
+                rec[f"br_{t}"] = br[t]
+                rec[f"ladder_add_{t}"] = ladder_add(
+                    ladder_profile[device], codec, _COMPLEXITY_CLIP[t])
+            recipes.append(rec)
     if not recipes:
         return None
     return {"recipes": recipes, "gpu_choice": gpu_choice, "have_ladder": have_ladder}
@@ -205,6 +211,7 @@ def measured_fixture(vmaf_targets: list, asic_recipes: list, classes: list,
             "unit": unit,
             "clip_low": "Meridian (soft live-action — low SI/TI)",
             "clip_high": "Big Buck Bunny (sharp 3D animation — high SI/TI)",
+            "clip_sport": "Kranjska Gora downhill MTB (high SI/TI — sport)",
             "gpu_profile": built["gpu_choice"],
             "asic_projected": True,
         },
