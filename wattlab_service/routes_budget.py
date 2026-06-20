@@ -604,8 +604,9 @@ def _reconfigure_body(local: bool, st: dict) -> str:
                        "is showing illustrative data.</div>")
     controls = (
         "<button id='runBtn' onclick='startRun()'>▶ Run full calibration</button>"
-        "<div class='rc-note'>Sweeps 90 encodes (3 codecs × CPU/GPU baseline+tuned × 5 bitrates "
-        "× BBB + Meridian), ~80 min. <b>Pauses the queue</b> for the duration (UI stays up) and "
+        "<div class='rc-note'>Sweeps 207 encodes — 135 VMAF-target (3 codecs × CPU/GPU baseline+tuned "
+        "× 5 bitrates × Meridian + BBB + Sport/MTB) plus 72 ABR-ladder rungs — ~2.5–3 hr. "
+        "<b>Pauses the queue</b> for the duration (UI stays up) and "
         "needs the box otherwise idle. On completion <code>/video/budget</code> updates automatically. "
         "Re-run when the encode hardware changes (e.g. NetInt ASIC cards).</div>"
         "<div id='rcMsg'></div>"
