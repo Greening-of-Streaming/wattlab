@@ -130,6 +130,30 @@ DEFAULTS = {
     "enhance_upload_ttl_h": 12,
     "enhance_template_sdr": "nvencc_fhd_709_20mbps.args",
     "enhance_template_hdr": "nvencc_fhd_pq_20mbps.args",
+    # --- Prepare REM Files (/prepare-rem, Lab-only) — REM↔OWL integration ---
+    # Encode a source to a constant TARGET QUALITY (VMAF), then wrap it in a
+    # timer + black/white/black marker structure so REM can delimit the analysis
+    # window during device playback. Bitrate is the free variable, quality the
+    # constant target. See docs / the meeting spec (2026-06-23).
+    "rem_target_vmaf": 92,            # default quality target (operator-overridable per run)
+    "rem_vmaf_tolerance": 0.5,        # accept when |measured - target| <= this
+    "rem_max_iters": 6,              # bitrate-search iteration cap on the excerpt
+    # Segment layout (seconds) → [timer][black][white][black][video][tail] ≈ 10 min.
+    "rem_timer_s": 60,
+    "rem_marker_s": 30,              # each of the three black/white/black markers
+    "rem_video_s": 390,             # 6.5 min of content
+    "rem_tail_s": 60,
+    # The bitrate search runs on a short representative excerpt (the bitrate→VMAF
+    # curve is content-driven, ~duration-invariant for ABR/CBR), then ONE full
+    # encode at the converged bitrate confirms VMAF on the deliverable.
+    "rem_search_excerpt_s": 120,
+    # Pluggable timer asset (Simon delivers later): a shell script (run with
+    # output-path + W H fps dur args) takes precedence, else a pristine mezzanine
+    # is normalised to the encode params, else OWL generates a lavfi placeholder.
+    "rem_timer_script_path": "",
+    "rem_timer_mezzanine_path": "",
+    # Generated 10-min REM files live here (large — hundreds of MB to GB; NOT /tmp).
+    "rem_output_dir": "/srv/data/owl/rem_out",
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
     # CR-015 — auto-lower the maintenance flag after this many minutes of

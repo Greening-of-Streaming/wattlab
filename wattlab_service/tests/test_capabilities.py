@@ -268,6 +268,7 @@ def test_required_tier_table_snapshot():
         "settings_write":      Tier.Lab,
         "variance_run":        Tier.Lab,
         "benchmark_run":       Tier.Lab,   # CR-061
+        "prepare_rem":         Tier.Lab,   # REM↔OWL — /prepare-rem run/upload/delete
     }
     assert capabilities._REQUIRED_TIER == expected
 

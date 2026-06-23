@@ -59,6 +59,11 @@ SETTINGS_READ_FULL = "settings_read_full" # render-mode predicate (editable inpu
 SETTINGS_WRITE     = "settings_write"
 VARIANCE_RUN       = "variance_run"
 BENCHMARK_RUN      = "benchmark_run"       # CR-061 — launch/cancel the in-app overnight benchmark
+PREPARE_REM        = "prepare_rem"         # REM↔OWL integration — /prepare-rem hidden Lab page: encode a
+                                           # source to a target VMAF + wrap it in timer/marker structure for
+                                           # REM device-playback experiments (the generated file's SHARE link
+                                           # is intentionally un-gated, PUBLIC_PAGE, so a remote collaborator
+                                           # can download it without LAN/SSH — security by unguessable token).
 
 
 # --- Capability → minimum tier ----------------------------------------------
@@ -95,6 +100,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     SETTINGS_WRITE:     Tier.Lab,
     VARIANCE_RUN:       Tier.Lab,
     BENCHMARK_RUN:      Tier.Lab,
+    PREPARE_REM:        Tier.Lab,
 }
 
 

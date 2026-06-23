@@ -55,6 +55,7 @@ import routes_methodology
 import routes_mockups   # TEMPORARY — Marketing Lab landing mockups, delete with the module
 import routes_privacy
 import routes_rag
+import routes_rem
 import routes_results
 import routes_settings
 import routes_video
@@ -62,7 +63,7 @@ import routes_video
 for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_demo,
                  routes_enhance, routes_findings, routes_image, routes_llm,
                  routes_methodology, routes_mockups, routes_privacy, routes_rag,
-                 routes_results, routes_settings, routes_video):
+                 routes_rem, routes_results, routes_settings, routes_video):
     app.include_router(_feature.router)
 
 # Serve bundled assets (owl logo, favicon, wl-*.js bundles) from
@@ -291,6 +292,7 @@ async def index(request: Request):
         <div class="nav-util">
             <a href="/queue-status">⏱ Queue</a>
             <a href="/benchmark">📊 Benchmarks</a>
+            <a href="/prepare-rem">🛰 Prepare REM Files</a>
             <a href="/settings">⚙ Settings</a>
             <a href="/methodology">📐 Methodology</a>
         </div>
