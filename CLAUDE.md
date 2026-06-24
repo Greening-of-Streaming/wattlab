@@ -41,6 +41,7 @@
 - "Not eco-warriors. Just people who dislike waste."
 - If it can't be measured, it shouldn't be asserted.
 - Separate device / network / data center / production+storage impacts explicitly.
+- **NEVER claim that more data / bitrate / bandwidth means more *network* energy** (in findings, UI copy, comments, email — anywhere public). GoS does not accept that bandwidth→energy link: it's non-trivial and contested (networks run largely fixed-power regardless of utilisation). Report the delivery-side delta as a DATA/storage/bandwidth *requirement* (bytes, kbps), not as Wh. OWL measures device-layer energy only; the network is excluded, not modelled. "Networks use energy" (with attribution caveats) is fine; "extra bits ⇒ extra network energy" is not.
 - State scoping assumptions. Signal uncertainty. Traffic Light Confidence on all claims.
 - Audience: CTOs, operators, infrastructure players, policymakers.
 
