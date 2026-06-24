@@ -328,6 +328,31 @@ def test_cr056_image_finding_renders_with_image_dispatcher():
     assert "image: window.wlRenderImageCard" in body
 
 
+def test_calibration_finding_renders_and_serves_artifact():
+    """A finding may cite the fingerprint-keyed encode-parity calibration
+    artifact (parity.py), not just per-job results. The page must (1) embed a
+    `data-type="calibration"` placeholder mapped to wlRenderCalibrationCard,
+    and (2) the /findings/source endpoint must serve the matrix artifact —
+    resolved by file path, since `calibration` has no per-job loader."""
+    r = client.get("/findings/hevc-h264-fallback-energy")
+    assert r.status_code == 200
+    body = r.text
+    assert 'data-type="calibration"' in body
+    assert "calibration: window.wlRenderCalibrationCard" in body
+    assert "window.wlRenderCalibrationCard = function" in body
+    # The cited artifact downloads via the scoped finding-source carve-out.
+    dl = client.get("/findings/source/calibration/2026-06-20/download.json")
+    assert dl.status_code == 200, dl.text
+    assert dl.json().get("schema") == "encode-parity/v1"
+
+
+def test_calibration_source_rejects_uncited_date():
+    """The calibration carve-out is still scoped to cited artifacts only —
+    an arbitrary date that no finding cites must 404, not leak a sweep."""
+    r = client.get("/findings/source/calibration/1999-01-01/download.json")
+    assert r.status_code == 404
+
+
 # --- CR-058: /demo Findings step rewire ------------------------------------
 
 def test_demo_findings_step_shows_catalog_preview_when_enabled():

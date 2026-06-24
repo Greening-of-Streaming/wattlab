@@ -139,6 +139,36 @@ def _finding_page_html(f, public_base_url: str) -> str:
     # text gives clear progression and matches the lab-look fidelity goal.
     hydrate_js = """
 <script>
+// Calibration sweeps (parity.py) are not single measurements — they are a
+// fingerprinted matrix of encodes (codec x profile x bitrate x clip). There is
+// no per-job card to reuse, so this renderer summarises the artifact: what ran,
+// on what hardware, and how to get the raw rows. Defensive against missing keys.
+window.wlRenderCalibrationCard = function(o){
+  const d = (o && o.result) || {};
+  const fp = d.fingerprint || {};
+  const proto = d.protocol || {};
+  const rows = Array.isArray(d.rows) ? d.rows : [];
+  const codecs = [...new Set(rows.map(r => r.codec).filter(Boolean))].sort();
+  const clips = (proto.clips || [...new Set(rows.map(r => r.clip).filter(Boolean))]);
+  const profiles = [...new Set(rows.map(r => r.profile).filter(Boolean))].sort();
+  const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const kpi = (v, l) => '<div class="kpi"><div class="val">' + esc(v) + '</div><div class="lbl">' + esc(l) + '</div></div>';
+  const gpu = (fp.gpu && fp.gpu.name) || '—';
+  const cpu = (fp.cpu && fp.cpu.model) || '—';
+  return '<div class="result-card">'
+    + '<div class="headline">Encode-parity calibration sweep — ' + rows.length + ' encodes'
+    + (d.complete ? '' : ' (incomplete)') + '</div>'
+    + '<div class="kpi-row">'
+    + kpi(rows.length, 'rows (codec x profile x bitrate x clip)')
+    + kpi(codecs.join(' / ') || '—', 'codecs')
+    + kpi(clips.length, 'sources')
+    + kpi(profiles.join(' / ') || '—', 'encode profiles')
+    + '</div>'
+    + '<div class="prev-note">' + esc(gpu) + ' (NVENC) · ' + esc(cpu)
+    + ' · ' + esc(proto.scale || '1080p') + ' · ' + esc(d.generated_at || '') + '</div>'
+    + '<div class="conf-badge">Matrix artifact — download the raw rows below for per-encode Wh/min, VMAF, bitrate and confidence.</div>'
+    + '</div>';
+};
 (async function hydrateFindingEmbeds(){
   const els = document.querySelectorAll('.finding-embed');
   const renderers = {
@@ -146,6 +176,7 @@ def _finding_page_html(f, public_base_url: str) -> str:
     llm: window.wlRenderLLMCard,
     image: window.wlRenderImageCard,
     rag: window.wlRenderRAGCard,
+    calibration: window.wlRenderCalibrationCard,
     enhance: window.wlRenderEnhanceCard
   };
   for (const el of els) {
@@ -456,21 +487,31 @@ async def finding_page(slug: str, request: Request):
 @router.get("/findings/source/{job_type}/{job_id}/download.json",
          dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def finding_source_result(job_type: str, job_id: str):
-    if job_type not in ("video", "llm", "image", "enhance"):
+    # `calibration` is the fingerprint-keyed sweep artifact (parity.py), not a
+    # per-job result — it is loaded by file path below, not via load_result.
+    if job_type not in ("video", "llm", "image", "enhance", "calibration"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
-    # Set of (type, token) the published catalog cites, with token normalised
-    # the same way the embed JS / result_download_url do (bare job_id = last
-    # underscore-separated segment), so date-prefixed legacy ids match too.
-    cited = set()
+    # Map (type, token) → full cited id, with token normalised the same way the
+    # embed JS / result_download_url do (bare job_id = last underscore-separated
+    # segment), so date-prefixed legacy ids match too. We keep the FULL id so a
+    # calibration filename (underscores throughout) can be resolved unambiguously.
+    cited: dict[tuple[str, str], str] = {}
     for f in findings_mod.list_all():
         for rid in f.source_result_ids:
             if "/" not in rid:
                 continue
             t, tail = rid.split("/", 1)
-            cited.add((t, tail.split("_")[-1]))
-    if (job_type, job_id.split("_")[-1]) not in cited:
+            cited[(t, tail.split("_")[-1])] = rid
+    full_id = cited.get((job_type, job_id.split("_")[-1]))
+    if full_id is None:
         return JSONResponse({"error": "Not a cited finding source"}, status_code=404)
-    data = load_result(job_type, job_id, visitor_key=None)
+    if job_type == "calibration":
+        # Resolve by the full cited id (not the truncated job_id) — the date
+        # tail alone could glob-match a sibling sweep on the same day.
+        path = findings_mod.resolve_result_path(full_id)
+        data = json.loads(path.read_text(encoding="utf-8")) if path else None
+    else:
+        data = load_result(job_type, job_id, visitor_key=None)
     if not data:
         return JSONResponse({"error": "Not found"}, status_code=404)
     content = json.dumps(data, indent=2)
