@@ -175,6 +175,17 @@ DEFAULTS = {
     # meridian_120s asset). Member/Lab = 1024 MB (today's 1GB).
     "upload_size_anonymous_mb": 100,
     "upload_size_member_mb":    1024,
+    # --- Unified upload store (uploads.py) — shared by /video, /enhance-run,
+    # /prepare-rem. Retention is per-file (filename prefix evict_/proc_/keep_);
+    # see uploads.RETENTIONS. `uploads_dir` is the shared dir for features with
+    # no special storage need (/video moved off /tmp; /prepare-rem); /enhance-run
+    # keeps its pixop docker-mount input dir. "Remove when short of space"
+    # (evict, the default) deletes the oldest evict-class uploads when free space
+    # on the dir's disk drops below `uploads_min_free_gb`, with a generous
+    # `uploads_evict_ttl_h` backstop. (/enhance-run still reads enhance_upload_ttl_h.)
+    "uploads_dir":           "/srv/data/owl/uploads",
+    "uploads_min_free_gb":   20,
+    "uploads_evict_ttl_h":   72,
     # CR-050 — per-surface enabled model lists. Empty list (or absent key)
     # means "all available enabled" so a fresh server with no settings file
     # just works. Settings UI writes ordered lists; model_catalog filters

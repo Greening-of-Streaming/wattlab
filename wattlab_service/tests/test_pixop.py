@@ -1021,7 +1021,8 @@ def test_upload_lab_uncapped(tmp_path, monkeypatch):
                     headers=LAB)
     assert r.status_code == 200
     d = r.json()
-    assert d["name"].startswith("upload_") and d["name"].endswith(".mp4")
+    # Default retention = evict; shared store names <ret>_enhance_<uuid>_<stem>.
+    assert d["name"].startswith("evict_enhance_") and d["name"].endswith(".mp4")
     assert d["duration_s"] == 120.0           # Lab: no duration cap applied
     assert (tmp_path / "input" / d["name"]).exists()
     assert d["input_stream"]["hdr"] is False
@@ -1035,7 +1036,7 @@ def test_upload_member_duration_cap(tmp_path, monkeypatch):
                     files={"file": ("c.mp4", b"x" * 32, "video/mp4")}, headers=LAB)
     assert r.status_code == 413
     assert "60s" in r.json()["error"]
-    assert not list((tmp_path / "input").glob("upload_*"))   # rejected file removed
+    assert not list((tmp_path / "input").iterdir())   # rejected file removed
 
 
 def test_upload_member_size_cap(tmp_path, monkeypatch):
@@ -1253,23 +1254,24 @@ def test_enhance_page_has_args_editor():
 
 # --- CR-064: keep-after-run checkbox + Lab delete of uploads ------------------
 
-def test_upload_keep_flag_encodes_name(tmp_path, monkeypatch):
+def test_upload_retention_encodes_name(tmp_path, monkeypatch):
     monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
     monkeypatch.setattr(pixop, "probe_input_stream", lambda p: {"duration_s": 10.0})
-    r = client.post("/enhance-run/upload", data={"keep": "true"},
+    r = client.post("/enhance-run/upload", data={"retention": "keep"},
                     files={"file": ("c.mp4", b"x" * 16, "video/mp4")}, headers=LAB)
     assert r.status_code == 200
-    assert r.json()["name"].startswith("upload_keep_")
-    r2 = client.post("/enhance-run/upload", data={"keep": "false"},
+    assert r.json()["name"].startswith("keep_enhance_")
+    r2 = client.post("/enhance-run/upload", data={"retention": "proc"},
                      files={"file": ("c.mp4", b"x" * 16, "video/mp4")}, headers=LAB)
-    assert r2.json()["name"].startswith("upload_")
-    assert not r2.json()["name"].startswith("upload_keep_")
+    assert r2.json()["name"].startswith("proc_enhance_")
 
 
-def test_upload_is_ephemeral_rule():
-    assert routes_enhance._upload_is_ephemeral("upload_ab12_clip.mp4") is True
-    assert routes_enhance._upload_is_ephemeral("upload_keep_ab12_clip.mp4") is False
-    assert routes_enhance._upload_is_ephemeral("meridian_hd_p3pq_clip_30s.mov") is False
+def test_upload_retention_rule():
+    import uploads
+    assert uploads.retention_of("upload_ab12_clip.mp4") == "evict"      # legacy
+    assert uploads.retention_of("upload_keep_ab12_clip.mp4") == "keep"  # legacy
+    assert uploads.retention_of("proc_enhance_ab12_clip.mp4") == "proc"
+    assert uploads.retention_of("meridian_hd_p3pq_clip_30s.mov") is None
 
 
 def test_input_delete_lab_only_and_uploads_only(tmp_path, monkeypatch):
@@ -1298,14 +1300,14 @@ def test_input_delete_lab_only_and_uploads_only(tmp_path, monkeypatch):
     assert r.status_code == 404
 
 
-def test_page_keep_checkbox_and_delete_button_by_tier(monkeypatch):
+def test_page_retention_picker_and_delete_button_by_tier(monkeypatch):
     r = client.get("/enhance-run", headers=LAB)
-    assert 'id="keepTog" checked' in r.text     # Lab default: keep
-    assert 'id="delBtn"' in r.text              # Lab sees the ✕
+    assert 'name="retention"' in r.text          # shared 3-way picker
+    assert 'value="evict" checked' in r.text     # default = remove when short of space
+    assert 'id="delBtn"' in r.text               # Lab sees the ✕
     monkeypatch.setattr(audience, "tier", lambda req: audience.Tier.Member)
     r = client.get("/enhance-run", headers=LAB)
-    assert 'id="keepTog" checked' not in r.text  # Member default: ephemeral
-    assert "keepTog" in r.text
+    assert 'name="retention"' in r.text          # picker still present for Members
     # The ✕ BUTTON is absent for Members (the JS that references delBtn is
     # static and null-guarded, so check the element, not the string).
     assert 'id="delBtn"' not in r.text

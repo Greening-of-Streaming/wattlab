@@ -18,6 +18,7 @@ import audience
 import queue_control
 import settings as cfg
 import ui
+import uploads
 from capabilities import (requires, can, gate,
                           BATCH_COMPARE, CUSTOM_PROMPT, CUSTOM_UPLOAD,
                           PUBLIC_PAGE, QUEUE_VIEW, VIDEO_RUN)
@@ -125,6 +126,7 @@ async def video_page(request: Request):
     lk_upload_class   = _lock_class(request, CUSTOM_UPLOAD)
     lk_upload_badge   = _lock_badge_html(request, CUSTOM_UPLOAD, "Upload — Members only")
     upload_disabled   = _disabled_attr(request, CUSTOM_UPLOAD)
+    retention_picker  = ui.upload_retention_radios(disabled=upload_disabled)
     queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
@@ -389,6 +391,7 @@ async def video_page(request: Request):
             <div>{lk_upload_badge}</div>
         </div>
         <input type="file" id="fileInput" accept=".mp4,.mov,.mkv,.avi,.webm,.ts"{upload_disabled}>
+        {retention_picker}
     </div>
     <button id="runBtn" onclick="uploadAndRun()"{upload_disabled}>Upload & Measure</button>
 
@@ -611,6 +614,8 @@ async def video_page(request: Request):
                 const form = new FormData();
                 form.append('file', file);
                 form.append('preset', selectedPreset);
+                const _ret = document.querySelector('input[name=retention]:checked');
+                form.append('retention', _ret ? _ret.value : 'evict');
                 for (const [k, v] of Object.entries(cmds)) form.append(k, v);
                 resp = await fetch('/video/upload', {{ method: 'POST', body: form }});
             }} else {{
@@ -1114,8 +1119,10 @@ async def run_job(job_id: str, input_path: Path, preset: str, delete_after: bool
     except Exception as e:
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
     finally:
+        # Uploaded inputs (delete_after) honour their retention: proc → delete now,
+        # evict/keep → touch mtime. Curated sources (delete_after=False) untouched.
         if delete_after:
-            input_path.unlink(missing_ok=True)
+            uploads.cleanup_after_job(input_path.parent, input_path.name)
 
 
 @router.post("/video/use-source", dependencies=[Depends(requires(VIDEO_RUN))])
@@ -1160,6 +1167,7 @@ async def upload_video(
     request: Request,
     file: UploadFile = File(...),
     preset: str = Form("both"),
+    retention: str = Form(uploads.DEFAULT_RETENTION),
     custom_cmd: str = Form(None),
     custom_cmd_cpu: str = Form(None),
     custom_cmd_gpu: str = Form(None),
@@ -1196,8 +1204,10 @@ async def upload_video(
         return JSONResponse({"error": f"Upload too large (max {max_mb} MB for your tier)"}, status_code=413)
 
     job_id = str(uuid.uuid4())[:8]
-    input_path = UPLOAD_DIR / f"{job_id}_in{suffix}"
-    input_path.write_bytes(contents)
+    # Shared upload store (off /tmp); retention prefix drives lifecycle.
+    saved = uploads.save(contents, file.filename, retention=retention,
+                         feature="video", dest_dir=uploads.shared_dir())
+    input_path = saved["path"]
     label = f"Video — {preset} · {file.filename}"
 
     async def coro():

@@ -233,27 +233,18 @@ def ffmpeg_comparable(preset_name: str, c: Optional[dict] = None) -> bool:
 
 
 def sweep_ephemeral_uploads(c: Optional[dict] = None) -> list[str]:
-    """Delete un-kept uploads (`upload_*`, not `upload_keep_*`) older than
-    `upload_ttl_h`. Their mtime is touched at run end, so the TTL counts from
-    the run (or the upload, if never run) — the result card's source viewer
-    keeps working all session, and deletion happens afterwards (CR-064,
-    owner-amended 2026-06-10). Called from preflight; fail-soft; returns the
-    swept names (for tests/logs)."""
+    """Backstop sweep of the enhance input dir. Delegates evict-class uploads
+    (incl. legacy `upload_` non-keep) + `normalized_` intermediates to the shared
+    `uploads.sweep` (TTL from `upload_ttl_h`); their mtime is touched at run end
+    so the TTL counts from the run. Adds the enhance-specific `preview_`-orphan
+    cleanup (regardless of age). Called from preflight; fail-soft; returns swept
+    names. (Retention is now per-file via uploads.RETENTIONS — `keep_` survives.)"""
+    import uploads
     c = c or config()
     inp, _, _ = _workdir_paths(c)
-    cutoff = time.time() - float(c.get("upload_ttl_h", 12)) * 3600
-    swept = []
+    swept = uploads.sweep(inp, ttl_h=float(c.get("upload_ttl_h", 12)),
+                          extra_prefixes=("normalized_",))
     try:
-        for p in inp.iterdir():
-            if not p.is_file() or p.stat().st_mtime >= cutoff:
-                continue
-            ephemeral_upload = (p.name.startswith("upload_")
-                                and not p.name.startswith("upload_keep_"))
-            # normalized_* intermediates are deleted at run end; sweeping the
-            # stragglers covers a crash mid-run (they're bulky + reproducible).
-            if ephemeral_upload or p.name.startswith("normalized_"):
-                p.unlink(missing_ok=True)
-                swept.append(p.name)
         # preview_* proxies live as long as their source input does (kept
         # uploads keep theirs); orphans are swept regardless of age.
         sources = {Path(n).stem for n in list_inputs(c)}

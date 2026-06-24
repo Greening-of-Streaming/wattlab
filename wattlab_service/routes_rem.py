@@ -25,6 +25,7 @@ import rem_prep
 import settings as cfg
 import sources
 import ui
+import uploads
 from capabilities import (requires, can, PREPARE_REM, PUBLIC_PAGE,
                           SETTINGS_WRITE, WORKING_NAV)
 from persist import save_result
@@ -36,6 +37,11 @@ router = APIRouter()
 
 _CODECS = ("h264", "h265", "av1")
 _UPLOAD_EXTS = {".mov", ".mp4", ".mkv", ".m4v", ".y4m", ".webm"}
+
+# Make the REM upload dir visible to global "short of space" eviction (no mkdir
+# here — register the path; uploads._all_dirs() filters to existing dirs).
+uploads.register_dir(
+    Path(cfg.load().get("rem_output_dir", "/srv/data/owl/rem_out")) / "_uploads")
 
 
 def _truthy(v: str) -> bool:
@@ -74,6 +80,11 @@ async def run_rem_job(job_id: str, source_key: str | None, upload_name: str | No
         jobs[job_id].update({"status": "done", "stage": "done", "result": result})
     except Exception as e:
         jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+    finally:
+        # proc → delete now; evict/keep → touch (recency/TTL from run end).
+        if upload_name:
+            _, up_dir, _ = rem_prep.rem_dirs()
+            uploads.cleanup_after_job(up_dir, upload_name)
 
 
 # --- Page -------------------------------------------------------------------
@@ -97,6 +108,7 @@ async def prepare_rem_page(request: Request):
             .replace("{LOCK_CLASS}", _lock_class(request, PREPARE_REM))
             .replace("{LAB_BANNER}", banner)
             .replace("{DISABLED}", dis)
+            .replace("{RETENTION_PICKER}", ui.upload_retention_radios(disabled=dis))
             .replace("{SOURCE_PICKER}", _video_source_picker_html())
             .replace("{TARGET_VMAF}", str(s.get("rem_target_vmaf", 92)))
             .replace("{GPU_DISABLED}", "" if (gpu_ok and is_lab) else " disabled")
@@ -111,7 +123,8 @@ async def prepare_rem_page(request: Request):
 
 # --- Upload (Lab; the page is Lab-only so no Member caps) -------------------
 @router.post("/prepare-rem/upload", dependencies=[Depends(requires(PREPARE_REM))])
-async def prepare_rem_upload(request: Request, file: UploadFile = File(...)):
+async def prepare_rem_upload(request: Request, file: UploadFile = File(...),
+                             retention: str = Form(uploads.DEFAULT_RETENTION)):
     orig = Path(file.filename or "clip").name
     ext = Path(orig).suffix.lower()
     if ext not in _UPLOAD_EXTS:
@@ -119,13 +132,11 @@ async def prepare_rem_upload(request: Request, file: UploadFile = File(...)):
             {"error": f"Unsupported container '{ext or '(none)'}' — use one of: "
                       + ", ".join(sorted(_UPLOAD_EXTS))}, status_code=400)
     blob = await file.read()
-    safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(orig).stem)[:48] or "clip"
-    name = f"upload_{uuid.uuid4().hex[:8]}_{safe_stem}{ext}"
     _, up_dir, _ = rem_prep.rem_dirs()
-    path = up_dir / name
-    path.write_bytes(blob)
-    props = rem_prep._probe_props(path)
-    return {"name": name, "width": props.get("width"), "height": props.get("height"),
+    saved = uploads.save(blob, orig, retention=retention, feature="rem", dest_dir=up_dir)
+    props = rem_prep._probe_props(saved["path"])
+    return {"name": saved["name"], "retention": saved["retention"],
+            "width": props.get("width"), "height": props.get("height"),
             "fps": props.get("fps")}
 
 
@@ -163,6 +174,9 @@ async def prepare_rem_run(request: Request,
             return JSONResponse({"error": "target VMAF must be a number"}, status_code=400)
 
     metered = not _truthy(produce_only)
+    # Backstop sweep of stale evict-class uploads on every run start.
+    _, up_dir, _ = rem_prep.rem_dirs()
+    uploads.sweep(up_dir)
     job_id = str(uuid.uuid4())[:8]
     label = (f"REM prep — {rem_prep.CODEC_LABEL.get(codec, codec)} {h}p "
              f"{device}" + ("" if metered else " · produce-only"))
@@ -212,8 +226,8 @@ async def prepare_rem_share(token: str):
 
 @router.delete("/prepare-rem/input/{name}", dependencies=[Depends(requires(SETTINGS_WRITE))])
 async def prepare_rem_input_delete(name: str):
-    """Lab-only — delete an uploaded clip. `upload_*` only; basename allow-list."""
-    if Path(name).name != name or not name.startswith("upload_"):
+    """Lab-only — delete an uploaded clip. Uploads only; basename allow-list."""
+    if Path(name).name != name or not uploads.is_owl_upload(name):
         return JSONResponse({"ok": False, "error": "Only uploaded clips can be deleted"},
                             status_code=400)
     _, up_dir, _ = rem_prep.rem_dirs()
@@ -305,6 +319,7 @@ _PREPARE_REM_HTML = """
       <span class="note" id="upStatus"></span>
     </div>
   </div>
+  {RETENTION_PICKER}
 
   <h2>2 · Output</h2>
   <div class="row">
@@ -359,6 +374,8 @@ async function doUpload() {
   if (!f) { st.textContent = 'pick a file first'; return; }
   st.textContent = 'uploading…';
   const fd = new FormData(); fd.append('file', f);
+  const ret = document.querySelector('input[name=retention]:checked');
+  fd.append('retention', ret ? ret.value : 'evict');
   try {
     const r = await fetch('/prepare-rem/upload', {method:'POST', body:fd});
     const j = await r.json();

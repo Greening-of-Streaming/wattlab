@@ -9,7 +9,6 @@ chrome from ui.py — never import main.
 import asyncio
 import html as html_lib
 import json
-import re
 import uuid
 from pathlib import Path
 
@@ -21,12 +20,17 @@ import pixop
 import queue_control
 import settings as cfg
 import ui
+import uploads
 from capabilities import requires, can, ENHANCE_RUN, PUBLIC_PAGE, SETTINGS_WRITE
 from persist import save_result
 from runtime import jobs, job_status as _job_status
 from ui import _PROGRESS_JS, _lock_badge_html, _lock_class
 
 router = APIRouter()
+
+# The enhance uploads live in the pixop docker-mount input dir; register it so
+# global "short of space" eviction can consider its evict-class files too.
+uploads.register_dir(pixop._workdir_paths(pixop.config())[0])
 
 
 # --- CR-042 · Pixop placeholder (video enhancement demo) -------------------
@@ -379,10 +383,11 @@ def _enhance_upload_limits_html() -> str:
     dur = int(s.get("enhance_upload_max_duration_s", 60))
     ttl = int(s.get("enhance_upload_ttl_h", 12))
     return (f"Upload limits &mdash; Members: file &le;{mb} MB, clip &le;{dur}s "
-            f"&middot; Lab (LAN): uncapped. Un-kept uploads are removed ~{ttl}h "
-            "after their run (so the source stays comparable on the result card; "
-            "outputs stay with the result); &ldquo;Keep on GoS1&rdquo; keeps the "
-            "clip indefinitely &mdash; visible to everyone with page access.")
+            f"&middot; Lab (LAN): uncapped. Retention is your choice above: "
+            f"&ldquo;short of space&rdquo; keeps the clip until the disk is low (TTL "
+            f"backstop ~{ttl}h after its run, so the result card stays comparable), "
+            "&ldquo;immediately&rdquo; deletes it as the run ends, &ldquo;keep&rdquo; "
+            "keeps it indefinitely. Outputs always stay with the result.")
 
 
 _ENHANCE_RUN_STYLES = """
@@ -489,9 +494,7 @@ _ENHANCE_RUN_HTML = """
       </div>
     </div>
   </div>
-  <label style="display:flex;align-items:center;gap:0.45rem;color:var(--text-2);font-size:0.78rem;text-transform:none;margin-bottom:0.35rem;cursor:pointer">
-    <input type="checkbox" id="keepTog"{KEEP_CHECKED}{DISABLED}> Keep on GoS1 after run
-  </label>
+  {RETENTION_PICKER}
   <div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.85rem">{UPLOAD_LIMITS}</div>
   <div class="row">
     <div>
@@ -626,7 +629,7 @@ function updateInputPreview() {
   var note = document.getElementById('inPrevNote');
   // Lab-only ✕: deletable = uploaded clips only (staged clips protected).
   var del = document.getElementById('delBtn');
-  if (del) del.style.display = (sel && sel.value && sel.value.indexOf('upload_') === 0) ? '' : 'none';
+  if (del) del.style.display = (sel && sel.value && /^(evict_|proc_|keep_|upload_)/.test(sel.value)) ? '' : 'none';
   if (!sel || !sel.value) { wrap.style.display = 'none'; return; }
   // Prefer the normalized-preview proxy when a prior run produced one — it's
   // what the measurement encodes, and it plays where the raw source may not.
@@ -648,7 +651,7 @@ function updateInputPreview() {
 async function deleteInput() {
   var sel = document.getElementById('inSel');
   var name = sel && sel.value;
-  if (!name || name.indexOf('upload_') !== 0) return;
+  if (!name || !/^(evict_|proc_|keep_|upload_)/.test(name)) return;
   if (!confirm('Delete uploaded clip "' + name + '" from GoS1?')) return;
   try {
     var resp = await fetch('/enhance-run/input/' + encodeURIComponent(name), { method:'DELETE' });
@@ -914,8 +917,8 @@ async function uploadClip() {
     '<div style="color:var(--warn);font-size:0.82rem">Uploading ' + f.name + '…</div>';
   var form = new FormData();
   form.append('file', f);
-  var keep = document.getElementById('keepTog');
-  form.append('keep', keep && keep.checked ? 'true' : 'false');
+  var ret = document.querySelector('input[name=retention]:checked');
+  form.append('retention', ret ? ret.value : 'evict');
   try {
     var resp = await fetch('/enhance-run/upload', { method:'POST', body:form });
     var d = await resp.json();
@@ -1356,7 +1359,8 @@ async def enhance_run_page(request: Request):
                                                pf.get("input_previews"),
                                                pf.get("input_norm_flags")))
             .replace("{DEL_BTN}",          del_btn)
-            .replace("{KEEP_CHECKED}",     " checked" if is_lab else "")
+            .replace("{RETENTION_PICKER}", ui.upload_retention_radios(
+                disabled=("" if run_enabled else " disabled")))
             .replace("{SR_OPTIONS}",       _enhance_sr_options_html())
             .replace("{UPLOAD_LIMITS}",    _enhance_upload_limits_html())
             .replace("{COMBOS_JSON}",      json.dumps(pf["combos"]))
@@ -1634,29 +1638,13 @@ async def enhance_ladder_page(request: Request):
                           styles=_LADDER_STYLES, head=head, body=body)
 
 
-def _upload_is_ephemeral(input_name: str) -> bool:
-    """Cleanup rule (CR-064, owner-amended 2026-06-10): retention is the
-    UPLOADER's choice via the "Keep on GoS1 after run" checkbox, encoded in
-    the stored name — `upload_keep_*` persists, plain `upload_*` is removed
-    after its run. Name-based so it survives restarts with no side-state;
-    staged (non-upload) clips are never cleaned."""
-    return (input_name.startswith("upload_")
-            and not input_name.startswith("upload_keep_"))
-
-
 def _cleanup_upload(input_name: str) -> None:
-    """Mark an un-kept upload's run as finished by touching its mtime — the
-    actual deletion is pixop.sweep_ephemeral_uploads, `enhance_upload_ttl_h`
-    hours later. Deleting at job end broke the result card's source-vs-output
-    comparison (owner, 2026-06-10); touching restarts the TTL clock from the
-    run instead of the upload. Fail-soft."""
-    try:
-        inp, _, _ = pixop._workdir_paths(pixop.config())
-        path = inp / input_name
-        if path.is_file():
-            path.touch()
-    except Exception:
-        pass
+    """Apply the upload's retention at run end (uploads.cleanup_after_job):
+    `proc` → delete now; `evict`/`keep` → touch mtime so eviction recency / the
+    TTL backstop counts from the run (the result card's source-vs-output viewer
+    keeps working all session). Staged (non-upload) clips are never touched."""
+    inp, _, _ = pixop._workdir_paths(pixop.config())
+    uploads.cleanup_after_job(inp, input_name)
 
 
 def _resolve_run_preset(preset_name: str, output_format: str, sr_target: str):
@@ -1724,7 +1712,7 @@ async def enhance_run_start(request: Request,
     if input_name not in pf["inputs"] or not pixop._preset_known(preset, pf):
         return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
     is_live = str(live).lower() in ("true", "1", "on", "yes")
-    cleanup = _upload_is_ephemeral(input_name)
+    cleanup = uploads.is_owl_upload(input_name)
     label = f"Enhance — {preset}" + (" · Live 1×" if is_live else "")
 
     async def coro():
@@ -1785,7 +1773,7 @@ async def enhance_run_start_compare(request: Request,
                              "no apples-to-apples ffmpeg baseline"}, status_code=400)
     ff = ff_filter if ff_filter in ("lanczos", "bicubic") else "lanczos"
     is_live = str(live).lower() in ("true", "1", "on", "yes")
-    cleanup = _upload_is_ephemeral(input_name)
+    cleanup = uploads.is_owl_upload(input_name)
     label = (f"Enhance compare — {preset} vs ffmpeg {ff}"
              + (" · Live 1×" if is_live else ""))
 
@@ -1806,12 +1794,12 @@ _UPLOAD_EXTS = {".mov", ".mp4", ".mkv", ".m4v", ".y4m", ".webm"}  # = pixop.list
 
 @router.post("/enhance-run/upload", dependencies=[Depends(requires(ENHANCE_RUN))])
 async def enhance_upload(request: Request, file: UploadFile = File(...),
-                         keep: str = Form("")):
-    """CR-064 — upload a clip into the enhance input dir. Member caps: file
-    size (enhance_upload_max_mb) + clip duration (enhance_upload_max_duration_s,
-    ffprobe-enforced); Lab is uncapped. The same probe's stream facts are
-    returned (and stamped on results as input_stream provenance) — they never
-    drive the UI."""
+                         retention: str = Form(uploads.DEFAULT_RETENTION)):
+    """CR-064 — upload a clip into the enhance input dir (shared uploads store,
+    retention prefix). Member caps: file size (enhance_upload_max_mb) + clip
+    duration (enhance_upload_max_duration_s, ffprobe-enforced); Lab is uncapped.
+    The same probe's stream facts are returned (and stamped on results as
+    input_stream provenance) — they never drive the UI."""
     s = cfg.load()
     is_lab = audience.tier(request) == audience.Tier.Lab
     max_mb = int(s.get("enhance_upload_max_mb", 1024))
@@ -1836,15 +1824,12 @@ async def enhance_upload(request: Request, file: UploadFile = File(...),
         return JSONResponse({"error": f"File exceeds the {max_mb} MB Member limit"},
                             status_code=413)
 
-    safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(orig).stem)[:48] or "clip"
-    # Retention choice encoded in the name — see _upload_is_ephemeral.
-    prefix = ("upload_keep_" if str(keep).lower() in ("true", "1", "on", "yes")
-              else "upload_")
-    name = f"{prefix}{uuid.uuid4().hex[:8]}_{safe_stem}{ext}"
     inp, _, _ = pixop._workdir_paths(pixop.config())
-    inp.mkdir(parents=True, exist_ok=True)
-    path = inp / name
-    path.write_bytes(blob)
+    # Shared upload store: retention prefix (evict/proc/keep) + free-space eviction.
+    saved = uploads.save(blob, orig, retention=retention, feature="enhance",
+                         dest_dir=inp)
+    name = saved["name"]
+    path = saved["path"]
 
     stream = pixop.probe_input_stream(path)
     dur = (stream or {}).get("duration_s")
@@ -1876,9 +1861,9 @@ async def enhance_upload(request: Request, file: UploadFile = File(...),
                dependencies=[Depends(requires(SETTINGS_WRITE))])
 async def enhance_input_delete(name: str):
     """Lab-only — delete an UPLOADED input clip from the menu. Restricted to
-    `upload_*` names so the curated staged clips (Meridian, BBB) can't be
-    removed by a stray click; basename-only, no traversal."""
-    if Path(name).name != name or not name.startswith("upload_"):
+    upload names (any retention prefix + legacy) so the curated staged clips
+    (Meridian, BBB) can't be removed by a stray click; basename-only, no traversal."""
+    if Path(name).name != name or not uploads.is_owl_upload(name):
         return JSONResponse({"ok": False, "error": "Only uploaded clips can be "
                              "deleted here"}, status_code=400)
     inp, _, _ = pixop._workdir_paths(pixop.config())

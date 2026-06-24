@@ -214,6 +214,29 @@ def _lock_class(request: Request, capability: str) -> str:
     return "" if can(audience.tier(request), capability) else "lock-block"
 
 
+def upload_retention_radios(default: str = "evict", disabled: str = "",
+                            name: str = "retention") -> str:
+    """Shared 3-way upload-retention picker (uploads.RETENTIONS) — rendered on
+    every page with an upload control so the same options appear everywhere.
+    `disabled` is the ' disabled' attribute string for read-only (non-Lab) views."""
+    import uploads
+    parts = []
+    for r in uploads.RETENTIONS:
+        checked = " checked" if r == default else ""
+        parts.append(
+            f'<label style="display:block;font-size:0.8rem;color:var(--text-2);'
+            f'margin:0.15rem 0;cursor:pointer">'
+            f'<input type="radio" name="{name}" value="{r}"{checked}{disabled} '
+            f'style="accent-color:var(--accent)"> {uploads.RETENTION_LABELS[r]} '
+            f'<span style="color:var(--text-5);font-size:0.72rem">'
+            f'— {uploads.RETENTION_HELP[r]}</span></label>'
+        )
+    return ('<div class="upload-retention" style="margin:0.4rem 0">'
+            '<div style="color:var(--text-4);font-size:0.7rem;text-transform:uppercase;'
+            'letter-spacing:0.05em;margin-bottom:0.2rem">After upload</div>'
+            + "".join(parts) + '</div>')
+
+
 def _disabled_attr(request: Request, capability: str) -> str:
     """Returns ' disabled' when `request` lacks `capability`, else ''.
     Use on inputs/buttons inside a lock-block so they can't be focused
