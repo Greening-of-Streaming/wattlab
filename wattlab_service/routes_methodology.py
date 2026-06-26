@@ -471,6 +471,18 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <p>All formulas use wall-power from the P110 (system-level), not component-level readings. The GPU&rsquo;s self-reported power (its vendor sensor &mdash; <code>amdgpu</code> PPT or <code>nvidia-smi</code> power draw) is captured for reference but is not used in the primary energy calculation &mdash; it covers only the GPU die/board, not the full system delta (CPU, RAM, drives, fans, PSU losses).</p>
 
+  <h3 style="margin-top:1.25rem">Isolating the encoder &mdash; transcode vs encode</h3>
+  <p>Every video figure above is the energy of a <strong>full transcode</strong> &mdash; ffmpeg decodes the source, converts colour space, scales, <em>then</em> encodes &mdash; not the encoder in isolation. For most comparisons that is the honest number (you cannot encode without first decoding), and when the input is held constant the decode cost is a near-constant offset that cancels out of the comparison. Where the encoder&rsquo;s <em>own</em> share is wanted &mdash; currently in the REM file-prep flow (<code>/prepare-rem</code>) &mdash; OWL runs a second, <strong>decode-only</strong> pass under the identical protocol (the same source decoded and discarded to a null sink, no encode) and subtracts it:</p>
+
+  <div class="formula">
+    <span class="label">Encoder-only energy (approximate)</span>
+    <span class="var">&Delta;E<sub>encode</sub></span> &asymp; <span class="var">&Delta;E<sub>transcode</sub></span> &minus; <span class="var">&Delta;E<sub>decode</sub></span>
+  </div>
+
+  <p>All three figures &mdash; transcode, decode, and the derived encode &mdash; are reported side by side, so the attribution is shown rather than asserted.</p>
+
+  <div class="open-q"><span class="marker">&#9658;</span><span><strong>Why &ldquo;approximate.&rdquo;</strong> Inside a single ffmpeg process decode and encode run <em>concurrently</em> (threaded), so a stand-alone decode pass slightly over-counts decode&rsquo;s marginal share &mdash; making the subtracted encode figure a conservative lower bound, not an exact split. The clean isolation is to <strong>pre-decode the source to raw</strong> and measure the encode from raw; but raw video is enormous and becomes I/O-bound at 4K, so OWL uses the cheap subtraction as the routine method and keeps the raw route as an occasional cross-check. On the GPU path the probe is hardware-decode only, so scaling is counted under encode. The split therefore signals its own uncertainty &mdash; consistent with the confidence framework below.</span></div>
+
   <h2 id="confidence">Confidence Framework</h2>
 
   <p>Every OWL result carries a traffic-light confidence flag. Under the CR-028 Phase 2 model (designed with Tania Pouli), the flag answers one defensible question per run: <strong>can this run be distinguished from idle?</strong> It is a per-run confidence interval, not a fixed-watt rule of thumb.</p>
