@@ -194,6 +194,9 @@ def to_csv(job_type: str, data: dict) -> str:
             "ffmpeg_cmd",
         ]
         rows = _video_rows(data)
+    elif job_type == "rem":
+        fieldnames = _REM_FIELDNAMES
+        rows = _rem_rows(data)
     else:
         fieldnames = [
             "job_id", "saved_at", "model", "task", "duration_s",
@@ -241,6 +244,92 @@ def _co2e_fields(energy: dict) -> dict:
         "co2e_source": i.get("source"),
         "co2e_zone": i.get("zone"),
     }
+
+
+# --- REM-prep CSV (one row per generated file). The first two columns are the
+# output filename + share token so energy is trivially associated with the file. ---
+_REM_FIELDNAMES = [
+    "output_filename", "share_token", "batch_id", "job_id", "saved_at",
+    "codec", "device", "height", "target_mode", "target_value",
+    "achieved_vmaf", "achieved_bitrate_kbps", "converged",
+    "w_base", "w_task", "delta_w", "delta_t_s", "delta_e_wh",
+    "decode_wh", "encode_wh",
+    "co2e_g", "co2e_intensity_g_per_kwh", "co2e_source", "co2e_zone",
+    "poll_count", "confidence",
+    "cpu_base", "cpu_peak", "gpu_base", "gpu_peak",
+    "segment_total_s", "concat_method", "size_mb",
+]
+
+
+def _rem_row(data: dict) -> dict:
+    """Flatten one rem_prep result dict to a CSV row (null-safe for produce-only
+    runs where `energy`/`thermals` are None)."""
+    e = data.get("energy") or {}
+    t = data.get("thermals") or {}
+    o = data.get("output") or {}
+    seg = data.get("segment_layout_s") or {}
+    es = data.get("energy_split") or {}
+    mode = data.get("target_mode") or "vmaf"
+    target_value = (data.get("target_bitrate_kbps") if mode == "bitrate"
+                    else data.get("target_vmaf"))
+    return {
+        "output_filename": o.get("filename"),
+        "share_token": o.get("share_token"),
+        "batch_id": data.get("batch_id"),
+        "job_id": data.get("job_id"),
+        "saved_at": data.get("saved_at"),
+        "codec": data.get("codec"),
+        "device": data.get("device"),
+        "height": data.get("height"),
+        "target_mode": mode,
+        "target_value": target_value,
+        "achieved_vmaf": data.get("achieved_vmaf"),
+        "achieved_bitrate_kbps": data.get("achieved_bitrate_kbps"),
+        "converged": data.get("converged"),
+        "w_base": e.get("w_base"), "w_task": e.get("w_task"),
+        "delta_w": e.get("delta_w"), "delta_t_s": e.get("delta_t_s"),
+        "delta_e_wh": e.get("delta_e_wh"),
+        "decode_wh": es.get("decode_wh"), "encode_wh": es.get("encode_wh"),
+        **_co2e_fields(e),
+        "poll_count": e.get("poll_count"),
+        "confidence": (e.get("confidence") or {}).get("label"),
+        "cpu_base": t.get("cpu_base"), "cpu_peak": t.get("cpu_peak"),
+        "gpu_base": t.get("gpu_base"), "gpu_peak": t.get("gpu_peak"),
+        "segment_total_s": seg.get("total"),
+        "concat_method": o.get("concat_method"),
+        "size_mb": o.get("size_mb"),
+    }
+
+
+def _rem_rows(data: dict) -> list:
+    return [_rem_row(data)]
+
+
+def rem_batch_csv(batch_id: str) -> str:
+    """Combined energy CSV for every stored rem result sharing `batch_id`, one
+    row per file (sorted by saved_at). 'Live': returns only completed rows if
+    fetched before all codecs in the batch finish."""
+    out_dir = RESULTS_DIR / "rem"
+    rows = []
+    if out_dir.exists():
+        for p in out_dir.glob("*.json"):
+            try:
+                d = json.loads(p.read_text())
+            except Exception:
+                continue
+            if d.get("batch_id") == batch_id:
+                rows.append(_rem_row(d))
+    rows.sort(key=lambda r: r.get("saved_at") or "")
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=_REM_FIELDNAMES, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    disclaimer = (
+        "# OWL CSV export — energy columns (w_*, delta_*) are 🟢 direct "
+        "measurements. co2e_* columns are 🟡 indicative (Wh × third-party "
+        "grid intensity, not measured). See /methodology."
+    )
+    return output.getvalue() + disclaimer + "\n"
 
 
 # ── Result-summary dispatch (Phase 4 of the 2026-06 refactor) ───────────────

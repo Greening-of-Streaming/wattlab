@@ -7,6 +7,10 @@ DEFAULTS = {
     # Kill switch for anonymous aggregate visit counting (analytics.py — no
     # IP/cookie/UA stored; the /audience dashboard reads it). ON by default.
     "analytics_enabled": True,
+    # Canonical public origin for building absolute share links that must work
+    # off-LAN (e.g. /rem-file/{token}). Used instead of the request host so a
+    # link copied from an SSH-tunnelled session (host=localhost) is still public.
+    "public_base_url": "https://wattlab.greeningofstreaming.org",
     "baseline_polls": 10,
     "video_cooldown_s": 60,
     "llm_rest_s": 10,
@@ -135,6 +139,9 @@ DEFAULTS = {
     # timer + black/white/black marker structure so REM can delimit the analysis
     # window during device playback. Bitrate is the free variable, quality the
     # constant target. See docs / the meeting spec (2026-06-23).
+    "rem_measure_decode_split": True, # metered runs add a decode-only probe → report encode = transcode − decode
+    "rem_target_mode": "vmaf",        # default form mode: "vmaf" (search) or "bitrate" (direct)
+    "rem_default_bitrate_kbps": 4000, # prefill for the bitrate-mode input
     "rem_target_vmaf": 92,            # default quality target (operator-overridable per run)
     "rem_vmaf_tolerance": 0.5,        # accept when |measured - target| <= this
     "rem_max_iters": 6,              # bitrate-search iteration cap on the excerpt

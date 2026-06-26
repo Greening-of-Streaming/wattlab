@@ -227,7 +227,7 @@ def test_page_renders_for_lab():
     assert "Prepare REM Files" in r.text
     # Lab → controls enabled, no read-only banner.
     assert "Read-only preview" not in r.text
-    assert "Generate REM file" in r.text
+    assert "Generate REM File(s)" in r.text
 
 
 def test_page_readonly_for_member(monkeypatch):
@@ -239,7 +239,7 @@ def test_page_readonly_for_member(monkeypatch):
     assert "Read-only preview" in r.text
     # The run button is disabled for non-Lab.
     assert 'id="runBtn"' in r.text
-    assert "disabled>Generate REM file" in r.text
+    assert "disabled>Generate REM File(s)" in r.text
 
 
 def test_page_403_for_anonymous():
@@ -274,3 +274,276 @@ def test_share_link_is_public(monkeypatch, tmp_path):
 def test_share_link_bad_token_404():
     r = client.get("/rem-file/notavalidtoken", headers=_ANON_FETCH)
     assert r.status_code == 404
+
+
+# --------------------------------------------------------------------------
+# Target mode: VMAF (search) vs Bitrate (direct) — end-to-end produce run
+# --------------------------------------------------------------------------
+@pytest.fixture
+def e2e_env(monkeypatch, tmp_path):
+    """Patch the heavy I/O so run_rem_prep_job runs to a result dict in-process:
+    ffprobe → fixed dims, every ffmpeg/transcode → touch its output file."""
+    import json as _json
+
+    def fake_run(cmd, capture_output=True, text=True, check=False, **kwargs):
+        cmd = [str(c) for c in cmd]
+        if "-show_entries" in cmd:  # ffprobe
+            out = _json.dumps({"streams": [{"width": 1920, "height": 1080,
+                                            "r_frame_rate": "30/1"}]})
+            return type("R", (), {"returncode": 0, "stdout": out, "stderr": ""})()
+        Path(cmd[-1]).write_bytes(b"x")  # ffmpeg/concat: create the output
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    def fake_transcode(cmd, progress_cb=None):
+        cmd = [str(c) for c in cmd]
+        if not ("-f" in cmd and "null" in cmd):   # skip the null-sink decode probe
+            Path(cmd[-1]).write_bytes(b"x")
+        return {"success": True, "ffmpeg_cmd": " ".join(cmd)}
+
+    monkeypatch.setattr(rem_prep.subprocess, "run", fake_run)
+    monkeypatch.setattr(video, "transcode", fake_transcode)
+    monkeypatch.setattr(video, "compute_vmaf", lambda d, r, s=None: 93.0)
+    monkeypatch.setattr(video, "probe_output_stream",
+                        lambda p: {"pix_fmt": "yuv420p", "codec_name": "h264"})
+    monkeypatch.setattr(video, "_probe_duration", lambda p: 10.0)
+    monkeypatch.setattr(video, "focus_mode_enter", lambda: [])
+    monkeypatch.setattr(video, "focus_mode_exit", lambda stopped: None)
+    monkeypatch.setattr(video, "LOCK_FILE", tmp_path / "lock")
+    monkeypatch.setattr(rem_prep.cfg, "load",
+                        lambda: {**settings.DEFAULTS, "rem_output_dir": str(tmp_path),
+                                 "public_base_url": "https://owl.example.org"})
+    # A real uploaded source the job can stat/trim (under rem_dirs()'s _uploads).
+    up_dir = tmp_path / "_uploads"
+    up_dir.mkdir(parents=True, exist_ok=True)
+    (up_dir / "src.mp4").write_bytes(b"src")
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_bitrate_mode_skips_search(e2e_env, monkeypatch):
+    # In bitrate mode the VMAF search must never run.
+    def _boom(*a, **k):
+        raise AssertionError("encode_to_vmaf must not be called in bitrate mode")
+    monkeypatch.setattr(rem_prep, "encode_to_vmaf", _boom)
+
+    res = await rem_prep.run_rem_prep_job(
+        "bm01", jobs=None, upload_name="src.mp4", source_key=None,
+        codec="h264", device="cpu", height=1080,
+        fixed_bitrate_kbps=5000, batch_id="batch123abc", metered=False)
+
+    assert res["target_mode"] == "bitrate"
+    assert res["target_vmaf"] is None
+    assert res["target_bitrate_kbps"] == 5000
+    assert res["achieved_bitrate_kbps"] == 5000
+    assert res["converged"] is True
+    assert res["search"]["skipped"] is True
+    assert res["batch_id"] == "batch123abc"
+
+
+@pytest.mark.asyncio
+async def test_share_url_is_absolute_public(e2e_env):
+    res = await rem_prep.run_rem_prep_job(
+        "su01", jobs=None, source_key=None, upload_name="src.mp4",
+        codec="h264", device="cpu", height=1080,
+        fixed_bitrate_kbps=4000, metered=False)
+    su = res["output"]["share_url"]
+    assert su.startswith("https://owl.example.org/rem-file/")
+    assert "localhost" not in su
+
+
+def test_public_base_strips_trailing_slash(monkeypatch):
+    monkeypatch.setattr(rem_prep.cfg, "load",
+                        lambda: {"public_base_url": "https://owl.example.org/"})
+    assert rem_prep._public_base() == "https://owl.example.org"
+
+
+# --------------------------------------------------------------------------
+# Decode/encode energy split (Simon 2026-06-26) — metered runs
+# --------------------------------------------------------------------------
+def test_build_decode_cmd_cpu_is_null_sink_no_encoder():
+    cmd = rem_prep.build_decode_cmd("h264", "cpu", 720, "in.mp4")
+    assert cmd[-3:] == ["-f", "null", "-"]      # sinks to null, no output file
+    assert "-c:v" not in cmd                     # no encoder
+    assert "scale=-2:720" in cmd                 # decode + scale (CPU reference)
+
+
+@pytest.fixture
+def metered_env(e2e_env, monkeypatch):
+    """e2e_env + mocked power instrumentation so the metered path (baseline +
+    polling) runs in-process."""
+    import power
+
+    async def fake_baseline(polls=10):
+        return {"w_base": 80.0, "baseline_samples_w": [80.0] * 5,
+                "cpu_temp_base": 40.0, "gpu_temp_base": 35.0}
+
+    async def fake_poll(stop_event):
+        return [{"watts": 120.0, "cpu_tctl": 55.0, "gpu_junction": 50.0}
+                for _ in range(8)]
+
+    monkeypatch.setattr(video, "measure_baseline", fake_baseline)
+    monkeypatch.setattr(video, "poll_during_task", fake_poll)
+    monkeypatch.setattr(power, "meters_summary", lambda *a, **k: None)
+    return e2e_env
+
+
+@pytest.mark.asyncio
+async def test_decode_encode_split_present(metered_env):
+    res = await rem_prep.run_rem_prep_job(
+        "ds01", jobs=None, source_key=None, upload_name="src.mp4",
+        codec="h264", device="cpu", height=1080,
+        fixed_bitrate_kbps=4000, metered=True)
+    es = res["energy_split"]
+    assert es is not None
+    assert es["method"] == "transcode_minus_decode"
+    # encode = max(0, transcode − decode), and the transcode figure matches `energy`.
+    assert es["encode_wh"] == round(max(0.0, es["transcode_wh"] - es["decode_wh"]), 4)
+    assert es["transcode_wh"] == res["energy"]["delta_e_wh"]
+    assert es["decode"]["poll_count"] == 8        # the probe was actually metered
+
+
+@pytest.mark.asyncio
+async def test_decode_split_fail_soft(metered_env, monkeypatch):
+    # If the decode probe fails, the split is dropped but the deliverable + its
+    # transcode energy survive.
+    def ft(cmd, progress_cb=None):
+        cmd = [str(c) for c in cmd]
+        if "-f" in cmd and "null" in cmd:
+            return {"success": False, "ffmpeg_cmd": " ".join(cmd), "stderr": "boom"}
+        Path(cmd[-1]).write_bytes(b"x")
+        return {"success": True, "ffmpeg_cmd": " ".join(cmd)}
+    monkeypatch.setattr(video, "transcode", ft)
+    res = await rem_prep.run_rem_prep_job(
+        "df01", jobs=None, source_key=None, upload_name="src.mp4",
+        codec="h264", device="cpu", height=1080,
+        fixed_bitrate_kbps=4000, metered=True)
+    assert res["energy_split"] is None
+    assert res["energy"] is not None
+
+
+@pytest.mark.asyncio
+async def test_decode_split_disabled_by_setting(metered_env, monkeypatch):
+    # rem_measure_decode_split=False → encode still metered, but no decode probe/split.
+    monkeypatch.setattr(rem_prep.cfg, "load",
+                        lambda: {**settings.DEFAULTS, "rem_output_dir": str(metered_env),
+                                 "public_base_url": "https://owl.example.org",
+                                 "rem_measure_decode_split": False})
+    res = await rem_prep.run_rem_prep_job(
+        "dd01", jobs=None, source_key=None, upload_name="src.mp4",
+        codec="h264", device="cpu", height=1080,
+        fixed_bitrate_kbps=4000, metered=True)
+    assert res["energy_split"] is None
+    assert res.get("energy") is not None
+
+
+# --------------------------------------------------------------------------
+# run-route: multi-codec → N jobs sharing one batch_id; partial-enqueue
+# --------------------------------------------------------------------------
+def test_run_multicodec_returns_batch(monkeypatch):
+    seen = []
+
+    def fake_enqueue(job_id, kind, label, coro, request=None, page=None):
+        seen.append((job_id, label))
+        return len(seen)  # position 1, 2, ...
+
+    import routes_rem
+    monkeypatch.setattr(routes_rem.queue_control, "enqueue", fake_enqueue)
+
+    r = client.post("/prepare-rem/run", headers=_LAB,
+                    data={"source_key": "meridian_120s",
+                          "codec": ["h264", "av1"], "target_mode": "vmaf"})
+    assert r.status_code == 200
+    j = r.json()
+    assert len(j["jobs"]) == 2
+    assert {x["codec"] for x in j["jobs"]} == {"h264", "av1"}
+    # All share one batch_id, but each has a distinct job_id.
+    assert j["batch_id"]
+    assert len({x["job_id"] for x in j["jobs"]}) == 2
+    assert j["rejected"] == []
+
+
+def test_run_multicodec_partial_enqueue_records_rejected(monkeypatch):
+    import routes_rem
+    calls = {"n": 0}
+
+    def fake_enqueue(job_id, kind, label, coro, request=None, page=None):
+        calls["n"] += 1
+        return None if calls["n"] == 2 else 1  # 2nd codec rejected (queue full)
+
+    monkeypatch.setattr(routes_rem.queue_control, "enqueue", fake_enqueue)
+    r = client.post("/prepare-rem/run", headers=_LAB,
+                    data={"source_key": "meridian_120s",
+                          "codec": ["h264", "av1"]})
+    assert r.status_code == 200
+    j = r.json()
+    assert len(j["jobs"]) == 1 and len(j["rejected"]) == 1
+
+
+def test_run_rejects_bad_bitrate(monkeypatch):
+    r = client.post("/prepare-rem/run", headers=_LAB,
+                    data={"source_key": "meridian_120s", "codec": "h264",
+                          "target_mode": "bitrate", "target_bitrate": "0"})
+    assert r.status_code == 400
+
+
+def test_run_requires_at_least_one_codec():
+    r = client.post("/prepare-rem/run", headers=_LAB,
+                    data={"source_key": "meridian_120s", "codec": "vp9"})
+    assert r.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# Energy CSV — association columns first; null-safe; batch aggregation
+# --------------------------------------------------------------------------
+def _rem_result(job_id, batch_id, fname, energy=True):
+    return {
+        "mode": "rem_prep", "job_id": job_id, "batch_id": batch_id,
+        "saved_at": "2026-06-26T10:00:00", "codec": "h264", "device": "cpu",
+        "height": 1080, "target_mode": "vmaf", "target_vmaf": 92,
+        "achieved_vmaf": 92.3, "achieved_bitrate_kbps": 4200, "converged": True,
+        "energy": ({"w_base": 80.0, "w_task": 130.0, "delta_w": 50.0,
+                    "delta_t_s": 12.0, "delta_e_wh": 0.16, "poll_count": 12,
+                    "confidence": {"label": "🟢", "flag": "🟢"}} if energy else None),
+        "energy_split": ({"transcode_wh": 0.16, "decode_wh": 0.04, "encode_wh": 0.12}
+                         if energy else None),
+        "thermals": ({"cpu_base": 40, "cpu_peak": 60} if energy else None),
+        "segment_layout_s": {"total": 600},
+        "output": {"filename": fname, "share_token": "tok_" + job_id,
+                   "concat_method": "copy", "size_mb": 210.0},
+    }
+
+
+def test_to_csv_rem_association_columns_first():
+    import persist
+    csv_text = persist.to_csv("rem", _rem_result("j1", "b1", "rem_j1_h264.mp4"))
+    header = csv_text.splitlines()[0]
+    cols = header.split(",")
+    assert cols[0] == "output_filename" and cols[1] == "share_token"
+    assert "rem_j1_h264.mp4" in csv_text and "tok_j1" in csv_text
+    # decode/encode split columns present + populated.
+    assert "decode_wh" in cols and "encode_wh" in cols
+    assert "0.04" in csv_text and "0.12" in csv_text
+
+
+def test_to_csv_rem_handles_produce_only_energy_none():
+    import persist
+    # Must not throw when energy/thermals are None (produce-only run).
+    csv_text = persist.to_csv("rem", _rem_result("j2", "b1", "x.mp4", energy=False))
+    assert "x.mp4" in csv_text
+
+
+def test_rem_batch_csv_aggregates_by_batch(monkeypatch, tmp_path):
+    import json as _json
+    import persist
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    rem_dir = tmp_path / "rem"
+    rem_dir.mkdir()
+    (rem_dir / "2026-06-26_j1.json").write_text(
+        _json.dumps(_rem_result("j1", "bX", "a.mp4")))
+    (rem_dir / "2026-06-26_j2.json").write_text(
+        _json.dumps(_rem_result("j2", "bX", "b.mp4")))
+    (rem_dir / "2026-06-26_j3.json").write_text(
+        _json.dumps(_rem_result("j3", "OTHER", "c.mp4")))
+    csv_text = persist.rem_batch_csv("bX")
+    assert "a.mp4" in csv_text and "b.mp4" in csv_text
+    assert "c.mp4" not in csv_text  # different batch excluded

@@ -30,6 +30,24 @@ so REM can target arbitrary resolution (incl. 4K) and a per-iteration bitrate.
 Software encoders (libx264/libx265/libsvtav1) are the default (reproducible codec-
 comparison reference); NVENC is offered for speed. Every segment is pinned to 4:2:0
 8-bit + AAC 48 kHz stereo so it is TV-displayable and concat-compatible.
+
+PLANNED (agreed with Simon 2026-06-26):
+  * HDR/PQ migration — REM is SDR 8-bit ONLY today (build_encode_cmd pins yuv420p).
+    Simon's timer config already supports PQ (HEVC main10, bt2020, master-display/
+    max-cll); making the whole REM path HDR-capable (10-bit, bt2020, smpte2084
+    transfer + mastering metadata, end-to-end through markers + concat) is the next
+    feature. Ship SDR first, then SDR+HDR.
+  * Decode/encode energy split — the metered figure is currently a full TRANSCODE
+    (decode + scale + encode in one window), not pure encode. Add a null-sink decode
+    pass (`ffmpeg -i <src> -f null -`) measured in the same protocol and report
+    decode / encode (= transcode - decode) / total; keep Simon's encode-to-raw as an
+    occasional cross-check (raw is I/O-bound + huge at 4K). Note the decode/encode
+    overlap caveat: in one ffmpeg process they run concurrently, so the subtraction
+    is an approximation (the raw method is the clean isolation).
+
+The pluggable timer (generate_timer_segment) is wired to Simon's look via
+bin/rem_timer.sh (settings `rem_timer_script_path`): OWL calls it `<out> <w> <h>
+<fps> <dur>`, it draws the MM:SS count-down + GoS logo, OWL re-encodes to match.
 """
 from __future__ import annotations
 
@@ -368,6 +386,31 @@ async def encode_to_vmaf(excerpt: Path, work_dir: Path, codec: str, device: str,
 # Full-clip encode — metered (energy math mirrors video.run_single) or produce-only.
 # Keeps the output file (it becomes the video segment in the concat).
 # ---------------------------------------------------------------------------
+def _energy_from_readings(readings: list, baseline: dict, delta_t: float) -> dict:
+    """Shared ΔW / ΔE / confidence math for one metered window's polls. Used by
+    BOTH the encode pass and the decode-only probe so the two figures are
+    computed identically and subtract cleanly (encode = transcode − decode)."""
+    w_base = baseline["w_base"]
+    task_samples_w = [round(r["watts"], 2) for r in readings]
+    baseline_samples_w = baseline.get("baseline_samples_w")
+    w_task = sum(r["watts"] for r in readings) / len(readings) if readings else w_base
+    delta_w = round(w_task - w_base, 2)
+    meters = power.meters_summary(baseline, readings, task_samples_w)
+    if meters and "delta_w_combined" in meters:
+        delta_w = meters["delta_w_combined"]
+    delta_e_wh = round(delta_w * (delta_t / 3600), 4)
+    conf = confidence(delta_w, len(readings), w_base,
+                      baseline_samples_w=baseline_samples_w,
+                      task_samples_w=task_samples_w, meters=meters)
+    return {
+        "w_base": round(w_base, 2), "w_task": round(w_task, 2),
+        "delta_w": round(delta_w, 2), "delta_t_s": delta_t,
+        "delta_e_wh": delta_e_wh, "poll_count": len(readings),
+        "baseline_samples_w": baseline_samples_w, "task_samples_w": task_samples_w,
+        "confidence": conf, **({"meters": meters} if meters else {}),
+    }
+
+
 async def _measure_encode(video_clip: Path, out_path: Path, codec: str, device: str,
                           height: int, bps: int, baseline: dict,
                           jobs: Optional[dict], job_id: str) -> dict:
@@ -389,18 +432,7 @@ async def _measure_encode(video_clip: Path, out_path: Path, codec: str, device: 
         video._clear_progress(jobs, job_id)
 
     delta_t = round(t_end - t_start, 1)
-    w_base = baseline["w_base"]
-    task_samples_w = [round(r["watts"], 2) for r in readings]
-    baseline_samples_w = baseline.get("baseline_samples_w")
-    w_task = sum(r["watts"] for r in readings) / len(readings) if readings else w_base
-    delta_w = round(w_task - w_base, 2)
-    meters = power.meters_summary(baseline, readings, task_samples_w)
-    if meters and "delta_w_combined" in meters:
-        delta_w = meters["delta_w_combined"]
-    delta_e_wh = round(delta_w * (delta_t / 3600), 4)
-    conf = confidence(delta_w, len(readings), w_base,
-                      baseline_samples_w=baseline_samples_w,
-                      task_samples_w=task_samples_w, meters=meters)
+    energy = _energy_from_readings(readings, baseline, delta_t)
     cpu_temps = [r["cpu_tctl"] for r in readings if r.get("cpu_tctl")]
     gpu_temps = [r["gpu_junction"] for r in readings if r.get("gpu_junction")]
 
@@ -412,13 +444,7 @@ async def _measure_encode(video_clip: Path, out_path: Path, codec: str, device: 
     return {
         "output_path": out_path, "bps": bps, "vmaf": vmaf, "metered": True,
         "transcode": tx, "stream": stream, "output_size_mb": out_size_mb,
-        "energy": {
-            "w_base": round(w_base, 2), "w_task": round(w_task, 2),
-            "delta_w": round(delta_w, 2), "delta_t_s": delta_t,
-            "delta_e_wh": delta_e_wh, "poll_count": len(readings),
-            "baseline_samples_w": baseline_samples_w, "task_samples_w": task_samples_w,
-            "confidence": conf, **({"meters": meters} if meters else {}),
-        },
+        "energy": energy,
         "thermals": {
             "cpu_base": baseline.get("cpu_temp_base"),
             "cpu_peak": round(max(cpu_temps), 1) if cpu_temps else None,
@@ -426,6 +452,47 @@ async def _measure_encode(video_clip: Path, out_path: Path, codec: str, device: 
             "gpu_peak": round(max(gpu_temps), 1) if gpu_temps else None,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Decode-only energy probe — isolates the encoder (Simon 2026-06-26). The metered
+# encode above times a full TRANSCODE (decode + scale + encode); subtracting a
+# decode-only pass leaves the encoder's share. See the module header for the
+# overlap caveat (decode/encode run concurrently in one ffmpeg process, so this
+# is an approximation; Simon's encode-to-raw is the clean cross-check).
+# ---------------------------------------------------------------------------
+def build_decode_cmd(codec: str, device: str, height: int, input_path) -> list:
+    """Same front-end as build_encode_cmd but NO encoder/output — frames are
+    decoded (and scaled, on CPU) then sunk to `-f null`. CPU mirrors decode+scale
+    so the split's 'encode' is the pure encoder; GPU is best-effort hw-decode
+    (scale_cuda→null is awkward), so its split lumps scale into 'encode'."""
+    i = str(input_path)
+    if device == "cpu":
+        return [video._ffmpeg_bin(), "-y", "-i", i,
+                "-vf", f"scale=-2:{height}", "-an", "-f", "null", "-"]
+    b = gpu.BACKEND
+    return [video._ffmpeg_bin(), "-y", *b.ffmpeg_hwaccel_args(), "-i", i,
+            "-an", "-f", "null", "-"]
+
+
+async def _measure_decode(video_clip: Path, codec: str, device: str, height: int,
+                          baseline: dict, jobs: Optional[dict],
+                          job_id: str) -> Optional[dict]:
+    """Metered decode-only probe (build_decode_cmd). Returns an energy dict
+    shaped like _measure_encode's, or None if the probe fails — fail-soft, a
+    missing split must never sink the deliverable."""
+    cmd = build_decode_cmd(codec, device, height, video_clip)
+    stop_event = asyncio.Event()
+    t_start = time.time()
+    poll_task = asyncio.create_task(video.poll_during_task(stop_event))
+    tx = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: video.transcode(cmd))
+    t_end = time.time()
+    stop_event.set()
+    readings = await poll_task
+    if not (tx or {}).get("success", False):
+        return None
+    return _energy_from_readings(readings, baseline, round(t_end - t_start, 1))
 
 
 async def _produce_encode(video_clip: Path, out_path: Path, codec: str, device: str,
@@ -513,6 +580,14 @@ def assemble_rem_file(segments: list, out_path: Path, codec: str, device: str,
 # Share-token registry — the deliverable's download link is intentionally un-gated
 # (a remote collaborator with the unguessable token can fetch it without LAN/SSH).
 # ---------------------------------------------------------------------------
+def _public_base() -> str:
+    """Canonical public origin for absolute share links (no trailing slash).
+    Server-authoritative on purpose: a link built from the request host would be
+    'localhost' when the page is opened through Simon's SSH tunnel."""
+    return str(cfg.load().get("public_base_url",
+                              "https://wattlab.greeningofstreaming.org")).rstrip("/")
+
+
 def _token_index_path(out_dir: Path) -> Path:
     return out_dir / "share_tokens.json"
 
@@ -553,8 +628,11 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
                            upload_name: Optional[str] = None,
                            codec: str = "h264", device: str = "cpu",
                            height: int = 1080, target_vmaf: Optional[float] = None,
+                           fixed_bitrate_kbps: Optional[int] = None,
+                           batch_id: Optional[str] = None,
                            metered: bool = True) -> dict:
     s = cfg.load()
+    bitrate_mode = fixed_bitrate_kbps is not None
     target = float(target_vmaf if target_vmaf is not None else s.get("rem_target_vmaf", 92))
     tol = float(s.get("rem_vmaf_tolerance", 0.5))
     max_iters = int(s.get("rem_max_iters", 6))
@@ -580,21 +658,28 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
     if not input_path.exists():
         raise FileNotFoundError(f"source file missing: {input_path}")
 
-    excerpt = _excerpt_path(source_key, input_path, excerpt_s, work_dir)
     video_clip = _trim(input_path, video_s, work_dir, f"{job_id}_video")
 
     def _set(**kw):
         if jobs is not None and job_id in jobs:
             jobs[job_id].update(kw)
 
-    _set(stage="seeding", iter_done=0, iter_max=max_iters, iterations=[])
     loop = asyncio.get_event_loop()
     stopped = video.focus_mode_enter()
     video.LOCK_FILE.write_text(job_id)
     try:
-        search = await encode_to_vmaf(excerpt, work_dir, codec, device, height,
-                                      target, tol, max_iters, jobs, job_id)
-        accepted_bps = int(search["bps"])
+        if bitrate_mode:
+            # Direct encode at the requested bitrate — no search, no excerpt.
+            # slope=None makes the corrective full pass below self-skip.
+            accepted_bps = _clamp_bps(int(fixed_bitrate_kbps))
+            search = {"bps": accepted_bps, "excerpt_vmaf": None, "iterations": [],
+                      "slope": None, "converged": True, "skipped": True}
+        else:
+            _set(stage="seeding", iter_done=0, iter_max=max_iters, iterations=[])
+            excerpt = _excerpt_path(source_key, input_path, excerpt_s, work_dir)
+            search = await encode_to_vmaf(excerpt, work_dir, codec, device, height,
+                                          target, tol, max_iters, jobs, job_id)
+            accepted_bps = int(search["bps"])
         video_seg = work_dir / f"rem_{job_id}_seg_video.mp4"
         _set(stage="encoding")
         if metered:
@@ -615,6 +700,13 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
                                                  height, corr, base2, jobs, job_id)
                     enc = _pick_better(enc, enc2, target)
             video_result = enc
+            # Decode-only probe (same focus window) → isolate encode energy.
+            if s.get("rem_measure_decode_split", True):
+                _set(stage="measuring_decode")
+                dec_base = await video.measure_baseline(
+                    polls=int(s.get("baseline_polls", 10)))
+                video_result["decode_energy"] = await _measure_decode(
+                    video_clip, codec, device, height, dec_base, jobs, job_id)
         else:
             video_result = await _produce_encode(video_clip, video_seg, codec, device,
                                                   height, accepted_bps, jobs, job_id)
@@ -671,21 +763,47 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
             pass
     _set(stage="done")
 
+    # Decode/encode energy split (Simon 2026-06-26): encode = transcode − decode.
+    transcode_energy = video_result.get("energy")
+    decode_energy = video_result.get("decode_energy")
+    energy_split = None
+    if transcode_energy and decode_energy:
+        t_wh = transcode_energy.get("delta_e_wh") or 0.0
+        d_wh = decode_energy.get("delta_e_wh") or 0.0
+        energy_split = {
+            "method": "transcode_minus_decode",
+            "transcode_wh": t_wh,
+            "decode_wh": d_wh,
+            "encode_wh": round(max(0.0, t_wh - d_wh), 4),
+            "decode": decode_energy,
+            "note": "encode = full transcode − decode-only probe. Decode and encode "
+                    "overlap in one ffmpeg process, so this is an approximation "
+                    "(encode-to-raw is the clean isolation). On GPU the probe is "
+                    "hw-decode only, so scale is counted under encode.",
+        }
+
     return {
         "mode": "rem_prep",
         "job_id": job_id,
+        "batch_id": batch_id,
         "source": {"key": source_key, "upload": upload_name, "label": src_label},
         "codec": codec, "codec_label": CODEC_LABEL.get(codec, codec.upper()),
         "device": device, "height": height,
-        "target_vmaf": target, "tolerance": tol,
+        "target_mode": "bitrate" if bitrate_mode else "vmaf",
+        "target_vmaf": None if bitrate_mode else target,
+        "target_bitrate_kbps": accepted_bps if bitrate_mode else None,
+        "tolerance": tol,
         "metered": metered,
         "achieved_vmaf": video_result.get("vmaf"),
         "achieved_bitrate_kbps": accepted_bps,
         "converged": bool(search.get("converged")),
         "search": {"iterations": search.get("iterations"),
                    "excerpt_vmaf": search.get("excerpt_vmaf"),
-                   "seeded_from": "parity" if search.get("iterations") else None},
+                   "skipped": bool(search.get("skipped")),
+                   "seeded_from": None if bitrate_mode
+                                  else ("parity" if search.get("iterations") else None)},
         "energy": video_result.get("energy"),
+        "energy_split": energy_split,
         "thermals": video_result.get("thermals"),
         "video_stream": video_result.get("stream"),
         "video_encode": {"transcode": video_result.get("transcode"),
@@ -701,7 +819,8 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
             "concat_method": asm.get("method"),
             "download_url": f"/prepare-rem/output/{final.name}",
             "share_token": token,
-            "share_url": f"/rem-file/{token}",
+            # Absolute + public so a link copied from the SSH tunnel still works.
+            "share_url": f"{_public_base()}/rem-file/{token}",
         },
         "scope": "Device layer only (GoS1 server). Production/encode energy of the "
                  "video segment only; markers/timer assembled outside the measurement "
