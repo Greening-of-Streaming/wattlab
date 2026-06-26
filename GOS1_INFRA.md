@@ -1,6 +1,8 @@
 # GoS1 Infrastructure & Backup Context
 # Companion to CLAUDE.md (which covers WattLab project specifics)
-# Last updated: 2026-06-19 (box moved to the basement; server + both Tapo plugs given fixed Bbox IPs)
+# Last updated: 2026-06-26 (two infra facts logged in "External Access Incidents & DNS": GoS1 now has a
+#   FIXED public IP — free "IP fixe" opt-in on the Bouygues portal after a WiFi 7 Bbox firmware upgrade
+#   blocked all ports; and the LAN link-flap / old-switch (IPTV-multicast-flood) incident.)
 
 ## Owner
 Ben Schwarz (bs@ctoic.net / EURL CTO INNOVATION CONSULTING / SIREN 508109337)
@@ -68,11 +70,41 @@ dom, marisol, simon, tania — home dirs exist but unreadable by gos user.
 
 ## External Access Incidents & DNS
 
-### Bouygues Bbox shared-IPv4 / CGNAT incident — 2026-06-01
-Bouygues moved the Bbox to a **shared IPv4** (CGNAT), limiting forwardable ports to **24576–32767** — which killed public 80/443 and took `wattlab.greeningofstreaming.org` offline. External HTTPS has since been restored (externally confirmed reachable 2026-06-11). **If it recurs:** request a free **dedicated IPv4** from Bouygues; plan B is a Linode-hosted Caddy reverse proxy fronting GoS1.
+### Public IP — now FIXED (free, opt-in via Bouygues portal)
+**GoS1's public IP is a dedicated FIXED/static IP** (confirmed by owner 2026-06-26). How we got there:
+a **WiFi 7 Bbox upgrade** (latest hardware) shipped an **unsolicited firmware update that blocked ALL ports**
+— catastrophic, total external-access loss. After some digging the fix was to **opt in to the "IP fixe"
+option on the Bouygues customer portal** (free) — which both restores forwarding and pins a static public IP.
+This is the durable resolution of the 2026-06-01 CGNAT incident below. **Consequences:** external hosting of
+`wattlab.greeningofstreaming.org` is stable on a known IP. **DuckDNS is redundant for *this* IP but
+DELIBERATELY KEPT** — it's portability insurance: if GoS1 ever moves to a site **without** a fixed IP
+(no opt-in available), dynamic DNS is needed again, so the updater stays in place. **If ports ever drop again
+after a Bbox firmware push:** re-check the "IP fixe" / port-forwarding settings on the Bouygues portal first
+(a firmware update can silently reset them).
 
-### DuckDNS auto-updater — now on GoS1
-Runs on GoS1 at `/home/gos/duckdns/duck.sh` via the `gos` crontab, every 5 minutes (`*/5 * * * *`, verified 2026-06-11). The previous updater ran off-box and **silently failed** during the 2026-06-01 outage — same lesson as the backup incident below: silent background jobs need a visible failure signal.
+### Bouygues Bbox shared-IPv4 / CGNAT incident — 2026-06-01 (RESOLVED — see above)
+Bouygues moved the Bbox to a **shared IPv4** (CGNAT), limiting forwardable ports to **24576–32767** — which killed public 80/443 and took `wattlab.greeningofstreaming.org` offline. External HTTPS restored (externally confirmed reachable 2026-06-11); **permanently resolved by the "IP fixe" opt-in above.** Historical plan B (if Bouygues ever can't provide it): a Linode-hosted Caddy reverse proxy fronting GoS1.
+
+### DuckDNS auto-updater — on GoS1 (kept on purpose for portability)
+Runs on GoS1 at `/home/gos/duckdns/duck.sh` via the `gos` crontab, every 5 minutes (`*/5 * * * *`, verified 2026-06-11). **Redundant for the current static IP but deliberately retained** as insurance for a future move to a site without a fixed IP (where dynamic DNS is needed again) — do NOT retire it on the assumption it's dead weight. The previous updater ran off-box and **silently failed** during the 2026-06-01 outage — same lesson as the backup incident below: silent background jobs need a visible failure signal.
+
+### LAN link-flap / old-switch incident — 2026-06-26
+**Symptom:** a "partial network outage" (~30 min, recovered by ~14:33). Owner on the LAN, others affected.
+
+**What the box logged (kernel, authoritative):** GoS1's NIC `eno2` (Realtek **r8169**, PCI `08:00.0`) flapped ~5× between **14:01:55 and 14:11:31**, then went stable and stayed clean. The unused second NIC `eno1` (`07:00.0`) briefly came up at 14:10:22 / down 14:11:27 (likely a cable momentarily touched that port). DuckDNS updates (5-min cron) returned `NO_RESPONSE` at **14:05** (during the flaps) and again at **14:30** (after the link was stable → that later blip was **upstream/WAN**, not the box).
+
+**Signature = physical, not congestion / not software:**
+- Every re-link negotiated **1Gbps/Full** → it is an *old gigabit* switch, **not** 10 Mbps as first assumed (the switch's uplink-to-router speed is separate/unknown).
+- NIC counters across the event: RX errors/dropped/missed **0**, TX errors **0** → the port physically lost carrier (switch resetting the port), **not** buffer overruns from a saturated link.
+- No reboot (then up 5d+), load <1, RAM fine, no ffmpeg/heavy egress, `eno1`/`eno2` **not** bridged or bonded (the `br-*`/veth are Docker's) → **no L2 loop**, GoS1 was not flooding.
+
+**Root-cause hypothesis (strong, not proven):** since the **2026-06-19 basement move, GoS1 lost its direct router cable and now hangs off a very old gigabit switch — shared with a TV used for 4K-streaming tests**. Sustained 4K load on a marginal/aging switch (weak PSU brown-out / thermal) is a classic trigger for ports physically resetting → flapped GoS1 *and* rippled to other devices on that switch ⇒ the "partial" feel. GoS1 is a **victim of the shared switch, not the cause**. (Confidence: link-flap timeline + physical-vs-congestion call = high, from logs/counters; 4K-as-trigger = strong correlation, no switch/TV telemetry to confirm.)
+
+**Recommended fixes (in order):** (1) get GoS1 **off the shared switch — restore a direct router port** (it was stable that way pre-move); (2) replace the old switch / verify it isn't overheating; (3) leave only `eno2` cabled (avoid an accidental `eno1` second-port loop). **Repro test:** stream 4K to the TV while watching `journalctl -k -f | grep "Link is"` on GoS1 — port flaps under load ⇒ switch condemned. Same lesson as the silent-failure incidents: this was only diagnosable because the kernel keeps a visible link-event log.
+
+**UPDATE — same-day live repro (confirmed mechanism): IPTV multicast flood, not just "old switch".** The switch is a **Netgear GS305v3 — unmanaged, so NO IGMP snooping**. The Bbox delivers TV by **multicast**; with no snooping the switch **floods every channel to all ports, including GoS1**. Measured live with France 3 HD on the TV: `eno2` was receiving **~5 Mbps, 514 mcast pkts/s (~95% of RX)** for a stream GoS1 never joined (its only multicast memberships were normal local `224.0.0.251`/`224.0.0.1`). A **4K channel ≈ 25–40 Mbps** flood at far higher pkt-rate is what makes GoS1's SSH session go **unresponsive**, and very plausibly what overwhelmed the cheap switch into the 14:01–14:11 **port resets** (one root cause, two symptoms). EEE (802.3az) was also `enabled-active` on `eno2` (Realtek r8169/rtl8125b — a known flap factor) — disable as belt-and-suspenders: `sudo ethtool --set-eee eno2 eee off`. **Primary fix = separate IPTV from GoS1** (GoS1 *or* the TV on a direct Bbox port), **or** swap the GS305v3 for an IGMP-snooping smart switch (GS305E/GS308E). The Bbox "only one HD channel works" is likely its own IPTV/line-capacity issue (ISP side). ⚠ Don't re-trigger 4K casually — it floods GoS1 and can hang a live session.
+
+**RESOLUTION — ordered 2026-06-26: 2× Netgear GS305E** (Plus/Web-Managed, **has IGMP snooping**) to replace the unmanaged **GS305v3** (P/N `272-13158-01`, S/N `5UB19865Y04DD0`). The "E" suffix is the whole point — plain GS305/GS105/TL-SG105 are *unmanaged* (no snooping) and would flood GoS1 identically. **Install checklist:** (1) in the GS305E web UI, **enable IGMP snooping** and verify the multicast/querier defaults (Netgear KB 31257 — default IGMP settings can disrupt multicast; the Bbox should be the querier); (2) **disable EEE/green-Ethernet on GoS1's `eno2`** — `sudo ethtool --set-eee eno2 eee off`, then make it persistent (networkd `.link` / NM / udev) — it was `enabled-active` and is a known r8169/rtl8125b flap factor; (3) cable only `eno2` (avoid an accidental `eno1` second-port loop). **Verify:** stream 4K to the TV while watching `journalctl -k -f | grep "Link is"` and `eno2` multicast pkts/s (`watch -n1 "ip -s link show eno2"`) — the flood + flaps should disappear. **Free fallback** still valid if the switch swap is delayed or snooping needs tuning: put **GoS1 *or* the TV on a direct Bbox port** (off the shared switch). Second GS305E = spare / second location.
 
 ## Nextcloud Backup (Hetzner Storage Share)
 - **URL:** https://nx92576.your-storageshare.de
