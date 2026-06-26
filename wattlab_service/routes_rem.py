@@ -73,14 +73,14 @@ async def run_rem_job(job_id: str, source_key: str | None, upload_name: str | No
                       codec: str, device: str, height: int,
                       target_vmaf: float | None, metered: bool,
                       fixed_bitrate_kbps: int | None = None,
-                      batch_id: str | None = None):
+                      batch_id: str | None = None, score_vmaf: bool = True):
     try:
         jobs[job_id].update({"status": "running", "stage": "starting"})
         result = await rem_prep.run_rem_prep_job(
             job_id, jobs=jobs, source_key=source_key, upload_name=upload_name,
             codec=codec, device=device, height=height,
             target_vmaf=target_vmaf, fixed_bitrate_kbps=fixed_bitrate_kbps,
-            batch_id=batch_id, metered=metered)
+            batch_id=batch_id, score_vmaf=score_vmaf, metered=metered)
         save_result("rem", job_id, result)
         jobs[job_id].update({"status": "done", "stage": "done", "result": result})
     except Exception as e:
@@ -169,6 +169,7 @@ async def prepare_rem_run(request: Request,
                           target_mode: str = Form("vmaf"),
                           target_vmaf: str = Form(""),
                           target_bitrate: str = Form(""),
+                          compute_vmaf: str = Form("true"),
                           produce_only: str = Form("")):
     # codec may arrive as one or many checked boxes; normalise to a deduped,
     # known-codec list preserving form order.
@@ -216,6 +217,9 @@ async def prepare_rem_run(request: Request,
             return JSONResponse({"error": "target VMAF must be a number"}, status_code=400)
 
     metered = not _truthy(produce_only)
+    # VMAF is intrinsic to the search → always on in VMAF mode; the skip toggle
+    # only applies to the (slow on 4K) reporting score in bitrate mode.
+    score_vmaf = True if target_mode == "vmaf" else _truthy(compute_vmaf)
     # Backstop sweep of stale evict-class uploads on every run start.
     _, up_dir, _ = rem_prep.rem_dirs()
     uploads.sweep(up_dir)
@@ -234,7 +238,8 @@ async def prepare_rem_run(request: Request,
         async def coro(job_id=job_id, c=c):
             await run_rem_job(job_id, source_key or None, upload_name or None,
                               c, device, h, tv, metered,
-                              fixed_bitrate_kbps=fixed_bps, batch_id=batch_id)
+                              fixed_bitrate_kbps=fixed_bps, batch_id=batch_id,
+                              score_vmaf=score_vmaf)
 
         position = queue_control.enqueue(job_id, "rem", label, coro,
                                          request=request, page="/prepare-rem")
@@ -451,6 +456,12 @@ _PREPARE_REM_HTML = """
       <input type="number" id="bitrate" min="200" max="60000" step="50" value="{DEFAULT_BITRATE}" style="width:7rem"{DISABLED}>
     </div>
   </div>
+  <div class="row" id="vmafComputeRow" style="display:none">
+    <div class="field">
+      <label><input type="checkbox" id="computeVmaf" checked{DISABLED}> Compute VMAF on the result</label>
+      <span class="note">⚠ VMAF scoring is slow at 4K (minutes per file) and runs once per codec, in series — for up to 3× 10-min 4K files it can dominate the run. Leave on for the quality figure; uncheck to skip it and get the files faster.</span>
+    </div>
+  </div>
   <div class="row">
     <div class="field">
       <label><input type="checkbox" id="produceOnly"{DISABLED}> Produce only (skip energy measurement — faster)</label>
@@ -472,6 +483,8 @@ function toggleTargetMode() {
   const m = document.getElementById('targetMode').value;
   document.getElementById('vmafField').style.display = (m === 'bitrate') ? 'none' : '';
   document.getElementById('bitrateField').style.display = (m === 'bitrate') ? '' : 'none';
+  // VMAF is intrinsic in quality mode; only offer to skip it in bitrate mode.
+  document.getElementById('vmafComputeRow').style.display = (m === 'bitrate') ? '' : 'none';
 }
 
 async function doUpload() {
@@ -517,6 +530,7 @@ async function runRem() {
   fd.append('target_mode', mode);
   fd.append('target_vmaf', document.getElementById('vmaf').value);
   fd.append('target_bitrate', document.getElementById('bitrate').value);
+  fd.append('compute_vmaf', document.getElementById('computeVmaf').checked ? 'true' : 'false');
   fd.append('produce_only', document.getElementById('produceOnly').checked ? 'true' : 'false');
   btn.disabled = true; res.innerHTML = '';
   try {
@@ -577,8 +591,9 @@ function renderResult(d, card) {
   // Target line depends on mode: VMAF search vs fixed bitrate.
   let targetHtml;
   if (d.target_mode === 'bitrate') {
+    const vm = (d.achieved_vmaf==null) ? 'VMAF not computed' : 'VMAF '+ d.achieved_vmaf;
     targetHtml = '<div class="k">Target bitrate</div><div class="v">'+ d.target_bitrate_kbps +
-      ' kbps (fixed) → VMAF '+ (d.achieved_vmaf==null?'?':d.achieved_vmaf) +'</div>';
+      ' kbps (fixed) → '+ vm +'</div>';
   } else {
     const conv = d.converged ? '✓ converged' : '⚠ best-effort (not within tolerance)';
     targetHtml = '<div class="k">Target VMAF</div><div class="v">'+ d.target_vmaf +

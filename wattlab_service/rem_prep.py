@@ -386,6 +386,20 @@ async def encode_to_vmaf(excerpt: Path, work_dir: Path, codec: str, device: str,
 # Full-clip encode — metered (energy math mirrors video.run_single) or produce-only.
 # Keeps the output file (it becomes the video segment in the concat).
 # ---------------------------------------------------------------------------
+def _rem_vmaf(distorted, reference, height: int = 1080) -> Optional[float]:
+    """Terminal VMAF for the REM deliverable — a REPORTING score, so speed it up
+    for big 4K clips via temporal subsampling + all cores (keeps it under
+    compute_vmaf's 600s timeout). Doubles the subsample above 1080p. Honors the
+    global vmaf_enabled toggle. The bitrate SEARCH keeps the precise globals."""
+    s = cfg.load()
+    sub = int(s.get("rem_vmaf_n_subsample", 5) or 1)
+    if height and height > 1080:
+        sub *= 2                      # 4K decodes two heavy streams — more headroom
+    s2 = {**s, "vmaf_n_subsample": max(1, sub),
+          "vmaf_n_threads": int(s.get("rem_vmaf_n_threads", 24))}
+    return video.compute_vmaf(distorted, reference, s2)
+
+
 def _energy_from_readings(readings: list, baseline: dict, delta_t: float) -> dict:
     """Shared ΔW / ΔE / confidence math for one metered window's polls. Used by
     BOTH the encode pass and the decode-only probe so the two figures are
@@ -413,7 +427,8 @@ def _energy_from_readings(readings: list, baseline: dict, delta_t: float) -> dic
 
 async def _measure_encode(video_clip: Path, out_path: Path, codec: str, device: str,
                           height: int, bps: int, baseline: dict,
-                          jobs: Optional[dict], job_id: str) -> dict:
+                          jobs: Optional[dict], job_id: str,
+                          score_vmaf: bool = True) -> dict:
     cmd = build_encode_cmd(codec, device, height, bps, video_clip, out_path)
     duration_s = video._probe_duration(video_clip)
     progress_cb = (video._make_progress_cb(jobs, job_id, duration_s)
@@ -437,7 +452,7 @@ async def _measure_encode(video_clip: Path, out_path: Path, codec: str, device: 
     gpu_temps = [r["gpu_junction"] for r in readings if r.get("gpu_junction")]
 
     # Terminal pass — measurement window is closed (stop_event set, polling done).
-    vmaf = video.compute_vmaf(out_path, video_clip)
+    vmaf = _rem_vmaf(out_path, video_clip, height) if score_vmaf else None
     stream = video.probe_output_stream(out_path)
     out_size_mb = (round(out_path.stat().st_size / 1024 / 1024, 2)
                    if out_path.exists() and out_path.stat().st_size > 0 else None)
@@ -497,7 +512,7 @@ async def _measure_decode(video_clip: Path, codec: str, device: str, height: int
 
 async def _produce_encode(video_clip: Path, out_path: Path, codec: str, device: str,
                           height: int, bps: int, jobs: Optional[dict],
-                          job_id: str) -> dict:
+                          job_id: str, score_vmaf: bool = True) -> dict:
     cmd = build_encode_cmd(codec, device, height, bps, video_clip, out_path)
     duration_s = video._probe_duration(video_clip)
     progress_cb = (video._make_progress_cb(jobs, job_id, duration_s)
@@ -506,7 +521,7 @@ async def _produce_encode(video_clip: Path, out_path: Path, codec: str, device: 
         None, lambda: video.transcode(cmd, progress_cb=progress_cb))
     if jobs is not None:
         video._clear_progress(jobs, job_id)
-    vmaf = video.compute_vmaf(out_path, video_clip)
+    vmaf = _rem_vmaf(out_path, video_clip, height) if score_vmaf else None
     stream = video.probe_output_stream(out_path)
     out_size_mb = (round(out_path.stat().st_size / 1024 / 1024, 2)
                    if out_path.exists() and out_path.stat().st_size > 0 else None)
@@ -630,9 +645,13 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
                            height: int = 1080, target_vmaf: Optional[float] = None,
                            fixed_bitrate_kbps: Optional[int] = None,
                            batch_id: Optional[str] = None,
+                           score_vmaf: bool = True,
                            metered: bool = True) -> dict:
     s = cfg.load()
     bitrate_mode = fixed_bitrate_kbps is not None
+    # VMAF is intrinsic to the search, so it's always scored in VMAF mode; the
+    # skip toggle only applies to the reporting score in bitrate mode.
+    score_vmaf = score_vmaf or not bitrate_mode
     target = float(target_vmaf if target_vmaf is not None else s.get("rem_target_vmaf", 92))
     tol = float(s.get("rem_vmaf_tolerance", 0.5))
     max_iters = int(s.get("rem_max_iters", 6))
@@ -685,7 +704,8 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
         if metered:
             base = await video.measure_baseline(polls=int(s.get("baseline_polls", 10)))
             enc = await _measure_encode(video_clip, video_seg, codec, device,
-                                        height, accepted_bps, base, jobs, job_id)
+                                        height, accepted_bps, base, jobs, job_id,
+                                        score_vmaf=score_vmaf)
             # One corrective full pass if the full-clip VMAF drifts off target.
             if (enc["vmaf"] is not None and abs(enc["vmaf"] - target) > tol
                     and search.get("slope")):
@@ -709,7 +729,8 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
                     video_clip, codec, device, height, dec_base, jobs, job_id)
         else:
             video_result = await _produce_encode(video_clip, video_seg, codec, device,
-                                                  height, accepted_bps, jobs, job_id)
+                                                  height, accepted_bps, jobs, job_id,
+                                                  score_vmaf=score_vmaf)
         accepted_bps = int(video_result["bps"])
     finally:
         video.LOCK_FILE.unlink(missing_ok=True)

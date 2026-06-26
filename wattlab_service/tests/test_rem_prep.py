@@ -421,6 +421,63 @@ async def test_decode_split_fail_soft(metered_env, monkeypatch):
     assert res["energy"] is not None
 
 
+# --------------------------------------------------------------------------
+# VMAF: REM-specific subsample/threads (A) + bitrate-mode skip toggle (C)
+# --------------------------------------------------------------------------
+def test_rem_vmaf_subsamples_and_doubles_for_4k(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(video, "compute_vmaf",
+                        lambda d, r, s=None: captured.update(s) or 95.0)
+    monkeypatch.setattr(rem_prep.cfg, "load",
+                        lambda: {**settings.DEFAULTS, "rem_vmaf_n_subsample": 5,
+                                 "rem_vmaf_n_threads": 24})
+    rem_prep._rem_vmaf("d.mp4", "r.mp4", 1080)
+    assert captured["vmaf_n_subsample"] == 5 and captured["vmaf_n_threads"] == 24
+    rem_prep._rem_vmaf("d.mp4", "r.mp4", 2160)   # 4K → doubled
+    assert captured["vmaf_n_subsample"] == 10
+
+
+@pytest.mark.asyncio
+async def test_bitrate_mode_can_skip_vmaf(e2e_env, monkeypatch):
+    # compute_vmaf must NOT be called when scoring is skipped in bitrate mode.
+    def _boom(*a, **k):
+        raise AssertionError("VMAF must not be scored when skipped")
+    monkeypatch.setattr(video, "compute_vmaf", _boom)
+    res = await rem_prep.run_rem_prep_job(
+        "sv01", jobs=None, source_key=None, upload_name="src.mp4",
+        codec="h264", device="cpu", height=1080,
+        fixed_bitrate_kbps=4000, score_vmaf=False, metered=False)
+    assert res["achieved_vmaf"] is None
+
+
+@pytest.mark.asyncio
+async def test_vmaf_mode_forces_scoring_even_if_skip_passed(e2e_env, monkeypatch):
+    # In VMAF mode score_vmaf=False is overridden — the search needs VMAF.
+    import budget_data
+    monkeypatch.setattr(budget_data, "latest_artifact_path", lambda: None)
+    res = await rem_prep.run_rem_prep_job(
+        "vf01", jobs=None, source_key=None, upload_name="src.mp4",
+        codec="h264", device="cpu", height=1080,
+        target_vmaf=92.0, score_vmaf=False, metered=False)
+    assert res["target_mode"] == "vmaf"
+    assert res["achieved_vmaf"] is not None
+
+
+def test_run_route_forces_vmaf_in_quality_mode(monkeypatch):
+    import routes_rem
+    seen = {}
+
+    def fake_enqueue(job_id, kind, label, coro, request=None, page=None):
+        seen["coro"] = coro
+        return 1
+    monkeypatch.setattr(routes_rem.queue_control, "enqueue", fake_enqueue)
+    # Even if the form sends compute_vmaf=false, quality mode keeps VMAF on.
+    r = client.post("/prepare-rem/run", headers=_LAB,
+                    data={"source_key": "meridian_120s", "codec": "h264",
+                          "target_mode": "vmaf", "compute_vmaf": "false"})
+    assert r.status_code == 200
+
+
 @pytest.mark.asyncio
 async def test_decode_split_disabled_by_setting(metered_env, monkeypatch):
     # rem_measure_decode_split=False → encode still metered, but no decode probe/split.

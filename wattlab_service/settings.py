@@ -140,6 +140,12 @@ DEFAULTS = {
     # window during device playback. Bitrate is the free variable, quality the
     # constant target. See docs / the meeting spec (2026-06-23).
     "rem_measure_decode_split": True, # metered runs add a decode-only probe → report encode = transcode − decode
+    # Terminal VMAF on the REM deliverable is a REPORTING score (not a search
+    # target), so subsample temporally + use all cores to keep big 4K clips fast
+    # and under compute_vmaf's 600s timeout. The helper doubles the subsample for
+    # >1080p automatically. (The bitrate-search VMAF keeps the precise globals.)
+    "rem_vmaf_n_subsample": 5,        # score every Nth frame for the deliverable score
+    "rem_vmaf_n_threads": 24,         # all cores (terminal pass, outside the energy window)
     "rem_target_mode": "vmaf",        # default form mode: "vmaf" (search) or "bitrate" (direct)
     "rem_default_bitrate_kbps": 4000, # prefill for the bitrate-mode input
     "rem_target_vmaf": 92,            # default quality target (operator-overridable per run)
