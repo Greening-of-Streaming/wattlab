@@ -106,6 +106,21 @@ Runs on GoS1 at `/home/gos/duckdns/duck.sh` via the `gos` crontab, every 5 minut
 
 **RESOLUTION — ordered 2026-06-26: 2× Netgear GS305E** (Plus/Web-Managed, **has IGMP snooping**) to replace the unmanaged **GS305v3** (P/N `272-13158-01`, S/N `5UB19865Y04DD0`). The "E" suffix is the whole point — plain GS305/GS105/TL-SG105 are *unmanaged* (no snooping) and would flood GoS1 identically. **Install checklist:** (1) in the GS305E web UI, **enable IGMP snooping** and verify the multicast/querier defaults (Netgear KB 31257 — default IGMP settings can disrupt multicast; the Bbox should be the querier); (2) **disable EEE/green-Ethernet on GoS1's `eno2`** — `sudo ethtool --set-eee eno2 eee off`, then make it persistent (networkd `.link` / NM / udev) — it was `enabled-active` and is a known r8169/rtl8125b flap factor; (3) cable only `eno2` (avoid an accidental `eno1` second-port loop). **Verify:** stream 4K to the TV while watching `journalctl -k -f | grep "Link is"` and `eno2` multicast pkts/s (`watch -n1 "ip -s link show eno2"`) — the flood + flaps should disappear. **Free fallback** still valid if the switch swap is delayed or snooping needs tuning: put **GoS1 *or* the TV on a direct Bbox port** (off the shared switch). Second GS305E = spare / second location.
 
+**RESOLVED — installed, configured & verified 2026-06-27.** Both GS305E units in service, GS305v3 retired. Topology is now a **chain**:
+
+```
+Bbox (192.168.1.254, IGMP querier)
+  └─ GS305E-1  192.168.1.173  MAC 28:94:01:8A:F7:23  S/N 5W18635XA583A  fw V1.0.0.22  ── GoS1 eno2
+       └─ GS305E-2  192.168.1.8  MAC 28:94:01:8A:F7:46                                ── STB (4K IPTV)
+```
+
+- Both switches: **DHCP-enabled** (got `.173` / `.8` leases from the Bbox — reserve these on the Bbox if stable IPs are wanted), web UI at `http://<ip>/index.cgi`, admin password set to **`Wattlab1`** on both. Names set in-UI: **GS305E-1**, **GS305E-2**.
+- **IGMP snooping was already ON by factory default** on both — it was **not** the missing piece. The **only change from factory on each** was setting **Block Unknown Multicast Address → Enable** (System → Multicast). That's the setting that actually stops the un-joined channels flooding GoS1's port; snooping alone only prunes *learned* groups. GS305E-2 shipped with default password `password` (set to `Wattlab1` on first login).
+- **Why GS305E-1 alone protects GoS1:** in the chain, the STB's IGMP joins flow *upstream* (STB → GS305E-2 → GS305E-1 → Bbox), so GS305E-1 forwards the 4K multicast only out its GS305E-2 port, never GoS1's. GS305E-2's config is hygiene only — nothing downstream of it but the STB.
+- **VERIFIED live (2026-06-27, 4K IPTV streaming):** `eno2` RX multicast = **0 frames over 10 s (~0/s)**, total ~50 pkt/s / ~62 kbit/s — vs the old GS305v3 flood of **~514 mcast pkt/s / ~5 Mbps on France 3 HD**. Flood eliminated; GoS1's only multicast memberships are the normal local `224.0.0.1`/`224.0.0.251`. The hang-during-4K problem is gone.
+- ⚠ **Still open (belt-and-suspenders, low priority):** checklist item (2) — `eno2` EEE is now `enabled-inactive` (the GS305E doesn't negotiate it, so the flap risk is currently moot) but was **never explicitly disabled/persisted** via `ethtool --set-eee eno2 eee off`. Do it if any future r8169 flaps recur.
+- **Ops note for re-finding the switches:** NSDP auto-discovery (UDP 63322) is **dead from GoS1** because `ufw` is active and drops the unicast reply to the broadcast probe. Discover instead by ARP OUI **`28:94:01`** (`ip neigh show dev eno2 | grep 28:94:01`) + web-UI fingerprint (`<title>Redirect to Login</title>`, `index.cgi`).
+
 ## Nextcloud Backup (Hetzner Storage Share)
 - **URL:** https://nx92576.your-storageshare.de
 - **Plan:** NX11 base (possibly upgraded to 1 TB — verify at accounts.hetzner.com)
