@@ -312,14 +312,19 @@ def _next_bitrate(samples: list, target: float) -> int:
     return _clamp_bps(_round50(min(b for _, b in vb) * 0.6))
 
 
-def _accept(samples: list, target: float):
-    """Pick the accepted (bps, vmaf): prefer the lowest-overshoot encode that is
-    AT OR ABOVE target (don't ship under-quality); else the closest overall."""
+def _accept(samples: list, target: float, tol: float):
+    """Pick the accepted (bps, vmaf). The search STOPS on a symmetric band
+    (|vmaf - target| <= tol), so acceptance must honor the same band — otherwise a
+    probe that converges a hair UNDER target (e.g. 91.99 vs a 92 target) gets
+    discarded and the search falls back to its high seed, overshooting both quality
+    and bitrate. Any encode at or above `target - tol` clears quality; among those
+    pick the LOWEST bitrate (don't ship more bits than the target needs). Only when
+    nothing reaches the band do we fall back to the closest overall."""
     if not samples:
         return None
-    at_or_above = [(b, v) for b, v in samples if v >= target]
-    if at_or_above:
-        return min(at_or_above, key=lambda bv: bv[1] - target)
+    in_band = [(b, v) for b, v in samples if v >= target - tol]
+    if in_band:
+        return min(in_band, key=lambda bv: bv[0])
     return min(samples, key=lambda bv: abs(bv[1] - target))
 
 
@@ -371,7 +376,7 @@ async def encode_to_vmaf(excerpt: Path, work_dir: Path, codec: str, device: str,
         if abs(v - target) <= tol:
             break
         bps = _next_bitrate(samples, target)
-    accepted = _accept(samples, target)
+    accepted = _accept(samples, target, tol)
     seed = _seed_bitrate(codec, height, target)
     return {
         "bps": accepted[0] if accepted else seed,
@@ -530,14 +535,18 @@ async def _produce_encode(video_clip: Path, out_path: Path, codec: str, device: 
             "energy": None, "thermals": None}
 
 
-def _pick_better(a: dict, b: dict, target: float) -> dict:
-    """Of two full-clip encodes pick the deliverable: prefer ≥target with the
-    smaller overshoot, else the closest to target. The loser's output is removed."""
+def _pick_better(a: dict, b: dict, target: float, tol: float) -> dict:
+    """Of two full-clip encodes pick the deliverable. Honor the same symmetric band
+    as the search: an encode at or above `target - tol` clears quality, so among
+    those prefer the LOWEST bitrate; otherwise prefer the closest to target. The
+    loser's output is removed."""
     def score(r):
         v = r.get("vmaf")
         if v is None:
-            return (2, 9e9)
-        return (0, v - target) if v >= target else (1, target - v)
+            return (2, 0.0, 9e9)
+        if v >= target - tol:
+            return (0, float(r.get("bps") or 9e9), 0.0)   # clears quality → fewest bits
+        return (1, 0.0, target - v)                       # under-quality → closest to target
     win, lose = (a, b) if score(a) <= score(b) else (b, a)
     try:
         Path(lose["output_path"]).unlink(missing_ok=True)
@@ -718,7 +727,7 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
                     video_seg2 = work_dir / f"rem_{job_id}_seg_video2.mp4"
                     enc2 = await _measure_encode(video_clip, video_seg2, codec, device,
                                                  height, corr, base2, jobs, job_id)
-                    enc = _pick_better(enc, enc2, target)
+                    enc = _pick_better(enc, enc2, target, tol)
             video_result = enc
             # Decode-only probe (same focus window) → isolate encode energy.
             if s.get("rem_measure_decode_split", True):

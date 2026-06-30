@@ -37,16 +37,49 @@ def test_next_bitrate_drops_when_all_above_target():
     assert rem_prep._next_bitrate(samples, 92.0) < 6000
 
 
-def test_accept_prefers_at_or_above_target_with_least_overshoot():
+def test_accept_prefers_lowest_bitrate_in_band():
     samples = [(4000, 90.0), (6000, 92.4), (9000, 97.0)]
-    bps, v = rem_prep._accept(samples, 92.0)
+    bps, v = rem_prep._accept(samples, 92.0, 0.5)
     assert bps == 6000 and v == 92.4
 
 
 def test_accept_falls_back_to_closest_when_none_reach_target():
     samples = [(2000, 80.0), (4000, 89.0)]
-    bps, v = rem_prep._accept(samples, 92.0)
+    bps, v = rem_prep._accept(samples, 92.0, 0.5)
     assert bps == 4000 and v == 89.0  # closest to target
+
+
+def test_accept_keeps_within_tolerance_probe_just_under_target():
+    # Regression: the H.265 Meridian run (afc416c2) converged on 2850 kbps @ 91.99
+    # (Δ −0.01, inside ±0.5) but _accept's old hard `>= target` floor discarded it
+    # and fell back to the 4050 kbps seed @ 93.66 — overshooting quality AND bitrate
+    # (above the parallel H.264 run's 3200 kbps). Acceptance must honor the same
+    # symmetric band the search stops on.
+    samples = [(4050, 93.66), (2450, 91.43), (2850, 91.99)]
+    bps, v = rem_prep._accept(samples, 92.0, 0.5)
+    assert bps == 2850 and v == 91.99
+
+
+def test_accept_excludes_probes_below_the_band():
+    # 91.0 is outside ±0.5 of 92 → must not be accepted over the in-band 92.3.
+    samples = [(2000, 91.0), (3000, 92.3), (5000, 95.0)]
+    bps, v = rem_prep._accept(samples, 92.0, 0.5)
+    assert bps == 3000 and v == 92.3
+
+
+def test_pick_better_prefers_lower_bitrate_within_band():
+    # Both full-clip encodes clear quality (>= 91.5); pick the cheaper one rather
+    # than the higher-bitrate overshoot.
+    lo = {"vmaf": 91.99, "bps": 2850, "output_path": "/nonexistent/lo.mp4"}
+    hi = {"vmaf": 93.62, "bps": 4050, "output_path": "/nonexistent/hi.mp4"}
+    assert rem_prep._pick_better(hi, lo, 92.0, 0.5) is lo
+    assert rem_prep._pick_better(lo, hi, 92.0, 0.5) is lo
+
+
+def test_pick_better_falls_back_to_closest_when_both_under_band():
+    a = {"vmaf": 88.0, "bps": 2000, "output_path": "/nonexistent/a.mp4"}
+    b = {"vmaf": 90.5, "bps": 3000, "output_path": "/nonexistent/b.mp4"}
+    assert rem_prep._pick_better(a, b, 92.0, 0.5) is b  # closer to target
 
 
 def test_slope_from_bracket_is_positive():
