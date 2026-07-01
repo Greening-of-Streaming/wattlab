@@ -59,6 +59,7 @@ SETTINGS_READ_FULL = "settings_read_full" # render-mode predicate (editable inpu
 SETTINGS_WRITE     = "settings_write"
 VARIANCE_RUN       = "variance_run"
 BENCHMARK_RUN      = "benchmark_run"       # CR-061 — launch/cancel the in-app overnight benchmark
+CREATE_FINDING     = "create_finding"      # LLM-assisted finding drafter (draft + human-gated save); Lab-only, OWL's first non-measurement LLM use
 PREPARE_REM        = "prepare_rem"         # REM↔OWL integration — /prepare-rem hidden Lab page: encode a
                                            # source to a target VMAF + wrap it in timer/marker structure for
                                            # REM device-playback experiments (the generated file's SHARE link
@@ -100,6 +101,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     SETTINGS_WRITE:     Tier.Lab,
     VARIANCE_RUN:       Tier.Lab,
     BENCHMARK_RUN:      Tier.Lab,
+    CREATE_FINDING:     Tier.Lab,
     PREPARE_REM:        Tier.Lab,
 }
 

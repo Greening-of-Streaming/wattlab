@@ -48,6 +48,7 @@ import routes_benchmark
 import routes_budget   # DEMO — transcode-budget calculator (CR-003 × CR-045 V2); illustrative data
 import routes_demo
 import routes_enhance
+import routes_finding_draft   # Lab-only LLM-assisted finding drafter (CREATE_FINDING)
 import routes_findings
 import routes_image
 import routes_llm
@@ -61,7 +62,7 @@ import routes_settings
 import routes_video
 
 for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_demo,
-                 routes_enhance, routes_findings, routes_image, routes_llm,
+                 routes_enhance, routes_finding_draft, routes_findings, routes_image, routes_llm,
                  routes_methodology, routes_mockups, routes_privacy, routes_rag,
                  routes_rem, routes_results, routes_settings, routes_video):
     app.include_router(_feature.router)

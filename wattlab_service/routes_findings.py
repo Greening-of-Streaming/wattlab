@@ -17,7 +17,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 import findings as findings_mod
 import settings as cfg
 import version
-from capabilities import requires, PUBLIC_PAGE
+from audience import tier as resolve_tier
+from capabilities import requires, can, PUBLIC_PAGE, CREATE_FINDING
 from persist import load_result
 from ui import _BACK, _BASE_STYLES, _CARBON_JS, _RESULT_JS
 
@@ -331,17 +332,27 @@ _FINDINGS_CATALOG_CSS = (
 )
 
 
-def _findings_catalog_page_html() -> str:
+def _findings_catalog_page_html(can_draft: bool = False) -> str:
     """CR-056 — Server-side render of /findings catalog index.
 
     Lists every finding under docs/findings/ as a row (confidence dot +
     headline + version/date + claim_short). Sorted by last_refined desc
     so newest-or-refined findings rise. Empty-catalog state is honest —
     'no findings yet' rather than scaffolding for one that never lands.
+
+    `can_draft` (Lab only) reveals the LLM-assisted "Draft a finding"
+    entry-point. It's a render-mode predicate, not a gate — the /findings/draft
+    routes enforce CREATE_FINDING themselves.
     """
     e = html_lib.escape
     items = findings_mod.list_all()
     items.sort(key=lambda f: f.last_refined, reverse=True)
+
+    draft_cta = (
+        '<a class="findings-draft-cta" href="/findings/draft">'
+        '✎ Draft a finding<span class="findings-draft-tag">Lab · AI-assisted</span></a>'
+        if can_draft else ''
+    )
 
     rows_html = _findings_catalog_rows_html(items)
     if not items:
@@ -372,6 +383,12 @@ def _findings_catalog_page_html() -> str:
             'background:rgba(255,170,0,0.06);padding:0.15rem 0.45rem;border-radius:2px}'
           '.findings-tagline{color:var(--text-3);font-family:monospace;font-size:0.78rem;line-height:1.55}'
           '.findings-footer{margin-top:1.5rem;padding-top:0.85rem;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-4);font-family:monospace}'
+          '.findings-draft-cta{display:inline-flex;align-items:center;gap:0.5rem;margin-top:0.7rem;'
+            'font-family:monospace;font-size:0.78rem;color:var(--accent);text-decoration:none;'
+            'border:1px solid var(--border-3);border-radius:4px;padding:0.3rem 0.6rem}'
+          '.findings-draft-cta:hover{background:rgba(0,255,153,0.06)}'
+          '.findings-draft-tag{font-size:0.6rem;letter-spacing:0.04em;text-transform:uppercase;'
+            'color:var(--text-4)}'
         '</style>'
         '</head><body style="background:var(--bg)">'
         '<div class="findings-wrap">'
@@ -384,6 +401,7 @@ def _findings_catalog_page_html() -> str:
               'Each finding links to its source measurement at live-run fidelity, with '
               'scope, methodology, and a copy-paste citation.'
             '</div>'
+            f'{draft_cta}'
           '</section>'
           f'{body_inner}'
           '<div class="findings-footer">'
@@ -405,7 +423,8 @@ async def findings_catalog_page(request: Request):
     s = cfg.load()
     if not s.get("findings_enabled", False):
         return HTMLResponse("Not found", status_code=404)
-    return HTMLResponse(_findings_catalog_page_html())
+    can_draft = can(resolve_tier(request), CREATE_FINDING)
+    return HTMLResponse(_findings_catalog_page_html(can_draft))
 
 
 @router.get("/findings/{slug}", response_class=HTMLResponse,
