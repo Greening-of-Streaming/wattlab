@@ -49,6 +49,23 @@ _RATE_WINDOW_S = 3600
 _rate_lock = threading.Lock()
 _rate: dict[str, list[float]] = {}
 
+# Global hard ceiling on stored submissions PER DAY, across all sources. The
+# per-subnet rate limit above only bounds a single /24; a distributed flood
+# (many IPs) would slip past it. This cap bounds the worst case regardless of
+# how the traffic is spread, so the moderation queue can't be buried.
+_MAX_PER_DAY = 500
+
+# Never open more than this many files in one list_all() sweep. The moderation
+# queue reads every record; without a cap a flood of tiny files would make that
+# page (and the open-count badge) slow. Newest files win (date-prefixed names
+# sort chronologically), so a cap shows the most recent, not a random subset.
+_MAX_SCAN = 2000
+
+# open_count() runs on every Lab page render (the top-right badge). Cache it for
+# a few seconds and invalidate on write, so page chrome never re-scans the dir.
+_COUNT_TTL_S = 20
+_count_cache: dict[str, float] = {"t": -1.0, "n": 0.0}
+
 _lock = threading.Lock()
 
 
@@ -74,6 +91,21 @@ def rate_ok(visitor_token: str, now: float | None = None) -> bool:
         hits.append(now)
         _rate[key] = hits
         return True
+
+
+def under_daily_cap(day: str | None = None) -> bool:
+    """True if today's stored-submission count is below the global ceiling.
+    Checked by the route BEFORE submit(); over-cap submissions are silently
+    dropped (accepted-looking to the client, so a flood learns nothing)."""
+    if not FEEDBACK_DIR.exists():
+        return True
+    day = day or datetime.now().strftime("%Y-%m-%d")
+    n = sum(1 for _ in FEEDBACK_DIR.glob(f"{day}_*.json"))
+    return n < _MAX_PER_DAY
+
+
+def _invalidate_count_cache() -> None:
+    _count_cache["t"] = -1.0
 
 
 def submit(*, slug: str | None, kind: str, body: str,
@@ -111,15 +143,18 @@ def submit(*, slug: str | None, kind: str, body: str,
         tmp = path.parent / (name + ".tmp")
         tmp.write_text(json.dumps(rec, indent=2))
         tmp.replace(path)
+    _invalidate_count_cache()
     return rec_id
 
 
 def list_all(status: str | None = None) -> list[dict]:
-    """Every feedback record, newest first. Optional status filter."""
+    """Feedback records, newest first, capped at _MAX_SCAN files. Optional
+    status filter. Names are date-prefixed, so a reverse filename sort reads
+    the newest files first — the cap drops the oldest, never a random subset."""
     if not FEEDBACK_DIR.exists():
         return []
     out: list[dict] = []
-    for p in FEEDBACK_DIR.glob("*.json"):
+    for p in sorted(FEEDBACK_DIR.glob("*.json"), reverse=True)[:_MAX_SCAN]:
         try:
             rec = json.loads(p.read_text())
         except Exception:
@@ -148,10 +183,19 @@ def set_status(rec_id: str, status: str) -> bool:
             tmp = p.parent / (p.name + ".tmp")
             tmp.write_text(json.dumps(rec, indent=2))
             tmp.replace(p)
+            _invalidate_count_cache()
             return True
     return False
 
 
-def open_count() -> int:
-    """Number of unresolved submissions — for the Lab-only catalog badge."""
-    return len(list_all(status="open"))
+def open_count(now: float | None = None) -> int:
+    """Number of unresolved submissions — for the Lab-only badges. Cached for
+    _COUNT_TTL_S so the top-right chip on every Lab page doesn't re-scan disk;
+    invalidated immediately on submit()/set_status()."""
+    now = time.time() if now is None else now
+    if 0 <= (now - _count_cache["t"]) < _COUNT_TTL_S:
+        return int(_count_cache["n"])
+    n = len(list_all(status="open"))
+    _count_cache["t"] = now
+    _count_cache["n"] = n
+    return n

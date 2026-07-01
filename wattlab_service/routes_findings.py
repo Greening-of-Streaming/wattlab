@@ -826,6 +826,13 @@ async def submit_feedback(request: Request):
             status_code=429,
         )
 
+    # Global daily ceiling — the backstop the per-subnet limit can't provide
+    # against a distributed flood. Over the cap we ACCEPT-and-DROP (looks like
+    # success) so an attacker can't probe the threshold; a real user hitting it
+    # is vanishingly unlikely on a research bench.
+    if not feedback_mod.under_daily_cap():
+        return JSONResponse({"ok": True})
+
     slug = (form.get("slug") or "").strip() or None
     if slug is not None:
         # Only accept notes tied to a finding that actually exists — don't let

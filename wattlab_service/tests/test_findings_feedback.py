@@ -7,6 +7,7 @@ The feedback store is redirected to a tmp dir (autouse fixture) so tests never
 touch results/_feedback. Anonymous is spoofed with x-real-ip=8.8.8.8 (TestClient
 is loopback = Lab otherwise); the moderation queue must reject that.
 """
+import json
 import re
 from pathlib import Path
 
@@ -33,8 +34,10 @@ def _isolate_feedback(tmp_path, monkeypatch):
     tests are independent and never write to the real results/_feedback."""
     monkeypatch.setattr(feedback, "FEEDBACK_DIR", tmp_path / "_feedback")
     feedback._rate.clear()
+    feedback._count_cache["t"] = -1.0
     yield
     feedback._rate.clear()
+    feedback._count_cache["t"] = -1.0
 
 
 def _enable(monkeypatch, enabled: bool):
@@ -258,3 +261,55 @@ def test_resolve_flow(findings_on):
     assert r_lab.status_code == 200
     assert feedback.list_all()[0]["status"] == "resolved"
     assert feedback.open_count() == 0
+
+
+# --- anti-flood hardening --------------------------------------------------
+
+def test_global_daily_cap_silently_drops(findings_on, monkeypatch):
+    """Over the per-day ceiling, submissions are accepted-looking but dropped —
+    the backstop the per-subnet limit can't give against a distributed flood."""
+    monkeypatch.setattr(feedback, "_MAX_PER_DAY", 2)
+    # three distinct subnets so the per-SUBNET rate limit is not what bites
+    for i, ip in enumerate(("11.0.0.1", "12.0.0.1", "13.0.0.1")):
+        r = client.post("/findings/feedback",
+                        data={"kind": "comment", "body": f"n{i}"},
+                        headers={"x-real-ip": ip})
+        assert r.status_code == 200 and r.json().get("ok") is True
+    # only the first two were actually stored
+    assert len(feedback.list_all()) == 2
+
+
+def test_list_all_caps_scan(monkeypatch):
+    monkeypatch.setattr(feedback, "_MAX_SCAN", 2)
+    for _ in range(4):
+        feedback.submit(slug=None, kind="comment", body="x")
+    assert len(feedback.list_all()) == 2
+
+
+def test_open_count_caches_then_rescans_after_ttl(findings_on):
+    assert feedback.open_count(now=1000.0) == 0
+    feedback.submit(slug=None, kind="comment", body="a")   # invalidates cache
+    assert feedback.open_count(now=1001.0) == 1
+    # a second open record written straight to disk (no cache invalidation)
+    (feedback.FEEDBACK_DIR / "2026-07-01_deadbeef0001.json").write_text(
+        json.dumps({"id": "deadbeef0001", "status": "open",
+                    "submitted_at": "2026-07-01T00:00:00"}))
+    assert feedback.open_count(now=1005.0) == 1    # within TTL → cached
+    assert feedback.open_count(now=1099.0) == 2    # past TTL → rescanned
+
+
+# --- Lab notification badge (top-right chip) -------------------------------
+
+def test_lab_feedback_badge_shows_and_clears(findings_on):
+    # assert on the ELEMENT, not the always-present CSS rule (.lab-fb-badge)
+    marker = 'class="lab-fb-badge"'
+    # clean queue → no badge on a Lab page
+    assert marker not in client.get("/privacy", headers=_LAB).text
+    rid = feedback.submit(slug=None, kind="question", body="notify me")
+    # Lab sees the red badge…
+    assert marker in client.get("/privacy", headers=_LAB).text
+    # …anonymous never does
+    assert marker not in client.get("/privacy", headers=_ANON).text
+    # resolving clears it (state-driven, not permanent)
+    feedback.set_status(rid, "resolved")
+    assert marker not in client.get("/privacy", headers=_LAB).text

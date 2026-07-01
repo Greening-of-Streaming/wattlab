@@ -65,6 +65,14 @@ _AUTH_CHIP_STYLES = (
     ".auth-chip a:hover,.auth-chip button:hover{text-decoration:underline}"
     ".auth-chip .auth-email{color:var(--text-3)}"
     ".auth-chip.lab{border-color:var(--accent);color:var(--accent)}"
+    # Unresolved-feedback notification on the Lab chip — a small red count that
+    # links to the moderation queue. State-driven: present only while open notes
+    # exist, clears the moment the queue is emptied (it is not a permanent mark).
+    ".lab-fb-badge{display:inline-flex;align-items:center;justify-content:center;"
+    "min-width:1.15em;height:1.15em;padding:0 0.32em;margin-left:0.1rem;"
+    "background:#ff3b30;color:#fff!important;border-radius:1em;font-size:0.62rem;"
+    "font-weight:700;line-height:1;text-decoration:none}"
+    ".lab-fb-badge:hover{background:#ff5c52;text-decoration:none}"
     # CR-021 — Anonymous CTA variant. The chip is a status indicator for
     # Member/Lab but a sign-up *call to action* for Anonymous. On wide
     # displays (conference booths) the recessive 0.72 rem chip was easy
@@ -79,12 +87,37 @@ _AUTH_CHIP_STYLES = (
 )
 
 
+def _lab_feedback_badge_html() -> str:
+    """Red unresolved-count badge for the Lab chip, linking to the findings
+    feedback queue. Only rendered for Lab (the caller has already checked tier).
+    Fail-soft and feature-gated — never breaks page chrome; empty when the
+    findings feature is off or the queue is clear."""
+    try:
+        import settings as _cfg
+        if not _cfg.load().get("findings_enabled", False):
+            return ""
+        import feedback as _fb
+        n = _fb.open_count()
+    except Exception:
+        return ""
+    if n <= 0:
+        return ""
+    label = f"{n} unresolved finding comment{'s' if n != 1 else ''}/question{'s' if n != 1 else ''}"
+    return (
+        f'<a class="lab-fb-badge" href="/findings/feedback/queue" '
+        f'title="{label} — click to review">{n}</a>'
+    )
+
+
 def _auth_chip_html(request: Request) -> str:
     """Tier-aware sign-in widget. Pure HTML, no script — safe to inject
     into any page template via .replace('{AUTH_CHIP}', ...)."""
     t = audience.tier(request)
     if t == audience.Tier.Lab:
-        return '<div class="auth-chip lab" title="Authenticated by LAN/loopback IP">▣ Lab</div>'
+        return (
+            '<div class="auth-chip lab" title="Authenticated by LAN/loopback IP">'
+            f'▣ Lab{_lab_feedback_badge_html()}</div>'
+        )
     if t == audience.Tier.Member:
         email = auth.member_email_from_request(request) or ""
         return (
