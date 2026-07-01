@@ -4,9 +4,10 @@
 A plain content page that states what OWL actually does with data: anonymous
 aggregate visit counts (no cookies, no stored IPs — see analytics.py), the one
 strictly-necessary auth cookie (owl_session, members only — auth.py), the
-pseudonymised handling of visitor IPs, and the result data a visitor generates
-by running a job. Kept in sync with analytics.py / auth.py / persist.py BY HAND
-— if data handling changes, this page must change.
+pseudonymised handling of visitor IPs, the result data a visitor generates by
+running a job, and any feedback they submit on a findings page (feedback.py).
+Kept in sync with analytics.py / auth.py / persist.py / feedback.py BY HAND —
+if data handling changes, this page must change.
 """
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
@@ -59,6 +60,13 @@ def _body() -> str:
       <li><span class="key">Members&rsquo; email address.</span> If you sign in as a
           GoS member, your email is held in the member allowlist and used solely
           to authenticate you and scope you to your own results.</li>
+      <li><span class="key">Feedback you send us.</span> If you use a comment or
+          &ldquo;ask&rdquo; box on a findings page, we store the text you submit so the
+          lab can review and reply to it. It is <strong>not published on the site</strong>
+          &mdash; it goes to a private review queue. We keep the pseudonymised network
+          token described below (never your raw IP) alongside it, and your email only
+          if you happened to be signed in. Please don&rsquo;t include personal details
+          you don&rsquo;t want us to hold.</li>
     </ul>
 
     <h2>IP addresses</h2>

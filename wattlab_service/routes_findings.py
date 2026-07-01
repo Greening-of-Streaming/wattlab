@@ -14,13 +14,35 @@ import json
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
+import analytics
+import feedback as feedback_mod
 import findings as findings_mod
 import settings as cfg
 import version
 from audience import tier as resolve_tier
-from capabilities import requires, can, PUBLIC_PAGE, CREATE_FINDING
+from capabilities import (
+    requires, can, PUBLIC_PAGE, CREATE_FINDING, FEEDBACK_SUBMIT, FEEDBACK_MODERATE,
+)
 from persist import load_result
 from ui import _BACK, _BASE_STYLES, _CARBON_JS, _RESULT_JS
+
+
+def _client_ip(request: Request) -> str:
+    """Origin IP the same way audience.tier resolves it (nginx X-Real-IP,
+    falling back to the socket peer). Used only to derive the pseudonymous
+    feedback rate-limit token — never stored raw."""
+    return request.headers.get("x-real-ip") or (
+        request.client.host if request.client else ""
+    )
+
+
+def _member_email(request: Request) -> str | None:
+    """Signed-in member email, or None. Lazy import keeps auth off the hot path."""
+    try:
+        import auth as _auth
+        return _auth.member_email_from_request(request)
+    except Exception:
+        return None
 
 router = APIRouter()
 
@@ -33,6 +55,148 @@ router = APIRouter()
 
 _CONFIDENCE_DOT   = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
 _CONFIDENCE_LABEL = {"green": "Repeatable", "yellow": "Indicative", "red": "Below noise floor"}
+
+# review_status is a SEPARATE editorial axis from the statistical confidence dot
+# (see findings.py). Rendered as a text pill with its own icon/vocabulary so the
+# two never read as the same traffic-light — a reviewer must be able to tell
+# "statistically repeatable" from "signed off by a lab committee" at a glance.
+_REVIEW_STATUS_PILL = {
+    # status: (icon, label, css-var for accent colour)
+    "draft":       ("✎", "Draft — unreviewed", "--warn"),
+    "for-comment": ("💬", "Open for comment",   "--accent"),
+    "validated":   ("✓", "Lab-validated",       "--accent"),
+}
+
+
+# Editorial impact/actionability (2026-07-01 lab call): a THIRD axis, separate
+# from the confidence dot and the review-status pill. Rendered as a compact
+# filled-diamond marker whose main job is to SORT the catalog (strongest first)
+# for the dribble rollout — deliberately small so the row stays uncluttered.
+_IMPACT_LABEL = {3: "Actionable — can change a setting/setup",
+                 2: "Original finding, action is conditional/strategic",
+                 1: "Explanatory measurement with a learning"}
+
+
+def _impact_marker_html(impact) -> str:
+    if not impact:
+        return ""
+    filled = "◆" * impact
+    empty = "◇" * (3 - impact)
+    label = _IMPACT_LABEL.get(impact, "")
+    return (
+        f'<span class="impact-marker" title="Impact {impact}/3 — {html_lib.escape(label)}">'
+        f'{filled}{empty}</span>'
+    )
+
+
+def _review_status_pill_html(review_status: str) -> str:
+    """A small text pill for the editorial review status. Deliberately not a
+    coloured dot — that vocabulary belongs to statistical confidence."""
+    icon, label, colour_var = _REVIEW_STATUS_PILL.get(
+        review_status, _REVIEW_STATUS_PILL["draft"]
+    )
+    return (
+        f'<span class="review-pill review-pill-{html_lib.escape(review_status)}" '
+        f'style="border-color:var({colour_var});color:var({colour_var})">'
+        f'{icon} {html_lib.escape(label)}</span>'
+    )
+
+
+# --- Moderated feedback / "Ask OWL" box (2026-07-01 lab call) --------------
+# One submission box serves both "comment on this finding" (slug set) and
+# "ask a question" (slug None). It is read-only-in, write-only-out: the public
+# page shows the box, never other people's notes. Submissions go to the private
+# Lab queue at /findings/feedback/queue. A hidden honeypot field + a server-side
+# per-subnet rate limit stand in for a third-party CAPTCHA.
+
+_FEEDBACK_CSS = (
+    '<style>'
+      '.fb-box{margin-top:1.5rem;border:1px solid var(--border);border-left:3px solid var(--border-3);'
+        'background:var(--panel-2);padding:0.9rem 1rem}'
+      '.fb-box h3{margin:0 0 0.3rem 0;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.06em;'
+        'color:var(--text-3);font-weight:600}'
+      '.fb-box .fb-intro{color:var(--text-4);font-size:0.78rem;font-family:monospace;line-height:1.5;'
+        'margin:0 0 0.6rem 0}'
+      '.fb-form{display:flex;flex-direction:column;gap:0.5rem}'
+      '.fb-form select,.fb-form textarea{background:var(--panel);border:1px solid var(--border-3);'
+        'color:var(--text);font-family:monospace;font-size:0.82rem;padding:0.4rem 0.5rem;border-radius:3px}'
+      '.fb-form textarea{min-height:5rem;resize:vertical}'
+      # Honeypot: pulled off-screen, hidden from assistive tech. A human never
+      # sees or fills it; a naive bot will — filled → silently dropped.
+      '.fb-hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}'
+      '.fb-form button{align-self:flex-start;background:var(--panel);border:1px solid var(--accent);'
+        'color:var(--accent);font-family:monospace;font-size:0.8rem;padding:0.35rem 0.8rem;'
+        'border-radius:3px;cursor:pointer}'
+      '.fb-form button:hover:not(:disabled){background:var(--accent-soft)}'
+      '.fb-form button:disabled{opacity:0.5;cursor:default}'
+      '.fb-status{font-family:monospace;font-size:0.76rem;color:var(--text-3);min-height:1em}'
+    '</style>'
+)
+
+_FEEDBACK_JS = """
+<script>
+async function wlSubmitFeedback(ev){
+  ev.preventDefault();
+  const form = ev.target;
+  const status = form.querySelector('.fb-status');
+  const btn = form.querySelector('button[type=submit]');
+  btn.disabled = true; status.textContent = 'sending…';
+  try{
+    const r = await fetch('/findings/feedback', {method:'POST', body:new FormData(form)});
+    let j = {}; try { j = await r.json(); } catch(e) {}
+    if (r.ok && j.ok){
+      form.reset();
+      status.textContent = 'Thanks — the lab will review this. (Not shown publicly.)';
+    } else {
+      status.textContent = (j && j.error) ? j.error : ('could not send (HTTP ' + r.status + ')');
+      btn.disabled = false;
+    }
+  } catch(e){
+    status.textContent = 'network error — please try again';
+    btn.disabled = false;
+  }
+  return false;
+}
+</script>
+"""
+
+
+def _feedback_box_html(slug: str | None = None) -> str:
+    """The public submission box. `slug` set → 'comment on this finding';
+    None → general 'Ask OWL' box (catalog page)."""
+    e = html_lib.escape
+    slug_val = e(slug) if slug else ""
+    if slug:
+        heading = "Comment or question"
+        intro = ("Spotted an error, or want us to measure something? Every note goes "
+                 "to the lab for review — it is not published on this page.")
+        comment_label = "Comment on this finding"
+    else:
+        heading = "Ask OWL"
+        intro = ("Want us to measure something, or have a question about the method? "
+                 "Send it to the lab — we read every one. Not published here.")
+        comment_label = "General comment"
+    return (
+        '<section class="fb-box">'
+          f'<h3>{heading}</h3>'
+          f'<p class="fb-intro">{intro}</p>'
+          '<form class="fb-form" onsubmit="return wlSubmitFeedback(event)">'
+            f'<input type="hidden" name="slug" value="{slug_val}">'
+            # Honeypot — must stay empty. Bots that autofill every field trip it.
+            '<div class="fb-hp" aria-hidden="true">'
+              '<label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label>'
+            '</div>'
+            '<select name="kind" aria-label="Kind of note">'
+              f'<option value="comment">{comment_label}</option>'
+              '<option value="question">Ask a question</option>'
+            '</select>'
+            '<textarea name="body" maxlength="4000" required '
+              'placeholder="Your comment or question…"></textarea>'
+            '<button type="submit">Send to the lab</button>'
+            '<span class="fb-status" role="status"></span>'
+          '</form>'
+        '</section>'
+    )
 
 
 def _finding_page_html(f, public_base_url: str) -> str:
@@ -191,6 +355,11 @@ def _finding_page_html(f, public_base_url: str) -> str:
           '.finding-hero{border-bottom:1px solid var(--border);padding-bottom:0.85rem;margin-bottom:1rem}'
           '.finding-headline{font-size:1.25rem;line-height:1.4;margin:0 0 0.4rem 0;color:var(--text);font-weight:600}'
           '.finding-meta{color:var(--text-3);font-family:monospace;font-size:0.78rem}'
+          '.finding-review{margin-top:0.55rem;display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap}'
+          '.finding-review-note{color:var(--text-5);font-size:0.72rem;font-family:monospace}'
+          '.review-pill{display:inline-block;font-family:monospace;font-size:0.7rem;font-weight:600;'
+            'letter-spacing:0.03em;padding:0.15rem 0.5rem;border:1px solid var(--border-3);'
+            'border-radius:3px;background:var(--panel-2);white-space:nowrap}'
           '.finding-claim{background:var(--panel);padding:0.65rem 0.85rem;border-left:3px solid var(--accent);font-family:monospace;font-size:0.85rem;margin:0.85rem 0;color:var(--text-2);overflow-x:auto}'
           '.finding-scope{font-family:monospace;font-size:0.75rem;color:var(--text-4);margin:0.6rem 0;line-height:1.5}'
           '.cite-box{background:var(--panel-2);border:1px solid var(--border);padding:0.5rem 0.7rem;font-family:monospace;font-size:0.75rem;color:var(--text-3);white-space:pre-wrap;margin:0.85rem 0;position:relative}'
@@ -218,6 +387,7 @@ def _finding_page_html(f, public_base_url: str) -> str:
           '.conf-badge{display:inline-block;font-size:0.75rem;color:var(--text-3);margin-top:0.5rem}'
           '.prev-note{color:var(--text-5);font-size:0.75rem;font-family:monospace;margin-top:0.5rem}'
         '</style>'
+        f'{_FEEDBACK_CSS}'
         '</head><body style="background:var(--bg)">'
         f'<div class="finding-wrap">'
           # Breadcrumb back-nav — same palette as the site-wide _BACK chrome,
@@ -243,6 +413,10 @@ def _finding_page_html(f, public_base_url: str) -> str:
                  else f' · refined {e(f.last_refined)}')
               + f' · v{f.version}'
             f'</div>'
+            f'<div class="finding-review">{_review_status_pill_html(f.review_status)}'
+              f'<span class="finding-review-note">'
+              f'Statistical confidence (dot) and editorial review status (pill) are '
+              f'independent — see methodology.</span></div>'
           f'</section>'
           f'<div class="finding-claim">{e(f.claim_short)}</div>'
           f'<div class="finding-scope">SCOPE: {e(f.scope)}</div>'
@@ -257,6 +431,7 @@ def _finding_page_html(f, public_base_url: str) -> str:
           f'<section class="finding-prose" style="margin-top:1.25rem">{body_html}</section>'
           f'{methodology_link}'
           f'{tags_html}'
+          f'{_feedback_box_html(f.slug)}'
           f'<div class="finding-footer">'
             f'<div>permalink: <a href="/findings/{e(f.slug)}">{e(canonical_url)}</a></div>'
             f'{raw_links}'
@@ -272,6 +447,7 @@ def _finding_page_html(f, public_base_url: str) -> str:
         f'{_CARBON_JS}'
         f'{_RESULT_JS}'
         f'{hydrate_js}'
+        f'{_FEEDBACK_JS}'
         f'</body></html>'
     )
 
@@ -299,7 +475,9 @@ def _findings_catalog_rows_html(items, link_class: str = "") -> str:
             f'<a class="finding-row {link_class}" href="/findings/{e(f.slug)}">'
               f'<div class="finding-row-top">'
                 f'<span class="finding-row-dot">{dot}</span>'
+                f'{_impact_marker_html(f.impact)}'
                 f'<span class="finding-row-headline">{e(f.headline)}</span>'
+                f'{_review_status_pill_html(f.review_status)}'
                 f'<span class="finding-row-date">v{f.version} · {date_label}</span>'
               f'</div>'
               f'<div class="finding-row-claim">{e(f.claim_short)}</div>'
@@ -321,6 +499,8 @@ _FINDINGS_CATALOG_CSS = (
       '.finding-row-top{display:flex;align-items:baseline;gap:0.5rem;'
         'flex-wrap:wrap}'
       '.finding-row-dot{flex:0 0 auto;font-size:0.85rem}'
+      '.impact-marker{flex:0 0 auto;font-size:0.72rem;letter-spacing:0.05em;color:var(--accent);'
+        'cursor:help;font-family:monospace}'
       '.finding-row-headline{flex:1;color:var(--text);font-size:0.92rem;'
         'line-height:1.45;font-weight:500;min-width:200px}'
       '.finding-row-date{flex:0 0 auto;color:var(--text-4);font-family:monospace;'
@@ -328,11 +508,18 @@ _FINDINGS_CATALOG_CSS = (
       '.finding-row-claim{margin-top:0.35rem;color:var(--text-3);'
         'font-family:monospace;font-size:0.76rem;line-height:1.5;'
         'padding-left:1.5rem}'
+      # Editorial review-status pill — a separate axis from the confidence dot.
+      '.review-pill{flex:0 0 auto;display:inline-block;font-family:monospace;'
+        'font-size:0.64rem;font-weight:600;letter-spacing:0.03em;padding:0.1rem 0.4rem;'
+        'border:1px solid var(--border-3);border-radius:3px;background:var(--panel-2);'
+        'white-space:nowrap}'
     '</style>'
 )
 
 
-def _findings_catalog_page_html(can_draft: bool = False) -> str:
+def _findings_catalog_page_html(can_draft: bool = False,
+                                can_moderate: bool = False,
+                                open_feedback: int = 0) -> str:
     """CR-056 — Server-side render of /findings catalog index.
 
     Lists every finding under docs/findings/ as a row (confidence dot +
@@ -342,17 +529,28 @@ def _findings_catalog_page_html(can_draft: bool = False) -> str:
 
     `can_draft` (Lab only) reveals the LLM-assisted "Draft a finding"
     entry-point. It's a render-mode predicate, not a gate — the /findings/draft
-    routes enforce CREATE_FINDING themselves.
+    routes enforce CREATE_FINDING themselves. `can_moderate` (Lab only) reveals
+    the private feedback-queue link + open-note count.
     """
     e = html_lib.escape
     items = findings_mod.list_all()
-    items.sort(key=lambda f: f.last_refined, reverse=True)
+    # Strongest first: impact desc, then most-recently-refined. Unscored (None)
+    # sinks to the bottom. This ordering is the "dribble strongest-first" rollout.
+    items.sort(key=lambda f: (f.impact or 0, f.last_refined), reverse=True)
 
-    draft_cta = (
-        '<a class="findings-draft-cta" href="/findings/draft">'
-        '✎ Draft a finding<span class="findings-draft-tag">Lab · AI-assisted</span></a>'
-        if can_draft else ''
-    )
+    ctas = []
+    if can_draft:
+        ctas.append(
+            '<a class="findings-draft-cta" href="/findings/draft">'
+            '✎ Draft a finding<span class="findings-draft-tag">Lab · AI-assisted</span></a>'
+        )
+    if can_moderate:
+        ctas.append(
+            '<a class="findings-draft-cta" href="/findings/feedback/queue">'
+            f'✉ Feedback queue<span class="findings-draft-tag">Lab · '
+            f'{e(str(open_feedback))} open</span></a>'
+        )
+    draft_cta = "".join(ctas)
 
     rows_html = _findings_catalog_rows_html(items)
     if not items:
@@ -373,6 +571,7 @@ def _findings_catalog_page_html(can_draft: bool = False) -> str:
         '<meta name="description" content="OWL findings — citable energy measurements from the Greening of Streaming bench.">'
         f'{_BASE_STYLES}'
         f'{_FINDINGS_CATALOG_CSS}'
+        f'{_FEEDBACK_CSS}'
         '<style>'
           '.findings-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
           '.findings-hero{border-bottom:1px solid var(--border);padding-bottom:0.85rem;margin-bottom:1rem}'
@@ -397,18 +596,112 @@ def _findings_catalog_page_html(can_draft: bool = False) -> str:
             '<h1 class="findings-title">OWL Findings'
             '<span class="findings-beta">Beta · under development</span></h1>'
             '<div class="findings-tagline">'
-              'Curated, citable measurements from the Greening of Streaming bench. '
-              'Each finding links to its source measurement at live-run fidelity, with '
-              'scope, methodology, and a copy-paste citation.'
+              'Early measurements from the Greening of Streaming bench, published for '
+              'comment — not yet lab-validated. Each finding links to its source '
+              'measurement at live-run fidelity, with scope, methodology, and a '
+              'copy-paste citation. Tell us where we are wrong.'
             '</div>'
             f'{draft_cta}'
           '</section>'
           f'{body_inner}'
+          f'{_feedback_box_html(None)}'
           '<div class="findings-footer">'
             f'OWL · Greening of Streaming · {e(str(len(items)))} '
             f'finding{"s" if len(items) != 1 else ""} · {version.version_string()}'
           '</div>'
         '</div>'
+        f'{_FEEDBACK_JS}'
+        '</body></html>'
+    )
+
+
+def _feedback_queue_html(items) -> str:
+    """Lab-only moderation queue. Lists every submission (open first), with
+    resolve / reopen controls. Private page — never linked publicly."""
+    e = html_lib.escape
+    open_items = [r for r in items if r.get("status") != "resolved"]
+    done_items = [r for r in items if r.get("status") == "resolved"]
+
+    def _row(r):
+        rid = e(str(r.get("id", "")))
+        slug = r.get("slug")
+        target = (f'<a href="/findings/{e(slug)}" style="color:var(--accent)">{e(slug)}</a>'
+                  if slug else '<span style="color:var(--text-5)">general</span>')
+        resolved = r.get("status") == "resolved"
+        member = e(r.get("member_email") or "")
+        member_html = (f' · <span style="color:var(--text-3)">{member}</span>' if member else '')
+        btn = (
+            f'<button class="fbq-btn" onclick="wlFbStatus(\'{rid}\',\'open\')">reopen</button>'
+            if resolved else
+            f'<button class="fbq-btn" onclick="wlFbStatus(\'{rid}\',\'resolved\')">resolve</button>'
+        )
+        return (
+            f'<div class="fbq-row{" fbq-done" if resolved else ""}" id="fbq-{rid}">'
+              f'<div class="fbq-meta">'
+                f'<span class="fbq-kind">{e(str(r.get("kind","")))}</span> · {target} · '
+                f'{e(str(r.get("submitted_at","")))}'
+                f'<span class="fbq-token"> · {e(str(r.get("visitor_token") or "—"))}</span>'
+                f'{member_html}'
+              f'</div>'
+              f'<div class="fbq-body">{e(str(r.get("body","")))}</div>'
+              f'<div class="fbq-actions">{btn}<span class="fbq-status"></span></div>'
+            f'</div>'
+        )
+
+    open_html = "".join(_row(r) for r in open_items) or \
+        '<p style="color:var(--text-4);font-family:monospace;font-size:0.8rem">No open notes.</p>'
+    done_html = "".join(_row(r) for r in done_items)
+    done_section = (
+        '<h2 style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.06em;'
+        'color:var(--text-4);margin:1.5rem 0 0.5rem 0">Resolved</h2>' + done_html
+        if done_items else ''
+    )
+
+    return (
+        '<!DOCTYPE html><html><head>'
+        '<meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>OWL — Findings feedback queue (Lab)</title>'
+        f'{_BASE_STYLES}'
+        '<style>'
+          '.fbq-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text)}'
+          '.fbq-row{border:1px solid var(--border);border-left:3px solid var(--accent);'
+            'background:var(--panel-2);padding:0.7rem 0.85rem;margin:0.5rem 0}'
+          '.fbq-done{border-left-color:var(--border-3);opacity:0.6}'
+          '.fbq-meta{font-family:monospace;font-size:0.72rem;color:var(--text-4)}'
+          '.fbq-kind{color:var(--accent);text-transform:uppercase}'
+          '.fbq-token{color:var(--text-5)}'
+          '.fbq-body{margin:0.5rem 0;color:var(--text);font-size:0.9rem;line-height:1.5;white-space:pre-wrap}'
+          '.fbq-actions{display:flex;gap:0.6rem;align-items:center}'
+          '.fbq-btn{background:var(--panel);border:1px solid var(--border-3);color:var(--accent);'
+            'font-family:monospace;font-size:0.75rem;padding:0.25rem 0.7rem;border-radius:3px;cursor:pointer}'
+          '.fbq-btn:hover{background:var(--accent-soft)}'
+          '.fbq-status{font-family:monospace;font-size:0.72rem;color:var(--text-4)}'
+        '</style>'
+        '</head><body style="background:var(--bg)">'
+        '<div class="fbq-wrap">'
+          f'{_BACK}'
+          '<h1 style="font-size:1.2rem;color:var(--accent);font-weight:600">'
+            'Findings feedback queue'
+            '<span style="font-family:monospace;font-size:0.65rem;color:var(--text-4);'
+            'margin-left:0.5rem">LAB · PRIVATE</span></h1>'
+          '<p style="color:var(--text-4);font-family:monospace;font-size:0.76rem;line-height:1.5">'
+            'Anonymous comments and questions from the public findings pages. Not shown publicly. '
+            'The token is the pseudonymised /24-subnet hash — no raw IP is stored.</p>'
+          f'{open_html}'
+          f'{done_section}'
+        '</div>'
+        '<script>'
+        'async function wlFbStatus(id, status){'
+          'const row = document.getElementById("fbq-"+id);'
+          'const st = row.querySelector(".fbq-status"); st.textContent = "…";'
+          'const fd = new FormData(); fd.append("status", status);'
+          'try{'
+            'const r = await fetch("/findings/feedback/"+id+"/status", {method:"POST", body:fd});'
+            'if(r.ok){ location.reload(); } else { st.textContent = "error "+r.status; }'
+          '}catch(e){ st.textContent = "network error"; }'
+        '}'
+        '</script>'
         '</body></html>'
     )
 
@@ -423,8 +716,13 @@ async def findings_catalog_page(request: Request):
     s = cfg.load()
     if not s.get("findings_enabled", False):
         return HTMLResponse("Not found", status_code=404)
-    can_draft = can(resolve_tier(request), CREATE_FINDING)
-    return HTMLResponse(_findings_catalog_page_html(can_draft))
+    t = resolve_tier(request)
+    can_draft = can(t, CREATE_FINDING)
+    can_moderate = can(t, FEEDBACK_MODERATE)
+    open_feedback = feedback_mod.open_count() if can_moderate else 0
+    return HTMLResponse(
+        _findings_catalog_page_html(can_draft, can_moderate, open_feedback)
+    )
 
 
 @router.get("/findings/{slug}", response_class=HTMLResponse,
@@ -497,3 +795,80 @@ async def finding_source_result(job_type: str, job_id: str):
         io.BytesIO(content.encode()),
         media_type="application/json",
     )
+
+
+# --- Moderated feedback (2026-07-01 lab call) ------------------------------
+# One anonymous POST endpoint backs both the per-finding "comment" box and the
+# general "Ask OWL" box. Submissions go to the PRIVATE Lab queue; the public
+# page never renders them. Abuse defence without a third-party CAPTCHA:
+#   - honeypot form field ("website") → filled means bot → silently dropped
+#   - per-subnet-token rate limit (feedback.rate_ok)
+#   - server-side length cap + kind whitelist (feedback.submit)
+
+@router.post("/findings/feedback",
+         dependencies=[Depends(requires(FEEDBACK_SUBMIT))])
+async def submit_feedback(request: Request):
+    """Accept an anonymous comment/question against a finding (or general).
+    Same findings_enabled flag as the pages — off → the whole feature 404s."""
+    if not cfg.load().get("findings_enabled", False):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    form = await request.form()
+
+    # Honeypot: a human never sees this field. If it is filled, pretend success
+    # (so the bot doesn't learn it tripped a filter) but store nothing.
+    if (form.get("website") or "").strip():
+        return JSONResponse({"ok": True})
+
+    ip = _client_ip(request)
+    if not feedback_mod.rate_ok(analytics.hash_ip(ip)):
+        return JSONResponse(
+            {"error": "Too many submissions — please try again later."},
+            status_code=429,
+        )
+
+    slug = (form.get("slug") or "").strip() or None
+    if slug is not None:
+        # Only accept notes tied to a finding that actually exists — don't let
+        # arbitrary slugs seed junk records. A malformed finding counts as absent.
+        try:
+            exists = findings_mod.load(slug) is not None
+        except findings_mod.FindingError:
+            exists = False
+        if not exists:
+            return JSONResponse({"error": "unknown finding"}, status_code=400)
+
+    try:
+        feedback_mod.submit(
+            slug=slug,
+            kind=(form.get("kind") or ""),
+            body=(form.get("body") or ""),
+            visitor_ip=ip,
+            member_email=_member_email(request),
+        )
+    except feedback_mod.FeedbackError as ex:
+        return JSONResponse({"error": str(ex)}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@router.get("/findings/feedback/queue", response_class=HTMLResponse,
+         dependencies=[Depends(requires(FEEDBACK_MODERATE))])
+async def feedback_queue_page(request: Request):
+    """Lab-only private moderation queue."""
+    if not cfg.load().get("findings_enabled", False):
+        return HTMLResponse("Not found", status_code=404)
+    return HTMLResponse(_feedback_queue_html(feedback_mod.list_all()))
+
+
+@router.post("/findings/feedback/{rec_id}/status",
+         dependencies=[Depends(requires(FEEDBACK_MODERATE))])
+async def feedback_set_status(rec_id: str, request: Request):
+    """Lab-only — resolve/reopen one submission."""
+    form = await request.form()
+    status = (form.get("status") or "").strip()
+    try:
+        ok = feedback_mod.set_status(rec_id, status)
+    except feedback_mod.FeedbackError as ex:
+        return JSONResponse({"error": str(ex)}, status_code=400)
+    if not ok:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True})

@@ -6,6 +6,8 @@ last_refined: 2026-05-22
 headline: "AV1 hardware uses ~55% less energy than software at 1500 kbps, but loses ~2 VMAF points and produces ~40% larger files"
 claim_short: "1500 kbps ABR — SVT-AV1: 0.71 Wh · VMAF 92.74 · 14.5 MB · 34 s    av1_vaapi: 0.32 Wh · VMAF 90.79 · 20.3 MB · 15 s"
 confidence: green
+review_status: for-comment
+impact: 2
 scope: "Device layer only (GoS1: AMD Ryzen 9 7900 + Radeon RX 7800 XT). Network, CDN, and CPE excluded. No amortised training cost."
 methodology_ref: docs/wattlab_traffic_light_confidence.md
 source_result_ids:

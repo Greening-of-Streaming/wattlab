@@ -6,6 +6,8 @@ last_refined: 2026-06-19
 headline: "AI upscaling to 4K pays off where content is worst: restoring degraded SD buys ~20× more quality per Wh than polishing clean HD — and re-processing pristine 4K buys nothing at the highest energy cost"
 claim_short: "SD-dirty → 4K: +2.1 NR-VQA for 14.8 Wh · HD-clean → 4K: +0.23 for 11.9 Wh · pristine 4K → 4K: ±0.0 for 44 Wh (45 s / 60 fps clips, all 🟢)"
 confidence: green
+review_status: for-comment
+impact: 3
 scope: "Device layer only (GoS1 server: AMD Ryzen 9 7900 + NVIDIA RTX 5080, dual daisy-chained Tapo P110 — primary meter on the server plug). Network, CDN, and CPE excluded."
 methodology_ref: docs/wattlab_traffic_light_confidence.md
 source_result_ids:

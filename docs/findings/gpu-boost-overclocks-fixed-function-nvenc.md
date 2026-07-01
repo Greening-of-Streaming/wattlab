@@ -6,6 +6,8 @@ last_refined: 2026-06-20
 headline: "NVIDIA GPU Boost over-clocks the NVENC transcode pipeline into a wasteful zone: ~9-12% more energy for identical encode time and VMAF. Pinning the SM clock removes it — and makes GPU energy reproducible across reboots and ambient temperature."
 claim_short: "h264_nvenc 1080p, Meridian 120s: full boost (SM 2872 MHz) = 0.280 Wh in 12.1 s. Pinned at the knee (SM 2572 MHz) = 0.255 Wh in 12.5 s — 9% less energy, same VMAF, +0.4 s."
 confidence: green
+review_status: for-comment
+impact: 3
 scope: "Device layer only (GoS1: AMD Ryzen 9 7900 + NVIDIA RTX 5080, driver 610.43.02). GPU power read from the card's internal sensor (nvidia-smi power.draw). Network, CDN, and CPE excluded."
 methodology_ref: docs/encode_parity_calibration_2026-06.md
 source_result_ids:

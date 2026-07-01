@@ -6,6 +6,8 @@ last_refined: 2026-05-22
 headline: "On Meridian-120s at the ABR ladder, GPU encodes are 2.0× to 4.4× more energy-efficient than CPU encodes; H.265 GPU produces the lowest-energy file, AV1 GPU the fastest"
 claim_short: "Per-codec ABR · H.264 4 Mbps · H.265 2 Mbps · AV1 1.5 Mbps — most efficient: H.265 GPU (0.30 Wh, 28.4 MB, VMAF 92.0) · fastest: AV1 GPU (15.1 s, 0.32 Wh, VMAF 90.8)"
 confidence: green
+review_status: for-comment
+impact: 3
 scope: "Device layer only (GoS1: AMD Ryzen 9 7900 + Radeon RX 7800 XT, VAAPI full pipeline for GPU paths). Network, CDN, and CPE excluded."
 methodology_ref: docs/wattlab_traffic_light_confidence.md
 source_result_ids:

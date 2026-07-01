@@ -28,6 +28,23 @@ _FINDINGS_DIR  = _REPO_ROOT / "docs" / "findings"
 _RESULTS_DIR   = _REPO_ROOT / "results"
 
 _VALID_CONFIDENCE = {"green", "yellow", "red"}
+# review_status is EDITORIAL, a separate axis from `confidence` (which is the
+# statistical Traffic Light Φ(ΔW/SE) from confidence.py). Do NOT conflate them:
+# a finding can be statistically green (Repeatable) yet still `draft` because no
+# lab committee has signed it off. 2026-07-01 Policy/Language Lab call.
+#   draft       — AI+Python generated, not yet reviewed (published with a warning)
+#   for-comment — confident, published to invite external comment; not lab-validated
+#   validated   — signed off by a lab committee (Language / Policy / Protocol)
+_VALID_REVIEW_STATUS = {"draft", "for-comment", "validated"}
+# impact is EDITORIAL — a THIRD axis, orthogonal to `confidence` (is it real?) and
+# `review_status` (is it validated?). It answers "does it matter?" and drives
+# catalog ordering (strongest first) for the dribble rollout. 2026-07-01 lab call.
+#   3 — actionable: a reader could change a config/setting/purchase because of it
+#   2 — original finding that reframes understanding, but the action is conditional/strategic
+#   1 — an interesting explanation of a measurement, with a learning
+# (A finding worth "0 — just a detail" is not published at all — it is parked out
+#  of docs/findings/, so 0 is a triage verdict, never a stored value.)
+_VALID_IMPACT = {1, 2, 3}
 _REQUIRED_FIELDS  = {
     "slug", "version", "first_measured", "last_refined",
     "headline", "claim_short", "confidence", "scope",
@@ -48,10 +65,12 @@ class Finding:
     last_refined: str
     headline: str
     claim_short: str
-    confidence: str             # green | yellow | red
+    confidence: str             # green | yellow | red  (statistical, from confidence.py)
     scope: str
     methodology_ref: str
     source_result_ids: list[str]
+    review_status: str = "draft"   # draft | for-comment | validated  (editorial, separate axis)
+    impact: int | None = None      # 1|2|3 editorial actionability score (None = unscored)
     related_findings: list[str] = field(default_factory=list)
     supersedes: str | None = None
     tags: list[str] = field(default_factory=list)
@@ -93,6 +112,8 @@ def load(slug: str) -> Finding | None:
         scope             = str(meta["scope"]),
         methodology_ref   = str(meta["methodology_ref"]),
         source_result_ids = [str(x) for x in meta["source_result_ids"]],
+        review_status     = str(meta.get("review_status") or "draft"),
+        impact            = (int(meta["impact"]) if meta.get("impact") is not None else None),
         related_findings  = [str(x) for x in (meta.get("related_findings") or [])],
         supersedes        = (str(meta["supersedes"]) if meta.get("supersedes") else None),
         tags              = [str(x) for x in (meta.get("tags") or [])],
@@ -173,6 +194,23 @@ def _validate(meta: dict, path: Path) -> None:
         raise FindingError(
             f"{path.name}: confidence={meta['confidence']!r} not in {sorted(_VALID_CONFIDENCE)}"
         )
+    # review_status is optional (defaults to 'draft'); when present it must be valid.
+    if "review_status" in meta and meta["review_status"] not in _VALID_REVIEW_STATUS:
+        raise FindingError(
+            f"{path.name}: review_status={meta['review_status']!r} "
+            f"not in {sorted(_VALID_REVIEW_STATUS)}"
+        )
+    # impact is optional (unscored = None); when present it must be 1, 2 or 3.
+    if meta.get("impact") is not None:
+        try:
+            impact_val = int(meta["impact"])
+        except (TypeError, ValueError):
+            impact_val = None
+        if impact_val not in _VALID_IMPACT:
+            raise FindingError(
+                f"{path.name}: impact={meta['impact']!r} not in {sorted(_VALID_IMPACT)} "
+                f"(0 means 'do not publish' — park the finding instead of scoring it 0)"
+            )
     if not isinstance(meta["source_result_ids"], list) or not meta["source_result_ids"]:
         raise FindingError(f"{path.name}: source_result_ids must be a non-empty list")
     for k in ("first_measured", "last_refined"):

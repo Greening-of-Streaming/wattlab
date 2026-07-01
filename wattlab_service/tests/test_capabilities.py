@@ -251,6 +251,7 @@ def test_required_tier_table_snapshot():
         "llm_run":             Tier.Anonymous,
         "image_run":           Tier.Anonymous,
         "rag_run":             Tier.Anonymous,
+        "feedback_submit":     Tier.Anonymous,  # 2026-07-01 lab call — anonymous findings comment/question → private Lab queue
         # Member — "members shape inputs" (CR-001 part C1) +
         # custom_upload (CR-026 — anonymous-tier integrity pass) +
         # working_nav (CR-026 — home page nav grid for Member/Lab; Anonymous is redirected to /demo)
@@ -269,6 +270,7 @@ def test_required_tier_table_snapshot():
         "variance_run":        Tier.Lab,
         "benchmark_run":       Tier.Lab,   # CR-061
         "create_finding":      Tier.Lab,   # LLM-assisted finding drafter (human-gated save)
+        "feedback_moderate":   Tier.Lab,   # 2026-07-01 lab call — private findings-feedback queue
         "prepare_rem":         Tier.Lab,   # REM↔OWL — /prepare-rem run/upload/delete
     }
     assert capabilities._REQUIRED_TIER == expected

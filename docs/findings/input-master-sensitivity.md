@@ -6,6 +6,8 @@ last_refined: 2026-05-26
 headline: "Input-master bitrate has no measurable effect on H.265 re-encode energy (CPU 1.7 %, GPU 4.9 % spread); input-codec has a small effect carried by the AV1-as-source case (CPU 3.4 %, GPU 10.3 % spread)"
 claim_short: "Re-encode `h265_both` on 2-min 1080p siblings · bitrate axis (1.3 → 14.6 Mbps): flat · codec-of-origin axis (H.264 5.1 / H.265 3.4 / AV1 2.3 Mbps): AV1 source raises GPU energy by ~10 %"
 confidence: green
+review_status: for-comment
+impact: 2
 scope: "Device layer only (GoS1: AMD Ryzen 9 7900 + Radeon RX 7800 XT, VAAPI full pipeline for GPU paths). Two-minute 1080p siblings of Big Buck Bunny. Variance floor at measurement time: variance_pct ≈ 1.29 % (S25 calibration)."
 methodology_ref: docs/wattlab_traffic_light_confidence.md
 source_result_ids:

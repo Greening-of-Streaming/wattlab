@@ -279,15 +279,16 @@ def test_findings_catalog_returns_404_when_disabled(monkeypatch):
 
 # --- CR-056: bulk-imported findings load + render --------------------------
 
-# Slugs imported in CR-056 (2026-05-27). If any of these is removed in a
-# later editorial decision, update this list — the assertion below is a
-# regression guard against accidental deletion.
+# Slugs imported in CR-056 (2026-05-27) that remain in the live catalog.
+# 2026-07-01 impact-scoring pass (lab call): three weak findings were parked
+# out of docs/findings/ into docs/findings/_parked/ (kept in git history) —
+# llm-cold-inference-mwh-per-token, rag-faithfulness-rem-question (both stale
+# pre-S30 panels) and sd-turbo-cpu-image-first-run (impact 0). If a finding is
+# parked or removed in a later editorial decision, update this list — the
+# assertion below is a regression guard against *accidental* deletion.
 _CR056_SLUGS = [
     "abr-all-codecs-meridian-120s",
     "input-master-sensitivity",
-    "llm-cold-inference-mwh-per-token",
-    "rag-faithfulness-rem-question",
-    "sd-turbo-cpu-image-first-run",
 ]
 
 
@@ -315,17 +316,16 @@ def test_cr056_imported_findings_all_in_catalog():
         )
 
 
-def test_cr056_image_finding_renders_with_image_dispatcher():
-    """Q5 sanity check from the CR-056 design conversation: the SD-Turbo
-    finding (image type) must embed a `data-type="image"` placeholder and
-    the JS dispatcher must map that to wlRenderImageCard. Without this,
-    the embed shows 'no renderer for type=image'."""
-    r = client.get("/findings/sd-turbo-cpu-image-first-run")
+def test_finding_page_wires_image_dispatcher():
+    """Q5 sanity check from the CR-056 design conversation: the embed hydrator
+    must map data-type="image" to wlRenderImageCard, else an image finding
+    would show 'no renderer for type=image'. The only image finding (SD-Turbo)
+    was parked on 2026-07-01, so we assert the static dispatcher wiring is
+    present on a finding page rather than against a live image embed — the
+    wiring is the regression surface, and it is emitted on every finding page."""
+    r = client.get("/findings/av1-hw-sw-vmaf-tradeoff")
     assert r.status_code == 200
-    body = r.text
-    assert 'data-type="image"' in body
-    assert 'data-result-id="image/c40acdc1"' in body
-    assert "image: window.wlRenderImageCard" in body
+    assert "image: window.wlRenderImageCard" in r.text
 
 
 # --- CR-058: /demo Findings step rewire ------------------------------------
