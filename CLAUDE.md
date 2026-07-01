@@ -129,6 +129,22 @@ in every result; legacy results without them fall back to the old variance-thres
 Video: "Device layer only (GoS1 server). Network, CDN, and CPE excluded."
 LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised training cost."
 
+## Version Control Discipline (always apply)
+Learned the hard way 2026-06→07 (the finding-drafter was written, left uncommitted, buried in a
+mixed `git stash -u`, and nearly lost — recovered from `stash@{0}^3`). Rules:
+- **A restore point is a COMMIT, never a stash.** Anything crossing a session or branch switch gets
+  committed to a `feat/…`/`wip/…` branch the same session it's written. No "restore pending" limbo.
+- **`git stash` only for <1 h "pop it right back" interruptions**; if it must outlive that, `git stash -u`
+  then `git stash branch <name>` to convert it to a commit. Never park finished features in a stash.
+- **One workstream per branch/commit** — never entangle unrelated work (drafter + slides + settings…).
+- **`git add` files BY NAME** — never `git add -A`/`.`/`--all` (keeps [[settings_json_is_live_state]] and
+  strays out). settings.json stays out of feature commits.
+- **No `git clean`/`reset --hard`/`checkout .` without `git status` + `git clean -n` first.** `.gitignore`
+  does NOT protect real work (untracked `.py` is wiped by `git clean`; only ignored `.pyc` survives).
+- **Auditing a stash → always `git stash show -p --include-untracked`** (new files are invisible without it).
+- **Commit/push only when the user asks; branch first if on `main`.** These rules are guard-hooked in
+  `.claude/settings.json` (PreToolUse blocks the dangerous forms).
+
 ## Services & URLs
 wattlab (systemd, port 8000, 1 worker — restart needs the OWNER: not in Claude's sudoers) · ollama (11434).
 LAN `http://192.168.1.62:8000` · public `https://wattlab.greeningofstreaming.org` (nginx + certbot).
