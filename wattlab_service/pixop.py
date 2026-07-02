@@ -397,6 +397,11 @@ def probe_normalization(path) -> dict:
         out["reasons"].append(f"pixel format {out['pix_fmt']} not in the verified set")
         if out["target_fps"] is None and avg:
             out["target_fps"] = _snap_fps(avg)
+    # Always resolve a target_fps (even when the verdict is "not needed"), so a
+    # FORCED normalization has a concrete CFR rate to snap to. Advisory only here
+    # — it is consumed only when a normalization actually runs.
+    if out["target_fps"] is None and (avg or declared):
+        out["target_fps"] = _snap_fps(avg or declared)
     return out
 
 
@@ -1722,7 +1727,8 @@ _NORM_REF_POLLS = 3
 
 async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
                            job_id: str, live: bool,
-                           audio_risk: Optional[str] = None) -> dict:
+                           audio_risk: Optional[str] = None,
+                           force: bool = False) -> dict:
     """Probe-and-normalize bracket shared by both run flavours. Runs BEFORE
     focus/baseline so the ffmpeg cost stays outside every measured window.
     Live 1× mode refuses inputs that need it: the pacer stream-copies mpegts,
@@ -1752,6 +1758,19 @@ async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
     the risk just forces its audio branch to re-encode instead of copy."""
     inp, _, _ = _workdir_paths(c)
     probe = probe_normalization(inp / input_name)
+    if force and not probe["needed"]:
+        # Operator override (Lab "Force normalization" checkbox): auto-detection
+        # cleared the clip, but the user forces the lossless CFR pre-pass anyway.
+        # This is the escape hatch for defects the r/avg-fps check can't see —
+        # e.g. marginal VFR under _VFR_TOLERANCE, or non-monotonic DTS that still
+        # aborts the partner muxer (observed 2026-07-01 on a member upload).
+        # target_fps is always resolved by probe_normalization, so the FFV1
+        # normalize has a rate to snap to.
+        if probe.get("target_fps") is None:
+            return {"performed": False, "reasons": ["forced (no probeable fps)"],
+                    "vfr": probe.get("vfr", False), "source_pix_fmt": probe.get("pix_fmt")}
+        probe["needed"] = True
+        probe["reasons"] = list(probe["reasons"]) + ["forced normalization (operator override)"]
     if not probe["needed"] and not audio_risk:
         return {"performed": False, "reasons": [], "vfr": probe.get("vfr", False),
                 "source_pix_fmt": probe.get("pix_fmt")}
@@ -1786,7 +1805,8 @@ async def _maybe_normalize(input_name: str, c: dict, jobs: Optional[dict],
 
 async def run_enhance_measurement(input_name: str, preset_name: str,
                                   job_id: str, jobs: Optional[dict] = None,
-                                  live: bool = False) -> dict:
+                                  live: bool = False,
+                                  force_normalize: bool = False) -> dict:
     """Measure the energy of one partner GPU transcode/upscale.
 
     Validates input/preset, builds the verified docker command, then delegates to
@@ -1813,7 +1833,7 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
     # encodes the normalized intermediate; the original is what the result's
     # input_stream records.
     norm = await _maybe_normalize(input_name, c, jobs, job_id, live,
-                                  audio_risk=audio_risk)
+                                  audio_risk=audio_risk, force=force_normalize)
     enc_input = norm.get("normalized_name") or input_name
     output_name = _output_name(input_name, preset_name)
     cmd = build_docker_cmd(enc_input, preset_name, output_name, c, live=live,

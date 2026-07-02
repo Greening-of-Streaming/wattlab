@@ -496,6 +496,13 @@ _ENHANCE_RUN_HTML = """
   </div>
   {RETENTION_PICKER}
   <div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.85rem">{UPLOAD_LIMITS}</div>
+  <div style="margin-bottom:0.85rem">
+    <label style="text-transform:none;font-size:0.82rem;color:var(--text-2);display:inline-flex;gap:0.4rem;align-items:center;cursor:pointer"
+           title="Force a lossless constant-frame-rate pre-pass (VFR→CFR, clean timestamps) before measuring, even if auto-detection says the clip is fine. Use when a run fails with muxer/timestamp errors or the source is marginally VFR — the auto-check compares declared vs average fps and can miss dirty DTS. Runs outside the energy window. Not available with Live 1×.">
+      <input type="checkbox" id="forceNorm"{DISABLED}> Force normalization
+      <span style="color:var(--text-4);font-size:0.72rem">— VFR / timestamp fix (use if a clip fails with a muxer error)</span>
+    </label>
+  </div>
   <div class="row">
     <div>
       <label>Output format</label>
@@ -688,6 +695,8 @@ async function startRun() {
   var custom = _customArgs();
   if (custom) form.append('custom_args', custom);
   form.append('live', document.getElementById('liveTog').checked ? 'true' : 'false');
+  var fn = document.getElementById('forceNorm');
+  form.append('force_normalize', (fn && fn.checked) ? 'true' : 'false');
   try {
     var resp = await fetch('/enhance-run/start', { method:'POST', body:form });
     var data = await resp.json();
@@ -1715,11 +1724,13 @@ def _was_cancelled(job_id: str) -> bool:
 
 
 async def run_enhance_job(job_id: str, input_name: str, preset_name: str,
-                          live: bool = False, cleanup_input: bool = False):
+                          live: bool = False, cleanup_input: bool = False,
+                          force_normalize: bool = False):
     try:
         jobs[job_id].update({"status": "running", "stage": "starting"})
         result = await pixop.run_enhance_measurement(input_name, preset_name, job_id,
-                                                     jobs, live=live)
+                                                     jobs, live=live,
+                                                     force_normalize=force_normalize)
         if _was_cancelled(job_id):
             # docker-killed mid-transcode: the harness concluded through its
             # failed-transcode path — don't persist a half-run as a result.
@@ -1743,7 +1754,8 @@ async def enhance_run_start(request: Request,
                             output_format: str = Form(""),
                             sr_target: str = Form(""),
                             custom_args: str = Form(""),
-                            live: str = Form("false")):
+                            live: str = Form("false"),
+                            force_normalize: str = Form("false")):
     pf = pixop.preflight()
     if not pf["ok_transcode"]:
         return JSONResponse({"error": "Partner transcode not configured",
@@ -1759,12 +1771,20 @@ async def enhance_run_start(request: Request,
     if input_name not in pf["inputs"] or not pixop._preset_known(preset, pf):
         return JSONResponse({"error": "Unknown input or preset"}, status_code=400)
     is_live = str(live).lower() in ("true", "1", "on", "yes")
+    force_norm = str(force_normalize).lower() in ("true", "1", "on", "yes")
+    if is_live and force_norm:
+        # The FFV1 CFR intermediate can't stream through the 1× pacer (same rule
+        # as an auto-detected needs-normalize input) — fail early and clearly.
+        return JSONResponse(
+            {"error": "Forced normalization is not compatible with Live 1× mode — "
+                      "run it un-paced (batch)."}, status_code=400)
     cleanup = uploads.is_owl_upload(input_name)
-    label = f"Enhance — {preset}" + (" · Live 1×" if is_live else "")
+    label = f"Enhance — {preset}" + (" · Live 1×" if is_live else "") + \
+            (" · forced-norm" if force_norm else "")
 
     async def coro():
         await run_enhance_job(job_id, input_name, preset, live=is_live,
-                              cleanup_input=cleanup)
+                              cleanup_input=cleanup, force_normalize=force_norm)
 
     position = queue_control.enqueue(job_id, "enhance", label, coro,
                                      request=request, page="/enhance-run")

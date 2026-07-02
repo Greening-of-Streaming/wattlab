@@ -1032,6 +1032,12 @@ def test_upload_member_duration_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
     monkeypatch.setattr(audience, "tier", lambda r: audience.Tier.Member)
     monkeypatch.setattr(pixop, "probe_input_stream", lambda p: {"duration_s": 90.0})
+    # Pin the duration cap so the test is independent of live settings.json,
+    # which ops may raise (e.g. the 2026-07-01 bump to 7200s for a VIP film).
+    import settings as _s
+    _real_load = _s.load
+    monkeypatch.setattr(_s, "load",
+                        lambda: {**_real_load(), "enhance_upload_max_duration_s": 60})
     r = client.post("/enhance-run/upload",
                     files={"file": ("c.mp4", b"x" * 32, "video/mp4")}, headers=LAB)
     assert r.status_code == 413
@@ -1390,6 +1396,52 @@ def test_probe_normalization_fail_soft(monkeypatch):
     monkeypatch.setattr(pixop.subprocess, "run", boom)
     p = pixop.probe_normalization("x.mov")
     assert p["needed"] is False   # unprobeable → run proceeds, real error surfaces
+
+
+def test_probe_normalization_always_resolves_target_fps(monkeypatch):
+    """Even a clean CFR clip (needed=False) now carries a target_fps, so a
+    forced normalization has a concrete rate to snap to."""
+    monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
+        {"codec_type": "video", "pix_fmt": "yuv420p",
+         "r_frame_rate": "30000/1001", "avg_frame_rate": "30000/1001"},
+    ]))
+    p = pixop.probe_normalization("clean.mov")
+    assert p["needed"] is False and p["target_fps"] == "30000/1001"
+
+
+def test_maybe_normalize_force_overrides_clean_verdict(tmp_path, monkeypatch):
+    """The 'Force normalization' checkbox (2026-07-01): even when the probe
+    clears a clip, force=True runs the lossless CFR pre-pass — the escape hatch
+    for dirty-DTS clips the r/avg-fps heuristic can't see. force=False is a no-op."""
+    c = _cfg(tmp_path)
+    (tmp_path / "logs").mkdir(exist_ok=True)
+    monkeypatch.setattr(pixop, "probe_normalization", lambda p: {
+        "needed": False, "reasons": [], "vfr": False,
+        "pix_fmt": "yuv420p", "target_fps": "30000/1001", "audio_codec": "aac"})
+
+    async def _fake_baseline(polls=0):
+        return {"w_base": 80.0}
+    monkeypatch.setattr(pixop, "measure_baseline", _fake_baseline)
+
+    async def _fake_cooldown(**kw):
+        return {"stage": "normalize-idle"}
+    monkeypatch.setattr(pixop, "cooldown_between_runs", _fake_cooldown)
+
+    calls = []
+    def _fake_norm(name, probe, cc, **kw):
+        calls.append(probe)
+        return {"performed": True, "normalized_name": f"normalized_{name}.nut",
+                "reasons": list(probe.get("reasons") or [])}
+    monkeypatch.setattr(pixop, "normalize_input", _fake_norm)
+
+    # clean clip, no force → normalization skipped
+    r0 = asyncio.run(pixop._maybe_normalize("clip.mp4", c, None, "j0", False, force=False))
+    assert r0["performed"] is False and calls == []
+
+    # clean clip, force=True → normalize_input invoked, forced reason threaded
+    r1 = asyncio.run(pixop._maybe_normalize("clip.mp4", c, None, "j1", False, force=True))
+    assert r1["performed"] is True and len(calls) == 1
+    assert any("forced normalization" in r for r in calls[0]["reasons"])
 
 
 def test_build_normalize_cmd_lossless_contract(tmp_path, monkeypatch):
