@@ -7,6 +7,54 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 54 — 2026-06-24 → 07-02 (branch `feat/finding-draft-restore`)
+
+**Finding-drafter recovery + findings-catalogue triage overhaul + `/enhance-run` polish,
+committed as a clean split for review.** One branch, several self-contained workstreams
+(commit messages carry the deep detail — this is the map).
+
+- **Finding drafter restored** (`9fab401`). OWL's first non-measurement LLM use: a
+  Lab-only, human-gated drafter (`finding_draft.py` engine + `routes_finding_draft.py`,
+  `/findings/draft`). gpt-oss:20b drafts; deterministic code detects signals and sets
+  confidence/scope; guardrails block GoS-framing / confidence / scope / number-consistency
+  violations (bandwidth→network-energy ban held). Recovered **losslessly from
+  `stash@{0}^3`** after the near-loss — see the VC lesson below. New `CREATE_FINDING`
+  (Tier.Lab). Additive only; the entangled stash cruft (stale settings, /demo rework,
+  deck) deliberately left behind. `docs/finding_draft_method.md`.
+- **Version-control discipline hardened** (`bddd281`). The near-loss prompted a new
+  CLAUDE.md "Version Control Discipline" section + `.claude/hooks/git-guard.sh`
+  (PreToolUse guard denying hard reset / clean-without-`-n` / bare stash / `add -A`,
+  heredoc bodies stripped so commit messages naming those commands aren't flagged;
+  28/28 case tests) wired via `.claude/settings.json`.
+- **Findings → triaged, comment-open catalogue** (`3bf87dc`, follow-up `6b00da3`).
+  Two new axes kept separate from the statistical confidence dot: **review_status**
+  (draft|for-comment|validated, editorial pill) and **impact** (1–3 actionability,
+  sorts strongest-first; 0 = park, never stored). **Moderated "Ask OWL" feedback** —
+  anonymous POST → private Lab queue (`feedback.py`), honeypot + per-subnet rate limit
+  + global 500/day cap + 2000-file scan cap + 20s open-count cache, pseudonymised subnet
+  token (no raw IP), no third-party captcha. Lab unresolved-count badge on the ▣ Lab
+  chip. Pruned 8→5 findings (parked into `docs/findings/_parked/`). New FEEDBACK_SUBMIT
+  (Anon) / FEEDBACK_MODERATE (Lab) caps; /privacy discloses the store.
+- **`/enhance-run` polish.** Force-normalization checkbox (`5554a42`, CR-064 residual):
+  Lab escape hatch forcing the lossless CFR/FFV1 pre-pass even when auto-detection clears
+  a clip — for dirty-DTS / marginal-VFR sources the r/avg-fps heuristic misses (observed
+  2026-07-01 on a member upload that aborted the partner muxer); refused in Live 1×.
+  Ladder **source-resolution-vs-energy chart** (`6ad55a2`) on `/enhance-run/ladder`
+  (equal-length 45s fixtures only; surfaces the HD→4K dip).
+- **Infra / docs.** nginx `client_max_body_size` → 9g, transport-ceiling-only comment
+  (`494c3fb`); STAGING.md prefilled collaborator SSH access + loopback→Lab note
+  (`7337c96`).
+
+Tests **832 pass**. `settings.json` held out of every commit (live state).
+
+**Field note (2026-07-02):** collaborator Arian used the new tunnel-Lab login to enhance
+a 3h42m 1987 wedding film → 1080p10 HEVC, **510 Wh, 🟢 ci2 dual-meter** (VQA no-score:
+film far longer than the 600s scorer window). One-off VIP courtesy run, not a citable
+finding. The temp `/enhance-run` limit bumps that enabled it were reverted after his job
+finished (`pixop_docker_timeout_s`→1800; caps → 1024 MB / 150 s by the owner).
+
+---
+
 ## Session 53 — 2026-06-18/19
 
 **Encode-parity & energy-quality calibration — built the harness, ran the first full

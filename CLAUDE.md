@@ -1,6 +1,14 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-19 (Session 53 — ENCODE-PARITY & ENERGY-QUALITY CALIBRATION. New harness `parity.py`
+# Last updated: 2026-07-02 (Session 54 — FINDING-DRAFTER RESTORE + FINDINGS TRIAGE + /ENHANCE-RUN POLISH.
+#   Branch `feat/finding-draft-restore` (8 commits, 832 tests). Finding drafter recovered losslessly from a
+#   buried stash & re-wired (Lab-only human-gated LLM drafter, guardrails intact) → prompted a VC-discipline
+#   section + `.claude/hooks/git-guard.sh`. /findings became a triaged comment-open catalogue: review_status +
+#   impact axes (kept SEPARATE from the confidence dot), moderated "Ask OWL" feedback queue (feedback.py:
+#   anti-flood, pseudonymised, no captcha) + Lab unresolved badge, pruned 8→5. /enhance-run: Force-normalization
+#   checkbox (CR-064 residual; dirty-DTS/VFR escape hatch) + ladder source-res-vs-energy chart. nginx 9g +
+#   STAGING SSH docs. settings.json held out of every commit. Full detail → JOURNAL.md S54.)
+# (Session 53 — ENCODE-PARITY & ENERGY-QUALITY CALIBRATION. New harness `parity.py`
 #   + `bin/run-encode-parity` (importable; shared by the new /reconfigure route): sweeps codec × {CPU, GPU
 #   baseline, GPU tuned} × bitrate × {BBB, Meridian}, 1080p, via the real measured path + terminal VMAF.
 #   Live /video gpu.py args UNTOUCHED (tuned injected as custom args). 30s clips; NVENC too fast for 1Hz so
