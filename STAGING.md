@@ -29,6 +29,20 @@ Public visitors hit nginx at `wattlab.greeningofstreaming.org` and see the maint
 - **LAN**: `http://192.168.1.62:8000` — direct to FastAPI.
 - **SSH tunnel**: `ssh -p 2222 -L 8000:localhost:8000 user@gos1.duckdns.org`, then `http://localhost:8000`.
 
+Requests arriving through the tunnel are **loopback (127.0.0.1) → Lab tier** (full access, bypasses nginx + the public gate). The public hostname gives Anonymous/Member tier only. Note `-p 2222` is the *external* port — the Bbox forwards `2222 → GoS1:22`; on-LAN just use `ssh gos@192.168.1.62`.
+
+### Prefilled — collaborator SSH access
+
+Hand these to a collaborator whose key is in their `~/.ssh/authorized_keys` on GoS1.
+
+```bash
+# arian (added 2026-07-01)
+ssh -p 2222 arian@gos1.duckdns.org                            # shell login
+ssh -p 2222 -L 8000:localhost:8000 arian@gos1.duckdns.org     # tunnel → open http://localhost:8000 (Lab tier)
+```
+
+Same single-operator rule as owner Lab sessions: only one person should run measurements at a time (one OWL process, one P110) — a tunnelled collaborator contends for the box if they run jobs mid-measurement.
+
 ## What `stage-on` does (and the queue trade-off)
 
 1. **Drain the queue, best-effort, with a 60s timeout.** If a visitor's job is in flight when you stage, the script waits up to 60s for it to finish. After that it warns and proceeds; any pending jobs are *lost* (visitors must re-submit).
