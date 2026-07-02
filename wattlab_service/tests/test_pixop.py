@@ -1826,7 +1826,35 @@ def test_ladder_page_no_chart_without_data(tmp_path, monkeypatch):
     r = client.get("/enhance-run/ladder", headers=LAB)
     assert "Quality gain vs source quality" not in r.text
     assert "quality gain vs energy cost" not in r.text
-    assert "chart.umd" not in r.text                       # no dead script load
+    assert "Source resolution vs energy used" not in r.text
+
+
+def test_ladder_page_resolution_vs_energy_chart(tmp_path, monkeypatch):
+    import json
+    import routes_enhance as re_mod
+    (tmp_path / "sweep_summary.json").write_text(json.dumps({
+        "runs": {"bbb_sd_dirty.mp4": {"vqa_in": 5.45, "vqa_out": 7.56,
+                                      "delta_vqa": 2.11, "delta_e_wh": 14.8,
+                                      "confidence": "🟢"},
+                 "bbb_hd_clean.mp4": {"vqa_in": 9.4, "vqa_out": 9.5,
+                                      "delta_vqa": 0.1, "delta_e_wh": 11.9,
+                                      "confidence": "🟢"},
+                 "bbb_ref_4k.mp4": {"vqa_in": 9.58, "vqa_out": 9.63,
+                                    "delta_vqa": 0.05, "delta_e_wh": 43.5,
+                                    "confidence": "🟢"},
+                 # a UGC anchor — must be EXCLUDED from the energy-vs-res plot
+                 "upload_keep_c0fb79f4_544x408_Bad_Quality_2005_UGC.mov": {
+                     "vqa_in": 5.37, "vqa_out": 7.2, "delta_vqa": 1.83,
+                     "delta_e_wh": 1.7347, "confidence": "🟢"}}}))
+    monkeypatch.setattr(re_mod, "_LADDER_DIR", tmp_path)
+    r = client.get("/enhance-run/ladder", headers=LAB)
+    assert r.status_code == 200
+    assert "Source resolution vs energy used" in r.text
+    assert "energyres" in r.text                       # the new canvas
+    # source heights baked as x, energy as y (the three ladder rungs)
+    assert '"x": 480' in r.text and '"x": 1080' in r.text and '"x": 2160' in r.text
+    # the anchor's tiny non-comparable Wh must not enter the energy series
+    assert '1.7347' not in r.text.split('const ENERGY =')[1].split(';')[0]
 
 
 # ═══ Paced-path audio risk (PCE-AAC, owner reports 2026-06-12) ════════════════

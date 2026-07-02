@@ -1509,8 +1509,17 @@ def _ladder_chart_html(sweep: dict) -> str:
             return "triangle"
         return "star"    # real-UGC anchors
 
+    # Representative source height (px) per rung — the ladder rungs ARE these
+    # standard resolutions (854×480 / 1920×1080 / 3840×2160), so mapping the
+    # class to a height needs no manifest and can't drift from the fixtures.
+    res_h = {"sd": 480, "hd": 1080, "fourk": 2160}
+
     cost = {"sd": [], "hd": [], "fourk": []}
     curve = {"bbb": [], "meridian": [], "anchors": []}
+    # Source resolution vs energy (owner ask): only the equal-length 45 s ladder
+    # fixtures — the two UGC anchors are shorter clips, so their Wh isn't
+    # comparable on an absolute energy axis and would mislead. Colour = content.
+    energy = {"bbb": [], "meridian": []}
     for name, r in runs.items():
         if r.get("delta_vqa") is None or r.get("delta_e_wh") is None:
             continue
@@ -1522,11 +1531,18 @@ def _ladder_chart_html(sweep: dict) -> str:
         ckey = ("bbb" if name.startswith("bbb_") else
                 "meridian" if name.startswith("meridian_") else "anchors")
         curve[ckey].append({"x": r.get("vqa_in"), "y": r["delta_vqa"], "label": tip})
+        if ckey in energy:
+            h = res_h[res_class(name)]
+            energy[ckey].append({"x": h, "y": r["delta_e_wh"],
+                                 "label": f"{name} · {h}p source · {r['delta_e_wh']} Wh"})
     if not (cost["sd"] or cost["hd"] or cost["fourk"]):
         return ""
     for k in curve:
         curve[k].sort(key=lambda pt: pt["x"])
+    for k in energy:
+        energy[k].sort(key=lambda pt: pt["x"])
     cost_json, curve_json = json.dumps(cost), json.dumps(curve)
+    energy_json = json.dumps(energy)
     return f"""
 <h2 style="font-size:0.85rem;color:var(--text-3)">The sweet spot &mdash; quality gain vs energy cost (4K target)</h2>
 <div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.4rem">
@@ -1536,6 +1552,16 @@ def _ladder_chart_html(sweep: dict) -> str:
 </div>
 <div style="max-width:680px;margin-bottom:1.5rem"><canvas id="sweetspot"></canvas></div>
 
+<h2 style="font-size:0.85rem;color:var(--text-3)">Source resolution vs energy used (4K target)</h2>
+<div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.4rem">
+  Energy to upscale each 45&nbsp;s fixture to 4K, against its source resolution.
+  Note the dip: HD&rarr;4K is the cheapest &mdash; SD&rarr;4K costs a little more
+  (bigger scale factor) and 4K&rarr;4K far more (decoding + processing full 4K in).
+  Colour = content; equal-length ladder fixtures only (the shorter UGC anchors
+  aren't comparable on an absolute Wh axis).
+</div>
+<div style="max-width:680px;margin-bottom:1.5rem"><canvas id="energyres"></canvas></div>
+
 <h2 style="font-size:0.85rem;color:var(--text-3)">Quality gain vs source quality</h2>
 <div style="max-width:680px;margin-bottom:1.5rem"><canvas id="curve"></canvas></div>
 <script>
@@ -1543,7 +1569,9 @@ Chart.defaults.color = '#888';
 Chart.defaults.borderColor = '#222';
 const COST = {cost_json};
 const CURVE = {curve_json};
+const ENERGY = {energy_json};
 const tip = {{ callbacks: {{ label: ctx => ctx.raw.label }} }};
+const RESLABEL = {{ 480: '480p (SD)', 1080: '1080p (HD)', 2160: '2160p (4K)' }};
 const costDs = (label, pts, color) => ({{
   label, data: pts, borderColor: color, backgroundColor: color,
   pointStyle: pts.map(p => p.ptStyle), pointRadius: 6, showLine: false }});
@@ -1560,6 +1588,25 @@ new Chart(document.getElementById('sweetspot'), {{
       y: {{ title: {{ display: true, text: 'quality gain (ΔVQA)' }}, grid: {{ color: '#222' }} }}
     }},
     plugins: {{ legend: {{ labels: {{ boxWidth: 12, font: {{ size: 10 }}, usePointStyle: false }} }}, tooltip: tip }}
+  }}
+}});
+const energyDs = (label, pts, color) => ({{
+  label, data: pts, borderColor: color, backgroundColor: color,
+  showLine: true, pointRadius: 5, tension: 0, fill: false }});
+new Chart(document.getElementById('energyres'), {{
+  type: 'scatter',
+  data: {{ datasets: [
+    energyDs('BBB (synthetic)', ENERGY.bbb, '#00ff99'),
+    energyDs('Meridian (cinematic)', ENERGY.meridian, '#66aaff'),
+  ]}},
+  options: {{
+    scales: {{
+      x: {{ title: {{ display: true, text: 'source resolution' }}, grid: {{ color: '#222' }},
+           afterBuildTicks: axis => {{ axis.ticks = [{{value:480}},{{value:1080}},{{value:2160}}]; }},
+           ticks: {{ callback: v => RESLABEL[v] || v }} }},
+      y: {{ title: {{ display: true, text: 'energy used (Wh, 45 s clip)' }}, beginAtZero: true, grid: {{ color: '#222' }} }}
+    }},
+    plugins: {{ legend: {{ labels: {{ boxWidth: 12, font: {{ size: 10 }} }} }}, tooltip: tip }}
   }}
 }});
 const curveDs = (label, pts, color, line) => ({{
