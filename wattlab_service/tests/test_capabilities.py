@@ -296,8 +296,8 @@ def test_anonymous_does_not_get_working_nav():
 
 # Routes that legitimately need no cap.
 _ROUTE_WAIVERS = {
-    # Sign-out: any tier can sign out.
-    ("/auth/sign-out", "POST"),
+    # CR-066: /auth/sign-out now declares requires(PUBLIC_PAGE) like the other
+    # auth routes — the invariant is 95/95, no auth-route waiver.
     # FastAPI auto-injected schema docs. Not data; the OpenAPI surface is
     # internal-only on the GoS1 deployment via nginx (LAN only). If/when
     # we expose the public app at greeningofstreaming.org, consider

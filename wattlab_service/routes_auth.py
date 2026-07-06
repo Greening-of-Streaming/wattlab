@@ -9,6 +9,7 @@ concern) and renders _gate_page_html from here.
 
 Phase 3 per-feature route module — never import main.
 """
+import html
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -21,6 +22,33 @@ from capabilities import requires, CapabilityError, PUBLIC_PAGE
 from ui import JOIN_GOS_URL, OWL_CONTACT_EMAIL, _BASE_STYLES
 
 router = APIRouter()
+
+
+# --- CR-066 · reflected-input hardening -------------------------------------
+#
+# `next`, `error`, and the submitted email are all attacker-controllable and
+# reach HTML, outbound-email hrefs, and RedirectResponse. Two rules, applied at
+# EVERY use site: html.escape() before HTML interpolation, and _safe_next()
+# before anything that treats the value as a URL (attribute value, href,
+# emailed link, RedirectResponse). Do NOT interpolate a raw request value into
+# any of those contexts again — the auth origin is the highest-trust surface.
+
+def _safe_next(next_url: str) -> str:
+    """Allow-list `next` down to a site-local path so it can never drive an
+    open redirect or break out of an attribute / href / email link.
+
+    Accepts only a single-leading-slash relative path (query string allowed);
+    rejects protocol-relative `//host`, backslash tricks, embedded schemes, and
+    any control/whitespace character. Anything else collapses to "/"."""
+    if not next_url or not next_url.startswith("/"):
+        return "/"
+    if next_url.startswith("//") or next_url.startswith("/\\"):
+        return "/"
+    if "\\" in next_url:
+        return "/"
+    if any(ord(c) < 0x20 or c in " \t\r\n" for c in next_url):
+        return "/"
+    return next_url
 
 
 # --- CR-001 magic-link auth -------------------------------------------------
@@ -120,13 +148,14 @@ def _gate_page_html(request: Request, exc: CapabilityError) -> str:
 
 @router.get("/auth/sign-in", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def auth_sign_in_page(next: str = "/", error: str = ""):
-    err_html = f'<p class="err">{error}</p>' if error else ''
+    safe_next = _safe_next(next)
+    err_html = f'<p class="err">{html.escape(error)}</p>' if error else ''
     body = f"""
     {err_html}
     <p class="body">Enter the email address that's on the GoS member list.
        We'll send you a one-click sign-in link.</p>
     <form method="post" action="/auth/sign-in">
-      <input type="hidden" name="next" value="{next}">
+      <input type="hidden" name="next" value="{html.escape(safe_next, quote=True)}">
       <input type="email" name="email" placeholder="you@example.org"
              autocomplete="email" autofocus required>
       <button type="submit">Send sign-in link</button>
@@ -142,6 +171,8 @@ async def auth_sign_in_page(next: str = "/", error: str = ""):
 @router.post("/auth/sign-in", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def auth_sign_in_submit(request: Request, email: str = Form(...), next: str = Form("/")):
     email_norm = email.strip().lower()
+    safe_next = _safe_next(next)
+    next_q = quote(safe_next, safe="")
     # Anti-enumeration: behave identically for member and non-member emails.
     # Only members get an email; everyone else gets the same UI feedback.
     if auth.is_member(email_norm):
@@ -150,16 +181,16 @@ async def auth_sign_in_submit(request: Request, email: str = Form(...), next: st
         # nginx-fronted HTTPS works.
         scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
         host = request.headers.get("x-forwarded-host") or request.url.netloc
-        link = f"{scheme}://{host}/auth/verify?t={token}&next={next}"
+        link = f"{scheme}://{host}/auth/verify?t={quote(token, safe='')}&next={next_q}"
         email_send.send_magic_link(email_norm, link)
     body = f"""
-    <p class="body">If <strong>{email_norm}</strong> is a registered GoS member,
+    <p class="body">If <strong>{html.escape(email_norm)}</strong> is a registered GoS member,
        a sign-in link is on its way to that inbox now.</p>
     <p class="body" style="font-size:0.85rem;color:var(--text-4)">
        The link is valid for 15 minutes. Check your spam folder if it doesn't
        arrive within a minute.</p>
     <p class="body" style="margin-top:2rem">
-      <a href="/auth/sign-in?next={next}">← Try a different email</a> ·
+      <a href="/auth/sign-in?next={next_q}">← Try a different email</a> ·
       <a href="/">Continue to OWL</a></p>
     """
     return _auth_page_shell("Check your email · OWL", body)
@@ -167,10 +198,12 @@ async def auth_sign_in_submit(request: Request, email: str = Form(...), next: st
 
 @router.get("/auth/verify", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def auth_verify(t: str = "", next: str = "/"):
+    safe_next = _safe_next(next)
+    next_q = quote(safe_next, safe="")
     email = auth.verify_magic_token(t) if t else None
     if email is None:
         return RedirectResponse(
-            url=f"/auth/sign-in?next={next}&error=Sign-in+link+invalid+or+expired.",
+            url=f"/auth/sign-in?next={next_q}&error=Sign-in+link+invalid+or+expired.",
             status_code=302,
         )
     if not auth.is_member(email):
@@ -178,11 +211,11 @@ async def auth_verify(t: str = "", next: str = "/"):
         # and verify. Fail closed — fresh sign-in won't help, but the user
         # gets a clean message rather than a silent landing.
         return RedirectResponse(
-            url=f"/auth/sign-in?next={next}&error=Email+not+on+the+member+list.",
+            url=f"/auth/sign-in?next={next_q}&error=Email+not+on+the+member+list.",
             status_code=302,
         )
     cookie = auth.make_session_cookie_value(email)
-    response = RedirectResponse(url=next or "/", status_code=302)
+    response = RedirectResponse(url=safe_next, status_code=302)
     response.set_cookie(
         auth.SESSION_COOKIE_NAME, cookie,
         max_age=auth.SESSION_TTL_SECONDS,
@@ -192,7 +225,7 @@ async def auth_verify(t: str = "", next: str = "/"):
     return response
 
 
-@router.post("/auth/sign-out")
+@router.post("/auth/sign-out", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def auth_sign_out():
     response = RedirectResponse(url="/", status_code=302)
     response.delete_cookie(auth.SESSION_COOKIE_NAME)
