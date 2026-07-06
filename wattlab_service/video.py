@@ -13,6 +13,7 @@ import settings as cfg
 import gpu
 from confidence import confidence
 import power
+import energy
 from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 UPLOAD_DIR = Path("/tmp/wattlab_uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -674,7 +675,7 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
     meters = power.meters_summary(baseline, readings, task_samples_w)
     if meters and "delta_w_combined" in meters:
         delta_w = meters["delta_w_combined"]
-    delta_e_wh = round(delta_w * (delta_t / 3600), 4)
+    delta_e_wh = energy.energy_wh(delta_w, delta_t)
     conf = confidence(delta_w, len(readings), w_base,
                       baseline_samples_w=baseline_samples_w,
                       task_samples_w=task_samples_w, meters=meters)

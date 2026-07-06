@@ -8,6 +8,7 @@ from pathlib import Path
 import settings as cfg
 from confidence import confidence
 import power
+import energy
 from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
@@ -264,7 +265,7 @@ async def _run_single_inference(model_key: str, task_key: str,
     meters = power.meters_summary(baseline_dict, readings, task_samples_w)
     if meters and "delta_w_combined" in meters:
         delta_w = meters["delta_w_combined"]
-    delta_e_wh = round(delta_w * (delta_t / 3600), 4)
+    delta_e_wh = energy.energy_wh(delta_w, delta_t)
     output_tokens = inference_result["output_tokens"]
     mwh_per_token = round((delta_e_wh * 1000) / max(output_tokens, 1), 4) \
         if output_tokens else None
@@ -500,7 +501,7 @@ async def run_llm_batch_measurement(model_key: str, task_key: str, repeats: int,
         meters = power.meters_summary(_b, readings, task_samples_w)
         if meters and "delta_w_combined" in meters:
             delta_w = meters["delta_w_combined"]
-        delta_e_wh = round(delta_w * (delta_t / 3600), 4)
+        delta_e_wh = energy.energy_wh(delta_w, delta_t)
         output_tokens = inference_result["output_tokens"]
         mwh_per_token = round((delta_e_wh * 1000) / max(output_tokens, 1), 4) if output_tokens else None
 
