@@ -113,7 +113,7 @@ Lifecycle factors (IPCC AR6) are static — applied to historical mixes. Defensi
 
 ## CR-008 · REM ↔ OWL integration
 
-**Status:** captured 2026-05-01. **Steps 1–2 ✅ shipped** (REM source in-repo under `REM/`; OWL branding pass — `rem-theme.css` re-skin, 2026-05-27). Steps 3–4 (data interop, OWL-as-encoder) remain — longer horizon.
+**Status:** captured 2026-05-01. **Steps 1–2 ✅ shipped** (REM source in-repo under `REM/`; OWL branding pass — `rem-theme.css` re-skin, 2026-05-27). **Step 3 first slice ✅ shipped 2026-06-23→30:** the `/prepare-rem` "Prepare REM Files" page (`rem_prep.py` engine + `routes_rem.py`, commits `b475529`→`60f08cc`) — OWL encodes to a target-VMAF ladder and wraps timer/markers into 10-min REM playback files, with share links, energy CSV, and a decode/encode energy split. Lab-to-run / Member-viewable; un-gated share link for Simon. ⚠ **The arc shipped un-journaled** (no JOURNAL/ARCHITECTURE entry — flagged by OWL_AUDIT.md §3.7; S-entry owed, tracked as doc-debt in CLAUDE.md). Step-3 remainder (REM-side ingest, mash-up view) and step 4 remain — longer horizon.
 **Triggered by:** Dom + owner across the transcript (~T+486s, ~T+2160s, ~T+3151s, ~T+1014s).
 
 ### Problem
@@ -128,8 +128,12 @@ They're **complementary, not competing**, but currently they look like separate 
 
 1. ✅ **(Shipped)** Pull REM source code into the Claude project context so cross-understanding is possible (`REM/` + `REM/CLAUDE.md`).
 2. ✅ **(Shipped)** Update REM with **OWL branding and visual style** — `rem-theme.css` drop-in re-skin, same owl mark / `#00ff99` accent / dark theme. Dom's request.
-3. **(Later)** Genuine data interoperability — OWL exporting in a format REM can ingest, or vice versa. Mash-up view where 100s of homes report from REM and 1-2 contribute high-resolution OWL-style local measurements; visualised together.
+3. **(First slice ✅ shipped 2026-06)** Genuine data interoperability — `/prepare-rem` covers the OWL→REM direction (OWL produces REM-ready playback files). Remaining: REM ingesting OWL data (or vice versa); mash-up view where 100s of homes report from REM and 1-2 contribute high-resolution OWL-style local measurements; visualised together.
 4. **(Long-term, exploratory)** OWL acting as the encoder in a REM-orchestrated end-to-end test (encoder → intermediary server [Linode / TNO / Bristol] → client). Auto-hackathon workflow (see CR-009).
+
+### Audit note (2026-07-06)
+
+OWL_AUDIT.md's convergence thread runs through this CR: GoS convergence is **one-way — OWL moves toward REM's container pattern where it moves at all** (the mechanics live in CR-031, not here). Its "dangling `REM/CLAUDE.md` cross-link" finding (§3.8) does **not** reproduce on GoS1 — `REM/CLAUDE.md` exists in this checkout; the auditor's REM clone lacked it. No OWL-side action.
 
 ### Priority: the branding pass is the feasible near-term step; data integration comes later.
 
@@ -292,7 +296,7 @@ Spec-doc ownership: Tania the encoding-spec subsection of `WATTLAB_SPEC.md`, own
 
 ## CR-031 · Deployment portability (DB / power source / containerisation)
 
-**Status:** captured 2026-05-04 (post-meeting). Medium priority. One CR, three sub-sections (they share the question *what does it take to run OWL somewhere other than GoS1?*) — each with its own state: **§1 open decision (the Track A gate) · §2 cheap wins shipped, meter registry landed via CR-065 (closed), full backend still parked · §3 nothing built, externally driven.**
+**Status:** captured 2026-05-04 (post-meeting). Medium priority. One CR, three sub-sections (they share the question *what does it take to run OWL somewhere other than GoS1?*) — each with its own state: **§1 open decision (the Track A gate) · §2 cheap wins shipped, meter registry landed via CR-065 (closed), full backend still parked · §3 nothing built, externally driven.** **Refreshed 2026-07-06 from OWL_AUDIT.md** (§3.2/§3.3/§3.4): §3 gains an *ungated pre-work* list + blocker-list additions; §1 gains the `envelope_version` pre-work; §2 gains a meter-authenticity design input.
 **Triggered by:** team meeting 2026-05-04; board 2026-05-11 reinforced §3 (rack hosting — Linode, or Mike's Akamai open-rack offer in Virginia).
 
 #### §1 Persistence — STATUS: open decision, and the gate for Track A (CR-003, CR-007 analytics)
@@ -304,15 +308,28 @@ Flat JSON per result (`results/{type}/{date}_{job_id}.json`): fast, debuggable, 
 
 Decision criteria: if the historical-carbon work (now CR-007 Stage 1) and the calibration-history journals (CR-012, shipped — `results/diagnostics/history.jsonl`; their query friction is live evidence) show real flat-file pain, migrate; else index. Don't pre-decide the engine; REM coherence matters (owner: "I don't want five different databases").
 
+**Pre-work (2026-07-06, audit §3.4):** stamp `envelope_version: 1` in `persist.save_result` now (absent = 0) and record shape changes as version bumps in `docs/result_envelope.md`. Today every shape change is handled by making all 7 consumers tolerant of both forms forever (two cooldown shapes, small/large aliases, pre-CR-026 `visitor_key`-less records, …) — nothing on disk says which contract a file satisfies, and any §1 analytics/migration would have to reverse-engineer era boundaries from SHAs. Versioned envelopes are the precondition for merging OWL history into any store; `bin/anonymise-visitor-ips.py` is the in-repo template for backfill migrations. Also unify `RESULTS_DIR` resolution (`persist.py` absolute vs `findings.py` repo-relative — they agree only on GoS1) behind the §3 path root.
+
 #### §2 Power source — STATUS: cheap wins shipped 2026-06-09 (`power.stamp()` provenance + `meter_display_name`); full backend NOT built
 
 The deferred full shape: `power.py` becomes a dispatcher (`POWER_SOURCE` = tapo | pdu | synthetic) over `power_tapo.py` / `power_pdu.py` / `power_synthetic.py`. Board-added requirements (2026-05-11): every backend declares its **meter resolution**, and confidence must visibly degrade when resolution is coarser than the task ("you cannot be 🟢 on a 4 s encode measured by a 60 s meter" — *resolution-aware confidence is required behaviour, not a watch-out*); the interface must express **one primary reading plus N attributable sub-readings** (utility-grade meter + per-plug PDU stack, Mike's rack model).
 
 **CR-065 (closed 2026-06-11) rewrote `power.py`** — meter registry (`_meter_ips`, index 0 = primary), cached KLAP handles, ONE shared baseline/task sampler the modules delegate to. That registry is a step *toward* this backend but is not the protocol. **Any §2 design starts from the post-CR-065 `power.py`** — and inherits its hard constraint: KLAP sessions are exclusive per device, so a PowerBackend must own its meter's session outright.
 
+**Design input (2026-07-06, audit §5.9 — unverified lead, see CR-069):** the Tapo path authenticates with full TP-Link *cloud account* credentials from plaintext `.env`, and KLAP trusts whatever answers at `TAPO_P110_IP` — an ARP-spoof/IP-squat on the flat LAN could feed fabricated wattage into published findings (measurement *integrity*, not just confidentiality). Any PowerBackend protocol should carry an explicit meter-authenticity stance per backend.
+
 #### §3 Containerisation — STATUS: nothing built; timeline externally driven (Mike's rack / Linode)
 
 `Dockerfile` + `compose.yml`, with explicit acknowledgement of what can't containerise cleanly: focus mode's `systemctl stop` (drop it and document the quality loss, or privileged + /run/systemd — both ugly); GPU passthrough (now `--gpus` + nvidia-container-toolkit for NVENC/CUDA, not the old VAAPI `--device /dev/dri`); settings/calibration are host-specific — **first run on a new host MUST trigger a fresh variance calibration as a startup check**, never a manual step.
+
+**Ungated pre-work (added 2026-07-06 from OWL_AUDIT.md §3.2/§3.3 — needs no external hosting trigger; worth doing even if containerisation never happens):**
+
+1. **One path root + one env layer.** An `OWL_ROOT` (default: parent of `wattlab_service/`, env-overridable) in a small paths module, then a mechanical sweep of the ~25 hardcoded `/home/gos/wattlab` sites across 14 modules (`persist.py:13`, `settings.py:4,170-171`, `sources.py` ×7, `parity.py`, `routes_enhance.py`, …; `auth.py`/`findings.py`/`version.py` already do it right — the portable pattern exists in-tree). One `env.py` replacing the six divergent `dotenv_values()` sites with **process-env-wins** precedence — today `TAPO_*` and `ELECTRICITYMAPS_TOKEN` never consult `os.environ` at all, so a systemd `Environment=`/container deployment cannot inject the two most critical secrets. While in `settings.py`: `load()` warns instead of silently returning `DEFAULTS` (a corrupt read + one POST currently rewrites the file with `DEFAULTS`, discarding live `variance_*_pct` calibration), `save()` type-checks per key against `type(DEFAULTS[k])` and logs dropped keys (the `meter_display_name` dead-override class), and the dead `dotenv_values` in `main.py:39` goes.
+2. **Untrack `settings.json`** — `git rm --cached` + gitignore + a tracked `settings.example.json` (or lean on `DEFAULTS`, which already boots a fresh box). ⚠ **Owner sign-off required:** this retires the deliberate "settings catch-up" commit practice (settings.json-is-live-state discipline). The audit's case: `bin/stage-on`'s `git checkout` can clobber or conflict on live calibration values mid-swap — and on conflict aborts *after* raising the maintenance flag but *before* the restart, a half-deployed 503 state. Calibration history moves to explicit snapshot exports if wanted.
+3. **Commit the primary `wattlab.service`** + the `wattlab.service.d/mount.conf` drop-in + the `/etc/cron.d/wattlab-results-backup` line into `systemd/`, with the same install/verify block the auxiliary units have (audit: `high` — the unit that runs OWL exists only in `/etc` on the box whose disk-failure risk GOS1_INFRA.md itself documents, and `systemd/README.md`'s "source-of-truth lives here" claim is currently false for it).
+4. **Make `wattlab_service/` a real package** (`__init__.py`) so imports stop being CWD-dependent.
+
+**Blocker-list additions (same audit):** (a) **X-Real-IP trust breaks inside a docker bridge** — every container-internal request looks RFC1918 and would resolve to Lab; the trusted-proxy fix is CR-066 item 2 and must land before any container serves traffic. (b) **System-dependency inventory** — Ollama (`localhost:11434`, unauthenticated, pinned nowhere, absent from all provenance), `/usr/local/bin/ffmpeg-master`, lm-sensors, and the NR-VQA sandbox are load-bearing host dependencies no image recipe yet enumerates. (c) A **portable test suite** (CR-068) is the precondition for any containerised CI.
 
 ### Watch-outs
 
@@ -581,6 +598,128 @@ Smallest-footprint flow change in the findings chain that touches the *most-visi
 
 ---
 
+## CR-066 · Security hardening — auth edge, proxy-header trust, committed credential
+
+**Status:** captured 2026-07-06 from **OWL_AUDIT.md** (2026-07-05 nine-dimension re-audit; every item below was adversarially verified against commit `60f08cc`). **High priority — carries the audit's only `critical` finding.** Evidence file:line references below are the audit's; see OWL_AUDIT.md §2 items 1–3 and §3.9 for full detail.
+**Triggered by:** OWL_AUDIT.md §2 urgent triage.
+
+### Problem
+
+The capability spine and token cryptography are sound (94/95 routes gated, HMAC-SHA256 + `compare_digest`, purpose-separated tokens, no `eval`/`shell=True` — all audit positives). Against that base sit exploitable gaps concentrated on the member-facing edge, plus a LAN-switch admin password committed to the public org repo.
+
+### Work items (audit severity in brackets)
+
+1. **[critical] Reflected XSS + open redirect in the magic-link flow.** `routes_auth.py` interpolates `error` / `next` / `email_norm` into HTML unescaped (`:123`, `:129`, `:156`), builds the emailed verify link with raw `next` (`:153`), and does `RedirectResponse(url=next or "/")` (`:185`). All three GET routes are `PUBLIC_PAGE`. Fix: `html.escape()` every reflected value; allow-list `next` (single leading `/`, reject `//` and schemes/control chars) everywhere it is used — inputs, hrefs, the emailed link (URL-encoded), and the redirect.
+2. **[high] Spoofable `X-Real-IP` grants Lab (admin) tier.** `audience.py:59-63` and `queue_control.py:64` honour the header with no trusted-proxy check while uvicorn listens on `0.0.0.0:8000` — a direct `:8000` client can send `X-Real-IP: 127.0.0.1` and become Lab. Fix: honour forwarded headers only when `request.client.host` is the nginx proxy address; bind uvicorn to `127.0.0.1` in prod; firewall/document `:8000`. Cross-ref: the same trust breaks inside a docker bridge — listed as a CR-031 §3 blocker.
+3. **[high] Rotate + scrub the committed switch password.** `GOS1_INFRA.md:117-118` commits the GS305E admin password in cleartext (`d1941a3`, 2026-06-27 — in git history, so **burned regardless of any doc edit**). Rotate on both switches; reference the password manager instead. Same pass: move the owner identity/SIREN, Nextcloud URL + username + "2FA: not configured", and the personal-life inventory to a private ops note. The disk layout, incident log, and backup design stay.
+4. **[medium] Cookie + transport:** `secure=True` on the 30-day `owl_session` cookie (`routes_auth.py:186-191` — `secure` governs browser↔origin, not the nginx↔uvicorn hop the code comment reasons about); HSTS header in nginx; make the HTTP→HTTPS 301 unconditional.
+5. **[medium] Magic-link abuse limits:** nginx `limit_req` zone for `/auth/sign-in` + per-email cooldown (unauthenticated loop currently email-bombs via the shared Gmail sender); record consumed nonces so tokens are single-use within the 15-min TTL (`auth.py:206-210` documents they replay today).
+6. **[medium] Member custom-ffmpeg argv** (`video.py:528-529`) is fully user-controlled — ffmpeg's file/network protocols make it an arbitrary file-read/write + SSRF surface as the service user. Constrain to an allow-list of encoder/filter flags; reject protocol-bearing inputs and absolute output paths; force I/O into managed dirs. (A containerised transcode worker would bound the blast radius — CR-031.)
+7. **[low] Gate `POST /auth/sign-out`** with `requires(PUBLIC_PAGE)` and delete its `_ROUTE_WAIVERS` entry, restoring the 95/95 invariant; add baseline security headers (CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`).
+
+### Watch-outs
+
+- nginx edits, firewalling, and password rotation are **owner actions** (sudo wall); stage the pure-app fixes (items 1, 5-nonce, 6, 7) independently so the critical XSS fix never waits on an infra window.
+- **Item 2 changes the Lab access model.** LAN `http://192.168.1.62:8000` is the documented Lab path (CLAUDE.md, STAGING.md); binding to loopback moves Lab access to SSH tunnel or an nginx LAN listener. Decide the replacement *with the owner* before flipping — don't strand the bench workflow.
+- Verifier caveats to fold in: sign-in anti-enumeration is content-identical but not timing-identical (latency oracle); the ephemeral `OWL_AUTH_SECRET` fallback should warn louder or refuse to serve gated tiers on a prod misconfig.
+- Tests run as Lab tier — every fix here needs the CR-068 anonymous-tier smoke pattern to be regression-visible.
+
+### Cross-references
+
+CR-031 §3 (docker-bridge blocker, transcode sandboxing) · CR-068 (non-Lab route tests) · CR-069 leads 1 and 9 (dependency CVEs, Tapo LAN threat model) land here if confirmed.
+
+### Priority: high. Item 1 is small and self-contained — schedule ahead of feature work; item 3's rotation is a 10-minute owner action that shouldn't wait for the rest.
+
+---
+
+## CR-067 · Observability & durability floor — logging, health, job-failure journal, backup scope
+
+**Status:** captured 2026-07-06 from OWL_AUDIT.md §3.5 (reliability, maturity 2/5 — the audit's lowest score) + §3.4 backup findings; triage items 4–5.
+**Triggered by:** the audit's summary line — *"the system cannot tell anyone when it is broken"* — on a live member-facing service. The repo records the lesson twice already ("silent background jobs need a visible failure signal", GOS1_INFRA.md), and the backup last-success check promised after the 2026-04 24-night silent backup failure is still an unchecked TODO.
+
+### Problem
+
+(1) 76 except handlers across the seven core modules, 68 with no diagnostics, 39 bare `pass` — every degraded path (sensor parse failure, ffprobe timeout, KLAP rebuild, VQA probe) is indistinguishable from normal operation in `journalctl`; the S24 GPU-sensor incident was exactly this class. (2) Job failures are stored as `str(ex)` in a transient dict — no traceback, no journal entry, erased on restart. (3) No health semantics: `/live` returns 200 with all-`None` values; a Tapo failure freezes the displayed watts with no staleness signal; nothing external watches the service; nginx serves raw 502s when FastAPI dies. (4) The nightly backup covers `results/` only — `data/members.json`, the RAG corpus, keep-class uploads (a user-facing "never removed" promise), and `rem_out` files with circulating share tokens are single copies on one disk. (5) The maintenance watchdog's recovery path runs interactive `sudo` it can never satisfy — the exact failure CR-015 was built to prevent.
+
+### Agreed direction
+
+1. **No-PII-in-logs convention FIRST** (audit §5.4): `email_send.py` currently logs member emails on every send and, in dry-run/staging, complete magic links (live bearer credentials) to journald. Write the convention and fix those sites *before* the logging pass multiplies the pattern.
+2. **Logging pass:** a module logger in each core module + one `logger.warning`/`debug` inside every intentional fail-soft handler — keep the fail-soft semantics (the honest-degradation posture is an audit positive), add only visibility. ~68 sites, a one-day mechanical pass; journald picks it up for free. Adopt one GoS-wide convention (also the CR-031 prerequisite — stdout is the only container channel).
+3. **Job-failure journal:** the `queue_control` worker catch does `logging.exception` (traceback to journald) and appends `{job_id, type, ts, error, traceback}` to `results/diagnostics/job_failures.jsonl` (the CR-012 pattern); optionally `_recover_from_disk` answers "error" from it instead of forgetting queued users.
+4. **Health semantics + monitoring:** self-health fields on `/live` (already public) or an ungated `/healthz` — `{ok, watts_age_s, queue_depth, last_result_ts, backup_age_h, disk_free}`; store a timestamp beside `power_cache['watts']` and flag staleness beyond ~30 s; point a free external uptime monitor at it; dead-man ping on the backup cron; nginx `error_page 502` → the maintenance page. (One GoS-wide monitor watching both REM and OWL is the convergence shape.)
+5. **Backup scope:** extend the rclone manifest to `/srv/data/owl/{results,corpus,uploads,rem_out}` + `data/members.json`, **encrypted** (the `rclone-crypt` TODO — results/members carry member emails); add `uploads/` and `rem_out/` to the GOS1_INFRA disk inventory; decide whether `.chroma` is regenerate-on-restore.
+6. **Watchdog sudo:** version `infra/sudoers.d/wattlab-restart` (NOPASSWD for exactly `systemctl restart wattlab`), or give `stage-off` a `--no-restart` path for the watchdog (lowering the flag needs no restart when no branch switch occurred). Test by firing the timer against a stale flag.
+7. **Job-record integrity** (audit §3.1 medium; §5.5 concurrency lead feeds in via CR-069): a `JobRecord` `TypedDict` (status/stage/progress_pct/error/result/…) + a `set_status()` helper asserting legal transitions; migrate writers incrementally — routers first, measurement callbacks last (byte-stability rule).
+
+### Watch-outs
+
+- Sudoers install, cron edits, and the external monitor are **owner actions**; the app-side pieces stage independently.
+- Item 1 is a hard ordering constraint, not a nicety — a logging pass that lands first multiplies PII sites.
+- `/healthz` fields must stay cheap (no meter poll on request — read the cache).
+
+### Cross-references
+
+CR-012 closed (`history.jsonl` pattern) · CR-031 (logging convention + volume enumeration should match the future compose file) · CR-015 closed (the watchdog this repairs) · CR-069 leads 4/5/6 dispatch here.
+
+### Priority: high, immediately after CR-066. Items 4+5 are the audit's triage #4/#5 and are each roughly an afternoon.
+
+---
+
+## CR-068 · Testing — deploy gate, off-box portability, measurement-arithmetic coverage
+
+**Status:** captured 2026-07-06 from OWL_AUDIT.md §3.6 (+ the §3.4 findings-integrity test and the §3.8 inline-JS check).
+**Triggered by:** two audit lines: *"a production service with real members deploys via `git pull` + restart with zero automated verification"* and *"the product's entire output is energy numbers, yet the code computing them is the least-tested in the repo."*
+
+### Problem
+
+(a) Nothing gates deploys — no CI, no hooks, `stage-on`/`stage-off` run no tests ("run as a habit, not as a gate" is documented policy). (b) ~5–7% of the 770 tests pass only on GoS1 (hardcoded `/srv` paths, GPU detection, live production results, real media) with no skip markers; collection from the repo root aborts on a cwd-relative `StaticFiles` mount. (c) The energy formula `delta_e_wh = round(delta_w * (delta_t/3600), 4)` is duplicated inline **eight** times (`llm.py` ×2, `rag.py`, `image_gen.py`, `video.py`, `pixop.py`, `parity.py`, `rem_prep.py`) plus two JS re-implementations — none unit-tested; `llm`/`rag`/`image_gen` have no module tests at all. (d) Non-Lab route behaviour is under-tested (TestClient = Lab; the CR-026 anonymous invariants live only in the manual checklist — the known-worst regression class, already bitten in S37). (e) `findings.list_all()` silently drops broken findings and the test iterates its output, so silent unpublication stays green; its docstring cites a test file that doesn't exist. (f) ~5,100 lines of page JS in f-strings are parsed by no checker — the S38 bug class, still open for per-page JS.
+
+### Agreed direction
+
+1. **Gate:** a pre-push hook running `pytest tests/` (~18 s) + a pytest run inside `stage-on` before the restart. GitHub Actions waits until portability (item 2) makes the suite green off-box.
+2. **Portability:** `@pytest.mark.gpu` / `@pytest.mark.gos1_data` with skipif conditions; route test writes through `tmp_path`/settings overrides; a fixture `results/` tree for `test_findings`; fix repo-root collection; add `requirements-dev.txt` + `pytest.ini` (registering the asyncio marker). TESTING.md states explicitly what only GoS1 verifies — skipped is not green.
+3. **Energy arithmetic:** extract one `energy_wh(delta_w, delta_t_s)` helper across the eight call sites, with unit tests (rounding/zero/negative edges); summarisation-math tests for `llm`/`rag`/`image_gen` with mocked power, mirroring `test_pixop.py`. Pure-software refactor — no energy re-baseline needed. Fold in the §5.7 lead (verify first — CR-069): energy integration uses `time.time()`, so an NTP step/slew mid-run skews ΔT; move durations to `time.monotonic()`.
+4. **Anonymous-tier smoke:** a parametrized suite (~30 tests) covering every public page + the CR-026 invariants (403 upload, 404 cross-visitor download, `/`→`/demo` redirect), using a real public `x-real-ip` and no cookie.
+5. **Findings integrity:** the catalog test enumerates `docs/findings/*.md` and fails on any `FindingError` (~6 lines, replaces the pinned slug lists, covers every future finding); fix the stale docstring; add a cited-source guard to `persist.delete_result` (findings are OWL's citable output — silent unpublication is a data-integrity failure, not a UI bug).
+6. **Inline-JS syntax check:** a pytest that renders each page via TestClient, extracts inline `<script>` bodies, and runs `node --check` — closes the syntax gap for the 70% of the JS corpus still in f-strings without moving code (per-page extraction to `wl-llm.js`/`wl-rag.js` stays opportunistic, as pages are touched).
+7. **Guard residue:** replace the stale "RX 7800 XT" literal at `routes_rag.py:1619` (wrong hardware shown publicly since the GPU swap) with the `ui._gpu_display_name()` helper; add `/rag/compare` + `/llm/compare` to `test_gpu_ui_factorisation`, or a repo-wide test asserting no `routes_*.py` carries stale hardware literals outside comments.
+
+### Watch-outs
+
+- The `time.monotonic()` switch touches the measurement path — behaviourally identical under normal NTP, but sanity-check one live run before trusting it, and note it in `/methodology` only if anything visibly shifts.
+- Keep the full suite under ~20 s — the speed is why it gets run at all.
+- The pre-push hook must not block the owner's doc-only commits unreasonably; scope it to pushes, not commits.
+
+### Cross-references
+
+CR-031 (a container-runnable suite is a stated precondition) · CR-026 closed (the invariants being automated) · CR-066 (its fixes need item 4 to be regression-visible) · the standing energy-imperceptible-refactor rule (S-memory) covers item 3's extraction.
+
+### Priority: medium-high. Item 1 is an hour and pays immediately; items 3+7 are the science-credibility pieces.
+
+---
+
+## CR-069 · 2026-07 audit completeness leads — verify, then dispatch
+
+**Status:** captured 2026-07-06. OWL_AUDIT.md §5 lists ten issue classes flagged by the audit's completeness critic but **not adversarially verified** — "leads to confirm", not findings. This CR tracks verifying each and dispatching to the owning CR; nothing gets built from an unverified claim.
+**Triggered by:** OWL_AUDIT.md §5.
+
+### The ten leads and their dispatch targets
+
+1. **Dependency currency / supply chain** — `requirements.txt` is a 2026-04 snapshot; `pillow==10.2.0` and `requests==2.31.0` predate named CVEs; no `pip-audit`/dependabot. *Verify:* run `pip-audit` against the live venv. Confirmed fixes land under **CR-066**.
+2. **No LICENSE file; AI-model/corpus license compliance** — SD-Turbo/SDXL-Turbo (Stability community licenses), Ollama weights, redistributed RAG-corpus PDFs on a live member-facing org service. **Owner/board question**, not code — raise at the next meeting.
+3. **GDPR data-subject rights** — member identity woven into results (`m:<email>` visitor keys), members.json, Nextcloud backups, Gmail SMTP (processors without documented DPAs); `/privacy` invites erasure requests but no workflow can execute one. Extends the shipped S51 GDPR/analytics work; `bin/anonymise-visitor-ips.py` is the scrub-script template.
+4. **PII and secrets in the existing logs** — ✅ **dispatched:** CR-067 item 1 (hard ordering constraint on the logging pass).
+5. **Concurrency/races in the job machinery** — no `Lock` anywhere in `queue_control`; per-visitor cap is check-then-act; `focus_mode_exit` future discarded; world-writable `/tmp/gos-measure.lock` is squattable. *Verify* (the single-worker uvicorn model may bound some of this), then fixes land under **CR-067** item 7.
+6. **Disk-exhaustion vectors outside the uploads evictor** — multipart `/tmp` spool, HF/Ollama caches (see the model-caches-on-system-disk memory), chromadb, journald/nginx logs; nothing monitors free space. Partially covered by **CR-067** item 4's `disk_free` field; the cache relocation is already a standing memory item.
+7. **Wall-clock time is load-bearing** — ✅ **dispatched:** CR-068 item 3 (verify, then `time.monotonic()`).
+8. **Ollama as unpinned, unauthenticated system dependency** — ✅ **dispatched:** CR-031 §3 blocker inventory.
+9. **Tapo plug threat model** — ✅ **dispatched:** CR-031 §2 design input; LAN posture belongs to CR-066's scope when confirmed.
+10. **Accessibility / i18n** — no `lang` attr, no `aria-*`, canvas-only live power, ~zero alt text; the European Accessibility Act (enforceable since 2025-06) makes this more than polish for an EU-audience org. **Owner decision on scope**; if picked up it is a lab-look-preserving markup pass, not a redesign.
+
+### Priority: low as a container — leads 1 and 5 are the cheap verifications to run first (an hour each); 2 and 10 are owner calls; the rest are already dispatched.
+
+---
+
 ## Unverified reports (compressed 2026-06-11; re-checked same day — the GosOne→OWL sweep item closed by S43's doc pass)
 
 The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, team meeting 2026-05-04, board meeting 2026-05-11) were compressed 2026-06-11: every item that was marked resolved, absorbed into a CR, or is a meeting note recorded elsewhere (JOURNAL.md / board notes / CR cross-refs) was deleted. The genuinely unresolved residue — **all three possibly mooted by the S42 routes refactor; verify with the named 5–15 min spike before deleting**:
@@ -591,9 +730,9 @@ The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, 
 
 ---
 
-## Groupings & dependencies (rewritten 2026-06-11 — restructure pass: CR-018 merged into CR-007, CR-064 closed, CR-029 §4/§6 extracted)
+## Groupings & dependencies (rewritten 2026-06-11 — restructure pass: CR-018 merged into CR-007, CR-064 closed, CR-029 §4/§6 extracted; **extended 2026-07-06 — Track F added from the OWL_AUDIT.md triage, CR-031/CR-008 refreshed**)
 
-The **14 active CRs** cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
+The **18 active CRs** cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
 
 ### Track A — Storage / analytics (Tania-elevated 2026-05-07)
 
@@ -620,24 +759,38 @@ Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a l
 
 ### Track E — Strategic / exploratory (captured, idle)
 
-- **CR-008** REM ↔ OWL (steps 3–4; branding shipped) · **CR-009** cross-platform web client test bay · **CR-025** RT kernel (parked; re-read its decision frame after CR-065 settles) · **CR-039** AI quality judge (ratify the standing External-PQA carve-out, or drop) · **CR-041** new-vs-aged silicon (awaits a chip).
+- **CR-008** REM ↔ OWL (step-3 first slice `/prepare-rem` shipped 2026-06; remainder longer-horizon) · **CR-009** cross-platform web client test bay · **CR-025** RT kernel (parked; re-read its decision frame after CR-065 settles) · **CR-039** AI quality judge (ratify the standing External-PQA carve-out, or drop) · **CR-041** new-vs-aged silicon (awaits a chip).
+
+### Track F — 2026-07 audit remediation (OWL_AUDIT.md, captured 2026-07-06)
+
+- **CR-066** security hardening — auth-edge XSS/open-redirect (the audit's one `critical`), X-Real-IP trust root, committed switch password. First in line.
+- **CR-067** observability & durability floor — logging (no-PII convention first), job-failure journal, `/healthz` + external monitor, backup scope + heartbeat, watchdog sudo.
+- **CR-068** testing — deploy gate, off-box portability, `energy_wh()` + measurement-module tests, anonymous-tier smoke, findings-integrity test, inline-JS check.
+- **CR-069** the ten unverified §5 leads — verify, then dispatch (several already dispatched to CR-031/066/067/068).
+- *(Not new CRs but same source:* CR-031 gained its ungated pre-work list + blocker additions; CR-008's status was corrected; residual doc-debt — JOURNAL prepare-REM entry, ARCHITECTURE.md refresh, VERSION/tag reconciliation — is tracked in CLAUDE.md Deferred.)*
 
 ### Cross-track dependencies summary
 
 ```
 CR-031 §1 storage decision ──→ CR-003, CR-007 (analytics layer)
-CR-065 (in flight)         ──→ CR-031 §2 re-scope (power.py rewrite lands first)
+CR-065 (closed)            ──→ CR-031 §2 re-scope (power.py rewrite landed first)
 CR-029 (rigor review)      ──→ CR-045 (defining "equivalent quality" is the shared territory)
 Standing External-PQA rule ─?→ CR-039 (carve-out: ratify or drop)
 CR-064 retention pattern   ──→ CR-043 (port to /video; CR-039 a converging consumer)
 CR-041 / CR-007 outputs    ──→ /findings entries (CR-054 machinery, shipped)
 CR-057                     ──→ gated only on the lab UX review (flag-protected rollback)
+CR-066 item 2 (proxy trust)──→ CR-031 §3 (docker-bridge blocker cleared)
+CR-068 item 2 (portability)──→ CR-031 (container-runnable suite precondition)
+CR-068 item 4 (tier smoke) ──→ CR-066 (makes its fixes regression-visible)
+CR-069 verifications       ──→ CR-031 / CR-066 / CR-067 / CR-068 (dispatch targets)
 ```
 
-### Suggested order (2026-06-11)
+### Suggested order (refreshed 2026-07-06 — audit remediation slots at the top)
 
-1. **CR-065** close-out — the parallel session's to drive, not this backlog's.
-2. **CR-057** — schedule the lab UX review; the implementation itself is ~half a day.
-3. **CR-031 §1** storage decision — unblocks the analytics layer (CR-003, CR-007).
-4. **CR-029 remainder + CR-045** — Tania-led, as her availability allows; a §2 revision re-bases video numbers (re-run variance calibration), designed-for via `video._norm_args`.
-5. **CR-024**, then **CR-039 / CR-041 / CR-004 / CR-007 / CR-043** opportunistically; Track E as capacity allows.
+1. **CR-066 items 1 + 3** — the critical XSS fix (small, self-contained) and the switch-password rotation (10-minute owner action). Same week they're read.
+2. **CR-067 items 4 + 5** — health endpoint + monitor, backup manifest + heartbeat (the audit triage's #4/#5; an afternoon each). Then the rest of CR-066/067 as capacity allows.
+3. **CR-068 item 1** — the deploy gate is an hour; portability + energy-arithmetic tests behind it.
+4. **CR-057** — schedule the lab UX review; the implementation itself is ~half a day.
+5. **CR-031 §1** storage decision — unblocks the analytics layer (CR-003, CR-007); its new ungated pre-work list can proceed in parallel.
+6. **CR-029 remainder + CR-045** — Tania-led, as her availability allows; a §2 revision re-bases video numbers (re-run variance calibration), designed-for via `video._norm_args`.
+7. **CR-024**, then **CR-039 / CR-041 / CR-004 / CR-007 / CR-043 / CR-069** opportunistically; Track E as capacity allows.

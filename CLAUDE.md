@@ -22,10 +22,11 @@
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 14 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - CHANGE_REQUESTS.md — 18 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
 #   - TESTING.md — pytest suite (662 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
+#   - OWL_AUDIT.md — 2026-07-05 nine-dimension re-audit → CR-066–069 + CR-031/008 updates; disposition in AUDIT_RESPONSE.md
 #   - docs/wattlab_traffic_light_confidence.md (Tania §9 spec) · docs/wattlab_parameters_audit.md (param taxonomy)
 #   - docs/input_sensitivity_findings.md (CR-047 pre-test) · docs/dual_meter_pretest_findings.md (CR-065 pre-test)
 #   - docs/gpu_swap_amd_baseline.md (frozen AMD-era data)
@@ -141,8 +142,8 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 15 CRs** in CHANGE_REQUESTS.md; closed archive (problem + closing commit) in
-CHANGE_REQUESTS_CLOSED.md.
+tour/credibility → RAG). **Active: 18 CRs** in CHANGE_REQUESTS.md (incl. CR-066–069, captured 2026-07-06 from the
+OWL_AUDIT.md triage); closed archive (problem + closing commit) in CHANGE_REQUESTS_CLOSED.md.
 
 ### Recent sessions (true one-liners — full entries in JOURNAL.md)
 - S26–S30 (05-20→27): credibility bundle, versioning, VMAF + CI confidence model, BBB/variants picker, model-ladder refresh. 218→290 tests.
@@ -177,6 +178,10 @@ CHANGE_REQUESTS_CLOSED.md.
   VMAF checkbox defaulting from `vmaf_enabled` (video.py:229).
 - **Guided Tour Findings step** — redesign to aggregate across all stored results, not echo the session run.
 - **Power-user/visitor UX watch** — revisit if a visible density toggle becomes needed.
+- **2026-07 audit doc-debt** (OWL_AUDIT.md §3.7, residue after the CR-066–069 triage): JOURNAL entry for the
+  un-journaled prepare-REM arc (06-20→30: `/prepare-rem`, `uploads.py`, GPU clock pin, budget 3-clip campaign) ·
+  `ARCHITECTURE.md` map refresh (17 routers, real line counts) · VERSION/tag reconciliation (v0.8.7 "rollback
+  anchor" is 111+ commits stale, v1.x tags coexist) · back-fill the 28 closed-CR entries missing closing-commit hashes.
 
 ## Key Findings to Date
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real

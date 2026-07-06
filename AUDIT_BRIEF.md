@@ -1,5 +1,7 @@
 # OWL — Architecture Audit Brief
 
+> **Historical (2026-07-06):** this brief produced the 2026-05 architecture-only audit (response + outcome: `AUDIT_RESPONSE.md`). A full nine-dimension re-audit followed on 2026-07-05 — see `OWL_AUDIT.md`; its disposition is the final section of `AUDIT_RESPONSE.md`.
+
 **Prepared by:** the implementation agent that built recent sessions — flagging its own blind spots for a fresh reviewer.
 **Date:** 2026-05-01
 **Audience:** another AI agent (or human reviewer) doing an architecture audit before **CR-001 (two-tier OWL)** lands.
