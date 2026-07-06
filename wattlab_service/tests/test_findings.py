@@ -47,9 +47,33 @@ def test_av1_finding_parses_with_required_fields():
 
 # --- references resolve to real files -------------------------------------
 
+def test_every_finding_file_loads_without_error():
+    """CR-068: enumerate the filesystem, not list_all().
+
+    list_all() swallows FindingError and *drops* the offending finding — so a
+    finding whose source_result_id no longer resolves silently vanishes from the
+    catalog and any test iterating list_all() stays green (silent unpublication
+    of OWL's citable output). This gate loads every *.md by name so a broken one
+    raises here instead of disappearing. Covers findings the old pinned-slug
+    lists never named."""
+    # Skip dotfiles: a real finding slug never starts with "." — this filters
+    # macOS AppleDouble sidecars ("._slug.md") and editor swap files that a bare
+    # *.md glob would otherwise treat as broken findings.
+    md_files = [p for p in sorted(findings._FINDINGS_DIR.glob("*.md"))
+                if not p.name.startswith(".")]
+    assert md_files, "expected at least one finding markdown on disk"
+    for p in md_files:
+        # load() raises FindingError on malformed frontmatter OR a dangling
+        # source_result_id — either way this fails loudly, per-file.
+        f = findings.load(p.stem)
+        assert f is not None, f"{p.name}: load() returned None for an on-disk file"
+
+
 def test_every_finding_source_result_id_exists_on_disk():
     """Every finding under docs/findings/ must point at result files that
-    actually exist. A dangling finding cannot ship."""
+    actually exist. A dangling finding cannot ship. (Kept alongside the
+    filesystem-enumerating gate above, which is the one that fails loudly on a
+    finding list_all() would have silently dropped.)"""
     all_findings = findings.list_all()
     assert all_findings, "expected at least one finding (the AV1 worked example)"
     for f in all_findings:
