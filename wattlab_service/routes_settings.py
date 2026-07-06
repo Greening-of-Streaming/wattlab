@@ -21,7 +21,7 @@ import settings as cfg
 import ui
 import video as vid
 from capabilities import (requires, can, PUBLIC_PAGE, SETTINGS_READ_FULL,
-                          SETTINGS_WRITE, VARIANCE_RUN)
+                          SETTINGS_WRITE, VARIANCE_RUN, QUEUE_VIEW)
 from runtime import jobs
 from ui import CHARTJS_URL, _gpu_enc
 
@@ -175,6 +175,39 @@ async def variance_run(request: Request):
     return {"job_id": job_id, "queue_position": position}
 
 
+@router.post("/precalibration/run", dependencies=[Depends(requires(VARIANCE_RUN))])
+async def precalibration_run(request: Request):
+    """CR-024: enqueue the thermal-recovery probe as a first-class queue job —
+    the in-app equivalent of running bin/probe-thermal-recovery, so the operator
+    never drops to the shell. Mirrors /variance/run exactly; the probe holds the
+    measurement lock + focus mode itself (precalibration.py)."""
+    import precalibration
+    job_id = str(uuid.uuid4())[:8]
+    label = "Thermal-recovery probe — system offline"
+
+    async def coro():
+        try:
+            jobs[job_id].update({"status": "running", "stage": "starting"})
+            result = await precalibration.run_thermal_recovery_probe(job_id, jobs)
+            jobs[job_id].update({"status": "done", "stage": "done", "result": result})
+        except Exception as e:
+            jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+
+    position = queue_control.enqueue(job_id, "precalibration", label, coro, request=request)
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}
+
+
+@router.get("/precalibration/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
+async def precalibration_job_status(job_id: str):
+    """Status of a running/completed probe job so the /settings button can poll
+    to completion and refresh the chart. Same shape as the per-workload
+    /{type}/job/{id} endpoints."""
+    from runtime import job_status
+    return job_status(job_id)
+
+
 @router.get("/precalibration/data", dependencies=[Depends(requires(SETTINGS_READ_FULL))])
 async def precalibration_data():
     """Return the latest thermal-recovery probe data as JSON.
@@ -223,6 +256,22 @@ async def precalibration_data():
 async def settings_page(request: Request):
     s = cfg.load()
     local = can(audience.tier(request), SETTINGS_READ_FULL)
+
+    # CR-024: "▶ Re-run probe" controls for the thermal-recovery panel. Built
+    # here so the ETA badge can carry a server-computed estimate; injected into
+    # the (Lab-only) precal <details> block below.
+    import precalibration as _precal
+    _pdist, _ppc, _pnp = _precal._probe_params(s)
+    precal_eta_min = _precal.estimated_minutes(_pdist, _ppc, _pnp)
+    precal_run_controls = (
+        '<button onclick="runThermalProbe()" id="precalBtn" '
+        'style="background:var(--border);color:var(--accent);border:1px solid #00ff9944;'
+        'padding:0.4rem 1rem;cursor:pointer;font-family:monospace;font-size:0.82rem;'
+        'margin-bottom:0.5rem">&#9654; Re-run probe</button> '
+        f'<span style="color:var(--text-5);font-size:0.72rem">&#8776;{precal_eta_min} min '
+        f'&middot; {len(_pdist)} distances &times; CPU+GPU &middot; holds the box offline</span>'
+        '<div id="precal-run-msg" style="margin:0.35rem 0;font-size:0.8rem"></div>'
+    )
 
     def field(fid, val, min_, max_, unit, hint="", step=None):
         step_attr = f' step="{step}"' if step else ""
@@ -429,12 +478,13 @@ async def settings_page(request: Request):
     </div>
     {'<button onclick="runVarianceCalibration()" id="varCalBtn" style="background:var(--border);color:var(--accent);border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">▶ Run variance calibration</button><div id="var-cal-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>' if local else '<div style="color:var(--text-5);font-size:0.78rem;margin-top:0.5rem">Calibration requires lab access.</div>'}
 
-    {('''<details class="calib-details" id="precalDetails">
+    {(f'''<details class="calib-details" id="precalDetails">
       <summary>More calibration details</summary>
       <div class="panel">
         <div style="color:var(--text-4);font-size:0.72rem;line-height:1.6;margin-bottom:0.5rem">
-          Thermal-recovery probe (<code>bin/probe-thermal-recovery</code>): for each distance d after a CPU and a GPU encode, samples N idle polls. Used to validate that <code>variance_cooldown_s</code> is long enough — the curve should flatten well below it.
+          Thermal-recovery probe (<code>bin/probe-thermal-recovery</code>, or the button below): for each distance d after a CPU and a GPU encode, samples N idle polls. Used to validate that <code>variance_cooldown_s</code> is long enough — the curve should flatten well below it.
         </div>
+        {precal_run_controls}
         <div id="precal-meta" style="color:var(--text-5);font-size:0.72rem;margin-bottom:0.5rem">Loading…</div>
         <div style="position:relative;height:260px"><canvas id="precalChart"></canvas></div>
         <div id="precal-stats" style="margin-top:0.75rem;font-size:0.78rem;color:var(--text-3);line-height:1.7"></div>
@@ -644,16 +694,21 @@ async def settings_page(request: Request):
     }}
 
     let precalChartInstance = null;
-    async function loadPrecalibration() {{
+    async function loadPrecalibration(force) {{
         const meta = document.getElementById('precal-meta');
         const stats = document.getElementById('precal-stats');
-        if (precalChartInstance) return;  // already loaded
+        if (precalChartInstance && !force) return;  // already loaded
+        if (precalChartInstance && force) {{        // CR-024: rebuild after a re-run
+            try {{ precalChartInstance.destroy(); }} catch(e) {{}}
+            precalChartInstance = null;
+        }}
         try {{
             const resp = await fetch('/precalibration/data');
             const data = await resp.json();
             if (!data.available) {{
                 meta.innerHTML = '<span style="color:var(--text-5)">No probe data yet — '
-                    + 'run <code>bin/probe-thermal-recovery</code> from the shell to generate.</span>';
+                    + 'use the “▶ Re-run probe” button above (or run '
+                    + '<code>bin/probe-thermal-recovery</code> from the shell).</span>';
                 return;
             }}
             const cpu = data.points.filter(p => p.workload === 'cpu');
@@ -693,6 +748,63 @@ async def settings_page(request: Request):
             meta.innerHTML = '<span style="color:var(--err)">Failed to load probe data: ' + e + '</span>';
         }}
     }}
+    // CR-024: run the thermal-recovery probe as a queued job, poll to
+    // completion, then rebuild the chart from the fresh CSV.
+    async function runThermalProbe() {{
+        const btn = document.getElementById('precalBtn');
+        const msg = document.getElementById('precal-run-msg');
+        if (!btn) return;
+        if (!confirm('Run the thermal-recovery probe? It takes the box offline for '
+            + '≈{precal_eta_min} min and blocks other jobs until it finishes.')) return;
+        btn.disabled = true;
+        msg.innerHTML = '<span style="color:var(--warn)">Saving settings…</span>';
+        await saveSettings();
+        msg.innerHTML = '<span style="color:var(--warn)">Queuing probe…</span>';
+        try {{
+            const resp = await fetch('/precalibration/run', {{method: 'POST'}});
+            const data = await resp.json();
+            if (!data.job_id) {{
+                msg.innerHTML = '<span style="color:var(--err)">Error: ' + JSON.stringify(data) + '</span>';
+                btn.disabled = false;
+                return;
+            }}
+            msg.innerHTML = '<span style="color:var(--accent)">Probe ' + data.job_id
+                + ' queued (position ' + data.queue_position + '). '
+                + '<a href="/queue-status" style="color:var(--accent)">View queue →</a></span>';
+            pollThermalProbe(data.job_id);
+        }} catch(e) {{
+            msg.innerHTML = '<span style="color:var(--err)">Failed: ' + e + '</span>';
+            btn.disabled = false;
+        }}
+    }}
+    async function pollThermalProbe(jobId) {{
+        const btn = document.getElementById('precalBtn');
+        const msg = document.getElementById('precal-run-msg');
+        try {{
+            const r = await fetch('/precalibration/job/' + jobId);
+            const j = await r.json();
+            if (j.status === 'done') {{
+                msg.innerHTML = '<span style="color:var(--accent)">Probe ' + jobId
+                    + ' complete' + (j.result && j.result.pairs_failed
+                        ? ' (' + j.result.pairs_failed + ' encode(s) skipped)' : '')
+                    + ' — chart refreshed.</span>';
+                btn.disabled = false;
+                loadPrecalibration(true);
+                return;
+            }}
+            if (j.status === 'error') {{
+                msg.innerHTML = '<span style="color:var(--err)">Probe failed: '
+                    + (j.error || 'unknown error') + '</span>';
+                btn.disabled = false;
+                return;
+            }}
+            const stage = j.stage ? ' · ' + j.stage : '';
+            msg.innerHTML = '<span style="color:var(--warn)">Probe ' + jobId
+                + ' running' + stage + '… <a href="/queue-status" style="color:var(--accent)">queue →</a></span>';
+        }} catch(e) {{ /* transient — keep polling */ }}
+        setTimeout(() => pollThermalProbe(jobId), 5000);
+    }}
+
     const _precalDetails = document.getElementById('precalDetails');
     if (_precalDetails) {{
         _precalDetails.addEventListener('toggle', () => {{
