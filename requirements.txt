@@ -21,6 +21,7 @@ tapo==0.8.12
 
 # Config
 python-dotenv==1.2.2
+PyYAML==6.0.1        # findings frontmatter parsing (findings.py) — runtime dep for /findings
 
 # AI — image generation
 diffusers==0.37.1

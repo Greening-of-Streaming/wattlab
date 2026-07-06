@@ -1,0 +1,12 @@
+# WattLab dev/test-only dependencies (CR-068).
+# Not needed to run the service — only to run the test suite + audits.
+#   pip install -r requirements-dev.txt
+#
+# Pins match GoS1's venv (2026-07). The runtime deps live in requirements.txt.
+
+pytest==9.0.3
+pytest-asyncio==1.3.0
+
+# Supply-chain audit (CR-069 lead 1): run `pip-audit` against the venv to get
+# the authoritative CVE list before bumping pinned deps.
+pip-audit
