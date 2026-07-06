@@ -22,7 +22,7 @@
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 18 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - CHANGE_REQUESTS.md — 17 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
 #   - TESTING.md — pytest suite (662 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
@@ -142,8 +142,9 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 18 CRs** in CHANGE_REQUESTS.md (incl. CR-066–069, captured 2026-07-06 from the
-OWL_AUDIT.md triage); closed archive (problem + closing commit) in CHANGE_REQUESTS_CLOSED.md.
+tour/credibility → RAG). **Active: 17 CRs** in CHANGE_REQUESTS.md (CR-066–069 captured 2026-07-06 from the
+OWL_AUDIT.md triage; CR-024 closed same week — PR #5 `09480ec`); closed archive in CHANGE_REQUESTS_CLOSED.md.
+CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — owner-infra remainders keep them active.
 
 ### Recent sessions (true one-liners — full entries in JOURNAL.md)
 - S26–S30 (05-20→27): credibility bundle, versioning, VMAF + CI confidence model, BBB/variants picker, model-ladder refresh. 218→290 tests.

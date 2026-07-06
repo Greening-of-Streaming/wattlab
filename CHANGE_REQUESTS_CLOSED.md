@@ -1968,3 +1968,42 @@ Topology wall → `.159` (outer, original) → `.91` (inner, primary) → GoS1; 
 ### Relationship to CR-031 §2
 
 The meter registry is a step *toward* the deferred PowerBackend abstraction, not the protocol — PDU/IPMI/synthetic backends remain CR-031 §2 scope.
+
+---
+
+## CR-024 · Re-run thermal-recovery probe from the "More calibration details" panel
+
+**Status:** ✅ shipped 2026-07-06 on `feat/cr-024-precalibration-run`, merged to `main` via PR #5 (merge commit `09480ec`). The S21 display panel already existed; this session built the remaining deliverable — the run endpoint + button. 781 tests green at merge (the ~65-min probe itself needs GoS1 and is not run in tests).
+**Triggered by:** owner — refresh the curve without dropping to the shell.
+
+### Problem
+
+The probe is a CLI script (`bin/probe-thermal-recovery`, ~65 min) that holds `/tmp/owl-paused` + `/tmp/gos-measure.lock` directly and writes CSVs under `results/diagnostics/`. Every other long-running measurement goes through `queue_control.enqueue` so visitor-vs-operator collision is handled by the spine; the probe predated being a first-class server feature.
+
+### What shipped (vs. the agreed direction)
+
+1. **`precalibration.run_thermal_recovery_probe(job_id, jobs)`** — the CLI loop as an importable async engine, same shape as `video.run_variance_calibration`. Holds `LOCK_FILE` + focus mode, drives `jobs[job_id]["stage"]`, writes the exact `recovery_<ts>{,_summary}.csv` shape `/precalibration/data` reads. As-built note: journals via `persist.append_history_line("diagnostics", …, kind="thermal_recovery_probe")` rather than lifting the CLI's `_append_probe_history`. **Deliberately does NOT touch `/tmp/owl-paused`** — run through the queue it IS the sole worker (mirrors variance calibration), so pausing itself would deadlock. Encoder cmds via `video.variance_template` → route through `gpu.BACKEND` (no VAAPI `-t` cap needed post-CR-022).
+2. **`POST /precalibration/run`** gated on `VARIANCE_RUN`, via `queue_control.enqueue`, mirroring `/variance/run`. Plus **`GET /precalibration/job/{id}`** for completion polling.
+3. CLI left **standalone** (the module is canonical; the CLI keeps its own loop for pdb/diagnostic use — the CR allowed either).
+4. Panel UI: **"▶ Re-run probe" button** + server-computed ETA badge + inline progress; `loadPrecalibration(force)` rebuilds the chart on completion; empty-state copy points at the button.
+
+### Setting shape (shipped)
+
+```jsonc
+{
+  "precal_distances":      "0,2,5,8,12,18,25,35,50,70,95,120",
+  "precal_pre_cool_s":     30,
+  "precal_baseline_polls": null   // null → baseline_polls
+}
+```
+Defaults match the CLI so the button and the CLI produce identical CSVs.
+
+### Tests
+
+`test_precalibration.py` (11): distance/ETA/param helpers, missing-input guard (fails before focus mode / lock), enqueue + 429 + status endpoints, `/settings` button render.
+
+### Residual / watch-outs
+
+- The **65-min probe is untested end-to-end** (needs the box); the queue/endpoint/UI wiring is covered, the encode loop is exercised only by the physical run.
+- `results/diagnostics/` CSV shape unchanged — `/precalibration/data` doesn't care which path produced it.
+- Don't auto-chain probe → variance; separate buttons (unchanged).

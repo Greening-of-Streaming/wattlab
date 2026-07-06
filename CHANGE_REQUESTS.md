@@ -170,49 +170,6 @@ Dom guessed five days of Claude Code work. Probably correct order of magnitude. 
 
 ---
 
-## CR-024 · Re-run thermal-recovery probe from the "More calibration details" panel
-
-**Status:** captured 2026-05-04 (S21). The panel *display* shipped (S21: recovery chart from `GET /precalibration/data`, served from `routes_settings.py` post-S42-refactor) — but the deliverable here, **`POST /precalibration/run` + a "▶ Re-run probe" button, was never built**; the deferral is documented in code at `routes_settings.py:573`. Half-day estimate stands.
-**Triggered by:** owner — refresh the curve without dropping to the shell.
-
-### Problem
-
-The probe is a CLI script (`bin/probe-thermal-recovery`, ~65 min) that holds `/tmp/owl-paused` + `/tmp/gos-measure.lock` directly and writes CSVs under `results/diagnostics/`. Every other long-running measurement goes through `queue_control.enqueue` so visitor-vs-operator collision is handled by the spine; the probe predates being a first-class server feature.
-
-### Agreed direction
-
-**Promote the probe into `wattlab_service/precalibration.py` + `POST /precalibration/run`, mirroring `/variance/run`.**
-
-1. Extract the probe loop into `precalibration.py:run_thermal_recovery_probe(job_id, jobs)` — same shape as the variance calibration (encoder pieces now route through `gpu.BACKEND`). Also lift `_append_probe_history` from the CLI so runs keep journaling to `results/diagnostics/history.jsonl` (the hook CR-012's closed entry pre-named).
-2. New endpoint gated on `VARIANCE_RUN` (or a sibling capability), routed through `queue_control.enqueue`.
-3. CLI script becomes a thin client (or stays standalone — the module is what matters).
-4. Panel UI: "▶ Re-run probe" button + job polling + chart refresh on completion; ETA badge (≈65 min); disabled while in-flight.
-
-### Setting shape
-
-```jsonc
-{
-  "precal_distances":      "0,2,5,8,12,18,25,35,50,70,95,120",
-  "precal_pre_cool_s":     30,
-  "precal_baseline_polls": null   // null → baseline_polls
-}
-```
-Defaults match the CLI so behaviour is unchanged.
-
-**Cost:** ~half a day (mechanical extract + button + tests + docs).
-
-### Watch-outs
-
-- Keep the CLI script (diagnostic/pdb value) as a thin wrapper around the module.
-- `results/diagnostics/` keeps its CSV shape — the reader doesn't care which path produced it.
-- Don't auto-chain probe → variance; separate buttons, recommended sequence documented on `/methodology`.
-
-### Open question
-
-Naming only: `/precalibration/*` URL space for symmetry with `/variance/run`; the panel header may read "Thermal recovery probe".
-
----
-
 ## CR-025 · Migrate to a real-time Linux kernel for tighter measurement determinism
 
 **Status:** **Parked, low priority** (owner 2026-05-28: "we won't be going there for a while"). Captured 2026-05-04 (S21); confirmed by team meeting same day (item 30). **Body compressed 2026-06-11** — the original AMD-era analysis (ROCm-on-RT risk, per-number win estimates from pre-normalization CVs) is in this file's git history; any future validation targets the **Nvidia/CUDA/NVENC** stack (RTX 5080 since 2026-05-29).
@@ -732,7 +689,7 @@ The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, 
 
 ## Groupings & dependencies (rewritten 2026-06-11 — restructure pass: CR-018 merged into CR-007, CR-064 closed, CR-029 §4/§6 extracted; **extended 2026-07-06 — Track F added from the OWL_AUDIT.md triage, CR-031/CR-008 refreshed**)
 
-The **18 active CRs** cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items.
+The **17 active CRs** cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items. (CR-024 closed 2026-07-06, PR #5 `09480ec`.)
 
 ### Track A — Storage / analytics (Tania-elevated 2026-05-07)
 
@@ -754,7 +711,7 @@ Tania's S22 meeting line — *"if we save them somewhere reusable, we can do a l
 
 ### Track D — Operator quality-of-life (small, independent)
 
-- **CR-024** re-run thermal-recovery probe from `/settings` (the display shipped; the run endpoint + button didn't).
+- ~~**CR-024** re-run thermal-recovery probe from `/settings`~~ — ✅ **closed 2026-07-06** (PR #5 `09480ec`); moved to CHANGE_REQUESTS_CLOSED.md.
 - **CR-004** visual graphing remainder — no dependencies; CR-007 + the CR-012 history journals are its first consumers.
 
 ### Track E — Strategic / exploratory (captured, idle)
@@ -793,4 +750,4 @@ CR-069 verifications       ──→ CR-031 / CR-066 / CR-067 / CR-068 (dispatch
 4. **CR-057** — schedule the lab UX review; the implementation itself is ~half a day.
 5. **CR-031 §1** storage decision — unblocks the analytics layer (CR-003, CR-007); its new ungated pre-work list can proceed in parallel.
 6. **CR-029 remainder + CR-045** — Tania-led, as her availability allows; a §2 revision re-bases video numbers (re-run variance calibration), designed-for via `video._norm_args`.
-7. **CR-024**, then **CR-039 / CR-041 / CR-004 / CR-007 / CR-043 / CR-069** opportunistically; Track E as capacity allows.
+7. **CR-039 / CR-041 / CR-004 / CR-007 / CR-043 / CR-069** opportunistically; Track E as capacity allows. *(CR-024 done.)*
