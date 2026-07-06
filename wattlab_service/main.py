@@ -301,7 +301,8 @@ async def index(request: Request):
 
 @app.get("/power", dependencies=[Depends(requires(LIVE_TELEMETRY))])
 async def power_json():
-    return {"watts": _power_cache["watts"], "scope": "device_only", "source": "tapo_p110"}
+    return {"watts": _power_cache["watts"], "watts_age_s": runtime.watts_age_s(),
+            "scope": "device_only", "source": "tapo_p110"}
 
 
 @app.get("/live", dependencies=[Depends(requires(LIVE_TELEMETRY))])
@@ -309,14 +310,37 @@ async def live_json():
     """Bundled live telemetry for the shared UI poller. One round-trip for
     everything that updates in real-time on any page: watts, temps, GPU PPT,
     queue depth, pause state. Values may be None if a source is temporarily
-    unavailable."""
+    unavailable; `watts_age_s` (CR-067) distinguishes a fresh reading from a
+    frozen one when the Tapo path has died."""
     return {
         "watts":        _power_cache["watts"],
+        "watts_age_s":  runtime.watts_age_s(),
         "cpu_tctl":     _power_cache["cpu_tctl"],
         "gpu_junction": _power_cache["gpu_junction"],
         "gpu_ppt_w":    _power_cache["gpu_ppt_w"],
         "queue_depth":  queue_control.depth(),
         "paused":       queue_control.paused(),
+    }
+
+
+# CR-067: cheap health endpoint for an external uptime monitor. Anonymous
+# (PUBLIC_PAGE) so a monitor needs no auth, and deliberately does NO meter poll
+# or results glob on request — it reads in-memory signals only, so hammering it
+# is free. `ok` is liveness (the process answered); `watts_fresh` is the
+# degraded-but-alive signal a monitor should alert on separately.
+@app.get("/healthz", dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def healthz():
+    age = runtime.watts_age_s()
+    paused = queue_control.paused()
+    # While paused the poller intentionally backs off, so staleness is expected;
+    # only call the meter stale when NOT paused and the age exceeds ~3 poll gaps.
+    watts_fresh = paused or (age is not None and age < 20)
+    return {
+        "ok":           True,
+        "watts_age_s":  age,
+        "watts_fresh":  watts_fresh,
+        "queue_depth":  queue_control.depth(),
+        "paused":       paused,
     }
 
 

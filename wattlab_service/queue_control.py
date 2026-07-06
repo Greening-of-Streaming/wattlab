@@ -11,8 +11,12 @@ this module imports nothing from main.py — no circular deps.
 """
 
 import asyncio
+import logging
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -271,9 +275,29 @@ async def _worker():
             try:
                 await entry["coro_fn"]()
             except Exception as ex:
+                # CR-067: a failed run used to leave only str(ex) in a transient
+                # dict — no traceback, gone on restart, invisible in journald.
+                # Now: full traceback to the journal + an append-only
+                # job_failures.jsonl record that survives a restart.
+                tb = traceback.format_exc()
+                log.exception("queue job %s (%s) failed",
+                              job_id, entry.get("type"))
                 _jobs[job_id] = {**_jobs.get(job_id, {}),
                                  "stage": "error", "error": str(ex)}
-                _lock_file.unlink(missing_ok=True)
+                if _lock_file is not None:
+                    _lock_file.unlink(missing_ok=True)
+                try:
+                    import persist
+                    persist.append_history_line("diagnostics", {
+                        "kind":   "job_failure",
+                        "job_id": job_id,
+                        "type":   entry.get("type"),
+                        "label":  entry.get("label"),
+                        "error":  str(ex),
+                        "traceback": tb,
+                    }, filename="job_failures.jsonl")
+                except Exception:
+                    log.debug("could not journal job failure", exc_info=True)
             finally:
                 current_job_id = None
                 current_visitor_key = None

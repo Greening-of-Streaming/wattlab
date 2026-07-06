@@ -10,9 +10,13 @@ Contents:
   job_status() — the shared /<feature>/job/{id} response shape.
 """
 import asyncio
+import logging
+import time
 from pathlib import Path
 
 from power import get_power_watts, read_sensors_dict
+
+log = logging.getLogger(__name__)
 
 # Mirrors queue_control.PAUSE_FLAG. When the queue is paused, an operator/tool
 # owns the box (e.g. the encode-parity harness measuring from a separate
@@ -38,16 +42,36 @@ power_cache: dict = {
     "gpu_ppt_w": None,
 }
 
+# CR-067: monotonic timestamp of the last SUCCESSFUL watts poll (NTP-immune, so
+# an NTP step can't make the meter look fresh or stale). None until the first
+# success. `watts_age_s()` turns it into a staleness signal for /live + /healthz
+# — without it a dead Tapo path freezes `watts` at its last value with nothing
+# to distinguish "settled idle" from "meter died 20 minutes ago".
+_watts_ok_monotonic: float | None = None
+
+
+def watts_age_s():
+    """Seconds since the last successful watts poll, or None if never polled.
+    Cheap (arithmetic on a cached monotonic stamp) — safe to call per request."""
+    if _watts_ok_monotonic is None:
+        return None
+    return round(time.monotonic() - _watts_ok_monotonic, 1)
+
 
 async def power_poller():
+    global _watts_ok_monotonic
     while True:
         try:
             # Back off the meter while paused so a separate measuring process
             # (encode-parity harness) owns the P110 without KLAP-session ping-pong.
             if not _PAUSE_FLAG.exists():
                 power_cache["watts"] = await get_power_watts()
+                _watts_ok_monotonic = time.monotonic()
         except Exception:
-            pass  # keep stale value on transient errors
+            # Keep the stale value, but leave the timestamp untouched so
+            # watts_age_s() grows and /healthz can flag a dead meter path.
+            log.debug("power_poller: watts read failed, keeping stale value",
+                      exc_info=True)
         await asyncio.sleep(5)
 
 

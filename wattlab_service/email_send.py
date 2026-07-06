@@ -49,6 +49,22 @@ def _is_dry_run() -> bool:
     return False
 
 
+# CR-067 no-PII-in-logs convention (must hold before the wider logging pass):
+# never write a full member email address or a magic link (a live bearer
+# credential) to logs. Addresses are redacted to first-char + domain; the link
+# is suppressed unless OWL_SMTP_LOG_LINK=1 is set for a deliberate local debug.
+def _redact_email(addr: str) -> str:
+    """'alice@example.org' → 'a***@example.org'. Keeps the domain (useful for
+    delivery debugging) but drops the identifying local-part."""
+    try:
+        local, sep, domain = addr.partition("@")
+        if not sep:
+            return "***"
+        return f"{(local[:1] or '')}***@{domain}"
+    except Exception:
+        return "***"
+
+
 def _build_message(to: str, link: str) -> EmailMessage:
     msg = EmailMessage()
     msg["Subject"] = "Sign in to OWL"
@@ -97,15 +113,25 @@ def send_magic_link(to: str, link: str) -> bool:
     against email-enumeration)."""
     msg = _build_message(to, link)
     if _is_dry_run():
-        log.info("DRY RUN magic-link email to %s — link: %s", to, link)
+        # The link is a live credential — suppressed by default even in dry-run
+        # (staging can run dry-run). Opt in with OWL_SMTP_LOG_LINK=1 for a local
+        # test where you need to click it out of the log.
+        if _cfg("OWL_SMTP_LOG_LINK") in ("1", "true", "yes"):
+            log.info("DRY RUN magic-link email to %s — link: %s",
+                     _redact_email(to), link)
+        else:
+            log.info("DRY RUN magic-link email to %s (link suppressed; "
+                     "set OWL_SMTP_LOG_LINK=1 to include)", _redact_email(to))
         return True
     password = _cfg("OWL_SMTP_PASSWORD")
     try:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as s:
             s.login(SMTP_USER, password)
             s.send_message(msg)
-        log.info("Sent magic-link email to %s", to)
+        log.info("Sent magic-link email to %s", _redact_email(to))
         return True
-    except Exception as e:
-        log.exception("Failed to send magic-link email to %s: %s", to, e)
+    except Exception:
+        # log.exception appends the traceback (valuable for SMTP debugging);
+        # the address is redacted and the link is never in scope here.
+        log.exception("Failed to send magic-link email to %s", _redact_email(to))
         return False

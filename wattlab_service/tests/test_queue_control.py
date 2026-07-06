@@ -60,6 +60,52 @@ def _noop_coro():
     return _
 
 
+# --- CR-067 job-failure journal ---------------------------------------------
+
+def test_failed_job_is_journalled_with_traceback(tmp_path, monkeypatch):
+    """A raising job must (a) land status/stage=error and (b) append a
+    job_failures.jsonl record carrying the traceback — so a failure is no
+    longer just str(ex) in a transient dict, lost on restart."""
+    import asyncio
+    import json
+    import persist
+
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+
+    async def drive():
+        worker = asyncio.create_task(queue_control._worker())
+
+        def boom():
+            async def _():
+                raise ValueError("kaboom-in-job")
+            return _
+
+        queue_control.enqueue("failjob", "video", "a boom job", boom())
+        for _ in range(100):                       # ~2s budget
+            await asyncio.sleep(0.02)
+            if queue_control._jobs.get("failjob", {}).get("stage") == "error":
+                break
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(drive())
+
+    assert queue_control._jobs["failjob"]["stage"] == "error"
+    assert "kaboom-in-job" in queue_control._jobs["failjob"]["error"]
+
+    journal = tmp_path / "diagnostics" / "job_failures.jsonl"
+    assert journal.exists(), "job_failures.jsonl was not written"
+    rec = json.loads(journal.read_text().splitlines()[-1])
+    assert rec["job_id"] == "failjob"
+    assert rec["kind"] == "job_failure"
+    assert rec["type"] == "video"
+    assert "ValueError: kaboom-in-job" in rec["traceback"]
+    assert "ts" in rec  # append_history_line stamps ts + owl_version
+
+
 # --- enqueue ----------------------------------------------------------------
 
 def test_enqueue_returns_position_one_for_first_job():

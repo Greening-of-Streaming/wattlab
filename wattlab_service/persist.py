@@ -71,17 +71,19 @@ def save_result(job_type: str, job_id: str, data: dict,
     return path
 
 
-def append_history_line(category: str, data: dict) -> Path:
-    """Append one JSON line to results/<category>/history.jsonl (CR-012).
+def append_history_line(category: str, data: dict,
+                        filename: str = "history.jsonl") -> Path:
+    """Append one JSON line to results/<category>/<filename> (CR-012).
 
-    Drift-tracking journal for variance calibration + thermal-recovery probe.
+    Drift-tracking journal for variance calibration + thermal-recovery probe;
+    also the CR-067 job-failure journal (filename="job_failures.jsonl").
     Append-only, no schema lock-in. `ts` and `owl_version` are stamped on
     every line so future analyses can correlate drift with code changes,
     kernel versions, hardware swaps.
     """
     out_dir = RESULTS_DIR / category
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "history.jsonl"
+    path = out_dir / filename
     payload = {
         "ts": datetime.now().isoformat(),
         **data,
