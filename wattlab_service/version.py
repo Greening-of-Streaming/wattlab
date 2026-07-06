@@ -65,11 +65,19 @@ def _describe_version() -> str:
 
 def _dirty() -> bool:
     """Uncommitted *code* in the working tree — ignoring live-state files that
-    are tracked but never committed with features (settings.json)."""
+    are tracked but never committed with features (settings.json).
+
+    Note `_git()` strips the output, which drops the leading status-column
+    space (' M path' → 'M path'), so a fixed-width slice is wrong. Split on the
+    first whitespace run instead — robust to the stripped and unstripped forms
+    and to any status code width ('M', 'MM', '??', 'R ')."""
     for line in _git("status", "--porcelain").splitlines():
-        path = line[3:].strip()          # strip the 'XY ' status prefix
+        parts = line.split(None, 1)      # ['<status>', '<path>']
+        if len(parts) < 2:
+            continue
+        path = parts[1].strip()
         if " -> " in path:               # rename: take the destination
-            path = path.split(" -> ", 1)[1]
+            path = path.split(" -> ", 1)[1].strip()
         if path and path not in _IGNORE_DIRTY:
             return True
     return False

@@ -51,14 +51,17 @@ def test_describe_version_empty_without_tag(monkeypatch):
 # --- dirty flag ignores live-state settings.json ---------------------------
 
 def test_dirty_ignores_only_settings_json(monkeypatch):
-    monkeypatch.setattr(version, "_git", lambda *a: " M settings.json")
+    # `_git` strips output, so a single modified file comes back WITHOUT its
+    # leading status-column space ("M settings.json", not " M settings.json").
+    # The parse must handle that — this pins the real production form.
+    monkeypatch.setattr(version, "_git", lambda *a: "M settings.json")
     assert version._dirty() is False               # live state, not "-local"
 
 
 def test_dirty_true_on_real_code_change(monkeypatch):
     monkeypatch.setattr(
         version, "_git",
-        lambda *a: " M settings.json\n M wattlab_service/video.py")
+        lambda *a: "M settings.json\n M wattlab_service/video.py")
     assert version._dirty() is True                # uncommitted code → dirty
 
 
