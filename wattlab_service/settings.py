@@ -60,6 +60,11 @@ DEFAULTS = {
     # Variance calibration run parameters
     "variance_runs": 10,         # how many H264-CPU + H265-GPU pairs to run
     "variance_cooldown_s": 60,   # seconds between each run pair
+    # CR-024 thermal-recovery probe (POST /precalibration/run). Defaults match
+    # bin/probe-thermal-recovery so the button and the CLI produce identical CSVs.
+    "precal_distances": "0,2,5,8,12,18,25,35,50,70,95,120",  # sample points after each encode
+    "precal_pre_cool_s": 30,      # settle before each encode
+    "precal_baseline_polls": None,  # idle polls per distance; null → baseline_polls
     # Variance commands derive from video.PRESETS["cpu"] / ["h265_gpu"] at
     # run time (see video.variance_template). Hardcoded strings used to live
     # here but drifted out of sync with /video after S13's ABR migration —
