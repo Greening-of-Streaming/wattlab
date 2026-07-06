@@ -1,0 +1,23 @@
+# OWL — passwordless restart of the wattlab service, and nothing else.
+#
+# Why: the wattlab systemd unit is system-wide, so `systemctl restart wattlab`
+# needs root. Without this, two things break at the password wall:
+#   1. the CR-015 maintenance watchdog (bin/owl-maintenance-watchdog →
+#      stage-off → `sudo systemctl restart wattlab`) — it aborts, leaving the
+#      maintenance page up (the exact failure CR-015 was built to prevent);
+#   2. an operator/agent deploying a branch cannot reload code without a human.
+#
+# Least privilege: this grants the `gos` user NOPASSWD for the EXACT commands
+# below and no others. sudoers matches the full argv, so `gos` can run only
+# `sudo systemctl restart wattlab[.service]` — NOT `restart <other-unit>`, NOT
+# extra flags, NOT `systemctl edit/mask/...` (which would be privilege
+# escalation). Do NOT broaden this to a bare `/usr/bin/systemctl`.
+#
+# Install (owner, one-time — a bad sudoers file can lock out sudo, so validate):
+#   sudo install -m 0440 -o root -g root \
+#       infra/sudoers.d/wattlab-restart /etc/sudoers.d/wattlab-restart
+#   sudo visudo -cf /etc/sudoers.d/wattlab-restart   # must print "parsed OK"
+#
+# Mirrors the existing /etc/sudoers.d/wattlab-focus grant (focus-mode timers).
+
+gos ALL=(root) NOPASSWD: /usr/bin/systemctl restart wattlab, /usr/bin/systemctl restart wattlab.service
