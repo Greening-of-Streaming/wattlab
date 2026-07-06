@@ -85,7 +85,12 @@ def test_verify_rejects_external_next_on_success(monkeypatch):
                    follow_redirects=False)
     assert r.status_code == 302
     assert r.headers["location"] == "/"          # NOT https://evil.com
-    assert "owl_session" in r.headers.get("set-cookie", "")  # still signed in
+    cookie = r.headers.get("set-cookie", "")
+    assert "owl_session" in cookie               # still signed in
+    # CR-066: the session cookie must be Secure + HttpOnly so it can't ride a
+    # plaintext request or be read by script.
+    assert "Secure" in cookie
+    assert "HttpOnly" in cookie
 
 
 def test_verify_preserves_local_next_on_success(monkeypatch):

@@ -220,7 +220,12 @@ async def auth_verify(t: str = "", next: str = "/"):
         auth.SESSION_COOKIE_NAME, cookie,
         max_age=auth.SESSION_TTL_SECONDS,
         httponly=True, samesite="lax",
-        secure=False,  # nginx fronts HTTPS; the cookie travels HTTP between nginx and uvicorn
+        # CR-066: `secure` governs the browser↔origin connection (always HTTPS
+        # via nginx for Members), NOT the internal nginx↔uvicorn hop the old
+        # comment reasoned about. Members reach OWL only over HTTPS; Lab is
+        # granted by LAN origin and never relies on this cookie — so Secure is
+        # safe and stops the 30-day session riding a plaintext http:// request.
+        secure=True,
     )
     return response
 
