@@ -422,9 +422,50 @@ _FOOTER = (
 )
 
 
+def _findings_on() -> bool:
+    """Single flag read shared by the footer link and the public nav, so the
+    two surfaces can't drift when `findings_enabled` flips."""
+    return cfg.load().get("findings_enabled", False)
+
+
 def _footer() -> str:
-    link = _FINDINGS_LINK if cfg.load().get("findings_enabled", False) else ""
+    link = _FINDINGS_LINK if _findings_on() else ""
     return _FOOTER.replace("<!--FINDINGS-->", link)
+
+
+# Slim public nav (2026-07-07 anon-experience redesign). Before this, an
+# anonymous visitor's only surfaces were the /demo tour and the footer —
+# /video and /video/budget were unreachable without typing URLs. One compact
+# row, same links for every tier (tier gates live on the pages/actions, not
+# the nav); Member/Lab keep their fuller home grid on /.
+_NAV_ITEMS = (
+    ("/demo", "Tour"),
+    ("/video", "Video"),
+    ("/video/budget", "Energy budget"),
+    ("/findings", "Findings"),          # rendered only when _findings_on()
+    ("/methodology", "Methodology"),
+)
+
+
+def _nav_html(request: Request) -> str:
+    path = request.url.path
+    links = []
+    for href, label in _NAV_ITEMS:
+        if href == "/findings" and not _findings_on():
+            continue
+        active = path == href
+        color = "var(--accent)" if active else "var(--text-3)"
+        links.append(
+            f'<a href="{href}" style="color:{color};text-decoration:none" '
+            f'onmouseover="this.style.color=\'#00ff99\'" '
+            f'onmouseout="this.style.color=\'{color}\'">{label}</a>'
+        )
+    sep = '<span style="color:var(--text-5)">·</span>'
+    return (
+        '<nav style="display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center;'
+        'font-family:monospace;font-size:0.72rem;margin-bottom:1.5rem">'
+        + sep.join(links) + '</nav>'
+    )
 
 
 # Confidence flag popover — inject into any page that shows .conf-badge elements.
@@ -519,7 +560,7 @@ def render_page(request: Request, title: str, body: str, *,
     tags, early scripts). `tail` renders after the footer — for bundles the
     page's inline JS depends on at call time (e.g. _PROGRESS_JS).
     `back=False` drops the ← Home link (the home page itself)."""
-    header = _auth_chip_html(request) + (_BACK if back else "")
+    header = _auth_chip_html(request) + (_BACK if back else "") + _nav_html(request)
     return f"""<!DOCTYPE html>
 <html>
 <head>

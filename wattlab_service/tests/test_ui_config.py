@@ -138,3 +138,40 @@ def test_page_references_only_existing_bundles(path):
     html = client.get(path, headers=LAB).text
     for src in re.findall(r'<script src="/static/([^"?]+)', html):
         assert (STATIC_DIR / src).is_file(), f"{path} references missing /static/{src}"
+
+
+# ── Slim public nav (2026-07-07 anon-experience redesign) ────────────────────
+
+def test_public_nav_on_all_tiers():
+    """Every render_page page carries the compact nav; before this an
+    anonymous visitor could not reach /video or /video/budget without
+    typing the URL."""
+    from fastapi.testclient import TestClient
+    import main
+    c = TestClient(main.app)
+    for path, headers in (("/video", {"x-real-ip": "8.8.8.8"}),
+                          ("/demo", {"x-real-ip": "8.8.8.8"}),
+                          ("/settings", {"x-real-ip": "127.0.0.1"})):
+        t = c.get(path, headers=headers).text
+        for href in ('href="/demo"', 'href="/video"',
+                     'href="/video/budget"', 'href="/methodology"'):
+            assert href in t, f"{path} nav missing {href}"
+        assert 'href="/enhance-run"' not in t or path == "/settings", \
+            f"{path} must not advertise the member-gated enhance page"
+
+
+def test_public_nav_findings_follows_flag(monkeypatch):
+    """The nav's Findings link and the footer link share _findings_on() —
+    flag off removes both (no dead links; /findings 404s when disabled)."""
+    from fastapi.testclient import TestClient
+    import main, ui
+    import settings as cfg
+    c = TestClient(main.app)
+    t = c.get("/video", headers={"x-real-ip": "8.8.8.8"}).text
+    assert 'href="/findings"' in t   # flag is on in live settings
+    real_load = cfg.load
+    def off():
+        d = real_load(); d["findings_enabled"] = False; return d
+    monkeypatch.setattr(ui.cfg, "load", off)
+    t = c.get("/video", headers={"x-real-ip": "8.8.8.8"}).text
+    assert 'href="/findings"' not in t
