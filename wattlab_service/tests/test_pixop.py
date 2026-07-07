@@ -407,9 +407,10 @@ def test_enhance_page_renders_for_member_and_is_hidden():
     assert "not endorsements" in r.text
     assert "contribute streaming technologies" in r.text
     assert "{PARTNER_NAME}" not in r.text and "{PARTNER_ORG}" not in r.text
-    # Hidden: not linked from the member nav grid.
-    home = client.get("/").text
-    assert "/enhance-run" not in home
+    # Surfaced in the Guided Tour as of 2026-06-24 — an explainer step links the
+    # real page (owner ask). It is no longer hidden from the /demo landing.
+    demo = client.get("/demo", headers=LAB).text
+    assert "/enhance-run" in demo
 
 
 def test_methodology_names_contributed_technology():
@@ -1032,6 +1033,11 @@ def test_upload_member_duration_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
     monkeypatch.setattr(audience, "tier", lambda r: audience.Tier.Member)
     monkeypatch.setattr(pixop, "probe_input_stream", lambda p: {"duration_s": 90.0})
+    # Pin the caps like the size-cap test below — the live settings.json
+    # value drifts (it's operator state), and this test must stay hermetic.
+    monkeypatch.setattr(routes_enhance.cfg, "load",
+                        lambda: {"enhance_upload_max_mb": 1024,
+                                 "enhance_upload_max_duration_s": 60})
     r = client.post("/enhance-run/upload",
                     files={"file": ("c.mp4", b"x" * 32, "video/mp4")}, headers=LAB)
     assert r.status_code == 413

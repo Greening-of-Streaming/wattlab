@@ -221,8 +221,10 @@ _DEMO_HTML = f"""
     <span class="dot" id="dot-4"></span>
     <span class="dot" id="dot-5"></span>
     <span class="dot" id="dot-6"></span>
+    <span class="dot" id="dot-7"></span>
+    <span class="dot" id="dot-8"></span>
     <span class="label active" id="nav-label">Welcome</span>
-    <span id="step-counter" style="color:var(--text-5);font-size:0.7rem;margin-left:0.25rem">1 / 7</span>
+    <span id="step-counter" style="color:var(--text-5);font-size:0.7rem;margin-left:0.25rem">1 / 9</span>
   </div>
 </div>
 
@@ -297,6 +299,7 @@ _DEMO_HTML = f"""
 
 <!-- Step 1: Video -->
 <div class="step" id="step-1">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(0)">&lsaquo; Welcome</button><button class="btn btn-primary" onclick="goStep(2)">Energy budget &rsaquo;</button></div>
   <h1>Video Transcode</h1>
 
   <div class="band">
@@ -380,14 +383,68 @@ _DEMO_HTML = f"""
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="goStep(0)">← Welcome</button>
-      <button class="btn btn-primary" onclick="goStep(2)">Next: LLM inference →</button>
+      <button class="btn btn-primary" onclick="goStep(2)">Next: Energy budget →</button>
       <button class="btn btn-secondary" onclick="resetVideoStep()">Run a fresh transcode</button>
     </div>
   </div>
 </div>
 
-<!-- Step 2: LLM -->
+<!-- Step 2: Energy budget -->
 <div class="step" id="step-2">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(1)">&lsaquo; Video</button><button class="btn btn-primary" onclick="goStep(3)">Video enhancement &rsaquo;</button></div>
+  <h1>Energy Budget Planner</h1>
+  <div class="band">
+    <div class="band-label">What this shows</div>
+    <p style="color:var(--text-2);line-height:1.8;max-width:560px">
+      The same measurements, flipped into the operator&rsquo;s question: given an energy
+      budget and a quality target, how much video can you actually ship? Pick a VMAF
+      target (92 by default &mdash; the figure transcoding farms cite) and OWL shows how
+      many hours each codec and hardware path buys you, from real measured curves.
+    </p>
+  </div>
+  <div class="band">
+    <div class="band-label">Why it matters</div>
+    <p style="color:var(--text-3);line-height:1.7;max-width:560px">
+      It turns Wh-per-minute into planning &mdash; the H.264 / HEVC / AV1 and CPU-vs-GPU
+      decision, sized to a budget, measured rather than estimated.
+    </p>
+  </div>
+  <div class="btn-row" style="margin:1rem 0">
+    <a class="btn btn-primary" href="/video/budget" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block;line-height:1">Open the energy budget planner &#8599;</a>
+  </div>
+  <div class="btn-row" style="margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)"><button class="btn btn-secondary" onclick="goStep(1)">&lsaquo; Video</button><button class="btn btn-primary" onclick="goStep(3)">Next: Video enhancement &rsaquo;</button></div>
+</div>
+
+<!-- Step 3: Video enhancement -->
+<div class="step" id="step-3">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(2)">&lsaquo; Energy budget</button><button class="btn btn-primary" onclick="goStep(4)">LLM inference &rsaquo;</button></div>
+  <h1>ML Video Enhancement <span style="font-size:0.6rem;color:var(--text-5);border:1px solid var(--border-3);padding:0.05rem 0.3rem;border-radius:2px;vertical-align:middle">BETA</span></h1>
+  <div class="band">
+    <div class="band-label">What this shows</div>
+    <p style="color:var(--text-2);line-height:1.8;max-width:560px">
+      The energy cost of <em>improving</em> video with machine learning &mdash; denoise,
+      SDR&rarr;HDR, or upscale to 4K &mdash; measured per run and paired with a
+      no-reference quality score. The striking case: a bad 2005 phone clip cleaned up for
+      a few watt-hours, versus near-zero gain spent on already-pristine 4K.
+    </p>
+  </div>
+  <div class="band">
+    <div class="band-label">Why it matters</div>
+    <p style="color:var(--text-3);line-height:1.7;max-width:560px">
+      Operators handed an imperfect feed can weigh enhancing it against its real energy
+      cost &mdash; and see where enhancement earns its watts and where it just burns them.
+    </p>
+  </div>
+  <div class="btn-row" style="margin:1rem 0">
+    <a class="btn btn-primary" href="/enhance-run" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block;line-height:1">Open ML video enhancement &#8599;</a>
+  </div>
+  <p style="color:var(--text-5);font-size:0.72rem;max-width:560px">Member feature &mdash; sign in to run it; opens in a new tab.</p>
+  <div class="btn-row" style="margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)"><button class="btn btn-secondary" onclick="goStep(2)">&lsaquo; Energy budget</button><button class="btn btn-primary" onclick="goStep(4)">Next: LLM inference &rsaquo;</button></div>
+</div>
+
+<!-- Step 4: LLM -->
+<div class="step" id="step-4">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(3)">&lsaquo; Video enhancement</button><button class="btn btn-primary" onclick="goStep(5)">Image generation &rsaquo;</button></div>
   <h1>LLM Inference {{BETA_CHIP}}</h1>
 
   <div class="band">
@@ -435,17 +492,18 @@ _DEMO_HTML = f"""
     mWh/token measures inference energy only — not the energy cost of training the model.</p>
   </div>
 
-  <div id="next-2" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
+  <div id="next-4" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
     <div class="btn-row">
-      <button class="btn btn-secondary" onclick="goStep(1)">← Video</button>
-      <button class="btn btn-primary" onclick="goStep(3)">Next: Image generation →</button>
+      <button class="btn btn-secondary" onclick="goStep(3)">&lsaquo; Video enhancement</button>
+      <button class="btn btn-primary" onclick="goStep(5)">Next: Image generation →</button>
       <button class="btn btn-secondary" onclick="resetLLMStep()">Run a fresh LLM generation</button>
     </div>
   </div>
 </div>
 
-<!-- Step 3: Image generation -->
-<div class="step" id="step-3">
+<!-- Step 5: Image generation -->
+<div class="step" id="step-5">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(4)">&lsaquo; LLM inference</button><button class="btn btn-primary" onclick="goStep(6)">RAG &rsaquo;</button></div>
   <h1>Image Generation {{BETA_CHIP}}</h1>
 
   <div class="band">
@@ -481,17 +539,18 @@ _DEMO_HTML = f"""
     This measures one image on one machine — not the energy cost of a hosted API call.</p>
   </div>
 
-  <div id="next-3" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
+  <div id="next-5" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
     <div class="btn-row">
-      <button class="btn btn-secondary" onclick="goStep(2)">← LLM</button>
-      <button class="btn btn-primary" onclick="goStep(4)">Next: RAG →</button>
+      <button class="btn btn-secondary" onclick="goStep(4)">&lsaquo; LLM</button>
+      <button class="btn btn-primary" onclick="goStep(6)">Next: RAG →</button>
       <button class="btn btn-secondary" onclick="resetImageStep()">Run a fresh image generation</button>
     </div>
   </div>
 </div>
 
-<!-- Step 4: RAG -->
-<div class="step" id="step-4">
+<!-- Step 6: RAG -->
+<div class="step" id="step-6">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(5)">&lsaquo; Image generation</button><button class="btn btn-primary" onclick="goStep(7)">Confidence &rsaquo;</button></div>
   <h1>RAG Energy Cost {{BETA_CHIP}}</h1>
 
   <div class="band">
@@ -528,17 +587,18 @@ _DEMO_HTML = f"""
     RAG retrieval adds overhead but the dominant cost remains token generation.</p>
   </div>
 
-  <div id="next-4" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
+  <div id="next-6" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
     <div class="btn-row">
-      <button class="btn btn-secondary" onclick="goStep(3)">← Image</button>
-      <button class="btn btn-primary" onclick="goStep(5)">Next: How we flag confidence →</button>
+      <button class="btn btn-secondary" onclick="goStep(5)">&lsaquo; Image</button>
+      <button class="btn btn-primary" onclick="goStep(7)">Next: How we flag confidence →</button>
       <button class="btn btn-secondary" onclick="resetRAGStep()">Run a fresh RAG energy test</button>
     </div>
   </div>
 </div>
 
-<!-- Step 5: Confidence -->
-<div class="step" id="step-5">
+<!-- Step 7: Confidence -->
+<div class="step" id="step-7">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(6)">&lsaquo; RAG</button><button class="btn btn-primary" onclick="goStep(8)">Findings &rsaquo;</button></div>
   <h1>How We Flag Confidence</h1>
 
   <div class="band">
@@ -596,13 +656,14 @@ _DEMO_HTML = f"""
   </div>
 
   <div class="btn-row" style="margin-top:0.5rem">
-    <button class="btn btn-secondary" onclick="goStep(4)">← RAG</button>
-    <button class="btn btn-primary" onclick="goStep(6)">See findings →</button>
+    <button class="btn btn-secondary" onclick="goStep(6)">&lsaquo; RAG</button>
+    <button class="btn btn-primary" onclick="goStep(8)">See findings →</button>
   </div>
 </div>
 
-<!-- Step 6: Findings -->
-<div class="step" id="step-6">
+<!-- Step 8: Findings -->
+<div class="step" id="step-8">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(7)">&lsaquo; Confidence</button><button class="btn btn-primary" onclick="goStep(1)">&#8635; Start over</button></div>
   <h1>Findings</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
     Greening of Streaming · OWL · GoS1</p>
@@ -706,7 +767,7 @@ _DEMO_HTML = f"""
 
   <hr class="divider">
   <div class="btn-row">
-    <button class="btn btn-secondary" onclick="goStep(5)">← Confidence</button>
+    <button class="btn btn-secondary" onclick="goStep(7)">&lsaquo; Confidence</button>
     <button class="btn btn-secondary" onclick="goStep(1)">↺ Start over</button>
     <a href="{GOS_URL}" target="_blank"
        class="btn btn-secondary" style="text-decoration:none;display:inline-block;line-height:1">
@@ -724,7 +785,7 @@ let videoResult = null;
 let llmResult = null;
 let imageResult = null;
 let ragResult = null;
-const stepLabels = ['Welcome', 'Video Transcode', 'LLM Inference', 'Image Generation', 'RAG', 'Confidence', 'Findings'];
+const stepLabels = ['Welcome', 'Video Transcode', 'Energy Budget', 'Video Enhancement', 'LLM Inference', 'Image Generation', 'RAG', 'Confidence', 'Findings'];
 let streamTimer = null;
 let imageTimer = null;
 
@@ -732,14 +793,14 @@ let imageTimer = null;
 function goStep(n) {{
   document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
   document.getElementById('step-' + n).classList.add('active');
-  for (let i = 0; i < 7; i++) {{
+  for (let i = 0; i < 9; i++) {{
     const dot = document.getElementById('dot-' + i);
     dot.className = 'dot' + (i < n ? ' done' : i === n ? ' active' : '');
   }}
   const lbl = document.getElementById('nav-label');
   lbl.textContent = stepLabels[n];
   lbl.className = 'label active';
-  document.getElementById('step-counter').textContent = (n + 1) + ' / 7';
+  document.getElementById('step-counter').textContent = (n + 1) + ' / 9';
   currentStep = n;
   window.scrollTo(0, 0);
   // Tour navigation is NEVER gated on a pre-loaded result rendering. Reveal
@@ -749,12 +810,12 @@ function goStep(n) {{
   // renderLLMResult / renderDemoImageResult bailing out before revealNext and
   // trapped the tour on the LLM and Image steps. The pre-load below is
   // decorative: it populates the card but must not be able to block the tour.
-  if (n >= 1 && n <= 4) revealNext(n);
+  revealNext(n);
   if (n === 1 && !videoResult) loadVideoStep();
-  if (n === 2 && !llmResult) loadLLMStep();
-  if (n === 3 && !imageResult) loadImageStep();
-  if (n === 4 && !ragResult) loadRAGStep();
-  if (n === 6) buildSummary();
+  if (n === 4 && !llmResult) loadLLMStep();
+  if (n === 5 && !imageResult) loadImageStep();
+  if (n === 6 && !ragResult) loadRAGStep();
+  if (n === 8) buildSummary();
 }}
 
 function revealNext(n) {{
