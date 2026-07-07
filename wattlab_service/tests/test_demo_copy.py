@@ -155,3 +155,12 @@ def test_enhance_step_has_before_after_preview_block():
     assert 'id="enhance-vid-before"' in t and 'id="enhance-vid-after"' in t
     assert "playsinline" in t          # required for iPhone inline playback
     assert "same magnified region" in t   # crop honesty caption
+
+
+def test_enhance_previews_start_paused_with_shared_control():
+    """Owner ask 2026-07-08: clips start paused on their posters, one shared
+    play/pause button drives (and re-syncs) both."""
+    t = client.get("/demo").text
+    assert "autoplay" not in t
+    assert 'id="enhance-playpause"' in t
+    assert t.count("wlToggleEnhancePreview()") >= 3   # button + both videos

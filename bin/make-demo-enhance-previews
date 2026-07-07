@@ -79,6 +79,15 @@ def main() -> int:
                     help="crop-window height in output px (default: --height, i.e. "
                          "1:1 pixels; smaller = extra magnification for phone "
                          "screens, e.g. --window 360 --height 540 shows 1.5×)")
+    ap.add_argument("--before-fit", choices=("stretch", "pad", "fill"),
+                    default="stretch",
+                    help="how the enhancer mapped a non-matching-aspect source "
+                         "onto the output frame; the 'before' must replicate it "
+                         "or the two crops show different regions. MEASURED for "
+                         "Pixop on the 2005 4:3 clip: plain anamorphic STRETCH "
+                         "(frame-correlation MSE 0.2 vs ~4000 for crop models) — "
+                         "hence the default. Verify by eyeballing the posters "
+                         "after any new pin with a non-16:9 source")
     args = ap.parse_args()
 
     s = cfg.load()
@@ -118,13 +127,17 @@ def main() -> int:
         # aspect-FILLS (crops top/bottom); a pillarboxed 'before' would show
         # a different region than the 'after'. Matching aspects → plain scale.
         iw, ih = (int(v) for v in _probe(src_in, ffprobe, "width,height")[:2])
-        if abs(iw / ih - ow / oh) > 0.02:
+        if args.before_fit == "pad":
+            before_fit = (f"scale={ow}:{oh}:flags=lanczos:force_original_aspect_ratio=decrease,"
+                          f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2")
+        elif args.before_fit == "fill":
             before_fit = (f"scale={ow}:{oh}:flags=lanczos:force_original_aspect_ratio=increase,"
                           f"crop={ow}:{oh}")
-            print(f"aspect mismatch ({iw}x{ih} vs {ow}x{oh}): 'before' uses "
-                  f"aspect-fill to match the enhancer's framing")
         else:
             before_fit = f"scale={ow}:{oh}:flags=lanczos"
+        if abs(iw / ih - ow / oh) > 0.02:
+            print(f"aspect mismatch ({iw}x{ih} vs {ow}x{oh}): 'before' mapped via "
+                  f"'{args.before_fit}' — eyeball the posters for region alignment")
         geom = {
             "before": f"{before_fit},{crop},{out_scale}",
             "after": f"{crop},{out_scale}",

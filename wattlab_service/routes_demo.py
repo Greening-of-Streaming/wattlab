@@ -521,14 +521,19 @@ _DEMO_HTML = f"""
     <div style="display:flex;gap:1rem;flex-wrap:wrap">
       <figure style="flex:1;min-width:260px;margin:0">
         <figcaption style="color:var(--text-3);font-family:monospace;font-size:0.72rem;margin-bottom:0.35rem">SOURCE &mdash; 2005 phone clip as a player would show it</figcaption>
-        <video id="enhance-vid-before" muted loop playsinline autoplay controls preload="metadata"
-               style="width:100%;border:1px solid var(--border-2);display:block;background:#000"></video>
+        <video id="enhance-vid-before" muted loop playsinline preload="metadata"
+               onclick="wlToggleEnhancePreview()"
+               style="width:100%;border:1px solid var(--border-2);display:block;background:#000;cursor:pointer"></video>
       </figure>
       <figure style="flex:1;min-width:260px;margin:0">
         <figcaption style="color:var(--accent);font-family:monospace;font-size:0.72rem;margin-bottom:0.35rem">ENHANCED &mdash; ML denoise + upscale to 4K, same region</figcaption>
-        <video id="enhance-vid-after" muted loop playsinline autoplay controls preload="metadata"
-               style="width:100%;border:1px solid var(--border-2);display:block;background:#000"></video>
+        <video id="enhance-vid-after" muted loop playsinline preload="metadata"
+               onclick="wlToggleEnhancePreview()"
+               style="width:100%;border:1px solid var(--border-2);display:block;background:#000;cursor:pointer"></video>
       </figure>
+    </div>
+    <div class="btn-row" style="margin-top:0.6rem">
+      <button id="enhance-playpause" class="btn btn-secondary" onclick="wlToggleEnhancePreview()">&#9654; Play both</button>
     </div>
     <p style="color:var(--text-5);font-size:0.7rem;line-height:1.6;margin-top:0.4rem;max-width:560px">
       Both previews show the <em>same magnified region of the frame</em>, re-encoded
@@ -1007,6 +1012,23 @@ async function loadEnhancePreviews() {{
     after.src = '/demo/enhance-preview/after.mp4';
     document.getElementById('enhance-preview').style.display = 'block';
   }} catch(e) {{}}
+}}
+
+// One control for BOTH clips (they start paused on their posters): re-sync
+// on every toggle so the comparison never drifts apart across loops.
+function wlToggleEnhancePreview() {{
+  const before = document.getElementById('enhance-vid-before');
+  const after = document.getElementById('enhance-vid-after');
+  const btn = document.getElementById('enhance-playpause');
+  if (before.paused) {{
+    after.currentTime = before.currentTime;
+    before.play(); after.play();
+    btn.innerHTML = '&#10074;&#10074; Pause both';
+  }} else {{
+    before.pause(); after.pause();
+    after.currentTime = before.currentTime;
+    btn.innerHTML = '&#9654; Play both';
+  }}
 }}
 
 // ─── Video enhancement (step 3) ──────────────────────────────────────────────
