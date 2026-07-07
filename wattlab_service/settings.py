@@ -222,6 +222,14 @@ DEFAULTS = {
     # links exist anywhere in OWL until CR-055 (catalog index) ships, so
     # `false` here completely undiscoverable + `true` is preview-by-URL.
     "findings_enabled":          True,
+    # Guided-tour pinned results. job_id per tour step type; the /demo/last
+    # carve-out serves the pin first and falls back to latest-matching —
+    # EXCEPT "enhance", which is pin-ONLY (member uploads are private, never
+    # serve latest). "rag" maps to a results/llm/ record with mode
+    # "rag_compare". No /settings UI — set via POST /settings (Lab) or by
+    # editing settings.json; values are live state, set at deploy, never
+    # committed with features.
+    "demo_pinned_results": {},  # e.g. {"video": "…", "llm": "…", "rag": "…", "image": "…", "enhance": "…"}
     # CR-061 — in-app overnight benchmark. The set of "measures" is a registry
     # in benchmark.py; these bench_run_* flags toggle which run, so retiring or
     # adding a measure is a registry+flag change, not a code rewrite. Video is

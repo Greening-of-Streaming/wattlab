@@ -56,24 +56,46 @@ async def results_delete(job_type: str, job_id: str):
 #
 # Privacy note: the rendered /demo cards use energy figures, model
 # labels, generated text, and produced images — all already meant to
-# be illustrative. If a future Member workflow ever runs anything
-# personally identifying, revisit the model (curated demo-pinned
-# results, redacted shape, or a `is_demo` flag).
+# be illustrative. Curated pins (`demo_pinned_results` in settings) are
+# the operator's promise that a specific record is fit to show anyone;
+# "enhance" is pin-ONLY because that dir holds member-uploaded content
+# and "latest" could leak a private job. If a future Member workflow
+# ever runs anything personally identifying on the other types, extend
+# the pin-only rule to them too.
 @router.get("/demo/last/{job_type}", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def demo_last_result(job_type: str, task_eq: str | None = None):
-    """Latest persisted result for /demo's prev-runs panels, unfiltered
-    by visitor (deliberate CR-026 carve-out for the demo surface).
+    """Pinned-or-latest persisted result for /demo's tour panels,
+    unfiltered by visitor (deliberate CR-026 carve-out for the demo
+    surface).
 
-    `job_type='llm'` defaults to *plain* LLM runs — RAG records that
-    persist under results/llm/ (mode='rag', 'rag_compare') are excluded
-    unless the caller passes `task_eq='RAG …'`. This is what makes
-    /demo's LLM step show an actual LLM result instead of accidentally
-    rendering a RAG compare in the wrong widget shape.
+    Pin-first: `demo_pinned_results[job_type]` (settings) names a job_id
+    to serve; a dangling pin falls back to latest-matching — except
+    `enhance`, which never falls back (member uploads are private).
+
+    `job_type='rag'` is a pseudo-type: RAG records persist under
+    results/llm/ with mode='rag_compare'; the demo's RAG step reads this
+    instead of task-text filtering (newer records carry task=None).
+    `job_type='llm'` defaults to *plain* LLM runs — RAG/compare records
+    in the same dir are excluded so /demo's LLM step shows an actual
+    single inference instead of the wrong widget shape.
     """
-    if job_type not in ("video", "llm", "image"):
+    if job_type not in ("video", "llm", "image", "rag", "enhance"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
-    runs = list_results(job_type, limit=20, visitor_key=None)
-    if task_eq:
+    store_dir = "llm" if job_type == "rag" else job_type
+
+    pin = (cfg.load().get("demo_pinned_results") or {}).get(job_type)
+    if pin:
+        full = load_result(store_dir, pin, visitor_key=None)
+        if full is not None:
+            return full
+    if job_type == "enhance":
+        # Pin-only: no pin (or a dangling one) means nothing to show.
+        return JSONResponse({"error": "no result"}, status_code=404)
+
+    runs = list_results(store_dir, limit=20, visitor_key=None)
+    if job_type == "rag":
+        runs = [r for r in runs if r.get("mode") == "rag_compare"]
+    elif task_eq:
         runs = [r for r in runs if r.get("task") == task_eq]
     elif job_type == "llm":
         # Plain-LLM default: only a genuine single inference. Compare/RAG
@@ -91,7 +113,7 @@ async def demo_last_result(job_type: str, task_eq: str | None = None):
         runs = [r for r in runs if r.get("mode", "cpu") in ("cpu", "gpu")]
     if not runs:
         return JSONResponse({"error": "no result"}, status_code=404)
-    full = load_result(job_type, runs[0]["job_id"], visitor_key=None)
+    full = load_result(store_dir, runs[0]["job_id"], visitor_key=None)
     if full is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     return full
