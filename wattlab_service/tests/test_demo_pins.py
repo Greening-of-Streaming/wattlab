@@ -121,3 +121,47 @@ def test_invalid_type_still_400(tmp_results, pin):
     pin({})
     r = client.get("/demo/last/benchmark", headers=ANON)
     assert r.status_code == 400
+
+
+# ── /demo/enhance-preview — pinned-only web-safe media (2026-07-08) ──────────
+
+def _preview_env(monkeypatch, tmp_path, pin_id):
+    """Point pixop_workdir at tmp and pin `pin_id` (None = no pin)."""
+    real_load = cfg.load
+    def fake_load():
+        d = real_load()
+        d["pixop_workdir"] = str(tmp_path)
+        d["demo_pinned_results"] = {"enhance": pin_id} if pin_id else {}
+        return d
+    monkeypatch.setattr(cfg, "load", fake_load)
+    (tmp_path / "demo-previews").mkdir(exist_ok=True)
+    return tmp_path / "demo-previews"
+
+
+def test_enhance_preview_serves_only_pinned_files(monkeypatch, tmp_path):
+    d = _preview_env(monkeypatch, tmp_path, "showjob")
+    (d / "showjob__after.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    (d / "otherjob__after.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    r = client.get("/demo/enhance-preview/after.mp4", headers=ANON)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("video/mp4")
+    # Only the four fixed kinds resolve — no way to name another job's file.
+    assert client.get("/demo/enhance-preview/otherjob__after.mp4",
+                      headers=ANON).status_code == 400
+
+
+def test_enhance_preview_404_without_pin_or_files(monkeypatch, tmp_path):
+    d = _preview_env(monkeypatch, tmp_path, None)
+    (d / "orphan__after.mp4").write_bytes(b"x")
+    assert client.get("/demo/enhance-preview/after.mp4",
+                      headers=ANON).status_code == 404
+    _preview_env(monkeypatch, tmp_path, "pinnedbutempty")
+    assert client.get("/demo/enhance-preview/after.mp4",
+                      headers=ANON).status_code == 404  # pin set, file missing
+
+
+def test_enhance_preview_rejects_invalid_kind(monkeypatch, tmp_path):
+    _preview_env(monkeypatch, tmp_path, "showjob")
+    for bad in ("after.mov", "../secret.mp4", "before.mp4.bak"):
+        assert client.get(f"/demo/enhance-preview/{bad}",
+                          headers=ANON).status_code in (400, 404)

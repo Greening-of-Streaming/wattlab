@@ -143,3 +143,15 @@ def test_enhance_step_embeds_pinned_example_not_a_dead_link():
     # the visitor to the page once they're a member).
     assert "/auth/sign-in?next=/enhance-run" in t
     assert 'href="/enhance-run"' not in t
+
+
+def test_enhance_step_has_before_after_preview_block():
+    """The step leads with the visual comparison (pinned-only derived
+    previews); the block is display:none until the JS probe finds them,
+    so a missing pin degrades to the numeric card, never a broken player."""
+    t = client.get("/demo").text
+    assert 'id="enhance-preview"' in t
+    assert "/demo/enhance-preview/after.mp4" in t
+    assert 'id="enhance-vid-before"' in t and 'id="enhance-vid-after"' in t
+    assert "playsinline" in t          # required for iPhone inline playback
+    assert "same region at native 4K pixels" in t   # crop honesty caption

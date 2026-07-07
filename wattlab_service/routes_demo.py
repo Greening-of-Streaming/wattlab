@@ -505,17 +505,44 @@ _DEMO_HTML = f"""
   <div class="band">
     <div class="band-label">What this shows</div>
     <p style="color:var(--text-2);line-height:1.8;max-width:560px">
-      The energy cost of <em>improving</em> video with machine learning &mdash; denoise,
-      SDR&rarr;HDR, or upscale to 4K &mdash; measured per run and paired with a
-      no-reference quality score. The striking case: a bad 2005 phone clip cleaned up for
-      a few watt-hours, versus near-zero gain spent on already-pristine 4K.
+      Step 1 spent energy to <em>shrink</em> video. This flips the question: what does
+      it cost to make video <em>better</em>? A machine-learning enhancer on the lab GPU
+      takes a rough, low-resolution clip and denoises and upscales it &mdash; and OWL
+      meters the watt-hours at the wall and scores the quality before and after, like
+      every other workload on the bench.
+    </p>
+    <p style="color:var(--text-2);line-height:1.8;max-width:560px">
+      The showcase below: a deliberately degraded standard-definition clip,
+      machine-upscaled to 4K. Watch the two previews, then read what that difference
+      cost in the card underneath.
+    </p>
+  </div>
+  <div id="enhance-preview" style="display:none;margin:1rem 0">
+    <div style="display:flex;gap:1rem;flex-wrap:wrap">
+      <figure style="flex:1;min-width:260px;margin:0">
+        <figcaption style="color:var(--text-3);font-family:monospace;font-size:0.72rem;margin-bottom:0.35rem">SOURCE &mdash; degraded SD as a player would upscale it</figcaption>
+        <video id="enhance-vid-before" muted loop playsinline autoplay controls preload="metadata"
+               style="width:100%;border:1px solid var(--border-2);display:block;background:#000"></video>
+      </figure>
+      <figure style="flex:1;min-width:260px;margin:0">
+        <figcaption style="color:var(--accent);font-family:monospace;font-size:0.72rem;margin-bottom:0.35rem">ENHANCED &mdash; ML denoise + upscale to 4K, same region</figcaption>
+        <video id="enhance-vid-after" muted loop playsinline autoplay controls preload="metadata"
+               style="width:100%;border:1px solid var(--border-2);display:block;background:#000"></video>
+      </figure>
+    </div>
+    <p style="color:var(--text-5);font-size:0.7rem;line-height:1.6;margin-top:0.4rem;max-width:560px">
+      Both previews show the <em>same region at native 4K pixels</em>, re-encoded for
+      the web: the left is the SD source scaled up the way any player or TV would;
+      the right is the ML output, untouched. The quality scores below are measured
+      on the full originals.
     </p>
   </div>
   <div id="enhance-status"></div>
   <p style="color:var(--text-4);font-size:0.75rem;max-width:560px;line-height:1.6">
     How to read the card: the quality line is a no-reference score of the source
     vs the enhanced output (higher is better) &mdash; the measured quality change the
-    watt-hours bought.
+    watt-hours bought. Energy and duration cover the whole enhancement run,
+    metered at the wall like every OWL measurement.
   </p>
   <div class="band">
     <div class="band-label">Why it matters</div>
@@ -961,6 +988,24 @@ function loadRAGStep() {{
 function loadEnhanceStep() {{
   document.getElementById('enhance-status').innerHTML = '<p class="progress-note" style="color:var(--text-3)">Loading showcase run…</p>';
   showPrevEnhance();
+  loadEnhancePreviews();
+}}
+
+// Before/after previews for the pinned showcase (derived web-safe clips —
+// bin/make-demo-enhance-previews). Decorative and fail-soft: a 404 leaves
+// the block hidden and the numeric card carries the step alone.
+async function loadEnhancePreviews() {{
+  try {{
+    const head = await fetch('/demo/enhance-preview/after.mp4', {{method: 'HEAD'}});
+    if (!head.ok) return;
+    const before = document.getElementById('enhance-vid-before');
+    const after = document.getElementById('enhance-vid-after');
+    before.poster = '/demo/enhance-preview/before.jpg';
+    after.poster = '/demo/enhance-preview/after.jpg';
+    before.src = '/demo/enhance-preview/before.mp4';
+    after.src = '/demo/enhance-preview/after.mp4';
+    document.getElementById('enhance-preview').style.display = 'block';
+  }} catch(e) {{}}
 }}
 
 // ─── Video enhancement (step 3) ──────────────────────────────────────────────

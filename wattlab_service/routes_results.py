@@ -8,9 +8,10 @@ Phase 3 per-feature route module — never import main.
 """
 import io
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 import queue_control
 import settings as cfg
@@ -117,6 +118,35 @@ async def demo_last_result(job_type: str, task_eq: str | None = None):
     if full is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     return full
+
+
+# Web-safe before/after media for the PINNED enhance showcase — the visual
+# half of the tour's Video-Enhancement step. Same trust model as the pin
+# itself: the raw /enhance-run asset endpoints stay Member-gated; what this
+# serves are the small derived previews `bin/make-demo-enhance-previews`
+# writes for the one operator-pinned job (matched-size H.264 + posters,
+# HDR tonemapped). No pin, or no generated files → 404 and the tour step
+# falls back to the numeric card alone.
+_PREVIEW_KINDS = {
+    "before.mp4": "video/mp4", "after.mp4": "video/mp4",
+    "before.jpg": "image/jpeg", "after.jpg": "image/jpeg",
+}
+
+
+@router.get("/demo/enhance-preview/{kind}", dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def demo_enhance_preview(kind: str):
+    media_type = _PREVIEW_KINDS.get(kind)
+    if media_type is None:
+        return JSONResponse({"error": "Invalid kind"}, status_code=400)
+    pin = (cfg.load().get("demo_pinned_results") or {}).get("enhance")
+    if not pin or "/" in pin or ".." in pin:
+        return JSONResponse({"error": "no preview"}, status_code=404)
+    f = (Path(cfg.load().get("pixop_workdir", "/srv/data/owl/pixop"))
+         / "demo-previews" / f"{pin}__{kind}")
+    if not f.is_file():
+        return JSONResponse({"error": "no preview"}, status_code=404)
+    # FileResponse handles Range requests — required for video on Safari/iOS.
+    return FileResponse(f, media_type=media_type)
 
 
 @router.get("/results/{job_type}/{job_id}/download.json", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])

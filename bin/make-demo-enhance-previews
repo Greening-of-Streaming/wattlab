@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Generate web-safe before/after previews for the PINNED enhance showcase.
+
+The Guided Tour's Video-Enhancement step embeds the pinned enhance result
+(`demo_pinned_results.enhance` in settings.json). The raw artifacts are the
+wrong shape for the web — the output can be 4K HEVC at 35 Mbps (180+ MB),
+which most phone browsers won't even decode — so this derives two small
+matched-size H.264 clips + poster JPEGs that `/demo/enhance-preview/{kind}`
+serves publicly (pinned job only).
+
+Honesty contract: BOTH previews are re-encoded to the SAME frame size
+(source scaled up, output scaled down — lanczos both ways), so the visitor
+compares like with like at web quality; the VQA scores on the card are
+measured on the full-resolution originals. HDR (PQ) outputs are tonemapped
+to SDR via zscale+hable so they don't render washed-out on SDR displays.
+
+Run once after changing the enhance pin:
+    bin/make-demo-enhance-previews [--start 18] [--dur 6] [--height 540]
+Writes <pixop_workdir>/demo-previews/<job_id>__{before,after}.{mp4,jpg}.
+Idempotent — re-encodes unconditionally (cheap, seconds).
+"""
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "wattlab_service"))
+
+import settings as cfg  # noqa: E402
+
+RESULTS = Path("/srv/data/owl/results/enhance")
+
+
+def _probe(path: Path, ffprobe: str, entries: str) -> list[str]:
+    out = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", f"stream={entries}", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=True).stdout.strip()
+    return out.split(",")
+
+
+def _encode(src: Path, dst_mp4: Path, dst_jpg: Path, *, start: float, dur: float,
+            height: int, tonemap: bool, ffmpeg: str, geometry: str) -> None:
+    """`geometry` is the scale/crop part of the filter chain — full-frame
+    matched-size by default, or the detail-crop pair in --zoom mode."""
+    if tonemap:
+        # PQ → SDR bt709: linearise, tonemap, back to 709. Preview-only path;
+        # the measured artifact is untouched.
+        vf = (f"zscale=t=linear:npl=100,tonemap=hable,"
+              f"zscale=t=bt709:m=bt709:r=tv,{geometry},format=yuv420p")
+    else:
+        vf = f"{geometry},format=yuv420p"
+    common = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+    subprocess.run(common + ["-ss", str(start), "-t", str(dur), "-i", str(src),
+                             "-an", "-vf", vf, "-r", "30",
+                             "-c:v", "libx264", "-preset", "slow", "-crf", "21",
+                             "-movflags", "+faststart", str(dst_mp4)], check=True)
+    subprocess.run(common + ["-ss", str(start), "-i", str(src),
+                             "-frames:v", "1", "-vf", vf, "-q:v", "3",
+                             str(dst_jpg)], check=True)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--start", type=float, default=18.0, help="segment start (s)")
+    ap.add_argument("--dur", type=float, default=6.0, help="segment length (s)")
+    ap.add_argument("--height", type=int, default=540, help="preview height (px)")
+    ap.add_argument("--zoom", action="store_true",
+                    help="detail-crop mode: show a 16:9 window of the OUTPUT at "
+                         "native pixels; the 'before' is the source naively "
+                         "upscaled to the output size (what a player/TV scaler "
+                         "does) then cropped to the same window — full-frame "
+                         "matched-size previews hide the 4K-level difference")
+    ap.add_argument("--cx", type=int, default=None, help="crop-window centre x, output px")
+    ap.add_argument("--cy", type=int, default=None, help="crop-window centre y, output px")
+    args = ap.parse_args()
+
+    s = cfg.load()
+    ffmpeg = s.get("ffmpeg_bin", "ffmpeg")
+    ffprobe = "ffprobe"
+    pin = (s.get("demo_pinned_results") or {}).get("enhance")
+    if not pin:
+        print("No enhance pin in demo_pinned_results — nothing to do.")
+        return 1
+    matches = sorted(RESULTS.glob(f"*_{pin}.json"))
+    if not matches:
+        print(f"No stored result for pinned enhance job {pin}.")
+        return 1
+    rec = json.loads(matches[-1].read_text())
+    res = rec.get("result") or {}
+    workdir = Path(s.get("pixop_workdir", "/srv/data/owl/pixop"))
+    src_in = workdir / "input" / (res.get("input_name") or "")
+    src_out = workdir / "output" / (res.get("output_name") or "")
+    for p in (src_in, src_out):
+        if not p.is_file():
+            print(f"Missing artifact: {p}")
+            return 1
+
+    cw, ch = args.height * 16 // 9, args.height
+    if args.zoom:
+        ow, oh = (int(v) for v in _probe(src_out, ffprobe, "width,height")[:2])
+        cx = args.cx if args.cx is not None else ow // 2
+        cy = args.cy if args.cy is not None else oh // 2
+        x = max(0, min(ow - cw, cx - cw // 2))
+        y = max(0, min(oh - ch, cy - ch // 2))
+        crop = f"crop={cw}:{ch}:{x}:{y}"
+        geom = {"before": f"scale={ow}:{oh}:flags=lanczos,{crop}", "after": crop}
+        print(f"zoom mode: {cw}x{ch} window at ({x},{y}) of {ow}x{oh}")
+    else:
+        geom = {"before": f"scale=-2:{ch}:flags=lanczos",
+                "after": f"scale=-2:{ch}:flags=lanczos"}
+
+    outdir = workdir / "demo-previews"
+    outdir.mkdir(exist_ok=True)
+    for tag, src in (("before", src_in), ("after", src_out)):
+        tonemap = _probe(src, ffprobe, "color_transfer")[0] in ("smpte2084", "arib-std-b67")
+        mp4 = outdir / f"{pin}__{tag}.mp4"
+        jpg = outdir / f"{pin}__{tag}.jpg"
+        _encode(src, mp4, jpg, start=args.start, dur=args.dur,
+                height=args.height, tonemap=tonemap, ffmpeg=ffmpeg,
+                geometry=geom[tag])
+        print(f"{tag}: {mp4.name} ({mp4.stat().st_size/1e6:.1f} MB, "
+              f"tonemap={'yes' if tonemap else 'no'}) + {jpg.name}")
+    print(f"Done → {outdir}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
