@@ -466,9 +466,10 @@ render();
 """
 
 
-@router.get("/video/budget", response_class=HTMLResponse,
-            dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def budget_page(request: Request):
+def current_fixture() -> dict:
+    """Measured-or-illustrative budget fixture — the page's data source,
+    factored out so other surfaces (the /demo tour's Energy-budget teaser)
+    read the exact numbers /video/budget renders and can't drift."""
     demo = _demo_fixture()
     # Prefer a measured calibration artifact; fall back to the illustrative fixture.
     # The projected ASIC rows + class metadata carry over either way (no ASIC data).
@@ -478,8 +479,13 @@ async def budget_page(request: Request):
             demo["vmaf_targets"], asic_recipes, demo["classes"], demo["sponsorship_note"])
     except Exception:
         fix = None
-    if not fix:
-        fix = demo
+    return fix or demo
+
+
+@router.get("/video/budget", response_class=HTMLResponse,
+            dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def budget_page(request: Request):
+    fix = current_fixture()
     title = "Transcode budget" if not fix["meta"].get("illustrative", True) else "Transcode budget (demo)"
     return ui.render_page(request, title, styles=_STYLES, body=_body(fix))
 

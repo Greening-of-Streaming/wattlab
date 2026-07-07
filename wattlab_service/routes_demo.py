@@ -19,6 +19,7 @@ import ui
 from capabilities import requires, PUBLIC_PAGE
 from image_gen import IMAGE_MODELS
 from power import meter_display_name, meter_cadence_label
+import routes_budget
 from routes_findings import _findings_catalog_rows_html, _FINDINGS_CATALOG_CSS
 from ui import (GOS_URL, JOIN_GOS_URL, _BETA_CHIP, _CONF_HELP_WIDGET,
                 _PROGRESS_JS, _RESULT_JS, _gpu_display_name, _gpu_enc,
@@ -87,6 +88,72 @@ def _demo_image_detail() -> str:
         return "CPU"
     return f"CPU, {m['cpu_steps']} steps, {m['size_px']}&times;{m['size_px']}"
 
+
+def _budget_teaser_html() -> str:
+    """Energy-budget step teaser — the one takeaway from the live
+    /video/budget fixture: Wh per minute of 1080p output at the operator's
+    target VMAF, per codec × hardware path. Reads
+    routes_budget.current_fixture() so the numbers can't drift from the
+    planner page (measured when a calibration artifact exists). Vendor
+    names deliberately absent — GPU wording elsewhere in the tour routes
+    through gpu.BACKEND, and this table is data, not hardware copy.
+    Fail-soft: any surprise shape renders nothing rather than breaking /demo."""
+    try:
+        fix = routes_budget.current_fixture()
+        targets = fix["vmaf_targets"]
+        target = cfg.load().get("target_vmaf", 92)
+        idx = (targets.index(target) if target in targets else
+               min(range(len(targets)), key=lambda i: abs(targets[i] - target)))
+        cells: dict[tuple[str, str], float | None] = {}
+        codec_labels: dict[str, str] = {}
+        for r in fix["recipes"]:
+            if r.get("projected") or r.get("device") not in ("cpu", "gpu"):
+                continue
+            wh = (r.get("wh_low") or [])[idx] if idx < len(r.get("wh_low") or []) else None
+            cells[(r["codec"], r["device"])] = wh
+            codec_labels[r["codec"]] = r.get("codec_label", r["codec"])
+        if not cells:
+            return ""
+        best = min((v for v in cells.values() if v is not None), default=None)
+
+        def cell(codec: str, device: str) -> str:
+            wh = cells.get((codec, device))
+            if wh is None:
+                return '<td style="text-align:right;color:var(--text-5);padding:0.25rem 0.75rem">—</td>'
+            hl = "color:var(--accent);font-weight:bold" if wh == best else "color:var(--text-2)"
+            return f'<td style="text-align:right;{hl};padding:0.25rem 0.75rem">{wh:.3f}</td>'
+
+        rows = "".join(
+            f'<tr><td style="text-align:left;color:var(--text);padding:0.25rem 0.75rem 0.25rem 0">{codec_labels[c]}</td>'
+            f'{cell(c, "cpu")}{cell(c, "gpu")}</tr>'
+            for c in ("h264", "h265", "av1") if c in codec_labels
+        )
+        meta = fix.get("meta", {})
+        if meta.get("illustrative", True):
+            badge = ('<span style="color:var(--warn)">illustrative figures</span>'
+                     ' — no calibration artifact yet')
+        else:
+            when = str(meta.get("measured_on", ""))[:10]
+            badge = f'<span style="color:var(--accent)">measured</span> · GoS1 · {when}'
+        clip = str(meta.get("clip_low", "low-complexity clip"))
+        return (
+            '<div style="border:1px solid var(--border-2);padding:1rem 1.25rem;'
+            'max-width:560px;margin:1rem 0;font-family:monospace">'
+            '<div style="color:var(--text-4);font-size:0.68rem;text-transform:uppercase;'
+            f'letter-spacing:0.06em;margin-bottom:0.5rem">Wh per minute of 1080p video · VMAF {targets[idx]} · {badge}</div>'
+            '<table style="border-collapse:collapse;font-size:0.82rem">'
+            '<thead><tr style="color:var(--text-4);font-size:0.7rem;text-transform:uppercase">'
+            '<th style="text-align:left;padding:0.25rem 0.75rem 0.25rem 0">Codec</th>'
+            '<th style="text-align:right;padding:0.25rem 0.75rem">CPU</th>'
+            '<th style="text-align:right;padding:0.25rem 0.75rem">GPU</th>'
+            f'</tr></thead><tbody>{rows}</tbody></table>'
+            '<div style="color:var(--text-5);font-size:0.7rem;margin-top:0.5rem;line-height:1.5">'
+            f'Single stream · {clip} · the full planner adds ABR ladders, budgets and every VMAF target.</div>'
+            '</div>'
+        )
+    except Exception:
+        return ""
+
 _DEMO_STYLES = f"""
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);
@@ -104,6 +171,11 @@ _DEMO_STYLES = f"""
                   transition:background 0.3s}}
   .step-nav .dot.done{{background:#00ff9966}}
   .step-nav .dot.active{{background:var(--accent)}}
+  /* Optional AI-detour dots (steps 4-6): hollow + smaller so the detour
+     reads as a branch off the core path, not a longer road. */
+  .step-nav .dot.opt{{width:6px;height:6px;background:transparent;border:1px solid var(--border-3)}}
+  .step-nav .dot.opt.done{{border-color:#00ff9966;background:#00ff9922}}
+  .step-nav .dot.opt.active{{border-color:var(--accent);background:var(--accent)}}
   .step-nav .label{{color:var(--text-3);font-size:0.72rem}}
   .step-nav .label.active{{color:var(--accent)}}
 
@@ -218,13 +290,13 @@ _DEMO_HTML = f"""
     <span class="dot" id="dot-1"></span>
     <span class="dot" id="dot-2"></span>
     <span class="dot" id="dot-3"></span>
-    <span class="dot" id="dot-4"></span>
-    <span class="dot" id="dot-5"></span>
-    <span class="dot" id="dot-6"></span>
+    <span class="dot opt" id="dot-4" data-opt="1"></span>
+    <span class="dot opt" id="dot-5" data-opt="1"></span>
+    <span class="dot opt" id="dot-6" data-opt="1"></span>
     <span class="dot" id="dot-7"></span>
     <span class="dot" id="dot-8"></span>
     <span class="label active" id="nav-label">Welcome</span>
-    <span id="step-counter" style="color:var(--text-5);font-size:0.7rem;margin-left:0.25rem">1 / 9</span>
+    <span id="step-counter" style="color:var(--text-5);font-size:0.7rem;margin-left:0.25rem">Step 1 of 6</span>
   </div>
 </div>
 
@@ -291,6 +363,16 @@ _DEMO_HTML = f"""
       &rarr; Read the full measurement methodology</a>
     <span style="color:var(--text-5);margin-left:0.5rem">protocol, confidence framework, scope statements, calibration</span>
   </p>
+
+  <div style="margin-top:1.5rem;border:1px solid var(--border-2);padding:1rem 1.25rem;max-width:560px;font-family:monospace;font-size:0.8rem;line-height:2">
+    <div style="color:var(--text-4);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem">This tour &mdash; about 5 minutes</div>
+    <div style="color:var(--text-2)">1 &nbsp;Video transcode &mdash; what one encode really costs</div>
+    <div style="color:var(--text-2)">2 &nbsp;Energy budget &mdash; turn Wh/min into planning</div>
+    <div style="color:var(--text-2)">3 &nbsp;Video enhancement &mdash; when improving video earns its watts</div>
+    <div style="color:var(--text-2)">4 &nbsp;Confidence &amp; findings &mdash; how we know a number is real</div>
+    <div style="color:var(--text-4)">+ &nbsp;optional detour: AI workloads (LLM &middot; image &middot; RAG)</div>
+    <div style="color:var(--text-5);font-size:0.72rem;line-height:1.6;margin-top:0.4rem">Every step opens on a real stored measurement &mdash; and you can trigger fresh runs and watch them live.</div>
+  </div>
 
   <div class="btn-row">
     <button class="btn btn-primary" onclick="goStep(1)">Start Tour →</button>
@@ -409,6 +491,7 @@ _DEMO_HTML = f"""
       decision, sized to a budget, measured rather than estimated.
     </p>
   </div>
+  {{BUDGET_TEASER}}
   <div class="btn-row" style="margin:1rem 0">
     <a class="btn btn-primary" href="/video/budget" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block;line-height:1">Open the energy budget planner &#8599;</a>
   </div>
@@ -417,7 +500,7 @@ _DEMO_HTML = f"""
 
 <!-- Step 3: Video enhancement -->
 <div class="step" id="step-3">
-  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(2)">&lsaquo; Energy budget</button><button class="btn btn-primary" onclick="goStep(4)">LLM inference &rsaquo;</button></div>
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(2)">&lsaquo; Energy budget</button><button class="btn btn-primary" onclick="goStep(7)">Confidence &rsaquo;</button></div>
   <h1>ML Video Enhancement <span style="font-size:0.6rem;color:var(--text-5);border:1px solid var(--border-3);padding:0.05rem 0.3rem;border-radius:2px;vertical-align:middle">BETA</span></h1>
   <div class="band">
     <div class="band-label">What this shows</div>
@@ -428,6 +511,12 @@ _DEMO_HTML = f"""
       a few watt-hours, versus near-zero gain spent on already-pristine 4K.
     </p>
   </div>
+  <div id="enhance-status"></div>
+  <p style="color:var(--text-4);font-size:0.75rem;max-width:560px;line-height:1.6">
+    How to read the card: the quality line is a no-reference score of the source
+    vs the enhanced output (higher is better) &mdash; the measured quality change the
+    watt-hours bought.
+  </p>
   <div class="band">
     <div class="band-label">Why it matters</div>
     <p style="color:var(--text-3);line-height:1.7;max-width:560px">
@@ -435,15 +524,26 @@ _DEMO_HTML = f"""
       cost &mdash; and see where enhancement earns its watts and where it just burns them.
     </p>
   </div>
-  <div class="btn-row" style="margin:1rem 0">
-    <a class="btn btn-primary" href="/enhance-run" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block;line-height:1">Open ML video enhancement &#8599;</a>
+  <div style="border:1px dashed var(--border-3);padding:0.85rem 1rem;max-width:560px;margin:1rem 0">
+    <p style="color:var(--text-3);font-size:0.78rem;line-height:1.7;margin:0">
+      Running an enhancement yourself is a <strong>member feature</strong> &mdash; each run
+      holds the lab GPU for real minutes, and an open free enhancer would turn the
+      measurement bench into a video-improvement service.
+      <a href="/auth/sign-in?next=/enhance-run" style="color:var(--accent);text-decoration:none;border-bottom:1px solid var(--border-2);padding-bottom:1px">Members: sign in and open ML Video Enhancement &rarr;</a>
+    </p>
   </div>
-  <p style="color:var(--text-5);font-size:0.72rem;max-width:560px">Member feature &mdash; sign in to run it; opens in a new tab.</p>
-  <div class="btn-row" style="margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)"><button class="btn btn-secondary" onclick="goStep(2)">&lsaquo; Energy budget</button><button class="btn btn-primary" onclick="goStep(4)">Next: LLM inference &rsaquo;</button></div>
+  <div class="btn-row" style="margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
+    <button class="btn btn-secondary" onclick="goStep(2)">&lsaquo; Energy budget</button>
+    <button class="btn btn-primary" onclick="goStep(7)">Next: How we flag confidence &rsaquo;</button>
+    <button class="btn btn-secondary" onclick="goStep(4)" style="border:1px dashed var(--border-3)"><span style="font-size:0.6rem;letter-spacing:0.06em;color:var(--text-5);text-transform:uppercase;margin-right:0.4rem">Optional detour</span>Measure AI workloads too (LLM &middot; Image &middot; RAG &mdash; 3 steps) &rsaquo;</button>
+  </div>
 </div>
 
 <!-- Step 4: LLM -->
 <div class="step" id="step-4">
+  <div style="color:var(--text-4);font-size:0.72rem;margin-bottom:1rem;padding:0.4rem 0.6rem;border:1px dashed var(--border-3);display:inline-block">
+    Optional AI detour &middot; <a href="javascript:goStep(7)" style="color:var(--accent);text-decoration:none">jump to Confidence anytime &rarr;</a>
+  </div>
   <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(3)">&lsaquo; Video enhancement</button><button class="btn btn-primary" onclick="goStep(5)">Image generation &rsaquo;</button></div>
   <h1>LLM Inference {{BETA_CHIP}}</h1>
 
@@ -598,7 +698,7 @@ _DEMO_HTML = f"""
 
 <!-- Step 7: Confidence -->
 <div class="step" id="step-7">
-  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(6)">&lsaquo; RAG</button><button class="btn btn-primary" onclick="goStep(8)">Findings &rsaquo;</button></div>
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary conf-back" onclick="goStep(confBack)">&lsaquo; Video enhancement</button><button class="btn btn-primary" onclick="goStep(8)">Findings &rsaquo;</button></div>
   <h1>How We Flag Confidence</h1>
 
   <div class="band">
@@ -656,7 +756,7 @@ _DEMO_HTML = f"""
   </div>
 
   <div class="btn-row" style="margin-top:0.5rem">
-    <button class="btn btn-secondary" onclick="goStep(6)">&lsaquo; RAG</button>
+    <button class="btn btn-secondary conf-back" onclick="goStep(confBack)">&lsaquo; Video enhancement</button>
     <button class="btn btn-primary" onclick="goStep(8)">See findings →</button>
   </div>
 </div>
@@ -785,7 +885,18 @@ let videoResult = null;
 let llmResult = null;
 let imageResult = null;
 let ragResult = null;
+let enhanceResult = null;
 const stepLabels = ['Welcome', 'Video Transcode', 'Energy Budget', 'Video Enhancement', 'LLM Inference', 'Image Generation', 'RAG', 'Confidence', 'Findings'];
+// Honest progress: the core path is 6 stops (0,1,2,3,7,8); steps 4-6 are the
+// optional AI detour with its own 3-step count — never a "4/9 → 8/9" jump.
+const STEP_META = {{
+  0: 'Step 1 of 6', 1: 'Step 2 of 6', 2: 'Step 3 of 6', 3: 'Step 4 of 6',
+  4: 'AI detour · 1 of 3', 5: 'AI detour · 2 of 3', 6: 'AI detour · 3 of 3',
+  7: 'Step 5 of 6', 8: 'Step 6 of 6'
+}};
+// Confidence's back button returns to wherever the visitor came from:
+// the AI detour's RAG step (6) or the core path's enhancement step (3).
+let confBack = 3;
 let streamTimer = null;
 let imageTimer = null;
 
@@ -795,12 +906,19 @@ function goStep(n) {{
   document.getElementById('step-' + n).classList.add('active');
   for (let i = 0; i < 9; i++) {{
     const dot = document.getElementById('dot-' + i);
-    dot.className = 'dot' + (i < n ? ' done' : i === n ? ' active' : '');
+    const base = dot.dataset.opt ? 'dot opt' : 'dot';
+    dot.className = base + (i < n ? ' done' : i === n ? ' active' : '');
   }}
   const lbl = document.getElementById('nav-label');
   lbl.textContent = stepLabels[n];
   lbl.className = 'label active';
-  document.getElementById('step-counter').textContent = (n + 1) + ' / 9';
+  document.getElementById('step-counter').textContent = STEP_META[n] || '';
+  if (n === 7) {{
+    confBack = (currentStep === 6) ? 6 : 3;
+    document.querySelectorAll('.conf-back').forEach(b => {{
+      b.textContent = (confBack === 6) ? '‹ RAG' : '‹ Video enhancement';
+    }});
+  }}
   currentStep = n;
   window.scrollTo(0, 0);
   // Tour navigation is NEVER gated on a pre-loaded result rendering. Reveal
@@ -812,6 +930,7 @@ function goStep(n) {{
   // decorative: it populates the card but must not be able to block the tour.
   revealNext(n);
   if (n === 1 && !videoResult) loadVideoStep();
+  if (n === 3 && !enhanceResult) loadEnhanceStep();
   if (n === 4 && !llmResult) loadLLMStep();
   if (n === 5 && !imageResult) loadImageStep();
   if (n === 6 && !ragResult) loadRAGStep();
@@ -838,6 +957,31 @@ function loadImageStep() {{
 function loadRAGStep() {{
   document.getElementById('rag-status').innerHTML = '<p class="progress-note" style="color:var(--text-3)">Loading last result…</p>';
   showPrevRAG();
+}}
+function loadEnhanceStep() {{
+  document.getElementById('enhance-status').innerHTML = '<p class="progress-note" style="color:var(--text-3)">Loading showcase run…</p>';
+  showPrevEnhance();
+}}
+
+// ─── Video enhancement (step 3) ──────────────────────────────────────────────
+// Pinned showcase only — /demo/last/enhance serves the operator-pinned
+// record or 404s (member uploads are private; there is no latest-fallback).
+// Decorative like every pre-load: the step's nav buttons are static markup,
+// so a missing pin can never trap the tour.
+async function showPrevEnhance() {{
+  const el = document.getElementById('enhance-status');
+  try {{
+    const resp = await fetch('/demo/last/enhance');
+    if (!resp.ok) {{
+      el.innerHTML = '<p class="progress-note" style="color:var(--text-3)">No showcase run pinned yet — the description below is the workload.</p>';
+      return;
+    }}
+    const full = await resp.json();
+    enhanceResult = full;
+    el.innerHTML = wlRenderEnhanceCard({{result: full, isPrev: true, savedAt: full.saved_at}});
+  }} catch(e) {{
+    el.innerHTML = '<p class="progress-note" style="color:var(--text-3)">Showcase run unavailable.</p>';
+  }}
 }}
 
 // ─── Live power ───────────────────────────────────────────────────────────────
@@ -901,7 +1045,7 @@ async function showPrevLLM() {{
       document.getElementById('llm-status').innerHTML =
         '<p class="progress-note" style="color:var(--text-3)">No previous run on file — run one below, or skip ahead.</p>';
       document.getElementById('llm-btns').style.display = 'flex';
-      revealNext(2);
+      revealNext(4);
       return;
     }}
     const full = await resp.json();
@@ -910,7 +1054,7 @@ async function showPrevLLM() {{
       document.getElementById('llm-status').innerHTML =
         '<p class="progress-note" style="color:var(--text-3)">No previous LLM run on file — run one below, or skip ahead.</p>';
       document.getElementById('llm-btns').style.display = 'flex';
-      revealNext(2);
+      revealNext(4);
       return;
     }}
     llmResult = full;
@@ -919,7 +1063,7 @@ async function showPrevLLM() {{
     document.getElementById('llm-btns').style.display = 'flex';
     document.getElementById('llm-status').innerHTML =
       '<p class="progress-note" style="color:var(--err)">Error: ' + e + '</p>';
-    revealNext(2);
+    revealNext(4);
   }}
 }}
 
@@ -1128,12 +1272,12 @@ function renderLLMResult(r, savedAt, isPrev) {{
   if (!r.energy && !(r.runs && r.runs.length) && !r.summary && r.mode !== 'both') {{
     document.getElementById('llm-btns').style.display = 'flex';
     document.getElementById('llm-status').innerHTML = html;
-    revealNext(2);  // unrecognised shape ≠ trapped tour: still let them advance
+    revealNext(4);  // unrecognised shape ≠ trapped tour: still let them advance
     return;
   }}
   document.getElementById('llm-status').innerHTML = html;
   document.getElementById('llm-btns').style.display = 'none';
-  revealNext(2);
+  revealNext(4);
 }}
 
 function resetVideoStep() {{
@@ -1146,35 +1290,35 @@ function resetLLMStep() {{
   llmResult = null;
   document.getElementById('llm-btns').style.display = 'flex';
   document.getElementById('llm-status').innerHTML = '';
-  document.getElementById('next-2').style.display = 'none';
+  document.getElementById('next-4').style.display = 'none';
 }}
 function resetImageStep() {{
   imageResult = null;
   document.getElementById('image-btns').style.display = 'flex';
   document.getElementById('image-status').innerHTML = '';
-  document.getElementById('next-3').style.display = 'none';
+  document.getElementById('next-5').style.display = 'none';
 }}
 function resetRAGStep() {{
   ragResult = null;
   document.getElementById('rag-btns').style.display = 'flex';
   document.getElementById('rag-status').innerHTML = '';
-  document.getElementById('next-4').style.display = 'none';
+  document.getElementById('next-6').style.display = 'none';
 }}
 
 // ─── RAG ─────────────────────────────────────────────────────────────────────
 async function showPrevRAG() {{
   document.getElementById('rag-btns').style.display = 'none';
   try {{
-    // Filter on the task field so we get the latest 3-mode-compare RAG
-    // run, not just the latest llm/ entry (which might be a single LLM
-    // inference). Same /demo carve-out endpoint as the other steps.
-    const resp = await fetch('/demo/last/llm?task_eq=' +
-      encodeURIComponent('RAG compare (3 modes)'));
+    // Pin-first pseudo-type: /demo/last/rag maps to the results/llm dir
+    // filtered on mode=rag_compare (the old task_eq text filter stopped
+    // matching once newer records persisted task=null — the step sat
+    // empty for weeks). Same /demo carve-out endpoint as the other steps.
+    const resp = await fetch('/demo/last/rag');
     if (resp.status === 404) {{
       document.getElementById('rag-status').innerHTML =
         '<p class="progress-note" style="color:var(--text-3)">No previous 3-mode RAG comparison on file — run one below, or skip ahead.</p>';
       document.getElementById('rag-btns').style.display = 'flex';
-      revealNext(4);
+      revealNext(6);
       return;
     }}
     const full = await resp.json();
@@ -1184,7 +1328,7 @@ async function showPrevRAG() {{
     document.getElementById('rag-btns').style.display = 'flex';
     document.getElementById('rag-status').innerHTML =
       '<p class="progress-note" style="color:var(--err)">Error: ' + e + '</p>';
-    revealNext(4);
+    revealNext(6);
   }}
 }}
 
@@ -1257,7 +1401,7 @@ function renderRAGResult(r, savedAt, isPrev) {{
   document.getElementById('rag-status').innerHTML =
     wlRenderRAGCard({{result: r, savedAt: savedAt, isPrev: isPrev}});
   document.getElementById('rag-btns').style.display = 'none';
-  revealNext(4);
+  revealNext(6);
 }}
 
 // ─── Image ────────────────────────────────────────────────────────────────────
@@ -1337,7 +1481,7 @@ async function showPrevImage() {{
       document.getElementById('image-status').innerHTML =
         '<p class="progress-note" style="color:var(--text-3)">No previous run on file — run one below, or skip ahead.</p>';
       document.getElementById('image-btns').style.display = 'flex';
-      revealNext(3);
+      revealNext(5);
       return;
     }}
     const full = await resp.json();
@@ -1347,7 +1491,7 @@ async function showPrevImage() {{
     document.getElementById('image-btns').style.display = 'flex';
     document.getElementById('image-status').innerHTML =
       '<p class="progress-note" style="color:var(--err)">Error: ' + e + '</p>';
-    revealNext(3);
+    revealNext(5);
   }}
 }}
 
@@ -1359,13 +1503,13 @@ function renderDemoImageResult(r) {{
     document.getElementById('image-btns').style.display = 'flex';
     document.getElementById('image-status').innerHTML =
       wlRenderImageCard({{result: r, isPrev: false}});
-    revealNext(3);  // unrecognised shape ≠ trapped tour: still let them advance
+    revealNext(5);  // unrecognised shape ≠ trapped tour: still let them advance
     return;
   }}
   document.getElementById('image-status').innerHTML =
     wlRenderImageCard({{result: r, isPrev: false}});
   document.getElementById('image-btns').style.display = 'none';
-  revealNext(3);
+  revealNext(5);
 }}
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
@@ -1568,4 +1712,5 @@ async def demo_page(request: Request):
             .replace("{DEMO_IMAGE_DETAIL}",  _demo_image_detail())
             .replace("{METER_NAME}",         meter_display_name())
             .replace("{METER_CADENCE}",      meter_cadence_label())
+            .replace("{BUDGET_TEASER}",      _budget_teaser_html())
             .replace("{FINDINGS_PANEL}",     findings_panel_html))
