@@ -9,7 +9,10 @@
 #   renderers unified into wl-result.js `wlRenderVideoCard` (fresh == stored == findings embeds; CSS
 #   self-injects under .wl-rich). Slim public nav on every page (Tour·Video·Energy budget·Findings·
 #   Methodology) — anon previously had NO nav. Budget step teaser reads routes_budget.current_fixture().
-#   Tests 849. Enhance before/after is NUMERIC (VQA scores) — visual side-by-side = new scope.)
+#   07-08: enhance step got REAL before/after video — bin/make-demo-enhance-previews derives web-safe
+#   detail-crop clips (native-4K-pixel window; before = player-style upscale) from the pinned job's own
+#   artifacts, served pinned-only via GET /demo/enhance-preview/{kind} (raw assets stay Member-gated).
+#   Re-run the script after changing the enhance pin. Tests 853.)
 # Previous: 2026-06-19 (Session 53 — ENCODE-PARITY & ENERGY-QUALITY CALIBRATION. New harness `parity.py`
 #   + `bin/run-encode-parity` (importable; shared by the new /reconfigure route): sweeps codec × {CPU, GPU
 #   baseline, GPU tuned} × bitrate × {BBB, Meridian}, 1080p, via the real measured path + terminal VMAF.

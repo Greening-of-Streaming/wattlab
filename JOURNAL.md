@@ -60,6 +60,26 @@ with one live-settings-dependent failure, before this session). Docs:
 result_envelope.md (renderer unification + pin-first + fixed the stale
 "wlExpandPrevRow doesn't know enhance" line).
 
+**07-08 addendum — real before/after video on the enhancement step.** Ben (on a
+phone): the numeric-only card was underwhelming. Root constraints: raw enhance
+assets are Member-gated AND the showcase output is 4K HEVC at 35 Mbps (182 MB) —
+unplayable on phone browsers. Fix: `bin/make-demo-enhance-previews` derives two
+~1.5 MB H.264 960×540 clips + posters from the pinned job's own artifacts.
+Full-frame matched-size previews proved USELESS (the difference lives at 4K pixel
+level, downscaling erases it — checked visually), so the script's `--zoom` mode
+shows the same 960×540 window of the output at native pixels, with the "before"
+being the SD source upscaled the way any player/TV scaler would — the honest
+at-display-size comparison; captions state exactly this. HDR (PQ) outputs get
+zscale+hable tonemapping (preview-only). Served by `GET /demo/enhance-preview/
+{before,after}.{mp4,jpg}` — PUBLIC_PAGE but resolves ONLY the pinned job's files
+(same trust model as the pin); FileResponse Range support covers Safari/iOS.
+Enhance pin moved d41c47ac → **0466fe96** (same bbb_sd_dirty SD→4K story but SDR
+output — no tonemap caveat; VQA 5.45→7.56 🟢, 14.85 Wh); previews regenerated on
+the busy bunny/chinchilla segment (`--start 3 --dur 7 --zoom --cx 1960 --cy 1680`).
+**Re-run the script whenever the enhance pin changes.** Step copy rewritten around
+the showcase ("step 1 shrank video; this makes it better — here's what that
+costs"). Tests 849 → **853**.
+
 ---
 
 ## Session 53 — 2026-06-18/19
