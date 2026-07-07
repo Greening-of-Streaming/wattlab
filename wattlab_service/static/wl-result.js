@@ -187,161 +187,335 @@
       + '</div>';
   };
 
+  // ── Rich video renderers ───────────────────────────────────────────────
+  // Lifted from /video's inline fresh-run renderers (2026-07-07) so fresh
+  // runs, prev-row expansion, findings embeds, /benchmark and /demo all
+  // show the SAME full-fidelity card (docs/result_envelope.md). Their CSS
+  // was page-local to /video; it self-injects here, namespaced under
+  // .wl-rich, so any consumer page gets it without page-local copies.
+  function _wlEnsureRichStyles(){
+    if (typeof document === 'undefined') return;
+    if (document.getElementById('wl-rich-css')) return;
+    var st = document.createElement('style');
+    st.id = 'wl-rich-css';
+    st.textContent =
+        '.wl-rich h2{color:var(--accent);font-size:1.1rem;margin-bottom:1rem;'
+      +   'padding-bottom:0.5rem;border-bottom:1px solid var(--border)}'
+      + '.wl-rich .cols{display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}'
+      + '.wl-rich .col{flex:1;min-width:240px;border:1px solid var(--border);padding:1rem}'
+      + '.wl-rich .col h3{color:var(--accent);font-size:0.85rem;margin-bottom:0.4rem;'
+      +   'border:none;padding:0}'
+      + '.wl-rich .col .sub{color:var(--text-3);font-size:0.75rem;margin-bottom:0.75rem}'
+      + '.wl-rich .metric{display:flex;justify-content:space-between;padding:0.3rem 0;'
+      +   'border-bottom:1px solid var(--panel);font-size:0.82rem}'
+      + '.wl-rich .metric:last-child{border-bottom:none}'
+      + '.wl-rich .metric .val{color:var(--accent)}'
+      + '.wl-rich .section-title{color:var(--text-4);font-size:0.72rem;'
+      +   'text-transform:uppercase;letter-spacing:0.05em;margin:0.75rem 0 0.4rem}'
+      + '.wl-rich .analysis-box{border:1px solid #00ff9944;padding:1rem;'
+      +   'margin-bottom:1rem;background:#00ff9908}'
+      + '.wl-rich .analysis-box h3{color:var(--accent);font-size:0.85rem;'
+      +   'margin-bottom:0.5rem;border:none;padding:0}'
+      + '.wl-rich .finding{color:var(--text-2);font-size:0.85rem;line-height:1.7}'
+      + '.wl-rich .conf-note{color:var(--text-4);font-size:0.78rem;margin-top:0.5rem}'
+      + '.wl-rich .scope-note{color:var(--text-5);font-size:0.72rem;margin-top:1rem}'
+      + '.wl-rich .single-report{border:1px solid var(--border);padding:1.5rem}'
+      + '@media (max-width:600px){.wl-rich .cols{flex-direction:column}}';
+    document.head.appendChild(st);
+  }
+
+  function _wlMetricRow(label, val, unit){
+    return '<div class="metric"><span>' + label + '</span>'
+         + '<span class="val">' + val + (unit ? ' ' + unit : '') + '</span></div>';
+  }
+
+  function _wlVideoSingleRich(r){
+    var e = r.energy;
+    if (!e) return _wlBadRecord('Video', r);
+    var t = r.thermals || {};
+    var conf = e.confidence || {};
+    var pptNote = t.gpu_ppt_mean_w
+        ? _wlMetricRow('GPU PPT mean / peak', t.gpu_ppt_mean_w + ' / ' + t.gpu_ppt_peak_w, 'W')
+          + '<div style="color:var(--text-4);font-size:0.72rem;padding:0.1rem 0 0.6rem 1rem">'
+          + 'GPU self-reported power (PPT). Meter ΔW above is the full system delta — includes CPU, RAM, drives.'
+          + '</div>'
+        : '';
+    var cmdNote = r.transcode && r.transcode.ffmpeg_cmd
+        ? '<details style="margin-top:0.75rem"><summary style="color:var(--text-5);font-size:0.72rem;cursor:pointer">ffmpeg command</summary>'
+          + '<div style="color:var(--text-3);font-size:0.7rem;font-family:monospace;word-break:break-all;margin-top:0.4rem;padding:0.5rem;background:var(--panel-2);border:1px solid var(--border-2)">'
+          + r.transcode.ffmpeg_cmd + '</div></details>'
+        : '';
+    return '<div class="single-report">'
+      + '<h2>Energy Report — ' + (r.preset_label || 'Video') + '</h2>'
+      + '<div class="section-title">Encode</div>'
+      + _wlMetricRow('Preset', r.preset_detail || '—')
+      + _wlMetricRow('Duration', e.delta_t_s, 's')
+      + _wlMetricRow('Output size', r.output_size_mb, 'MB')
+      + cmdNote
+      + '<div class="section-title">Power</div>'
+      + _wlMetricRow('Baseline', e.w_base, 'W')
+      + _wlMetricRow('Task mean', e.w_task, 'W')
+      + _wlMetricRow('Delta (ΔW)', e.delta_w, 'W')
+      + _wlMetricRow('Energy (ΔE)', e.delta_e_wh, 'Wh')
+      + wlCarbonRow(e)
+      + _wlMetricRow('Polls', e.poll_count)
+      + '<div class="section-title">Thermals</div>'
+      + _wlMetricRow('CPU base → peak', t.cpu_base + ' → ' + t.cpu_peak, '°C')
+      + _wlMetricRow('GPU base → peak', t.gpu_base + ' → ' + t.gpu_peak, '°C')
+      + pptNote
+      + '<div class="conf-badge" style="margin-top:0.75rem">' + (conf.flag || '') + ' ' + (conf.label || '') + '</div>'
+      + (conf.hint ? '<div style="margin-top:0.35rem;color:var(--text-3);font-size:0.72rem">' + conf.hint + '</div>' : '')
+      + wlCarbonStrip(e.delta_e_wh, r.preset_label || 'Video transcode', e.delta_t_s,
+                      e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)
+      + '</div>';
+  }
+
+  function _wlVideoBothRich(r){
+    var cpu = r.cpu || {}, gpu = r.gpu || {};
+    var a = r.analysis || {};
+    if (!cpu.energy || !gpu.energy) {
+      return '<p style="color:var(--text-3)">Comparison result missing energy block.</p>';
+    }
+
+    function col(res){
+      var e = res.energy, t = res.thermals || {};
+      var conf = e.confidence || {};
+      // Side is CPU unless the preset key is a GPU variant. The bare
+      // 'cpu'/'gpu' keys are H.264 only; H.265/AV1 use h265_/av1_ prefixes,
+      // so a literal === 'cpu' mismarked every non-H.264 comparison and
+      // both columns inherited the GPU winner's flag.
+      var side = (res.preset_key || '').indexOf('gpu') !== -1 ? 'GPU' : 'CPU';
+      var isEnergyWinner = a.energy_winner === side;
+      var isSpeedWinner  = a.speed_winner  === side;
+      var pptNote = t.gpu_ppt_mean_w
+          ? _wlMetricRow('GPU PPT mean', t.gpu_ppt_mean_w, 'W')
+            + '<div style="color:var(--text-4);font-size:0.72rem;padding:0.1rem 0 0.6rem 1rem">'
+            + 'GPU self-reported · meter ΔW is full system delta.'
+            + '</div>'
+          : '';
+      var cmdNote = res.transcode && res.transcode.ffmpeg_cmd
+          ? '<details style="margin-top:0.5rem"><summary style="color:var(--text-5);font-size:0.7rem;cursor:pointer">ffmpeg command</summary>'
+            + '<div style="color:var(--text-3);font-size:0.68rem;font-family:monospace;word-break:break-all;margin-top:0.3rem;padding:0.4rem;background:var(--panel-2);border:1px solid var(--border-2)">'
+            + res.transcode.ffmpeg_cmd + '</div></details>'
+          : '';
+      return '<div class="col">'
+        + '<h3>' + (res.preset_label || side) + '</h3>'
+        + '<div class="sub">' + (res.preset_detail || '') + '</div>'
+        + '<div class="section-title">Encode</div>'
+        + _wlMetricRow('Duration', e.delta_t_s + (isSpeedWinner ? ' 🏁' : ''), 's')
+        + _wlMetricRow('Output size', res.output_size_mb, 'MB')
+        + _wlMetricRow('VMAF', res.vmaf != null ? res.vmaf : '—')
+        + cmdNote
+        + '<div class="section-title">Power</div>'
+        + _wlMetricRow('Baseline', e.w_base, 'W')
+        + _wlMetricRow('Task mean', e.w_task, 'W')
+        + _wlMetricRow('Peak delta', e.delta_w, 'W')
+        + _wlMetricRow('Energy (ΔE)', e.delta_e_wh + (isEnergyWinner ? ' ✓' : ''), 'Wh')
+        + wlCarbonRow(e)
+        + _wlMetricRow('Polls', e.poll_count)
+        + '<div class="section-title">Thermals</div>'
+        + _wlMetricRow('CPU base → peak', t.cpu_base + ' → ' + t.cpu_peak, '°C')
+        + _wlMetricRow('GPU base → peak', t.gpu_base + ' → ' + t.gpu_peak, '°C')
+        + pptNote
+        + '<div class="conf-badge" style="margin-top:0.75rem;font-size:0.8rem">'
+        + (conf.flag || '') + ' ' + (conf.label || '')
+        + '</div>'
+        + (conf.hint ? '<div style="margin-top:0.3rem;color:var(--text-3);font-size:0.7rem">' + conf.hint + '</div>' : '')
+        + '</div>';
+    }
+
+    // Carbon strip for the comparison report uses the lower of the two
+    // energy figures (the more efficient option) — that's the headline
+    // number for "given this is the best result here, here's how it'd
+    // play out elsewhere". Label is the winner's preset, explicitly
+    // framed as "best of CPU vs GPU".
+    var cpuWh = (cpu.energy && cpu.energy.delta_e_wh) != null ? cpu.energy.delta_e_wh : null;
+    var gpuWh = (gpu.energy && gpu.energy.delta_e_wh) != null ? gpu.energy.delta_e_wh : null;
+    var stripWh = (cpuWh != null && gpuWh != null)
+        ? Math.min(cpuWh, gpuWh)
+        : (cpuWh != null ? cpuWh : gpuWh);
+    var _winnerLbl = (cpuWh != null && gpuWh != null)
+        ? (cpuWh <= gpuWh ? cpu.preset_label : gpu.preset_label)
+        : (cpuWh != null ? cpu.preset_label : gpu.preset_label);
+    var stripLbl = (cpuWh != null && gpuWh != null)
+        ? (_winnerLbl + ' · best of CPU vs GPU')
+        : _winnerLbl;
+    var _winnerE = (cpuWh != null && gpuWh != null)
+        ? (cpuWh <= gpuWh ? cpu.energy : gpu.energy)
+        : (cpuWh != null ? cpu.energy : gpu.energy);
+    var _stripSavedG = _winnerE && _winnerE.co2e && _winnerE.co2e.intensity
+        ? _winnerE.co2e.intensity.g_per_kwh : null;
+    var _stripDur = _winnerE ? _winnerE.delta_t_s : null;
+    var _subRuns = [cpu, gpu].filter(function(s){ return s && s.energy && s.energy.co2e; })
+      .map(function(s){
+        return {label: s.preset_label, grams: s.energy.co2e.grams,
+                deltaWh: s.energy.delta_e_wh, durationS: s.energy.delta_t_s};
+      });
+    return '<div class="report">'
+      + '<h2>Comparison Report</h2>'
+      + '<div class="analysis-box">'
+      +   '<h3>Finding</h3>'
+      +   '<div class="finding">' + (a.finding || '') + '</div>'
+      +   '<div class="conf-note">' + (a.confidence_note || '') + '</div>'
+      +   (a.quality_note ? '<div class="conf-note" style="color:var(--accent)">◆ ' + a.quality_note + '</div>' : '')
+      + '</div>'
+      + '<div class="cols">' + col(cpu) + col(gpu) + '</div>'
+      + wlCarbonStrip(stripWh, stripLbl, _stripDur, _stripSavedG, _subRuns)
+      + '<div class="scope-note">' + (r.scope || '') + '</div>'
+      + '</div>';
+  }
+
+  function _wlVideoAllCodecsRich(r){
+    var codecs = r.codecs || {};
+    var a = r.analysis || {};
+    var codecOrder = [['h264','H.264'],['h265','H.265'],['av1','AV1']];
+    var fmt = function(v){ return v != null ? v : '—'; };
+
+    // Summary matrix table
+    var tableRows = codecOrder.map(function(co){
+      var key = co[0], label = co[1];
+      var cd = codecs[key];
+      if (!cd || !cd.cpu || !cd.gpu || !cd.cpu.energy || !cd.gpu.energy) return '';
+      var ce = cd.cpu.energy, ge = cd.gpu.energy;
+      var ca = cd.analysis || {};
+      var ew = ca.energy_winner, sw = ca.speed_winner;
+      var cpuWin = (ew==='CPU'?'✓':'') + (sw==='CPU'?' 🏁':'');
+      var gpuWin = (ew==='GPU'?'✓':'') + (sw==='GPU'?' 🏁':'');
+      // Headers right-align, so data cells must too — otherwise the
+      // numeric columns drift left of their headers.
+      return '<tr>'
+        + '<td style="color:var(--text);font-weight:bold;text-align:left">' + label + '</td>'
+        + '<td style="text-align:right">' + fmt(ce.delta_t_s) + 's</td>'
+        + '<td style="color:' + (ew==='CPU'?'#00ff99':'#888') + ';text-align:right">' + fmt(ce.delta_e_wh) + ' Wh ' + cpuWin + '</td>'
+        + '<td style="color:var(--text-3);font-size:0.75rem;text-align:right">' + fmt(cd.cpu.output_size_mb) + ' MB</td>'
+        + '<td style="color:var(--text-3);font-size:0.75rem;text-align:right">' + fmt(cd.cpu.vmaf) + '</td>'
+        + '<td style="text-align:right">' + fmt(ge.delta_t_s) + 's</td>'
+        + '<td style="color:' + (ew==='GPU'?'#00ff99':'#888') + ';text-align:right">' + fmt(ge.delta_e_wh) + ' Wh ' + gpuWin + '</td>'
+        + '<td style="color:var(--text-3);font-size:0.75rem;text-align:right">' + fmt(cd.gpu.output_size_mb) + ' MB</td>'
+        + '<td style="color:var(--text-3);font-size:0.75rem;text-align:right">' + fmt(cd.gpu.vmaf) + '</td>'
+        + '<td class="conf-badge" style="font-size:0.78rem;text-align:center">'
+        + ((ce.confidence && ce.confidence.flag) || '') + ' ' + ((ge.confidence && ge.confidence.flag) || '') + '</td>'
+        + '</tr>';
+    }).join('');
+
+    var bestE = a.most_efficient;
+    var bestS = a.fastest;
+    var highlights = '<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.75rem;font-size:0.82rem">'
+      + '<span>⚡ Most efficient: <span style="color:var(--accent)">'
+      + (bestE ? bestE.label + ' (' + bestE.delta_e_wh + ' Wh)' : '—') + '</span></span>'
+      + '<span>🏁 Fastest: <span style="color:var(--accent)">'
+      + (bestS ? bestS.label + ' (' + bestS.delta_t_s + 's)' : '—') + '</span></span>'
+      + '</div>';
+
+    // Per-codec collapsible detail
+    function miniCol(res){
+      var e = res.energy, t = res.thermals || {};
+      var conf = e.confidence || {};
+      return '<div style="flex:1;min-width:180px">'
+        + '<div style="color:var(--text-3);font-size:0.72rem;margin-bottom:0.4rem">' + (res.preset_label || '') + '</div>'
+        + _wlMetricRow('Duration', e.delta_t_s, 's')
+        + _wlMetricRow('Output size', res.output_size_mb, 'MB')
+        + _wlMetricRow('VMAF', res.vmaf != null ? res.vmaf : '—')
+        + _wlMetricRow('Baseline', e.w_base, 'W')
+        + _wlMetricRow('ΔW', e.delta_w, 'W')
+        + _wlMetricRow('ΔE', e.delta_e_wh, 'Wh')
+        + wlCarbonRow(e)
+        + _wlMetricRow('Polls', e.poll_count)
+        + _wlMetricRow('CPU peak', t.cpu_peak, '°C')
+        + _wlMetricRow('GPU peak', t.gpu_peak, '°C')
+        + '<div class="conf-badge" style="margin-top:0.5rem;font-size:0.78rem">' + (conf.flag || '') + ' ' + (conf.label || '') + '</div>'
+        + (conf.hint ? '<div style="color:var(--text-3);font-size:0.7rem;margin-top:0.2rem">' + conf.hint + '</div>' : '')
+        + '</div>';
+    }
+    var details = codecOrder.map(function(co){
+      var key = co[0], label = co[1];
+      var cd = codecs[key];
+      if (!cd || !cd.cpu || !cd.gpu || !cd.cpu.energy || !cd.gpu.energy) return '';
+      return '<details style="margin-top:0.5rem;border:1px solid var(--border-2);padding:0.75rem">'
+        + '<summary style="color:var(--text-3);font-size:0.8rem;cursor:pointer;list-style:none">'
+        + '<span style="color:var(--accent)">' + label + '</span> — '
+        + ((cd.analysis && cd.analysis.finding) || '').slice(0,80) + '…'
+        + '</summary>'
+        + '<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.75rem">'
+        + miniCol(cd.cpu) + miniCol(cd.gpu)
+        + '</div>'
+        + '</details>';
+    }).join('');
+
+    // Strip uses the most-efficient codec/device's energy as the headline,
+    // explicitly framed as "most efficient of all codecs" — the matrix
+    // above lists every codec/device pair.
+    var stripWh = bestE && bestE.delta_e_wh != null ? bestE.delta_e_wh : null;
+    var stripLbl = bestE
+        ? (bestE.label + ' · most efficient codec across all comparisons')
+        : 'Most efficient codec';
+    var _winE = (bestE && codecs[bestE.codec] && codecs[bestE.codec][bestE.side])
+        ? codecs[bestE.codec][bestE.side].energy : null;
+    var _stripDur = _winE ? _winE.delta_t_s : null;
+    var _stripSavedG = _winE && _winE.co2e && _winE.co2e.intensity
+        ? _winE.co2e.intensity.g_per_kwh : null;
+    // CR-032 — sub-runs for the carbon strip's per-mode breakdown
+    // (6 cells: H.264/H.265/AV1 × CPU/GPU).
+    var _subRuns = [];
+    codecOrder.forEach(function(co){
+      var key = co[0], label = co[1];
+      var cd = codecs[key];
+      if (!cd) return;
+      ['cpu','gpu'].forEach(function(side){
+        var sub = cd[side];
+        if (sub && sub.energy && sub.energy.co2e) {
+          _subRuns.push({label: sub.preset_label || (label + ' ' + side.toUpperCase()),
+                         grams: sub.energy.co2e.grams,
+                         deltaWh: sub.energy.delta_e_wh,
+                         durationS: sub.energy.delta_t_s});
+        }
+      });
+    });
+    return '<div class="report">'
+      + '<h2>All Codecs — Energy &amp; Speed Matrix</h2>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:0.5rem">'
+      + '<thead><tr style="color:var(--text-4);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em">'
+      + '<th style="text-align:left;padding:0.3rem 0.5rem 0.5rem 0">Codec</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">CPU time</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">CPU energy</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">CPU out</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">CPU VMAF</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">GPU time</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">GPU energy</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">GPU out</th>'
+      + '<th style="text-align:right;padding:0.3rem 0.5rem">GPU VMAF</th>'
+      + '<th style="text-align:center;padding:0.3rem 0.5rem">Conf</th>'
+      + '</tr></thead>'
+      + '<tbody style="font-family:monospace">' + tableRows + '</tbody>'
+      + '</table>'
+      + '<div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.25rem">✓ energy winner · 🏁 speed winner · CPU out / GPU out should match — confirms same bitrate target · VMAF = perceptual quality 0–100 (higher better)</div>'
+      + highlights
+      + '<div style="margin-top:1rem;color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Per-codec detail</div>'
+      + details
+      + wlCarbonStrip(stripWh, stripLbl, _stripDur, _stripSavedG, _subRuns)
+      + '<div class="scope-note">' + (r.scope || '') + '</div>'
+      + '</div>';
+  }
+
+  // Single dispatcher for every video card (fresh /video runs, prev-row
+  // expansion, findings embeds, /benchmark, /demo). Contract:
+  // {result, isPrev, savedAt} → HTML string.
   window.wlRenderVideoCard = function(opts){
     var r = (opts && opts.result) || {};
-    var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
-    if (r.mode === 'all_codecs') {
-      // 3 codecs × 2 sides = 6 sub-runs. Compact matrix + carbon strip.
-      // The /video page renders a richer per-codec collapsible breakdown
-      // for fresh runs; this lifted helper is the prev-row / cross-page
-      // version, so it sticks to the matrix.
-      var codecs = r.codecs || {};
-      var a = r.analysis || {};
-      var codecOrder = [['h264','H.264'],['h265','H.265'],['av1','AV1']];
-      var rows = '';
-      var subRuns = [];
-      var bestE = null, bestLabel = null;
-      codecOrder.forEach(function(co){
-        var key = co[0], lbl = co[1];
-        var c = codecs[key];
-        if (!c) return;
-        var ca = c.analysis || {};
-        ['cpu','gpu'].forEach(function(side){
-          var sub = c[side];
-          if (!sub || !sub.energy) return;
-          var e = sub.energy;
-          var sideLbl = side.toUpperCase();
-          var isWinner = ca.energy_winner === sideLbl;
-          var isFastest = ca.speed_winner === sideLbl;
-          var conf = (e.confidence && e.confidence.flag) || '';
-          rows += '<tr>'
-                + '<td style="text-align:left;color:var(--text);padding:0.3rem 0.5rem">'
-                + lbl + ' ' + sideLbl + '</td>'
-                + '<td style="text-align:right;padding:0.3rem 0.5rem">'
-                + _f(e.delta_t_s,1) + 's' + (isFastest ? ' 🏁' : '') + '</td>'
-                + '<td style="text-align:right;color:' + (isWinner?'var(--accent)':'var(--text-3)')
-                + ';padding:0.3rem 0.5rem">'
-                + _f(e.delta_e_wh,4) + ' Wh' + (isWinner ? ' ✓' : '') + '</td>'
-                + '<td style="text-align:right;color:var(--text-3);padding:0.3rem 0.5rem">'
-                + _f(sub.output_size_mb,2) + ' MB</td>'
-                + '<td style="text-align:right;color:var(--text-3);padding:0.3rem 0.5rem">'
-                + _f(sub.vmaf,1) + '</td>'
-                + '<td style="text-align:center;padding:0.3rem 0.5rem">' + conf + '</td>'
-                + '</tr>';
-          if (e.co2e) {
-            subRuns.push({label: sub.preset_label || (lbl + ' ' + sideLbl),
-                          grams: e.co2e.grams,
-                          deltaWh: e.delta_e_wh,
-                          durationS: e.delta_t_s});
-          }
-        });
-      });
-      // Strip uses the most-efficient sub-run's energy as the headline.
-      if (a.most_efficient && a.most_efficient.codec && a.most_efficient.side) {
-        var mc = (codecs[a.most_efficient.codec] || {})[a.most_efficient.side];
-        if (mc && mc.energy) { bestE = mc.energy; bestLabel = a.most_efficient.label; }
-      }
-      var stripWh = bestE ? bestE.delta_e_wh : null;
-      var stripDur = bestE ? bestE.delta_t_s : null;
-      var stripSavedG = bestE && bestE.co2e && bestE.co2e.intensity
-        ? bestE.co2e.intensity.g_per_kwh : null;
-      var stripLabel = (bestLabel || 'Most efficient')
-        + ' · most efficient codec across all comparisons';
-      // Highlights — mirrors /video's fresh-run renderAllCodecs framing
-      // since analysis.finding is empty for all_codecs results.
-      var highlightsHtml = '';
-      if (a.most_efficient || a.fastest) {
-        var partsH = [];
-        if (a.most_efficient) {
-          partsH.push('<span>⚡ Most efficient: <span style="color:var(--accent)">'
-                    + a.most_efficient.label + ' (' + a.most_efficient.delta_e_wh + ' Wh)</span></span>');
-        }
-        if (a.fastest) {
-          partsH.push('<span>🏁 Fastest: <span style="color:var(--accent)">'
-                    + a.fastest.label + ' (' + a.fastest.delta_t_s + 's)</span></span>');
-        }
-        highlightsHtml = '<div style="display:flex;gap:1.5rem;flex-wrap:wrap;'
-                       + 'font-size:0.85rem;margin-bottom:0.75rem">'
-                       + partsH.join('') + '</div>';
-      }
-      html += '<div class="result-card">'
-            + (a.finding ? '<p class="headline">' + a.finding + '</p>' : '')
-            + highlightsHtml
-            + '<table style="width:100%;border-collapse:collapse;font-size:0.82rem;'
-            + 'font-family:monospace;margin-bottom:0.5rem">'
-            + '<thead><tr style="color:var(--text-4);font-size:0.7rem;'
-            + 'text-transform:uppercase;letter-spacing:0.05em">'
-            + '<th style="text-align:left;padding:0.3rem 0.5rem 0.5rem 0">Codec · side</th>'
-            + '<th style="text-align:right;padding:0.3rem 0.5rem">Time</th>'
-            + '<th style="text-align:right;padding:0.3rem 0.5rem">Energy</th>'
-            + '<th style="text-align:right;padding:0.3rem 0.5rem">Output</th>'
-            + '<th style="text-align:right;padding:0.3rem 0.5rem">VMAF</th>'
-            + '<th style="text-align:center;padding:0.3rem 0.5rem">Conf</th>'
-            + '</tr></thead>'
-            + '<tbody>' + rows + '</tbody>'
-            + '</table>'
-            + '<div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.5rem">'
-            + '✓ energy winner per codec · 🏁 speed winner per codec</div>'
-            + (stripWh != null
-                ? wlCarbonStrip(stripWh, stripLabel, stripDur, stripSavedG, subRuns)
-                : '')
-            + '<p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>'
-            + '</div>';
-      return html;
-    }
+    var pre = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
     if (r.mode === 'codecs_cpu' || r.mode === 'codecs_gpu') {
-      return html + window.wlRenderCodecsSingle(r);
+      return pre + window.wlRenderCodecsSingle(r);
     }
-    if (r.mode === 'both') {
-      var cpu = r.cpu || {}, gpu = r.gpu || {}, a = r.analysis || {};
-      var ce = cpu.energy, ge = gpu.energy;
-      if (!ce || !ge) return html + '<p style="color:var(--text-3)">Comparison result missing energy block.</p>';
-      var winner = a.energy_winner;
-      var bestE = (ce.delta_e_wh <= ge.delta_e_wh) ? ce : ge;
-      var bestSide = (ce.delta_e_wh <= ge.delta_e_wh) ? 'CPU' : 'GPU';
-      var bestSavedG = bestE.co2e && bestE.co2e.intensity ? bestE.co2e.intensity.g_per_kwh : null;
-      var stripLabel = (cpu.preset_label || 'Video transcode') + ' · best of CPU vs GPU (' + bestSide + ')';
-      var subRuns = [
-        {label: (cpu.preset_label || 'CPU') + ' · CPU', e: ce},
-        {label: (gpu.preset_label || 'GPU') + ' · GPU', e: ge}
-      ].filter(function(s){ return s.e && s.e.co2e; }).map(function(s){
-        return {label: s.label, grams: s.e.co2e.grams,
-                deltaWh: s.e.delta_e_wh, durationS: s.e.delta_t_s};
-      });
-      html += '<div class="result-card">'
-            + '<p class="headline">' + (a.finding || '') + '</p>'
-            + '<div class="kpi-row">'
-            +   '<div class="kpi"><div class="val">' + _f(ce.delta_e_wh,4) + ' Wh</div>'
-            +     '<div class="lbl">CPU energy ' + (winner==='CPU'?'✓ winner':'') + '</div></div>'
-            +   '<div class="kpi"><div class="val">' + _f(ge.delta_e_wh,4) + ' Wh</div>'
-            +     '<div class="lbl">GPU energy ' + (winner==='GPU'?'✓ winner':'') + '</div></div>'
-            +   '<div class="kpi"><div class="val">' + ce.delta_t_s + 's / ' + ge.delta_t_s + 's</div>'
-            +     '<div class="lbl">Encode time CPU / GPU</div></div>'
-            + '</div>'
-            + '<div class="conf-badge">' + (ce.confidence && ce.confidence.flag) + ' CPU · '
-            + (ge.confidence && ge.confidence.flag) + ' GPU · ' + (a.confidence_note || '') + '</div>'
-            + (a.quality_note ? '<div class="conf-badge" style="color:var(--accent)">◆ ' + a.quality_note + '</div>' : '')
-            + wlCarbonStrip(bestE.delta_e_wh, stripLabel, bestE.delta_t_s, bestSavedG, subRuns)
-            + '<p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>'
-            + '</div>';
+    _wlEnsureRichStyles();
+    var inner;
+    if (r.mode === 'all_codecs') {
+      inner = _wlVideoAllCodecsRich(r);
+    } else if (r.mode === 'both') {
+      inner = _wlVideoBothRich(r);
     } else {
-      var res = r.result || r;
-      var e = res.energy;
-      if (!e) return html + _wlBadRecord('Video', r);
-      var savedG = e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null;
-      html += '<div class="result-card">'
-            + '<p class="headline">' + (res.preset_label || 'Video') + ': '
-            + e.delta_e_wh + ' Wh · ' + e.delta_t_s + 's</p>'
-            + '<div class="kpi-row">'
-            +   '<div class="kpi"><div class="val">' + e.delta_e_wh + ' Wh</div><div class="lbl">Energy delta</div></div>'
-            +   '<div class="kpi"><div class="val">' + e.delta_w + ' W</div><div class="lbl">Power delta</div></div>'
-            +   '<div class="kpi"><div class="val">' + e.delta_t_s + 's</div><div class="lbl">Duration</div></div>'
-            + '</div>'
-            + '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</div>'
-            + wlCarbonStrip(e.delta_e_wh, res.preset_label || 'Video transcode', e.delta_t_s, savedG)
-            + '</div>';
+      inner = _wlVideoSingleRich(r.result || r);
     }
-    return html;
+    return pre + '<div class="wl-rich">' + inner + '</div>';
   };
 
   // ─── LLM ─────────────────────────────────────────────────────────────────

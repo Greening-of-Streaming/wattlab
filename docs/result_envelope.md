@@ -36,10 +36,17 @@ Every result JSON under `results/{type}/{date}_{job_id}.json` carries:
 
 | mode | shape | summariser | JS renderer |
 |---|---|---|---|
-| `single` (also legacy absent → `?`) | `result{energy,thermals,…}` | `_sum_video_single` | `wlRenderVideoCard` else-branch |
-| `both` | `cpu{}, gpu{}, analysis{}` | `_sum_video_both` | `wlRenderVideoCard` |
-| `all_codecs` | `codecs{h264{cpu,gpu},…}, analysis{}` | `_sum_video_codecs` | `wlRenderVideoCard` |
+| `single` (also legacy absent → `?`) | `result{energy,thermals,…}` | `_sum_video_single` | `wlRenderVideoCard` else-branch (`_wlVideoSingleRich`) |
+| `both` | `cpu{}, gpu{}, analysis{}` | `_sum_video_both` | `wlRenderVideoCard` (`_wlVideoBothRich`) |
+| `all_codecs` | `codecs{h264{cpu,gpu},…}, analysis{}` | `_sum_video_codecs` | `wlRenderVideoCard` (`_wlVideoAllCodecsRich`) |
 | `codecs_cpu` / `codecs_gpu` | `codecs{…[side]}, analysis{}, side` | `_sum_video_codecs` | `wlRenderCodecsSingle` |
+
+Since 2026-07-07 `wlRenderVideoCard` IS the former /video fresh-run rich
+renderer family (thermals, PPT, Baseline/Task/Polls, ffmpeg `<details>`,
+per-codec collapsibles) — the /video page's `renderResult` delegates to it,
+so fresh runs, prev-row expansion, findings embeds and /demo all render the
+identical card. The rich CSS self-injects from wl-result.js (`.wl-rich`
+namespace, `#wl-rich-css`); consumer pages carry no copy.
 
 ### `llm` (writers: `llm.py` + `routes_llm`/`routes_rag` orchestration; **rag persists under `results/llm/`**)
 
@@ -90,8 +97,10 @@ CR-064 provenance fields (all nullable, never drive behaviour):
 ffprobe facts about the source (codec/res/pix_fmt/colour-transfer/`hdr`).
 Enhance results browse like every other type: `/results/enhance/list` +
 `download.json` / `download.csv` (`persist._enhance_rows`, one CSV row per
-measured pass), rendered by the page's own prev-runs section — the
-`wl-result.js` `wlExpandPrevRow` registry does NOT know `enhance`.
+measured pass). The /enhance-run page renders its own prev-runs section with
+the inline `renderResultHtml`/`renderCompareHtml`; `wl-result.js` also maps
+`enhance → wlRenderEnhanceCard` in the `wlExpandPrevRow` registry for
+cross-page embeds (findings, /demo's pinned Video-Enhancement step).
 
 ## Consumers (the blast-radius list)
 
@@ -99,8 +108,10 @@ A mode/shape change fans out to, in order of how quickly the break is noticed:
 
 1. Fresh-result JS card (`static/wl-result.js` `wlRender*Card`)
 2. Previous-runs expansion (same renderers, `isPrev` path)
-3. `/demo` pre-load (`routes_results.demo_last_result` — **mode-filters** per
-   step; S37 bug 1 was compare records leaking into the single renderer)
+3. `/demo` pre-load (`routes_results.demo_last_result` — **pin-first** via
+   `demo_pinned_results` in settings, then **mode-filters** per step; `rag`
+   is a pseudo-type over `results/llm/` and `enhance` is pin-ONLY. S37 bug 1
+   was compare records leaking into the single renderer)
 4. `persist._summarise` (the `/results/{type}/list` rows)
 5. CSV export rows (`persist._video_rows` / `_image_rows` / llm rows)
 6. Findings embeds (`routes_findings` source carve-out + `wl-result.js`)

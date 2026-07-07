@@ -66,3 +66,22 @@ def test_wl_cfg_loaded_before_bundles_that_need_it(path):
         cfg_pos = html.find('src="/ui-config.js"')
         assert cfg_pos != -1, f"{path} ships {bundle} but never loads /ui-config.js"
         assert cfg_pos < pos, f"{path} loads {bundle} before /ui-config.js"
+
+
+def test_video_rich_renderer_single_source():
+    """2026-07-07 renderer unification: the rich video card lives ONLY in
+    wl-result.js (wlRenderVideoCard + _wlVideoSingleRich/_wlVideoBothRich/
+    _wlVideoAllCodecsRich, CSS self-injected under .wl-rich). The /video
+    page must delegate — a re-grown inline renderSingle/renderBoth would
+    reopen the fresh-vs-stored drift this closed."""
+    bundle = (STATIC_DIR / "wl-result.js").read_text()
+    assert bundle.count("window.wlRenderVideoCard =") == 1
+    for fn in ("_wlVideoSingleRich", "_wlVideoBothRich", "_wlVideoAllCodecsRich",
+               "_wlEnsureRichStyles"):
+        assert f"function {fn}(" in bundle, f"wl-result.js lost {fn}"
+    assert "Energy Report — " in bundle          # the rich single card marker
+    video_html = client.get("/video", headers=LAB).text
+    for fn in ("function renderSingle", "function renderBoth",
+               "function renderAllCodecs"):
+        assert fn not in video_html, f"/video regrew an inline {fn}"
+    assert "wlRenderVideoCard(" in video_html    # fresh path delegates
