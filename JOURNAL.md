@@ -80,6 +80,17 @@ the busy bunny/chinchilla segment (`--start 3 --dur 7 --zoom --cx 1960 --cy 1680
 the showcase ("step 1 shrank video; this makes it better — here's what that
 costs"). Tests 849 → **853**.
 
+Iteration on Ben's phone feedback (same day): HEAD 405'd the JS reveal probe
+(previews silently hidden — route now GET+HEAD, probe uses GET, regression test,
+854 tests) · showcase re-pinned to **adea71ae** — REAL 2005 phone footage
+(544×408 drum-band parade → 4K, VQA 5.37→7.2, **1.78 Wh** 🟢), making the tour's
+original "bad 2005 phone clip cleaned up for a few watt-hours" line literally
+true · generator learned aspect-FILL for the 'before' when source/output aspects
+differ (pillarboxing showed a DIFFERENT region than the enhancer's crop — silent
+dishonesty) + `--window` magnification; half-frame 2× reads best on phones (1:1
+native too abstract, full-frame invisible). Final previews:
+`--start 0.5 --dur 6 --zoom --cx 2400 --cy 1300 --window 1080`.
+
 ---
 
 ## Session 53 — 2026-06-18/19
