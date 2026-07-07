@@ -165,3 +165,12 @@ def test_enhance_preview_rejects_invalid_kind(monkeypatch, tmp_path):
     for bad in ("after.mov", "../secret.mp4", "before.mp4.bak"):
         assert client.get(f"/demo/enhance-preview/{bad}",
                           headers=ANON).status_code in (400, 404)
+
+
+def test_enhance_preview_answers_head(monkeypatch, tmp_path):
+    """HEAD must not 405 — the tour's reveal probe and media players issue
+    it; a 405 silently hid the previews (2026-07-08 phone bug)."""
+    d = _preview_env(monkeypatch, tmp_path, "showjob")
+    (d / "showjob__after.jpg").write_bytes(b"\xff\xd8\xff\xdb")
+    r = client.head("/demo/enhance-preview/after.jpg", headers=ANON)
+    assert r.status_code == 200

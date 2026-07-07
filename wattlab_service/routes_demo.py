@@ -996,8 +996,10 @@ function loadEnhanceStep() {{
 // the block hidden and the numeric card carries the step alone.
 async function loadEnhancePreviews() {{
   try {{
-    const head = await fetch('/demo/enhance-preview/after.mp4', {{method: 'HEAD'}});
-    if (!head.ok) return;
+    // Probe with a plain GET on the small poster (HEAD used to 405 on
+    // FastAPI @get routes — the block silently never revealed on phones).
+    const probe = await fetch('/demo/enhance-preview/after.jpg');
+    if (!probe.ok) return;
     const before = document.getElementById('enhance-vid-before');
     const after = document.getElementById('enhance-vid-after');
     before.poster = '/demo/enhance-preview/before.jpg';

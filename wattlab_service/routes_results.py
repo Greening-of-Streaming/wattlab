@@ -133,7 +133,10 @@ _PREVIEW_KINDS = {
 }
 
 
-@router.get("/demo/enhance-preview/{kind}", dependencies=[Depends(requires(PUBLIC_PAGE))])
+# GET+HEAD: FastAPI's @get answers 405 to HEAD, which broke the tour's
+# reveal probe (fetch HEAD → 405 → previews stayed hidden on phones).
+@router.api_route("/demo/enhance-preview/{kind}", methods=["GET", "HEAD"],
+                  dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def demo_enhance_preview(kind: str):
     media_type = _PREVIEW_KINDS.get(kind)
     if media_type is None:
