@@ -7,6 +7,61 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 54 — 2026-07-07
+
+**Guided Tour v2 — the anonymous newbie path, recovered + redesigned.** Ben tested
+`/demo` anonymously and found the Energy-budget/Video-enhancement steps missing.
+Root cause: the 2026-06-24 9-step tour work was never merged — it sat in a git stash
+on `feat/finding-hevc-h264` under a "finding-hevc finding-draft WIP" label, mixed
+with finding-drafter work. And its enhancement step just linked out to
+`/enhance-run`, which is Member-gated even for GET → anonymous clicks landed on the
+sign-in gate (the observed breakage). Second latent defect: the RAG step preload
+filtered on task text (`task_eq=RAG compare (3 modes)`) but newer records persist
+`task=null` — the step had been empty for weeks.
+
+**Recovered + redesigned** (branch `feat/tour-redesign`, 5 commits):
+- **WS0** — recovered ONLY the `routes_demo.py`/`test_pixop.py` hunks from the stash
+  (`git apply --include=…`); the finding-drafter parts stay on their own branch;
+  stash left intact. Drive-by: `test_upload_member_duration_cap` now monkeypatches
+  `cfg.load` (was reading live settings.json and failing since the enhance caps drifted).
+- **Pinned tour results** — new `demo_pinned_results` settings key ({video, llm,
+  rag, image, enhance} → job_id). `/demo/last/{type}` serves the pin first, falls
+  back to latest-matching; **`enhance` is pin-ONLY** (member uploads are private —
+  never serve "latest"); `rag` is a new pseudo-type over `results/llm/` filtered on
+  `mode=rag_compare` (fixes the empty step structurally: benchmarks flooding
+  results/ can never empty a tour step again). Tests: `test_demo_pins.py`.
+- **Renderer unification** — `/video`'s rich inline renderers (thermals, PPT,
+  baseline/task/polls, ffmpeg `<details>`, per-codec collapsibles) moved into
+  `wl-result.js` as the single `wlRenderVideoCard` family; prev-row expansion,
+  findings embeds, /benchmark detail and /demo now show the SAME card as a fresh
+  run (closes the fresh-vs-stored info gap). CSS self-injects namespaced under
+  `.wl-rich` + ≤600px column collapse. Hardcoded "P110" in the lifted copy
+  neutralised to "meter". Guard: `test_video_rich_renderer_single_source`.
+- **Tour v2 flow** — Welcome → Video → Energy Budget → Video Enhancement →
+  *branch*: primary "How we flag confidence" (core), secondary clearly-marked
+  **optional AI detour** (LLM · Image · RAG, rejoining at Confidence) → Findings.
+  Honest counter: core = "Step n of 6", detour = "AI detour · n of 3" (no 4/9→8/9
+  jump); detour dots hollow; Confidence's back button returns to where you came
+  from. Welcome gains a tour map (4 core stops + detour + ~5 min). Budget step
+  renders a Wh/min-per-codec teaser from the new `routes_budget.current_fixture()`
+  (factored from `budget_page`, measured/illustrative badge — numbers can't drift
+  from the planner). Enhancement step embeds the pinned showcase via
+  `wlRenderEnhanceCard` + explicit "running is a member feature — real GPU
+  minutes" copy + sign-in link (`?next=/enhance-run`); no more bare gated link.
+- **Slim public nav** — `ui.render_page` now emits one compact row on every page
+  for every tier: Tour · Video · Energy budget · Findings (flag-gated via shared
+  `_findings_on()`) · Methodology. Anonymous visitors previously had NO nav at all.
+- **Pins set live**: video `fece0d35` (2026-07-07 all-codecs, all 🟢), llm
+  `7b14b39f`, rag `b500858b`, image `21718b6f`, enhance `d41c47ac` (bbb_sd_dirty
+  SD→4K, VQA 5.45→7.76 🟢, 13.9 Wh — lab content, tells the step's exact story).
+
+Tests 831 → **849** (note: CLAUDE.md's "704" was stale — the suite had grown to 831,
+with one live-settings-dependent failure, before this session). Docs:
+result_envelope.md (renderer unification + pin-first + fixed the stale
+"wlExpandPrevRow doesn't know enhance" line).
+
+---
+
 ## Session 53 — 2026-06-18/19
 
 **Encode-parity & energy-quality calibration — built the harness, ran the first full

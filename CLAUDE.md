@@ -1,6 +1,16 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-06-19 (Session 53 — ENCODE-PARITY & ENERGY-QUALITY CALIBRATION. New harness `parity.py`
+# Last updated: 2026-07-07 (Session 54 — GUIDED TOUR v2 + ANON EXPERIENCE. The 2026-06-24 9-step tour was
+#   found stranded in a stash (never merged; its /enhance-run link-out 403'd anon = "the broken tour").
+#   Recovered + redesigned: core path Welcome→Video→Energy Budget→Video Enhancement→Confidence→Findings
+#   with LLM/Image/RAG as a clearly-optional AI detour (honest "Step n of 6" / "AI detour · n of 3"
+#   counter). Tour steps now preload PINNED results (`demo_pinned_results` in settings; enhance pin-ONLY,
+#   rag = pseudo-type over results/llm mode=rag_compare — fixes the weeks-empty RAG step). /video's rich
+#   renderers unified into wl-result.js `wlRenderVideoCard` (fresh == stored == findings embeds; CSS
+#   self-injects under .wl-rich). Slim public nav on every page (Tour·Video·Energy budget·Findings·
+#   Methodology) — anon previously had NO nav. Budget step teaser reads routes_budget.current_fixture().
+#   Tests 849. Enhance before/after is NUMERIC (VQA scores) — visual side-by-side = new scope.)
+# Previous: 2026-06-19 (Session 53 — ENCODE-PARITY & ENERGY-QUALITY CALIBRATION. New harness `parity.py`
 #   + `bin/run-encode-parity` (importable; shared by the new /reconfigure route): sweeps codec × {CPU, GPU
 #   baseline, GPU tuned} × bitrate × {BBB, Meridian}, 1080p, via the real measured path + terminal VMAF.
 #   Live /video gpu.py args UNTOUCHED (tuned injected as custom args). 30s clips; NVENC too fast for 1Hz so
@@ -169,6 +179,7 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S51 (06-15): conference-demo pre-flight (demo lock = stage-on staging mode; remote = SSH tunnel) · GDPR anonymous-analytics: visit counter (analytics.py) + /audience (hidden Lab) + IP pseudonymisation (no raw IP on disk, 7 legacy files migrated) + /privacy notice. →702. (ccb77a9)
 - S52 (06-16): HDR→4K enhancement unblocked — measured Jon's memory-throttle env vars (VRAM 94→85%, energy/throughput cost within noise), applied to hdr_4k combo ONLY (`_COMBO_ENV`/combo_env), `_COMBO_EXCLUSIONS` emptied, methodology + page "mild throttle" note/tooltip · /enhance-run progress bar fed `elapsed` · compare-disable HDR tooltip. →704.
 - S53 (06-18/19): encode-parity & energy-quality calibration — `parity.py`+`bin/run-encode-parity` harness (repeat-to-20s for NVENC sampling, per-row checkpoint, pause-not-stop poller guard); first 90-encode run (all 🟢) → NVENC 2.5–4.4× less Wh/min than CPU, GPU-worse-esp-AV1 gap is low-complexity/low-bitrate only (Meridian: NVENC AV1 beats libsvtav1), tuned NVENC bundle REJECTED for live (more energy, lower VMAF) · /video/budget auto-flips to measured (`budget_data.py`) · target_vmaf=92 on /settings · method note + /video/budget/reconfigure (Lab re-cal). Tests 704. ⚠ 1 restart pending. →704.
+- S54 (07-07): Guided Tour v2 — stranded 9-step tour recovered from stash + redesigned (core path w/ optional AI detour, honest counter) · pinned tour preloads (`demo_pinned_results`; enhance pin-only, rag pseudo-type) · /video rich renderer unified into wl-result.js (fresh==stored==embeds) · slim public nav all pages · budget-step teaser from current_fixture(). →849.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
