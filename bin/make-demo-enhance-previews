@@ -69,12 +69,16 @@ def main() -> int:
     ap.add_argument("--height", type=int, default=540, help="preview height (px)")
     ap.add_argument("--zoom", action="store_true",
                     help="detail-crop mode: show a 16:9 window of the OUTPUT at "
-                         "native pixels; the 'before' is the source naively "
-                         "upscaled to the output size (what a player/TV scaler "
-                         "does) then cropped to the same window — full-frame "
-                         "matched-size previews hide the 4K-level difference")
+                         "native pixels; the 'before' is the source upscaled the "
+                         "way a player/TV scaler would (aspect kept, pillarboxed "
+                         "like the output) then cropped to the same window — "
+                         "full-frame matched-size previews hide the 4K-level difference")
     ap.add_argument("--cx", type=int, default=None, help="crop-window centre x, output px")
     ap.add_argument("--cy", type=int, default=None, help="crop-window centre y, output px")
+    ap.add_argument("--window", type=int, default=None,
+                    help="crop-window height in output px (default: --height, i.e. "
+                         "1:1 pixels; smaller = extra magnification for phone "
+                         "screens, e.g. --window 360 --height 540 shows 1.5×)")
     args = ap.parse_args()
 
     s = cfg.load()
@@ -98,19 +102,39 @@ def main() -> int:
             print(f"Missing artifact: {p}")
             return 1
 
-    cw, ch = args.height * 16 // 9, args.height
     if args.zoom:
+        wh = args.window or args.height
+        cw, ch = (wh * 16 // 9) & ~1, wh & ~1
         ow, oh = (int(v) for v in _probe(src_out, ffprobe, "width,height")[:2])
         cx = args.cx if args.cx is not None else ow // 2
         cy = args.cy if args.cy is not None else oh // 2
-        x = max(0, min(ow - cw, cx - cw // 2))
-        y = max(0, min(oh - ch, cy - ch // 2))
+        x = max(0, min(ow - cw, cx - cw // 2)) & ~1
+        y = max(0, min(oh - ch, cy - ch // 2)) & ~1
+        out_scale = f"scale=-2:{args.height}:flags=lanczos" if ch != args.height else "null"
         crop = f"crop={cw}:{ch}:{x}:{y}"
-        geom = {"before": f"scale={ow}:{oh}:flags=lanczos,{crop}", "after": crop}
-        print(f"zoom mode: {cw}x{ch} window at ({x},{y}) of {ow}x{oh}")
+        # The 'before' must land on the SAME region as the output crop, so it
+        # replicates the enhancer's framing. When the source aspect differs
+        # from the output's (the 2005 clip is 4:3, output 16:9), Pixop
+        # aspect-FILLS (crops top/bottom); a pillarboxed 'before' would show
+        # a different region than the 'after'. Matching aspects → plain scale.
+        iw, ih = (int(v) for v in _probe(src_in, ffprobe, "width,height")[:2])
+        if abs(iw / ih - ow / oh) > 0.02:
+            before_fit = (f"scale={ow}:{oh}:flags=lanczos:force_original_aspect_ratio=increase,"
+                          f"crop={ow}:{oh}")
+            print(f"aspect mismatch ({iw}x{ih} vs {ow}x{oh}): 'before' uses "
+                  f"aspect-fill to match the enhancer's framing")
+        else:
+            before_fit = f"scale={ow}:{oh}:flags=lanczos"
+        geom = {
+            "before": f"{before_fit},{crop},{out_scale}",
+            "after": f"{crop},{out_scale}",
+        }
+        mag = args.height / ch if ch else 1
+        print(f"zoom mode: {cw}x{ch} window at ({x},{y}) of {ow}x{oh}"
+              + (f", shown at {mag:.2f}x" if ch != args.height else ""))
     else:
-        geom = {"before": f"scale=-2:{ch}:flags=lanczos",
-                "after": f"scale=-2:{ch}:flags=lanczos"}
+        geom = {"before": f"scale=-2:{args.height}:flags=lanczos",
+                "after": f"scale=-2:{args.height}:flags=lanczos"}
 
     outdir = workdir / "demo-previews"
     outdir.mkdir(exist_ok=True)

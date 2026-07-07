@@ -512,15 +512,15 @@ _DEMO_HTML = f"""
       every other workload on the bench.
     </p>
     <p style="color:var(--text-2);line-height:1.8;max-width:560px">
-      The showcase below: a deliberately degraded standard-definition clip,
-      machine-upscaled to 4K. Watch the two previews, then read what that difference
-      cost in the card underneath.
+      The showcase below: real 2005 phone footage &mdash; 544&times;408, heavily
+      compressed &mdash; machine-upscaled to 4K for a couple of watt-hours. Watch the
+      two previews, then read what that difference cost in the card underneath.
     </p>
   </div>
   <div id="enhance-preview" style="display:none;margin:1rem 0">
     <div style="display:flex;gap:1rem;flex-wrap:wrap">
       <figure style="flex:1;min-width:260px;margin:0">
-        <figcaption style="color:var(--text-3);font-family:monospace;font-size:0.72rem;margin-bottom:0.35rem">SOURCE &mdash; degraded SD as a player would upscale it</figcaption>
+        <figcaption style="color:var(--text-3);font-family:monospace;font-size:0.72rem;margin-bottom:0.35rem">SOURCE &mdash; 2005 phone clip as a player would show it</figcaption>
         <video id="enhance-vid-before" muted loop playsinline autoplay controls preload="metadata"
                style="width:100%;border:1px solid var(--border-2);display:block;background:#000"></video>
       </figure>
@@ -531,10 +531,9 @@ _DEMO_HTML = f"""
       </figure>
     </div>
     <p style="color:var(--text-5);font-size:0.7rem;line-height:1.6;margin-top:0.4rem;max-width:560px">
-      Both previews show the <em>same region at native 4K pixels</em>, re-encoded for
-      the web: the left is the SD source scaled up the way any player or TV would;
-      the right is the ML output, untouched. The quality scores below are measured
-      on the full originals.
+      Both previews show the <em>same magnified region of the frame</em>, re-encoded
+      for the web: the left is the source scaled up conventionally (no ML), the right
+      is the ML output. The quality scores below are measured on the full originals.
     </p>
   </div>
   <div id="enhance-status"></div>

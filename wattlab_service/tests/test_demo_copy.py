@@ -154,4 +154,4 @@ def test_enhance_step_has_before_after_preview_block():
     assert "/demo/enhance-preview/after.mp4" in t
     assert 'id="enhance-vid-before"' in t and 'id="enhance-vid-after"' in t
     assert "playsinline" in t          # required for iPhone inline playback
-    assert "same region at native 4K pixels" in t   # crop honesty caption
+    assert "same magnified region" in t   # crop honesty caption
