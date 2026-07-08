@@ -7,6 +7,8 @@ queue badge + shared JS bundle tags), capability lock badges, and the
 <script src> tags for the static/wl-*.js bundles. main.py (and, from Phase 3,
 the per-feature route modules) imports these by name; no behaviour lives here.
 """
+import html as html_lib
+
 from fastapi import Request
 
 import audience
@@ -422,6 +424,42 @@ _FOOTER = (
 )
 
 
+# ── Social share metadata (OpenGraph + Twitter cards) ──────────────────────
+# Without these, pasting an OWL URL into LinkedIn/Slack renders as a bare
+# link — flagged as the launch-blocker in docs/anon_landing_audit_2026-06.md
+# §2.2. Default description = the OWL storytelling one-liner (Marketing,
+# 2026-07); the image is bin/make-og-card's output. Absolute URLs come from
+# `public_base_url` so cards work when shared from any session.
+OG_DESCRIPTION = (
+    "The real energy cost of video transcoding and AI inference — measured "
+    "live at the wall on Greening of Streaming's open bench. Every number is "
+    "a real measurement: reproducible, citable, confidence-rated."
+)
+
+
+def og_meta_html(title: str, path: str = "/", description: str | None = None) -> str:
+    """OpenGraph/Twitter meta block for a page's <head>. `title`/`description`
+    should be plain text (escaped here); `path` is the request path."""
+    base = cfg.load().get("public_base_url", "").rstrip("/")
+    e = html_lib.escape
+    t, desc = e(title, quote=True), e(description or OG_DESCRIPTION, quote=True)
+    return (
+        f'<meta name="description" content="{desc}">'
+        '<meta property="og:type" content="website">'
+        '<meta property="og:site_name" content="OWL · Greening of Streaming">'
+        f'<meta property="og:title" content="{t}">'
+        f'<meta property="og:description" content="{desc}">'
+        f'<meta property="og:url" content="{base}{e(path, quote=True)}">'
+        f'<meta property="og:image" content="{base}/static/og-card.png">'
+        '<meta property="og:image:width" content="1200">'
+        '<meta property="og:image:height" content="630">'
+        '<meta name="twitter:card" content="summary_large_image">'
+        f'<meta name="twitter:title" content="{t}">'
+        f'<meta name="twitter:description" content="{desc}">'
+        f'<meta name="twitter:image" content="{base}/static/og-card.png">'
+    )
+
+
 def _findings_on() -> bool:
     """Single flag read shared by the footer link and the public nav, so the
     two surfaces can't drift when `findings_enabled` flips."""
@@ -568,6 +606,7 @@ def render_page(request: Request, title: str, body: str, *,
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
   <title>OWL — {title}</title>
+    {og_meta_html(f"OWL — {title}", request.url.path)}
 {head}    <style>
 {styles}{_HEADER_STYLES}
     </style>

@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Generate the social share card (og:image) at wattlab_service/static/og-card.png.
+
+1200x630 (the LinkedIn/OpenGraph canonical size), OWL identity: #0a0a0a bg,
+#00ff99 accent, monospace type, traffic-light confidence dots. Pure PIL —
+no SVG rasterizer on GoS1. Re-run after wording/identity changes.
+"""
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+OUT = Path(__file__).resolve().parent.parent / "wattlab_service" / "static" / "og-card.png"
+MONO = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+MONO_B = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
+
+BG, ACCENT, TEXT, DIM = "#0a0a0a", "#00ff99", "#e8e8e8", "#9a9a9a"
+
+img = Image.new("RGB", (1200, 630), BG)
+d = ImageDraw.Draw(img)
+
+# frame
+d.rectangle([24, 24, 1175, 605], outline="#1f3a2e", width=2)
+
+# wordmark + subtitle
+d.text((80, 96), "OWL", font=ImageFont.truetype(MONO_B, 150), fill=ACCENT)
+d.text((84, 268), "Online WattLab · Greening of Streaming",
+       font=ImageFont.truetype(MONO, 34), fill=DIM)
+
+# tagline (from the OWL storytelling doc)
+tagline = ["The real energy cost of video transcoding",
+           "and AI inference — measured live at the wall.",
+           "Reproducible. Citable. Open."]
+f_tag = ImageFont.truetype(MONO, 40)
+for i, line in enumerate(tagline):
+    d.text((84, 360 + i * 56), line, font=f_tag, fill=TEXT)
+
+# confidence traffic light + footer url (right-aligned, no collision)
+f_foot = ImageFont.truetype(MONO, 26)
+for i, c in enumerate(("#00cc66", "#e6b800", "#cc3333")):
+    d.ellipse([84 + i * 44, 545, 84 + i * 44 + 24, 569], fill=c)
+d.text((228, 545), "confidence-rated", font=f_foot, fill=DIM)
+url = "wattlab.greeningofstreaming.org"
+d.text((1175 - 32 - d.textlength(url, font=f_foot), 545), url,
+       font=f_foot, fill=ACCENT)
+
+img.save(OUT, optimize=True)
+print(f"{OUT} ({OUT.stat().st_size/1024:.0f} kB)")

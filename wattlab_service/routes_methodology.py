@@ -33,6 +33,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
 <title>OWL Measurement Methodology</title>
+<!--OG_META-->
 <style>
   :root {
     --bg: #0a0a0a;
@@ -763,6 +764,11 @@ async def methodology_page(request: Request):
     s = cfg.load()
     recovery = _recovery_chart_payload(s.get("variance_cooldown_s", 40))
     return (_METHODOLOGY_HTML
+            .replace("<!--OG_META-->",       ui.og_meta_html(
+                "OWL Measurement Methodology", "/methodology",
+                "How OWL measures: wall-metered baselines and deltas, "
+                "traffic-light confidence on every claim, explicit scope. "
+                "The full public protocol."))
             .replace("{AUTH_CHIP_STYLES}",   _AUTH_CHIP_STYLES)
             .replace("{AUTH_CHIP}",          _auth_chip_html(request))
             .replace("{BASELINE_POLLS}",     str(s.get("baseline_polls",     "—")))

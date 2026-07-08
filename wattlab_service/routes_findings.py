@@ -19,6 +19,7 @@ import settings as cfg
 import version
 from capabilities import requires, PUBLIC_PAGE
 from persist import load_result
+import ui
 from ui import _BACK, _BASE_STYLES, _CARBON_JS, _RESULT_JS
 
 router = APIRouter()
@@ -183,7 +184,9 @@ def _finding_page_html(f, public_base_url: str) -> str:
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{e(f.headline[:80])} — OWL Finding</title>'
-        f'<meta name="description" content="{e(f.claim_short)}">'
+        # Share card: og:title = the finding's headline so a LinkedIn paste of
+        # a per-finding URL previews the claim itself, not generic site copy.
+        f'{ui.og_meta_html(f.headline, f"/findings/{f.slug}", f.claim_short)}'
         f'{_BASE_STYLES}'
         '<style>'
           '.finding-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
@@ -359,7 +362,9 @@ def _findings_catalog_page_html() -> str:
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>OWL — Findings (Beta)</title>'
-        '<meta name="description" content="OWL findings — citable energy measurements from the Greening of Streaming bench.">'
+        + ui.og_meta_html("OWL — Findings", "/findings",
+                          "Citable, confidence-rated energy measurements from "
+                          "the Greening of Streaming bench.") +
         f'{_BASE_STYLES}'
         f'{_FINDINGS_CATALOG_CSS}'
         '<style>'

@@ -175,3 +175,27 @@ def test_public_nav_findings_follows_flag(monkeypatch):
     monkeypatch.setattr(ui.cfg, "load", off)
     t = c.get("/video", headers={"x-real-ip": "8.8.8.8"}).text
     assert 'href="/findings"' not in t
+
+
+def test_social_share_meta_on_all_pages(monkeypatch):
+    """OpenGraph/Twitter cards (the S49 §2.2 LinkedIn launch-blocker):
+    every page previews with the OWL card; per-finding pages preview the
+    finding's own headline so shared finding links carry the claim."""
+    from fastapi.testclient import TestClient
+    import findings as findings_mod
+    import main
+    c = TestClient(main.app)
+    for path in ("/demo", "/video", "/methodology"):
+        t = c.get(path, headers={"x-real-ip": "8.8.8.8"}).text
+        assert 'property="og:image" content="https://' in t, path
+        assert "og-card.png" in t and 'og:title' in t, path
+        assert 'name="twitter:card"' in t, path
+    items = findings_mod.list_all()
+    assert items, "findings catalog empty — can't test per-finding og"
+    f = items[0]
+    t = c.get(f"/findings/{f.slug}", headers={"x-real-ip": "8.8.8.8"}).text
+    import html as html_lib
+    assert html_lib.escape(f.headline, quote=True)[:60] in t
+    assert f'/findings/{f.slug}"' in t          # og:url is the permalink
+    t = c.get("/findings", headers={"x-real-ip": "8.8.8.8"}).text
+    assert 'og:title' in t and "og-card.png" in t
