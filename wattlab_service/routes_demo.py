@@ -1015,12 +1015,16 @@ async function loadEnhancePreviews() {{
 }}
 
 // One control for BOTH clips (they start paused on their posters): re-sync
-// on every toggle so the comparison never drifts apart across loops.
+// on every toggle so the comparison never drifts apart across loops. Both
+// files carry the clip's original audio but only 'before' is unmuted —
+// two synced tracks would echo. Unmuting inside the click handler is a
+// user gesture, so mobile browsers allow it.
 function wlToggleEnhancePreview() {{
   const before = document.getElementById('enhance-vid-before');
   const after = document.getElementById('enhance-vid-after');
   const btn = document.getElementById('enhance-playpause');
   if (before.paused) {{
+    before.muted = false;
     after.currentTime = before.currentTime;
     before.play(); after.play();
     btn.innerHTML = '&#10074;&#10074; Pause both';

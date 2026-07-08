@@ -53,9 +53,13 @@ def _encode(src: Path, dst_mp4: Path, dst_jpg: Path, *, start: float, dur: float
     else:
         vf = f"{geometry},format=yuv420p"
     common = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+    # Audio kept (the 2005 clip's sound is part of the demo) — resampled to a
+    # web-safe rate (the source is 7832 Hz PCM). The tour plays only ONE
+    # clip's audio at a time (JS unmutes 'before'), so no echo.
     subprocess.run(common + ["-ss", str(start), "-t", str(dur), "-i", str(src),
-                             "-an", "-vf", vf, "-r", "30",
+                             "-vf", vf, "-r", "30",
                              "-c:v", "libx264", "-preset", "slow", "-crf", "21",
+                             "-c:a", "aac", "-ar", "22050", "-ac", "1", "-b:a", "48k",
                              "-movflags", "+faststart", str(dst_mp4)], check=True)
     subprocess.run(common + ["-ss", str(start), "-i", str(src),
                              "-frames:v", "1", "-vf", vf, "-q:v", "3",
