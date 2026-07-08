@@ -185,8 +185,9 @@ def _finding_page_html(f, public_base_url: str) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{e(f.headline[:80])} — OWL Finding</title>'
         # Share card: og:title = the finding's headline so a LinkedIn paste of
-        # a per-finding URL previews the claim itself, not generic site copy.
-        f'{ui.og_meta_html(f.headline, f"/findings/{f.slug}", f.claim_short)}'
+        # a per-finding URL previews the claim itself — suffixed with the OWL
+        # one-liner so a cold viewer still learns who measured it and how.
+        f'{ui.og_meta_html(f.headline, f"/findings/{f.slug}", f.claim_short + " — measured on OWL, Greening of Streaming’s open bench. Live at the wall, reproducible, confidence-rated.")}'
         f'{_BASE_STYLES}'
         '<style>'
           '.finding-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
