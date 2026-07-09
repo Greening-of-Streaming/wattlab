@@ -143,9 +143,11 @@ def test_page_references_only_existing_bundles(path):
 # ── Slim public nav (2026-07-07 anon-experience redesign) ────────────────────
 
 def test_public_nav_on_all_tiers():
-    """Every render_page page carries the compact nav; before this an
-    anonymous visitor could not reach /video or /video/budget without
-    typing the URL."""
+    """Every render_page page carries the compact nav of TOP-LEVEL sections
+    (budget is a /video subpage, reached with context from /video and the
+    tour's budget step — owner call 2026-07-09). Enhancement is
+    tier-resolved: members get /enhance-run, anonymous visitors deep-link
+    to the tour's showcase step instead of the members-only gate."""
     from fastapi.testclient import TestClient
     import main
     c = TestClient(main.app)
@@ -153,11 +155,17 @@ def test_public_nav_on_all_tiers():
                           ("/demo", {"x-real-ip": "8.8.8.8"}),
                           ("/settings", {"x-real-ip": "127.0.0.1"})):
         t = c.get(path, headers=headers).text
-        for href in ('href="/demo"', 'href="/video"',
-                     'href="/video/budget"', 'href="/methodology"'):
+        for href in ('href="/demo"', 'href="/video"', 'href="/methodology"'):
             assert href in t, f"{path} nav missing {href}"
-        assert 'href="/enhance-run"' not in t or path == "/settings", \
-            f"{path} must not advertise the member-gated enhance page"
+        if path == "/settings":                      # Lab tier
+            assert 'href="/enhance-run"' in t
+        else:                                        # Anonymous
+            assert 'href="/demo#enhance"' in t, f"{path} anon nav missing enhance deep-link"
+            assert 'href="/enhance-run"' not in t, \
+                f"{path} must not advertise the member-gated enhance page"
+    # The tour supports the deep link the nav relies on.
+    t = c.get("/demo", headers={"x-real-ip": "8.8.8.8"}).text
+    assert "HASH_STEPS" in t and "enhance: 3" in t
 
 
 def test_public_nav_findings_follows_flag(monkeypatch):

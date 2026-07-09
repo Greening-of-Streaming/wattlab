@@ -929,10 +929,13 @@ var WL_CFG = window.WL_CFG;
         var rows = entries.map(function(e){
           var pct = (e[1] / totalPos) * 100;
           var pctStr = pct >= 1 ? pct.toFixed(0) + '%' : pct.toFixed(1) + '%';
-          return '<div style="display:flex;justify-content:space-between;'
-               + 'padding:0.15rem 0.4rem;font-family:monospace">'
-               + '<span style="color:var(--text-2)">' + (labels[e[0]] || e[0]) + '</span>'
-               + '<span style="color:var(--text-3)">' + Math.round(e[1]) + ' MW</span>'
+          // Label takes the slack; MW and % are fixed-width right-aligned
+          // columns so the digits line up down the table (a space-between
+          // middle child floated per-row and read as misaligned).
+          return '<div style="display:flex;gap:1rem;'
+               + 'padding:0.15rem 0.4rem;font-family:monospace;font-variant-numeric:tabular-nums">'
+               + '<span style="color:var(--text-2);flex:1">' + (labels[e[0]] || e[0]) + '</span>'
+               + '<span style="color:var(--text-3);min-width:80px;text-align:right">' + Math.round(e[1]) + ' MW</span>'
                + '<span style="color:var(--text);min-width:50px;text-align:right">' + pctStr + '</span>'
                + '</div>';
         }).join('');

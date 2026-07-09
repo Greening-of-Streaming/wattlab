@@ -16,7 +16,7 @@ import auth
 import gpu
 import settings as cfg
 import version
-from capabilities import can
+from capabilities import can, ENHANCE_RUN
 from power import meter_display_name, meter_cadence_label
 
 # ── External links — single source of truth ─────────────────────────────────
@@ -473,22 +473,29 @@ def _footer() -> str:
 
 # Slim public nav (2026-07-07 anon-experience redesign). Before this, an
 # anonymous visitor's only surfaces were the /demo tour and the footer —
-# /video and /video/budget were unreachable without typing URLs. One compact
-# row, same links for every tier (tier gates live on the pages/actions, not
-# the nav); Member/Lab keep their fuller home grid on /.
-_NAV_ITEMS = (
-    ("/demo", "Tour"),
-    ("/video", "Video"),
-    ("/video/budget", "Energy budget"),
-    ("/findings", "Findings"),          # rendered only when _findings_on()
-    ("/methodology", "Methodology"),
-)
+# /video was unreachable without typing URLs. One compact row of TOP-LEVEL
+# sections (the budget planner is a /video subpage, linked with context from
+# /video and the tour's budget step — owner call 2026-07-09); Member/Lab
+# keep their fuller home grid on /. "Enhancement" is tier-resolved: members
+# get the real page, anonymous visitors deep-link to the tour's showcase
+# step instead of hitting the members-only gate.
+def _nav_items(request: Request) -> tuple:
+    enhance_href = ("/enhance-run"
+                    if can(audience.tier(request), ENHANCE_RUN)
+                    else "/demo#enhance")
+    return (
+        ("/demo", "Tour"),
+        ("/video", "Video"),
+        (enhance_href, "Enhancement"),
+        ("/findings", "Findings"),      # rendered only when _findings_on()
+        ("/methodology", "Methodology"),
+    )
 
 
 def _nav_html(request: Request) -> str:
     path = request.url.path
     links = []
-    for href, label in _NAV_ITEMS:
+    for href, label in _nav_items(request):
         if href == "/findings" and not _findings_on():
             continue
         active = path == href

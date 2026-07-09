@@ -973,6 +973,17 @@ function revealNext(n) {{
   if (el) el.style.display = 'block';
 }}
 
+// Deep-linkable steps — the public nav's Enhancement item sends anonymous
+// visitors to /demo#enhance (the showcase) instead of the members-only
+// /enhance-run gate. hashchange handles same-page nav clicks.
+const HASH_STEPS = {{video: 1, budget: 2, enhance: 3, confidence: 7, findings: 8}};
+function goHashStep() {{
+  const n = HASH_STEPS[location.hash.replace('#', '')];
+  if (n !== undefined) goStep(n);
+}}
+window.addEventListener('hashchange', goHashStep);
+goHashStep();
+
 function loadVideoStep() {{
   document.getElementById('video-status').innerHTML = '<p class="progress-note" style="color:var(--text-3)">Loading last result…</p>';
   showPrevVideo();
