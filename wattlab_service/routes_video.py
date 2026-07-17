@@ -127,6 +127,9 @@ async def video_page(request: Request):
     lk_upload_badge   = _lock_badge_html(request, CUSTOM_UPLOAD, "Upload — Members only")
     upload_disabled   = _disabled_attr(request, CUSTOM_UPLOAD)
     retention_picker  = ui.upload_retention_radios(disabled=upload_disabled)
+    # Per-run VMAF toggle defaults from the global vmaf_enabled setting
+    # (VMAF-polish item 4): terminal pass, so it only trades wall time.
+    vmaf_checked      = " checked" if cfg.load().get("vmaf_enabled", True) else ""
     queue_depth = queue_control.depth()
     busy_banner = (f'<div style="background:var(--border-3);color:var(--warn);padding:0.75rem 1rem;'
                    f'margin-bottom:1rem;font-size:0.85rem">'
@@ -377,6 +380,15 @@ async def video_page(request: Request):
         <input type="file" id="fileInput" accept=".mp4,.mov,.mkv,.avi,.webm,.ts"{upload_disabled}>
         {retention_picker}
     </div>
+    <div style="margin:0.5rem 0 0.75rem">
+        <label style="font-size:0.8rem;color:var(--text-3);cursor:pointer">
+            <input type="checkbox" id="vmafToggle"{vmaf_checked}> Score quality (VMAF) after comparison runs
+        </label>
+        <div style="font-size:0.7rem;color:var(--text-5);margin-top:0.15rem">
+            Scored after the measurement window closes — never part of the energy figure, but it adds
+            minutes of wall time. Uncheck for a faster energy-only run. Single-preset runs never score.
+        </div>
+    </div>
     <button id="runBtn" onclick="uploadAndRun()"{upload_disabled}>Upload & Measure</button>
 
     <div id="status"></div>
@@ -600,6 +612,7 @@ async def video_page(request: Request):
                 form.append('preset', selectedPreset);
                 const _ret = document.querySelector('input[name=retention]:checked');
                 form.append('retention', _ret ? _ret.value : 'evict');
+                form.append('compute_vmaf', document.getElementById('vmafToggle').checked ? 'true' : 'false');
                 for (const [k, v] of Object.entries(cmds)) form.append(k, v);
                 resp = await fetch('/video/upload', {{ method: 'POST', body: form }});
             }} else {{
@@ -607,6 +620,7 @@ async def video_page(request: Request):
                 const form = new FormData();
                 form.append('source_key', selectedSource);
                 form.append('preset', selectedPreset);
+                form.append('compute_vmaf', document.getElementById('vmafToggle').checked ? 'true' : 'false');
                 for (const [k, v] of Object.entries(cmds)) form.append(k, v);
                 resp = await fetch('/video/use-source', {{ method: 'POST', body: form }});
             }}
@@ -777,7 +791,7 @@ async def video_page(request: Request):
 
 async def run_job(job_id: str, input_path: Path, preset: str, delete_after: bool = True,
                   custom_cmd: str = None, custom_cmd_cpu: str = None, custom_cmd_gpu: str = None,
-                  source_key: str = None):
+                  source_key: str = None, vmaf_override: bool = None):
     try:
         jobs[job_id].update({"status": "running", "stage": "starting"})
         _BOTH_PRESETS = {
@@ -786,16 +800,19 @@ async def run_job(job_id: str, input_path: Path, preset: str, delete_after: bool
             "av1_both":  ("av1_cpu",  "av1_gpu"),
         }
         if preset == "all_codecs":
-            result = await run_all_measurement(input_path, job_id, jobs)
+            result = await run_all_measurement(input_path, job_id, jobs,
+                                               vmaf_override=vmaf_override)
         elif preset in ("codecs_cpu", "codecs_gpu"):
             result = await run_codecs_single_measurement(
-                input_path, job_id, jobs, side=preset.split("_", 1)[1])
+                input_path, job_id, jobs, side=preset.split("_", 1)[1],
+                vmaf_override=vmaf_override)
         elif preset in _BOTH_PRESETS:
             p_cpu, p_gpu = _BOTH_PRESETS[preset]
             result = await run_both_measurement(input_path, job_id, jobs,
                                                 custom_cmd_cpu=custom_cmd_cpu,
                                                 custom_cmd_gpu=custom_cmd_gpu,
-                                                preset_cpu=p_cpu, preset_gpu=p_gpu)
+                                                preset_cpu=p_cpu, preset_gpu=p_gpu,
+                                                vmaf_override=vmaf_override)
         else:
             result = await run_video_measurement(input_path, job_id, preset, jobs,
                                                  custom_cmd=custom_cmd)
@@ -825,6 +842,7 @@ async def use_preloaded_source(
     custom_cmd: str = Form(None),
     custom_cmd_cpu: str = Form(None),
     custom_cmd_gpu: str = Form(None),
+    compute_vmaf: str = Form(""),   # ""=follow global vmaf_enabled; "true"/"false" per-run
 ):
     if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs", "codecs_cpu", "codecs_gpu"):
         return JSONResponse({"error": "Invalid preset"}, status_code=400)
@@ -842,12 +860,15 @@ async def use_preloaded_source(
     job_id = str(uuid.uuid4())[:8]
     label = f"Video — {preset} · {source['label']}"
 
+    vmaf_override = None if compute_vmaf == "" else compute_vmaf == "true"
+
     async def coro():
         await run_job(job_id, source["path"], preset, False,
                       custom_cmd=custom_cmd,
                       custom_cmd_cpu=custom_cmd_cpu,
                       custom_cmd_gpu=custom_cmd_gpu,
-                      source_key=source_key)
+                      source_key=source_key,
+                      vmaf_override=vmaf_override)
 
     position = queue_control.enqueue(job_id, "video", label, coro, request=request)
     if position is None:
@@ -863,6 +884,7 @@ async def upload_video(
     custom_cmd: str = Form(None),
     custom_cmd_cpu: str = Form(None),
     custom_cmd_gpu: str = Form(None),
+    compute_vmaf: str = Form(""),   # ""=follow global vmaf_enabled; "true"/"false" per-run
 ):
     if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs", "codecs_cpu", "codecs_gpu"):
         return JSONResponse({"error": "Invalid preset"}, status_code=400)
@@ -902,11 +924,14 @@ async def upload_video(
     input_path = saved["path"]
     label = f"Video — {preset} · {file.filename}"
 
+    vmaf_override = None if compute_vmaf == "" else compute_vmaf == "true"
+
     async def coro():
         await run_job(job_id, input_path, preset, True,
                       custom_cmd=custom_cmd,
                       custom_cmd_cpu=custom_cmd_cpu,
-                      custom_cmd_gpu=custom_cmd_gpu)
+                      custom_cmd_gpu=custom_cmd_gpu,
+                      vmaf_override=vmaf_override)
 
     position = queue_control.enqueue(job_id, "video", label, coro, request=request)
     if position is None:

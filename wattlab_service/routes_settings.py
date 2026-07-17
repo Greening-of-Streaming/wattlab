@@ -439,7 +439,7 @@ async def settings_page(request: Request):
     {field("h264_bitrate_kbps", s['h264_bitrate_kbps'], 500, 20000, "kbps", f"H.264 target bitrate (libx264 + {_gpu_enc('h264')})", step=100)}
     {field("h265_bitrate_kbps", s['h265_bitrate_kbps'], 500, 20000, "kbps", f"H.265 target bitrate (libx265 + {_gpu_enc('h265')})", step=100)}
     {field("av1_bitrate_kbps",  s['av1_bitrate_kbps'],  500, 20000, "kbps", f"AV1 target bitrate (libsvtav1 + {_gpu_enc('av1')})", step=100)}
-    {field("target_vmaf",       s.get('target_vmaf', 92), 50, 100, "VMAF", "operator quality target — the VMAF an encode should hit while minimising energy. Anchors the /video/budget calculator and the encode-parity/calibration study; display/analysis anchor only, does not change what /video encodes per-run.")}
+    {field("target_vmaf",       s.get('target_vmaf', 92), 50, 100, "VMAF", "operator quality target — the VMAF an encode should hit while minimising energy. Anchors the /video/budget calculator and the encode-parity/calibration study; display/analysis anchor only, does not change what /video encodes per-run. ⚠ calibrated in vmaf_v0.6.1 terms — live scoring moved to VMAF v1 (vmaf_model setting) 2026-07; revisit at the next re-calibration.")}
 
     <div class="section" id="s-confidence">Confidence thresholds — CI model (CR-028 Phase 2)</div>
     {field("conf_positive_green",  s.get('conf_positive_green', 0.95),  0.5, 0.999, "P", "🟢 min confidence_positive Φ(z) that task draws above idle", step=0.01)}

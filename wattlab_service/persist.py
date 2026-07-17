@@ -187,7 +187,7 @@ def to_csv(job_type: str, data: dict) -> str:
     elif job_type == "video":
         fieldnames = [
             "job_id", "saved_at", "mode", "preset", "duration_s",
-            "output_size_mb", "vmaf",
+            "output_size_mb", "vmaf", "vmaf_model",
             "w_base", "w_task", "delta_w", "delta_e_wh",
             "co2e_g", "co2e_intensity_g_per_kwh", "co2e_source", "co2e_zone",
             "poll_count", "confidence",
@@ -235,6 +235,16 @@ def to_csv(job_type: str, data: dict) -> str:
 
 # --- Internal helpers ---
 
+def _vmaf_model_export(score, model):
+    """Model provenance for exports. Results stored without `vmaf_model`
+    predate 2026-07-17, when the only model OWL ever ran was libvmaf's
+    built-in vmaf_v0.6.1 — exporting that as fact keeps old rows
+    self-describing next to v1-scored rows (different score currencies)."""
+    if score is None:
+        return None
+    return model or "vmaf_v0.6.1"
+
+
 def _co2e_fields(energy: dict) -> dict:
     """Pull the four flat CO2e CSV fields out of an `energy` dict's `co2e`
     block. Returns empty values if the block is absent (older results)."""
@@ -253,7 +263,7 @@ def _co2e_fields(energy: dict) -> dict:
 _REM_FIELDNAMES = [
     "output_filename", "share_token", "batch_id", "job_id", "saved_at",
     "codec", "device", "height", "target_mode", "target_value",
-    "achieved_vmaf", "achieved_bitrate_kbps", "converged",
+    "achieved_vmaf", "vmaf_model", "achieved_bitrate_kbps", "converged",
     "w_base", "w_task", "delta_w", "delta_t_s", "delta_e_wh",
     "decode_wh", "encode_wh",
     "co2e_g", "co2e_intensity_g_per_kwh", "co2e_source", "co2e_zone",
@@ -286,6 +296,8 @@ def _rem_row(data: dict) -> dict:
         "target_mode": mode,
         "target_value": target_value,
         "achieved_vmaf": data.get("achieved_vmaf"),
+        "vmaf_model": _vmaf_model_export(data.get("achieved_vmaf"),
+                                         data.get("vmaf_model")),
         "achieved_bitrate_kbps": data.get("achieved_bitrate_kbps"),
         "converged": data.get("converged"),
         "w_base": e.get("w_base"), "w_task": e.get("w_task"),
@@ -690,6 +702,7 @@ def _video_result_row(common: dict, r: dict) -> dict:
         "duration_s": e.get("delta_t_s"),
         "output_size_mb": r.get("output_size_mb"),
         "vmaf": r.get("vmaf"),
+        "vmaf_model": _vmaf_model_export(r.get("vmaf"), r.get("vmaf_model")),
         "w_base": e.get("w_base"), "w_task": e.get("w_task"),
         "delta_w": e.get("delta_w"), "delta_e_wh": e.get("delta_e_wh"),
         **_co2e_fields(e),

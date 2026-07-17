@@ -112,6 +112,31 @@
          + kind + ' result format not recognised' + m + ' — run a new measurement.</p>';
   }
 
+  // VMAF model provenance (2026-07 v0→v1 upgrade). Sides carry `vmaf_model`;
+  // stored results WITHOUT it predate provenance and were all scored by
+  // libvmaf's built-in vmaf_v0.6.1 — label them v0 explicitly. v0 and v1
+  // scores are different currencies (same clip pair: 77.95 v0 vs 83.59 v1);
+  // they must never be compared against each other.
+  function _wlVmafShort(r){
+    if (!r || r.vmaf == null) return '';
+    var m = r.vmaf_model || 'vmaf_v0.6.1';
+    if (m.indexOf('v1.0.16') !== -1) return 'v1';
+    if (m.indexOf('v0.6.1') !== -1) return 'v0';
+    return m;
+  }
+  function _wlVmafTag(r){
+    var s = _wlVmafShort(r);
+    return s ? ' (' + s + ')' : '';
+  }
+  function _wlVmafModelNote(recs){
+    var m = null, any = false;
+    (recs || []).forEach(function(r){
+      if (r && r.vmaf != null){ any = true; if (r.vmaf_model && !m) m = r.vmaf_model; }
+    });
+    if (!any) return '';
+    return ' · model ' + (m || 'vmaf_v0.6.1 (scored before 2026-07; see /methodology)');
+  }
+
   // ─── Video ───────────────────────────────────────────────────────────────
   // Single-device codec sweep card (modes codecs_cpu / codecs_gpu). One shared
   // helper used by BOTH the /video fresh-run renderResult and the prev-row /
@@ -123,11 +148,12 @@
     var sideLbl = side.toUpperCase();
     var devLbl = side === 'gpu' ? 'GPU (hardware)' : 'CPU (software)';
     var codecOrder = [['h264','H.264'],['h265','H.265'],['av1','AV1']];
-    var rows = '', subRuns = [], bestVmaf = null, bestVmafLbl = null;
+    var rows = '', subRuns = [], vmafRecs = [], bestVmaf = null, bestVmafLbl = null;
     codecOrder.forEach(function(co){
       var key = co[0], lbl = co[1];
       var c = codecs[key]; if (!c) return;
       var sub = c[side]; if (!sub || !sub.energy) return;
+      vmafRecs.push(sub);
       var e = sub.energy;
       var conf = (e.confidence && e.confidence.flag) || '';
       var isEff  = a.most_efficient && a.most_efficient.codec === key;
@@ -181,7 +207,7 @@
       + '<th style="text-align:center;padding:0.3rem 0.5rem">Conf</th>'
       + '</tr></thead><tbody>' + rows + '</tbody></table>'
       + '<div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.5rem">'
-      + '✓ most efficient · 🏁 fastest · same source + target bitrate · VMAF = perceptual quality 0–100 (higher better)</div>'
+      + '✓ most efficient · 🏁 fastest · same source + target bitrate · VMAF = perceptual quality 0–100 (higher better)' + _wlVmafModelNote(vmafRecs) + '</div>'
       + (stripWh != null ? wlCarbonStrip(stripWh, stripLabel, stripDur, stripSavedG, subRuns) : '')
       + '<p class="scope-note">Device layer only (GoS1). Network, CDN, CPE excluded.</p>'
       + '</div>';
@@ -304,7 +330,7 @@
         + '<div class="section-title">Encode</div>'
         + _wlMetricRow('Duration', e.delta_t_s + (isSpeedWinner ? ' 🏁' : ''), 's')
         + _wlMetricRow('Output size', res.output_size_mb, 'MB')
-        + _wlMetricRow('VMAF', res.vmaf != null ? res.vmaf : '—')
+        + _wlMetricRow('VMAF' + _wlVmafTag(res), res.vmaf != null ? res.vmaf : '—')
         + cmdNote
         + '<div class="section-title">Power</div>'
         + _wlMetricRow('Baseline', e.w_base, 'W')
@@ -407,6 +433,13 @@
       + (bestS ? bestS.label + ' (' + bestS.delta_t_s + 's)' : '—') + '</span></span>'
       + '</div>';
 
+    // All sides with a VMAF, for the model-provenance footnote
+    var _allSides = [];
+    codecOrder.forEach(function(co){
+      var cd = codecs[co[0]];
+      if (cd){ _allSides.push(cd.cpu); _allSides.push(cd.gpu); }
+    });
+
     // Per-codec collapsible detail
     function miniCol(res){
       var e = res.energy, t = res.thermals || {};
@@ -415,7 +448,7 @@
         + '<div style="color:var(--text-3);font-size:0.72rem;margin-bottom:0.4rem">' + (res.preset_label || '') + '</div>'
         + _wlMetricRow('Duration', e.delta_t_s, 's')
         + _wlMetricRow('Output size', res.output_size_mb, 'MB')
-        + _wlMetricRow('VMAF', res.vmaf != null ? res.vmaf : '—')
+        + _wlMetricRow('VMAF' + _wlVmafTag(res), res.vmaf != null ? res.vmaf : '—')
         + _wlMetricRow('Baseline', e.w_base, 'W')
         + _wlMetricRow('ΔW', e.delta_w, 'W')
         + _wlMetricRow('ΔE', e.delta_e_wh, 'Wh')
@@ -488,7 +521,7 @@
       + '</tr></thead>'
       + '<tbody style="font-family:monospace">' + tableRows + '</tbody>'
       + '</table>'
-      + '<div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.25rem">✓ energy winner · 🏁 speed winner · CPU out / GPU out should match — confirms same bitrate target · VMAF = perceptual quality 0–100 (higher better)</div>'
+      + '<div style="font-size:0.7rem;color:var(--text-5);margin-bottom:0.25rem">✓ energy winner · 🏁 speed winner · CPU out / GPU out should match — confirms same bitrate target · VMAF = perceptual quality 0–100 (higher better)' + _wlVmafModelNote(_allSides) + '</div>'
       + highlights
       + '<div style="margin-top:1rem;color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Per-codec detail</div>'
       + details

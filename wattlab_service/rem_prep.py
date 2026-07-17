@@ -63,6 +63,7 @@ from typing import Optional
 import gpu
 import power
 import energy
+import quality
 import settings as cfg
 import sources
 import video
@@ -826,6 +827,8 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
         "tolerance": tol,
         "metered": metered,
         "achieved_vmaf": video_result.get("vmaf"),
+        "vmaf_model": (quality.vmaf_model_id()
+                       if video_result.get("vmaf") is not None else None),
         "achieved_bitrate_kbps": accepted_bps,
         "converged": bool(search.get("converged")),
         "search": {"iterations": search.get("iterations"),

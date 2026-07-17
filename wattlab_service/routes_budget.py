@@ -249,6 +249,10 @@ def _band(fix: dict) -> str:
   <strong>1080p single rendition</strong> (not a full ABR ladder), per minute of source.
   Curves interpolate the measured VMAF-vs-bitrate points; the ASIC / FPGA class remains a
   <em>projected</em> placeholder until that hardware is on the bench.
+  VMAF figures here are <strong>vmaf_v0.6.1</strong> (the model in force at calibration);
+  OWL moved live scoring to VMAF&nbsp;v1 in 2026-07 &mdash; the two scales are not
+  comparable, so this page stays in v0 terms until the next
+  <a href="/methodology#energy-budget" style="color:#66ffcc">re-calibration</a>.
 </div>"""
 
 

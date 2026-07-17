@@ -36,6 +36,8 @@
   "vmaf_enabled": true,
   "vmaf_n_subsample": 1,
   "vmaf_n_threads": 12,
+  "vmaf_model": "v1",
+  "vmaf_ffmpeg_bin": "/srv/data/owl/vmaf/ffmpeg-score-20260717",
   "target_vmaf": 92,
   "pixop_image_tag": "pixop/live:2026.06.10",
   "pixop_workdir": "/srv/data/owl/pixop",

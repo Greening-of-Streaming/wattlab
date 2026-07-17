@@ -73,7 +73,7 @@ def test_summarise_codecs_gpu_all_green_false():
 def test_run_job_routes_codecs_cpu(monkeypatch):
     captured = {}
 
-    async def _fake(input_path, job_id, jobs, side="cpu"):
+    async def _fake(input_path, job_id, jobs, side="cpu", **kw):
         captured["side"] = side
         return {"mode": f"codecs_{side}", "codecs": {}, "analysis": {}}
 
@@ -90,7 +90,7 @@ def test_run_job_routes_codecs_cpu(monkeypatch):
 def test_run_job_routes_codecs_gpu(monkeypatch):
     captured = {}
 
-    async def _fake(input_path, job_id, jobs, side="cpu"):
+    async def _fake(input_path, job_id, jobs, side="cpu", **kw):
         captured["side"] = side
         return {"mode": f"codecs_{side}", "codecs": {}, "analysis": {}}
 

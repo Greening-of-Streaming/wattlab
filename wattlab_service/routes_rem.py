@@ -589,14 +589,17 @@ function renderResult(d, card) {
     energyHtml = '<div class="k">Encode energy</div><div class="v">— (produce-only)</div>';
   }
   // Target line depends on mode: VMAF search vs fixed bitrate.
+  // Model provenance: results without vmaf_model predate 2026-07 = v0.6.1.
+  const vmTag = d.achieved_vmaf==null ? '' :
+    ((d.vmaf_model||'vmaf_v0.6.1').indexOf('v1.0.16')!==-1 ? ' (v1)' : ' (v0)');
   let targetHtml;
   if (d.target_mode === 'bitrate') {
-    const vm = (d.achieved_vmaf==null) ? 'VMAF not computed' : 'VMAF '+ d.achieved_vmaf;
+    const vm = (d.achieved_vmaf==null) ? 'VMAF not computed' : 'VMAF'+ vmTag +' '+ d.achieved_vmaf;
     targetHtml = '<div class="k">Target bitrate</div><div class="v">'+ d.target_bitrate_kbps +
       ' kbps (fixed) → '+ vm +'</div>';
   } else {
     const conv = d.converged ? '✓ converged' : '⚠ best-effort (not within tolerance)';
-    targetHtml = '<div class="k">Target VMAF</div><div class="v">'+ d.target_vmaf +
+    targetHtml = '<div class="k">Target VMAF'+ vmTag +'</div><div class="v">'+ d.target_vmaf +
       ' → achieved '+ (d.achieved_vmaf==null?'?':d.achieved_vmaf) +' · '+ conv +'</div>';
   }
   card.innerHTML =

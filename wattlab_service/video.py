@@ -797,13 +797,24 @@ async def _attach_vmaf(sides: list, input_path: Path, job_id: str,
         r["vmaf"] = await loop.run_in_executor(
             None, lambda o=out: compute_vmaf(o, input_path, s)
         )
+        if r["vmaf"] is not None:
+            # Provenance: which model produced this score. Results without
+            # the field predate 2026-07-17 and are all vmaf_v0.6.1.
+            r["vmaf_model"] = quality.vmaf_model_id(s)
         if jobs is not None and job_id in jobs:
             jobs[job_id]["vmaf_done"] = jobs[job_id].get("vmaf_done", 0) + 1
 
 
-async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) -> dict:
-    """Run all 6 presets (H.264 / H.265 / AV1 × CPU / GPU) in codec pairs."""
+async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None,
+                              vmaf_override: Optional[bool] = None) -> dict:
+    """Run all 6 presets (H.264 / H.265 / AV1 × CPU / GPU) in codec pairs.
+
+    vmaf_override: per-run VMAF toggle (None = follow the global
+    vmaf_enabled setting). VMAF is a terminal pass, so skipping it never
+    changes the energy figures — only the wall time."""
     s = cfg.load()
+    if vmaf_override is not None:
+        s = {**s, "vmaf_enabled": bool(vmaf_override)}
     codec_pairs = [
         ("h264", "cpu",      "gpu"),
         ("h265", "h265_cpu", "h265_gpu"),
@@ -867,7 +878,8 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None) 
 
 
 async def run_codecs_single_measurement(input_path: Path, job_id: str,
-                                        jobs: dict = None, side: str = "cpu") -> dict:
+                                        jobs: dict = None, side: str = "cpu",
+                                        vmaf_override: Optional[bool] = None) -> dict:
     """Run all 3 codecs (H.264 / H.265 / AV1) on ONE device — CPU (software) or
     GPU (hardware). Codec-vs-codec energy + quality on a single device, with no
     CPU↔GPU confound. Sibling of run_all_measurement (the 6-way pairwise). The
@@ -878,6 +890,8 @@ async def run_codecs_single_measurement(input_path: Path, job_id: str,
     + {next_codec}_{side}_rest) so the /video progress widget can map them.
     """
     s = cfg.load()
+    if vmaf_override is not None:
+        s = {**s, "vmaf_enabled": bool(vmaf_override)}
     presets_by_side = {
         "cpu": [("h264", "cpu"), ("h265", "h265_cpu"), ("av1", "av1_cpu")],
         "gpu": [("h264", "gpu"), ("h265", "h265_gpu"), ("av1", "av1_gpu")],
@@ -960,8 +974,11 @@ async def run_both_measurement(input_path: Path, job_id: str, jobs: dict = None,
                                custom_cmd_cpu: str = None,
                                custom_cmd_gpu: str = None,
                                preset_cpu: str = "cpu",
-                               preset_gpu: str = "gpu") -> dict:
+                               preset_gpu: str = "gpu",
+                               vmaf_override: Optional[bool] = None) -> dict:
     s = cfg.load()
+    if vmaf_override is not None:
+        s = {**s, "vmaf_enabled": bool(vmaf_override)}
     if jobs is not None: jobs[job_id]["stage"] = "baseline"
     stopped = focus_mode_enter()
     baseline = await measure_baseline(polls=s["baseline_polls"])

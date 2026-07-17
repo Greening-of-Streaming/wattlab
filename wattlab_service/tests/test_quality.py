@@ -182,6 +182,28 @@ def test_pixop_probe_vqa_nr_delegates_to_quality(monkeypatch):
     assert seen["args"] == ("x.mp4", c)
 
 
+def test_attach_vmaf_stamps_model_provenance(tmp_path, monkeypatch):
+    # Every fresh video-side score must carry vmaf_model (results without it
+    # are read as legacy v0.6.1 — so new results MUST NOT omit it).
+    import asyncio
+    monkeypatch.setattr(video, "compute_vmaf", lambda d, r, s=None: 91.0)
+    sides = [{"preset_key": "cpu"}]
+    s = {"vmaf_enabled": True, "vmaf_model": "v0"}
+    asyncio.run(video._attach_vmaf(sides, tmp_path / "in.mp4", "j1", s, None))
+    assert sides[0]["vmaf"] == 91.0
+    assert sides[0]["vmaf_model"] == "vmaf_v0.6.1"
+
+
+def test_attach_vmaf_no_model_stamp_when_unscored(tmp_path, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(video, "compute_vmaf", lambda d, r, s=None: None)
+    sides = [{"preset_key": "cpu"}]
+    asyncio.run(video._attach_vmaf(sides, tmp_path / "in.mp4", "j1",
+                                   {"vmaf_enabled": True}, None))
+    assert sides[0]["vmaf"] is None
+    assert "vmaf_model" not in sides[0]
+
+
 def test_no_stray_libvmaf_invocations_outside_quality():
     # The single-funnel guarantee itself: no service module other than
     # quality.py may build a libvmaf filtergraph or spawn the VQA scorer.

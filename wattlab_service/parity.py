@@ -61,6 +61,7 @@ from typing import Optional
 import gpu
 import power
 import energy
+import quality
 import settings as cfg
 import video
 from confidence import confidence
@@ -389,6 +390,7 @@ async def _measure_recipe(ref: Path, job_id: str, codec: str, profile: str,
 
     return {
         "vmaf": vmaf,
+        "vmaf_model": quality.vmaf_model_id() if vmaf is not None else None,
         "ffmpeg_cmd": (last_tx or {}).get("ffmpeg_cmd"),
         "transcode_ok": (last_tx or {}).get("success"),
         "n_encodes": n_enc, "content_s": round(content_s, 1),
