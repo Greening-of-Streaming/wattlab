@@ -7,6 +7,49 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 55 — 2026-07-17
+
+**VMAF v1 adoption + quality.py single funnel.** Ben asked whether Netflix's newly
+announced VMAF v1 (TechBlog 2026-06-20, "industry calls it VMAF 2.0") would help OWL,
+then set the goal: one place to upgrade/roll back, all legacy scores understood for
+what they are.
+
+**Research first, measured on this bench.** v1 = model family `vmaf_v1.0.16` in
+libvmaf 3.2.0 (BSD+Patent, fully open): VIF dropped, CAMBI banding + first chroma
+feature + motion3 added — failure modes that sit exactly on OWL's tests
+(starvation-bitrate rungs band; kranjska is high-motion). Measured on the 45s BBB
+fixture pairs: compute cost ≈ a wash vs v0 (±5% total CPU; slightly worse wall at 20
+threads — VIF's savings pay for CAMBI+chroma); **scales NOT comparable** (same pair:
+77.95 v0 vs 83.59 v1). The installed `ffmpeg-master` (2026-05-07) can't load v1
+(missing `Speed_chroma` extractor) — and must never be bumped for scoring (encode
+binary; energy confound). Scoring assets staged at `/srv/data/owl/vmaf/`
+(`ffmpeg-score-20260717` BtbN build + all four v1 model JSONs).
+
+**quality.py — the single funnel** (commit `8769ca8`, behavior-neutral): the VMAF/VQA
+sweep found exactly ONE live runner of each (`video.compute_vmaf`,
+`pixop.probe_vqa_nr`); both implementations moved to a new `quality.py` (read_sensors
+delegate pattern — all callers/tests untouched), grown with: `vmaf_model`
+(v0|v1|path) + `vmaf_model_dir` + `vmaf_ffmpeg_bin` (scoring-only binary) settings,
+`vmaf_model_id()` provenance, `compute_psnr_ssim` (S48 fr_score.py capability),
+uhd variant → 4K models. Guard test: no libvmaf/VQA invocation outside quality.py.
+
+**v1 live** (commit `e3ccd15`): settings.json flipped (deliberate, part of the
+upgrade); every fresh score stamps `vmaf_model` (video sides, parity rows, REM
+deliverables, CSVs); **results without the field = vmaf_v0.6.1, labelled as such**
+everywhere (result cards tag (v0)/(v1) + model footnote; REM cards; CSV exports
+resolve legacy rows to vmaf_v0.6.1 as fact). `/video/budget` banner: calibration
+table + target_vmaf=92 stay v0-denominated until the next re-cal re-scores under v1.
+`/methodology` gained the v1 adoption note (Test Types) + budget model note. Also
+shipped VMAF-polish item 4: per-run "Score quality (VMAF)" checkbox on `/video`
+defaulting from `vmaf_enabled` (terminal pass — wall time only, never energy).
+Verified end-to-end post-restart: funnel scores the fixture pair 83.59 (matches the
+direct benchmark), pages serve the new copy. Tests 853→871.
+
+**Deferred deliberately:** parity/budget re-cal under v1 (owner-triggered via
+/reconfigure when wanted); kranjska has no degraded ladder so no FR score there yet
+(see memory: FR-VMAF sandwich plan for /enhance-run fixtures — model decision now
+resolved: compute new baselines in v1).
+
 ## Session 54 — 2026-07-07
 
 **Guided Tour v2 — the anonymous newbie path, recovered + redesigned.** Ben tested

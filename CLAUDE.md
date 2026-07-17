@@ -1,6 +1,13 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-07-07 (Session 54 — GUIDED TOUR v2 + ANON EXPERIENCE. The 2026-06-24 9-step tour was
+# Last updated: 2026-07-17 (Session 55 — VMAF v1 + quality.py single funnel. All quality metrics
+#   (FR VMAF/PSNR/SSIM + NR VQA) route through quality.py (video.py/pixop.py keep delegates);
+#   vmaf_model/vmaf_ffmpeg_bin settings = the one upgrade/rollback lever. Live scoring = VMAF v1
+#   (vmaf_v1.0.16_3d0h, scoring-only ffmpeg at /srv/data/owl/vmaf/ — NEVER bump ffmpeg_bin for
+#   scoring). v0/v1 scales NOT comparable (77.95 vs 83.59 same pair); every new score stamps
+#   vmaf_model; stored results without it = vmaf_v0.6.1, UI labels both. Budget/parity/target_vmaf
+#   stay v0-denominated until the next re-cal. /video per-run VMAF checkbox. Tests 871.)
+# Previous: 2026-07-07 (Session 54 — GUIDED TOUR v2 + ANON EXPERIENCE. The 2026-06-24 9-step tour was
 #   found stranded in a stash (never merged; its /enhance-run link-out 403'd anon = "the broken tour").
 #   Recovered + redesigned: core path Welcome→Video→Energy Budget→Video Enhancement→Confidence→Findings
 #   with LLM/Image/RAG as a clearly-optional AI detour (honest "Step n of 6" / "AI detour · n of 3"
@@ -183,6 +190,7 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S52 (06-16): HDR→4K enhancement unblocked — measured Jon's memory-throttle env vars (VRAM 94→85%, energy/throughput cost within noise), applied to hdr_4k combo ONLY (`_COMBO_ENV`/combo_env), `_COMBO_EXCLUSIONS` emptied, methodology + page "mild throttle" note/tooltip · /enhance-run progress bar fed `elapsed` · compare-disable HDR tooltip. →704.
 - S53 (06-18/19): encode-parity & energy-quality calibration — `parity.py`+`bin/run-encode-parity` harness (repeat-to-20s for NVENC sampling, per-row checkpoint, pause-not-stop poller guard); first 90-encode run (all 🟢) → NVENC 2.5–4.4× less Wh/min than CPU, GPU-worse-esp-AV1 gap is low-complexity/low-bitrate only (Meridian: NVENC AV1 beats libsvtav1), tuned NVENC bundle REJECTED for live (more energy, lower VMAF) · /video/budget auto-flips to measured (`budget_data.py`) · target_vmaf=92 on /settings · method note + /video/budget/reconfigure (Lab re-cal). Tests 704. ⚠ 1 restart pending. →704.
 - S54 (07-07): Guided Tour v2 — stranded 9-step tour recovered from stash + redesigned (core path w/ optional AI detour, honest counter) · pinned tour preloads (`demo_pinned_results`; enhance pin-only, rag pseudo-type) · /video rich renderer unified into wl-result.js (fresh==stored==embeds) · slim public nav all pages · budget-step teaser from current_fixture(). →849.
+- S55 (07-17): VMAF v1 adoption — quality.py single funnel (FR+NR metrics, delegate pattern), vmaf_model/vmaf_ffmpeg_bin settings lever, provenance stamping (`vmaf_model`; absent = legacy v0.6.1, UI labels both), /methodology v1 note, /video per-run VMAF checkbox · scoring binary separate from encode binary · budget/target_vmaf stay v0 until re-cal. →871.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
