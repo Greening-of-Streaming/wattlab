@@ -50,6 +50,15 @@ direct benchmark), pages serve the new copy. Tests 853→871.
 (see memory: FR-VMAF sandwich plan for /enhance-run fixtures — model decision now
 resolved: compute new baselines in v1).
 
+**Addendum — tour progress-bar drift** (`37efbb0`): Ben ran the tour's video job anon
+and the bar never mentioned VMAF — /demo's poll had its OWN 4-stage list with no
+'vmaf' index, so the multi-minute scoring pass rendered as "Baseline" (the CR-019
+factorisation had only shared the generic list; /video kept richer inline mode-aware
+ones). Fixed properly: wl-progress.js now owns WL_VIDEO_PRESET_STAGES/_IDX
+(preset-keyed) + wlVmafLine; /video and /demo both reference them; /demo gained the
+'Scoring quality (VMAF) — measurement already complete' banner + N-of-M line;
+drive-by av1_gpu_encode index fix; drift now test-guarded. Tests 872.
+
 ## Session 54 — 2026-07-07
 
 **Guided Tour v2 — the anonymous newbie path, recovered + redesigned.** Ben tested
