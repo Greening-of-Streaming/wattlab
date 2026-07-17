@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 import audience
 import persist
 import pixop
+import quality
 import routes_enhance
 import main
 
@@ -647,7 +648,7 @@ def test_parse_vqa_score():
 def test_probe_vqa_nr_missing_sandbox_fail_soft(tmp_path, monkeypatch):
     # Empty vqa_dir → None, and no subprocess is ever spawned.
     spawned = []
-    monkeypatch.setattr(pixop.subprocess, "run",
+    monkeypatch.setattr(quality.subprocess, "run",
                         lambda *a, **k: spawned.append(a))
     assert pixop.probe_vqa_nr(tmp_path / "x.mp4", _cfg(tmp_path)) is None
     assert spawned == []
@@ -687,7 +688,7 @@ def test_probe_vqa_nr_invocation_contract(tmp_path, monkeypatch):
             stderr = ""
         return R()
 
-    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    monkeypatch.setattr(quality.subprocess, "run", fake_run)
     out = pixop.probe_vqa_nr(clip, c)
     assert out["score"] == 9.76
     assert out["model"] == "CompressedVQA-HDR (NR)"
@@ -708,7 +709,7 @@ def test_probe_vqa_nr_parse_failure_fail_soft(tmp_path, monkeypatch):
             stderr = "boom"
         return R()
 
-    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    monkeypatch.setattr(quality.subprocess, "run", fake_run)
     assert pixop.probe_vqa_nr(clip, c) is None
 
 

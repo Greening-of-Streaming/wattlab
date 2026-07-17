@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional
 import settings as cfg
 import gpu
+import quality
 from confidence import confidence
 import power
 import energy
@@ -111,20 +112,8 @@ def _ffprobe_bin() -> str:
 
 
 def _probe_dims(path) -> Optional[tuple]:
-    """(width, height) of the first video stream's display frame, or None."""
-    try:
-        out = subprocess.run(
-            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0",
-             str(path)],
-            capture_output=True, text=True, timeout=10,
-        )
-        parts = out.stdout.strip().split("x")
-        if out.returncode == 0 and len(parts) >= 2:
-            return int(parts[0]), int(parts[1])
-    except Exception:
-        pass
-    return None
+    """(width, height) — delegates to quality.py (the FR-scoring prober)."""
+    return quality._probe_dims(path)
 
 
 def _probe_gop(path) -> dict:
@@ -195,77 +184,19 @@ def probe_output_stream(path) -> Optional[dict]:
 
 
 def _parse_vmaf_log(log_path) -> Optional[float]:
-    """Pull the pooled-mean VMAF from a libvmaf json log; None if unparseable."""
-    try:
-        data = json.loads(Path(log_path).read_text())
-        mean = data.get("pooled_metrics", {}).get("vmaf", {}).get("mean")
-        if mean is not None:
-            return round(float(mean), 2)
-        scores = [f.get("metrics", {}).get("vmaf") for f in data.get("frames", [])]
-        scores = [x for x in scores if x is not None]
-        if scores:
-            return round(sum(scores) / len(scores), 2)
-    except Exception:
-        pass
-    return None
+    """Delegates to quality.py — kept for existing importers."""
+    return quality._parse_vmaf_log(log_path)
 
 
 def compute_vmaf(distorted, reference, s: Optional[dict] = None) -> Optional[float]:
-    """Pooled-mean VMAF (0-100) of `distorted` vs `reference`, or None on any
-    failure (fail-soft, like other optional metrics).
+    """Pooled-mean VMAF of `distorted` vs `reference`, or None on any failure.
 
-    QA only. Callers MUST invoke this as a TERMINAL pass — after a job's
-    measurement window has closed (lock released, focus exited). Its CPU
-    draw is never polled, so it cannot enter a reported energy figure
-    (CR-044). Routes through ffmpeg_bin, the only build with libvmaf.
-
-    Dimension handling: the distorted is *cropped* (not scaled) to its own
-    delivered WxH and the reference is scaled to match. Cropping strips
-    VAAPI macroblock padding — the GPU HEVC path decodes 1080->1088, which
-    otherwise trips libvmaf with "input height must match" — without
-    resampling the signal we're measuring. Verified on a real CPU-vs-GPU
-    H.265 run 2026-05-22 (CPU 91.48 / GPU 91.31).
-    """
-    if s is None:
-        s = cfg.load()
-    if not s.get("vmaf_enabled", True):
-        return None
-    distorted, reference = Path(distorted), Path(reference)
-    if not (distorted.exists() and reference.exists()):
-        return None
-
-    dims = _probe_dims(distorted)   # display dims (1920x1080 for every preset)
-    if dims is None:
-        return None
-    tw, th = dims
-
-    sub = int(s.get("vmaf_n_subsample", 1) or 1)
-    nt = int(s.get("vmaf_n_threads", 12) or 12)
-    sub_opt = f":n_subsample={sub}" if sub > 1 else ""
-
-    fd, log = tempfile.mkstemp(prefix="owl_vmaf_", suffix=".json")
-    os.close(fd)
-    log = Path(log)
-    lavfi = (
-        f"[0:v]crop={tw}:{th}:0:0,setpts=PTS-STARTPTS[d];"
-        f"[1:v]scale={tw}:{th}:flags=bicubic,setpts=PTS-STARTPTS[r];"
-        f"[d][r]libvmaf=n_threads={nt}{sub_opt}:log_fmt=json:log_path={log}"
-    )
-    cmd = [_ffmpeg_bin(), "-y", "-i", str(distorted), "-i", str(reference),
-           "-lavfi", lavfi, "-f", "null", "-"]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        score = _parse_vmaf_log(log)
-        if score is None and proc.stderr and "VMAF score:" in proc.stderr:
-            try:
-                score = round(float(proc.stderr.split("VMAF score:")[-1].split()[0]), 2)
-            except Exception:
-                score = None
-        return score
-    except Exception:
-        return None
-    finally:
-        log.unlink(missing_ok=True)
+    Thin delegate — the implementation (model selection, scoring binary,
+    terminal-pass/fail-soft contract) lives in quality.py, the single home
+    for quality metrics. Kept here so callers and tests that bind
+    video.compute_vmaf (rem_prep, parity, monkeypatches) are untouched.
+    Persist quality.vmaf_model_id() next to any score you store."""
+    return quality.compute_vmaf(distorted, reference, s)
 
 
 # CR-035 — parse a single line from `ffmpeg -progress pipe:1` into the

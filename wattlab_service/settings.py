@@ -102,6 +102,20 @@ DEFAULTS = {
     "vmaf_enabled": True,
     "vmaf_n_subsample": 1,   # score every Nth frame (TEMPORAL only). 1 = full.
     "vmaf_n_threads": 12,    # libvmaf worker threads (box has 24 cores).
+    # VMAF model + scoring binary (quality.py). Model: "v0" = libvmaf built-in
+    # vmaf_v0.6.1 (all OWL scores before 2026-07-17), "v1" = Netflix
+    # vmaf_v1.0.16 file models under vmaf_model_dir (needs libvmaf >= 3.2.0),
+    # or an absolute path to any model json. The upgrade/rollback lever: flip
+    # here, nowhere else — every stored score carries `vmaf_model` provenance
+    # (absent = legacy = v0.6.1). v0 and v1 scores are DIFFERENT currencies
+    # (same clip pair measured 77.95 v0 vs 83.59 v1) — never compare across.
+    # vmaf_ffmpeg_bin is the scoring-only ffmpeg: v1 needs a newer libvmaf
+    # than the pinned encode binary, and ffmpeg_bin must never be bumped for
+    # scoring (binary changes confound energy measurements). Empty = score
+    # via ffmpeg_bin (v0 only).
+    "vmaf_model": "v0",
+    "vmaf_model_dir": "/srv/data/owl/vmaf/model",
+    "vmaf_ffmpeg_bin": "",
     # Operator quality target — the VMAF an encode should hit while minimising
     # energy. 92 is the figure operators most often cite. Anchors the
     # /video/budget calculator and the encode-parity/calibration study (the

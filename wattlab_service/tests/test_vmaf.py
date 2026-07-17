@@ -17,6 +17,7 @@ import json
 import types
 from pathlib import Path
 
+import quality
 import video
 
 
@@ -72,10 +73,10 @@ def test_compute_vmaf_missing_distorted_returns_none(tmp_path):
 def test_compute_vmaf_subprocess_raises_returns_none(tmp_path, monkeypatch):
     d, r = tmp_path / "d.mp4", tmp_path / "r.mp4"
     d.write_bytes(b"x"); r.write_bytes(b"x")
-    monkeypatch.setattr(video, "_probe_dims", lambda p: (1920, 1080))
+    monkeypatch.setattr(quality, "_probe_dims", lambda p: (1920, 1080))
     def boom(cmd, **kw):
         raise OSError("ffmpeg vanished")
-    monkeypatch.setattr(video.subprocess, "run", boom)
+    monkeypatch.setattr(quality.subprocess, "run", boom)
     assert video.compute_vmaf(d, r, {"vmaf_enabled": True}) is None
 
 
@@ -84,8 +85,8 @@ def test_compute_vmaf_subprocess_raises_returns_none(tmp_path, monkeypatch):
 def test_compute_vmaf_happy_path(tmp_path, monkeypatch):
     d, r = tmp_path / "d.mp4", tmp_path / "r.mp4"
     d.write_bytes(b"x"); r.write_bytes(b"x")
-    monkeypatch.setattr(video, "_probe_dims", lambda p: (1920, 1080))
-    monkeypatch.setattr(video.subprocess, "run", _logwriting_run(91.31))
+    monkeypatch.setattr(quality, "_probe_dims", lambda p: (1920, 1080))
+    monkeypatch.setattr(quality.subprocess, "run", _logwriting_run(91.31))
     score = video.compute_vmaf(d, r, {"vmaf_enabled": True, "vmaf_n_subsample": 1,
                                       "vmaf_n_threads": 4})
     assert score == 91.31
@@ -97,14 +98,14 @@ def test_compute_vmaf_crops_distorted_to_probed_dims(tmp_path, monkeypatch):
     # trip libvmaf. Verified live 2026-05-22.
     d, r = tmp_path / "d.mp4", tmp_path / "r.mp4"
     d.write_bytes(b"x"); r.write_bytes(b"x")
-    monkeypatch.setattr(video, "_probe_dims", lambda p: (1920, 1080))
+    monkeypatch.setattr(quality, "_probe_dims", lambda p: (1920, 1080))
     captured = {}
     def run(cmd, **kw):
         captured["lavfi"] = cmd[cmd.index("-lavfi") + 1]
         Path(captured["lavfi"].split("log_path=")[1]).write_text(
             json.dumps({"pooled_metrics": {"vmaf": {"mean": 90.0}}}))
         return _fake_proc()
-    monkeypatch.setattr(video.subprocess, "run", run)
+    monkeypatch.setattr(quality.subprocess, "run", run)
     video.compute_vmaf(d, r, {"vmaf_enabled": True})
     lavfi = captured["lavfi"]
     assert "crop=1920:1080:0:0" in lavfi
@@ -115,14 +116,14 @@ def test_compute_vmaf_crops_distorted_to_probed_dims(tmp_path, monkeypatch):
 def test_compute_vmaf_subsample_wired(tmp_path, monkeypatch):
     d, r = tmp_path / "d.mp4", tmp_path / "r.mp4"
     d.write_bytes(b"x"); r.write_bytes(b"x")
-    monkeypatch.setattr(video, "_probe_dims", lambda p: (1920, 1080))
+    monkeypatch.setattr(quality, "_probe_dims", lambda p: (1920, 1080))
     captured = {}
     def run(cmd, **kw):
         captured["lavfi"] = cmd[cmd.index("-lavfi") + 1]
         Path(captured["lavfi"].split("log_path=")[1]).write_text(
             json.dumps({"pooled_metrics": {"vmaf": {"mean": 90.0}}}))
         return _fake_proc()
-    monkeypatch.setattr(video.subprocess, "run", run)
+    monkeypatch.setattr(quality.subprocess, "run", run)
     video.compute_vmaf(d, r, {"vmaf_enabled": True, "vmaf_n_subsample": 5})
     assert "n_subsample=5" in captured["lavfi"]
 
@@ -130,14 +131,14 @@ def test_compute_vmaf_subsample_wired(tmp_path, monkeypatch):
 def test_compute_vmaf_no_subsample_when_one(tmp_path, monkeypatch):
     d, r = tmp_path / "d.mp4", tmp_path / "r.mp4"
     d.write_bytes(b"x"); r.write_bytes(b"x")
-    monkeypatch.setattr(video, "_probe_dims", lambda p: (1920, 1080))
+    monkeypatch.setattr(quality, "_probe_dims", lambda p: (1920, 1080))
     captured = {}
     def run(cmd, **kw):
         captured["lavfi"] = cmd[cmd.index("-lavfi") + 1]
         Path(captured["lavfi"].split("log_path=")[1]).write_text(
             json.dumps({"pooled_metrics": {"vmaf": {"mean": 90.0}}}))
         return _fake_proc()
-    monkeypatch.setattr(video.subprocess, "run", run)
+    monkeypatch.setattr(quality.subprocess, "run", run)
     video.compute_vmaf(d, r, {"vmaf_enabled": True, "vmaf_n_subsample": 1})
     assert "n_subsample" not in captured["lavfi"]
 
@@ -146,8 +147,8 @@ def test_compute_vmaf_stderr_fallback(tmp_path, monkeypatch):
     # If the json log is unwritten/unparseable, fall back to ffmpeg's stderr.
     d, r = tmp_path / "d.mp4", tmp_path / "r.mp4"
     d.write_bytes(b"x"); r.write_bytes(b"x")
-    monkeypatch.setattr(video, "_probe_dims", lambda p: (1920, 1080))
-    monkeypatch.setattr(video.subprocess, "run",
+    monkeypatch.setattr(quality, "_probe_dims", lambda p: (1920, 1080))
+    monkeypatch.setattr(quality.subprocess, "run",
                         lambda cmd, **kw: _fake_proc(stderr="[libvmaf] VMAF score: 88.50\n"))
     assert video.compute_vmaf(d, r, {"vmaf_enabled": True}) == 88.5
 
@@ -155,14 +156,14 @@ def test_compute_vmaf_stderr_fallback(tmp_path, monkeypatch):
 def test_compute_vmaf_cleans_up_temp_log(tmp_path, monkeypatch):
     d, r = tmp_path / "d.mp4", tmp_path / "r.mp4"
     d.write_bytes(b"x"); r.write_bytes(b"x")
-    monkeypatch.setattr(video, "_probe_dims", lambda p: (1920, 1080))
+    monkeypatch.setattr(quality, "_probe_dims", lambda p: (1920, 1080))
     seen = {}
     def run(cmd, **kw):
         logp = cmd[cmd.index("-lavfi") + 1].split("log_path=")[1]
         seen["log"] = logp
         Path(logp).write_text(json.dumps({"pooled_metrics": {"vmaf": {"mean": 90.0}}}))
         return _fake_proc()
-    monkeypatch.setattr(video.subprocess, "run", run)
+    monkeypatch.setattr(quality.subprocess, "run", run)
     video.compute_vmaf(d, r, {"vmaf_enabled": True})
     assert not Path(seen["log"]).exists()  # temp log removed in finally
 

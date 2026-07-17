@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Optional
 
 import gpu
+import quality
 import settings as cfg
 from confidence import confidence
 import power
@@ -1301,74 +1302,24 @@ def probe_ab_quality(path_a, path_b) -> Optional[dict]:
 
 
 # --- No-reference VQA (CompressedVQA-HDR) ------------------------------------
-# Credit: CompressedVQA-HDR — Sun et al., arXiv:2507.11900, Apache 2.0. A
-# learned NR model (HDR10 + SDR capable) scoring each file INDEPENDENTLY — the
-# within-run relative indicator for enhancement runs, which have no ground-truth
-# reference (VMAF N/A). Runs as a TERMINAL pass via subprocess to the sandboxed
-# venv at vqa_dir (never loaded into the service process: VRAM released on exit,
-# crash-isolated, vendor-portable — the script itself does cuda-if-available,
-# which ROCm also satisfies). Fail-soft everywhere: no sandbox → no score.
+# Implementation moved to quality.py (the single home for terminal-pass
+# quality metrics, FR + NR). Thin delegates kept so pixop callers, the
+# readiness probe, and tests that bind pixop.* names are untouched.
 
-_VQA_SCORE_RE = re.compile(r"Quality score:\s*(-?[\d.]+)")
-_VQA_MODEL_LABEL = "CompressedVQA-HDR (NR)"
+_VQA_MODEL_LABEL = quality._VQA_MODEL_LABEL
 
 
 def _parse_vqa_score(text) -> Optional[float]:
-    """Pull the score from VQA_NR.py stdout (warning noise may precede it)."""
-    m = _VQA_SCORE_RE.search(text or "")
-    if not m:
-        return None
-    try:
-        return round(float(m.group(1)), 2)
-    except ValueError:
-        return None
+    return quality._parse_vqa_score(text)
 
 
 def _vqa_paths(c: dict) -> Optional[tuple[Path, Path]]:
-    """(venv_python, NR_dir) if the sandbox is complete, else None. The NR dir
-    must be the cwd of the run (VQA_NR.py imports NR_model from cwd; ckpt paths
-    are relative)."""
-    root = Path(c["vqa_dir"])
-    venv_python = root / "venv" / "bin" / "python"
-    nr_dir = root / "CompressedVQA-HDR" / "NR"
-    needed = [venv_python, nr_dir / "VQA_NR.py",
-              nr_dir / "ckpts" / "NR_HDR_VQA.pth",
-              nr_dir / "ckpts" / "NR_HDR_VQA.npy"]
-    if all(p.exists() for p in needed):
-        return venv_python, nr_dir
-    return None
+    return quality._vqa_paths(c)
 
 
 def probe_vqa_nr(path, c: Optional[dict] = None) -> Optional[dict]:
-    """NR quality score for one clip, or None (disabled / sandbox missing /
-    file missing / timeout / parse failure — the run must never fail on this)."""
-    c = c or config()
-    if not c.get("vqa_enabled"):
-        return None
-    paths = _vqa_paths(c)
-    if paths is None or not Path(path).exists():
-        return None
-    venv_python, nr_dir = paths
-    t0 = time.time()
-    try:
-        r = subprocess.run(
-            [str(venv_python), "VQA_NR.py", "--distorted", str(path),
-             "--model_path", "ckpts/NR_HDR_VQA.pth",
-             "--profile_path", "ckpts/NR_HDR_VQA.npy"],
-            cwd=str(nr_dir), capture_output=True, text=True,
-            timeout=c["vqa_timeout_s"])
-        score = _parse_vqa_score(r.stdout)
-        if score is None:
-            # Sandbox drift (unpatched VQA_NR.py, missing HF cache, …) shows up
-            # here — log the tail so it's diagnosable, but stay fail-soft.
-            print(f"WARN: vqa score parse failed for {path}: "
-                  f"{(r.stderr or r.stdout or '')[-500:]}")
-            return None
-        return {"score": score, "model": _VQA_MODEL_LABEL,
-                "duration_s": round(time.time() - t0, 1)}
-    except Exception as e:
-        print(f"WARN: vqa probe failed for {path}: {e}")
-        return None
+    """NR quality score for one clip, or None — see quality.probe_vqa_nr."""
+    return quality.probe_vqa_nr(path, c or config())
 
 
 # NVEncC prints a summary line like
