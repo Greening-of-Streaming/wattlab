@@ -1194,7 +1194,7 @@ async function runDemoVideo() {{
     wlRenderProgress({{
       target: 'video-status',
       header: 'Submitting video job…',
-      stagesHtml: wlStageList(WL_VIDEO_STAGES, 0),
+      stagesHtml: wlStageList(WL_VIDEO_PRESET_STAGES.both, 0),
       elapsed: 0,
     }});
     const form = new FormData();
@@ -1218,13 +1218,11 @@ function showVideoError(msg) {{
 
 // CR-019 — /demo's poll loops use the shared wlRenderProgress widget
 // (with opts.target → per-step status div) so visitors see the same
-// big live wall-power readout and stage list as the main pages.
-const VIDEO_STAGE_IDX = {{
-  starting: 0, baseline: 0, baseline_2: 0,
-  cpu_encode: 1, gpu_encode: 1,
-  rest: 2,
-  done: 3,
-}};
+// big live wall-power readout and stage list as the main pages. Stage
+// list + stage→index map are the SHARED /video ones from wl-progress.js
+// (WL_VIDEO_PRESET_*, keyed 'both' — the tour runs h265_both/av1_both):
+// a local 4-stage copy here drifted and rendered the whole multi-minute
+// VMAF pass as "Baseline" (caught 2026-07-17).
 
 function pollVideo(jobId, t0) {{
   fetch('/video/job/' + jobId).then(r=>r.json()).then(data => {{
@@ -1235,8 +1233,8 @@ function pollVideo(jobId, t0) {{
       showVideoError(data.error);
     }} else {{
       const stage = data.stage || '';
-      const idx = VIDEO_STAGE_IDX[stage] ?? 0;
-      // For *_both presets the four stages cycle once for CPU then again
+      const idx = WL_VIDEO_PRESET_IDX.both[stage] ?? 0;
+      // For *_both presets the stages cycle once for CPU then again
       // for GPU (baseline → encode → rest → baseline_2 → encode again).
       // Without an explicit side label, the visitor sees the bar "go
       // around twice" with no idea why. This banner names which side is
@@ -1247,6 +1245,7 @@ function pollVideo(jobId, t0) {{
         rest:        'Cooldown — letting thermals settle before GPU',
         baseline_2:  'Side 2 of 2 — GPU encode (measuring baseline)',
         gpu_encode:  'Side 2 of 2 — GPU encode',
+        vmaf:        'Scoring quality (VMAF) — measurement already complete',
       }};
       const lbl = sideLabels[stage] || '';
       const sideLine = lbl
@@ -1254,13 +1253,13 @@ function pollVideo(jobId, t0) {{
         : '';
       wlRenderProgress({{
         target: 'video-status',
-        stagesHtml: wlStageList(WL_VIDEO_STAGES, idx),
+        stagesHtml: wlStageList(WL_VIDEO_PRESET_STAGES.both, idx),
         watts: data.watts,
         elapsed: Date.now() - t0,
         progressPct: data.progress_pct,
         etaS:        data.eta_s,
         encodeSpeed: data.encode_speed,
-        extraHtml: sideLine,
+        extraHtml: sideLine + wlVmafLine(stage, data),
         cooldownData: data,
       }});
       setTimeout(() => pollVideo(jobId, t0), 5000);

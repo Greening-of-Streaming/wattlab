@@ -85,3 +85,31 @@ def test_video_rich_renderer_single_source():
                "function renderAllCodecs"):
         assert fn not in video_html, f"/video regrew an inline {fn}"
     assert "wlRenderVideoCard(" in video_html    # fresh path delegates
+
+
+def test_video_stage_lists_single_source():
+    """2026-07-17: /demo's tour poll ran its own 4-stage video list with no
+    'vmaf' index — the multi-minute VMAF pass rendered as "Baseline". The
+    preset-keyed stage lists + stage→index maps now live ONLY in
+    wl-progress.js (WL_VIDEO_PRESET_STAGES / WL_VIDEO_PRESET_IDX); /video and
+    /demo must reference them, never define local copies."""
+    bundle = (STATIC_DIR / "wl-progress.js").read_text()
+    assert "WL_VIDEO_PRESET_STAGES" in bundle
+    assert "WL_VIDEO_PRESET_IDX" in bundle
+    assert bundle.count("VMAF (quality)") >= 4      # both/all/codecs_cpu/codecs_gpu
+    assert "function wlVmafLine(" in bundle
+    # every comparison map must know the vmaf stage
+    for m in ("_WL_V_BOTH_IDX", "_WL_V_ALL_IDX",
+              "_WL_V_CODECS_CPU_IDX", "_WL_V_CODECS_GPU_IDX"):
+        block = bundle.split(m + " = ", 1)[1].split("};", 1)[0]
+        assert "vmaf:" in block, f"{m} lost its vmaf index"
+
+    video_html = client.get("/video", headers=LAB).text
+    assert "WL_VIDEO_PRESET_STAGES" in video_html
+    assert "const _BOTH_STAGES" not in video_html, "/video regrew a local stage list"
+
+    demo_html = client.get("/demo", headers=LAB).text
+    assert "WL_VIDEO_PRESET_STAGES.both" in demo_html
+    assert "WL_VIDEO_PRESET_IDX.both" in demo_html
+    assert "wlVmafLine(" in demo_html
+    assert "const VIDEO_STAGE_IDX" not in demo_html, "/demo regrew a local stage map"

@@ -119,7 +119,81 @@ function wlRenderQueued(pos, opts) {
 // is baked at module load via the .replace() chain below — keeps the
 // visitor oriented during long quiet stages without a live timer (which
 // would imply more precision than the static expectation actually has).
-var WL_VIDEO_STAGES = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Encoding', WL_CFG.cooldown_label, 'Complete'];
+// ── /video preset-keyed stage lists + server-stage→index maps ─────────────
+// Lifted from /video's inline poll code (2026-07-17, VMAF-v1 session) after
+// /demo's tour poll was caught running its OWN 4-stage list: 'vmaf' had no
+// index there, so the multi-minute VMAF scoring pass rendered as "Baseline".
+// ONE definition now — /video's renderProgress and /demo's pollVideo both
+// read these. Labels bake from WL_CFG at load (the same serve-time wording
+// the old inline lists took via the BASELINE_S / REST_LABEL page tokens).
+var _WL_V_SINGLE = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Encode', 'Done'];
+var _WL_V_SINGLE_IDX = {starting:0, baseline:0, cpu_encode:1, gpu_encode:1,
+                        h265_cpu_encode:1, h265_gpu_encode:1,
+                        av1_cpu_encode:1, av1_gpu_encode:1, done:2};
+var _WL_V_BOTH = ['Baseline (' + WL_CFG.baseline_s + 's)', 'CPU encode', WL_CFG.rest_label,
+                  'Baseline 2 (' + WL_CFG.baseline_s + 's)', 'GPU encode', 'VMAF (quality)', 'Done'];
+var _WL_V_BOTH_IDX = {starting:0, baseline:0, cpu_encode:1, rest:2,
+                      baseline_2:3, gpu_encode:4, vmaf:5, done:6};
+var _WL_V_ALL = ['H.264 CPU', WL_CFG.rest_label, 'H.264 GPU', WL_CFG.rest_label,
+                 'H.265 CPU', WL_CFG.rest_label, 'H.265 GPU', WL_CFG.rest_label,
+                 'AV1 CPU', WL_CFG.rest_label, 'AV1 GPU', 'VMAF (quality)', 'Done'];
+var _WL_V_ALL_IDX = {starting:0,
+    h264_cpu_baseline:0, h264_cpu_encode:0,
+    h264_rest:1,
+    h264_gpu_baseline:2, h264_gpu_encode:2,
+    h264_inter_rest:3,
+    h265_cpu_baseline:4, h265_cpu_encode:4,
+    h265_rest:5,
+    h265_gpu_baseline:6, h265_gpu_encode:6,
+    h265_inter_rest:7,
+    av1_cpu_baseline:8, av1_cpu_encode:8,
+    av1_rest:9,
+    av1_gpu_baseline:10, av1_gpu_encode:10,
+    vmaf:11,
+    done:12};
+var _WL_V_CODECS_CPU = ['H.264 CPU', WL_CFG.rest_label, 'H.265 CPU', WL_CFG.rest_label,
+                        'AV1 CPU', 'VMAF (quality)', 'Done'];
+var _WL_V_CODECS_GPU = ['H.264 GPU', WL_CFG.rest_label, 'H.265 GPU', WL_CFG.rest_label,
+                        'AV1 GPU', 'VMAF (quality)', 'Done'];
+var _WL_V_CODECS_CPU_IDX = {starting:0,
+    h264_cpu_baseline:0, h264_cpu_encode:0,
+    h265_cpu_rest:1,
+    h265_cpu_baseline:2, h265_cpu_encode:2,
+    av1_cpu_rest:3,
+    av1_cpu_baseline:4, av1_cpu_encode:4,
+    vmaf:5, done:6};
+var _WL_V_CODECS_GPU_IDX = {starting:0,
+    h264_gpu_baseline:0, h264_gpu_encode:0,
+    h265_gpu_rest:1,
+    h265_gpu_baseline:2, h265_gpu_encode:2,
+    av1_gpu_rest:3,
+    av1_gpu_baseline:4, av1_gpu_encode:4,
+    vmaf:5, done:6};
+var WL_VIDEO_PRESET_STAGES = {
+    cpu: _WL_V_SINGLE, gpu: _WL_V_SINGLE,
+    h265_cpu: _WL_V_SINGLE, h265_gpu: _WL_V_SINGLE,
+    av1_cpu: _WL_V_SINGLE, av1_gpu: _WL_V_SINGLE,
+    both: _WL_V_BOTH, h265_both: _WL_V_BOTH, av1_both: _WL_V_BOTH,
+    all_codecs: _WL_V_ALL,
+    codecs_cpu: _WL_V_CODECS_CPU, codecs_gpu: _WL_V_CODECS_GPU
+};
+var WL_VIDEO_PRESET_IDX = {
+    cpu: _WL_V_SINGLE_IDX, gpu: _WL_V_SINGLE_IDX,
+    h265_cpu: _WL_V_SINGLE_IDX, h265_gpu: _WL_V_SINGLE_IDX,
+    av1_cpu: _WL_V_SINGLE_IDX, av1_gpu: _WL_V_SINGLE_IDX,
+    both: _WL_V_BOTH_IDX, h265_both: _WL_V_BOTH_IDX, av1_both: _WL_V_BOTH_IDX,
+    all_codecs: _WL_V_ALL_IDX,
+    codecs_cpu: _WL_V_CODECS_CPU_IDX, codecs_gpu: _WL_V_CODECS_GPU_IDX
+};
+// VMAF (CR-044) doesn't pipe ffmpeg progress, but the server surfaces
+// vmaf_done / vmaf_total so the widget can still show "N of M".
+function wlVmafLine(serverStage, data) {
+    if (serverStage !== 'vmaf' || !data || !data.vmaf_total) return '';
+    return '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.4rem">'
+         + 'VMAF · ' + (data.vmaf_done || 0) + ' of ' + data.vmaf_total
+         + ' encode' + (data.vmaf_total > 1 ? 's' : '') + ' scored</div>';
+}
+
 var WL_LLM_STAGES   = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Inference running', 'Complete'];
 var WL_IMAGE_STAGES = ['Baseline (' + WL_CFG.baseline_s + 's)', 'Generating image', 'Complete'];
 var WL_RAG_STAGES   = ['Baseline poll (' + WL_CFG.baseline_s + 's)', 'Inference running', 'Complete'];

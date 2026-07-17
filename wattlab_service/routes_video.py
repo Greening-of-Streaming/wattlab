@@ -478,73 +478,13 @@ async def video_page(request: Request):
     let elapsedTimer = null;
     let startTime = null;
 
-    const _SINGLE = ['Baseline ({{BASELINE_S}}s)', 'Encode', 'Done'];
-    const _SINGLE_MAP = {{'starting':0, 'baseline':0, 'cpu_encode':1, 'gpu_encode':1,
-                          'h265_cpu_encode':1, 'h265_gpu_encode':1, 'av1_cpu_encode':1, 'done':2}};
-    const _BOTH_STAGES = ['Baseline ({{BASELINE_S}}s)', 'CPU encode', '{{REST_LABEL}}', 'Baseline 2 ({{BASELINE_S}}s)', 'GPU encode', 'VMAF (quality)', 'Done'];
-    const _BOTH_MAP = {{'starting':0, 'baseline':0, 'cpu_encode':1, 'rest':2,
-                        'baseline_2':3, 'gpu_encode':4, 'vmaf':5, 'done':6}};
-    const _ALL_STAGES = ['H.264 CPU','{{REST_LABEL}}','H.264 GPU','{{REST_LABEL}}','H.265 CPU','{{REST_LABEL}}','H.265 GPU','{{REST_LABEL}}','AV1 CPU','{{REST_LABEL}}','AV1 GPU','VMAF (quality)','Done'];
-    const _ALL_MAP = {{'starting':0,
-        'h264_cpu_baseline':0,'h264_cpu_encode':0,
-        'h264_rest':1,
-        'h264_gpu_baseline':2,'h264_gpu_encode':2,
-        'h264_inter_rest':3,
-        'h265_cpu_baseline':4,'h265_cpu_encode':4,
-        'h265_rest':5,
-        'h265_gpu_baseline':6,'h265_gpu_encode':6,
-        'h265_inter_rest':7,
-        'av1_cpu_baseline':8,'av1_cpu_encode':8,
-        'av1_rest':9,
-        'av1_gpu_baseline':10,'av1_gpu_encode':10,
-        'vmaf':11,
-        'done':12}};
-    // Single-device codec sweeps (3 codecs on one device).
-    const _CODECS_CPU_STAGES = ['H.264 CPU','{{REST_LABEL}}','H.265 CPU','{{REST_LABEL}}','AV1 CPU','VMAF (quality)','Done'];
-    const _CODECS_GPU_STAGES = ['H.264 GPU','{{REST_LABEL}}','H.265 GPU','{{REST_LABEL}}','AV1 GPU','VMAF (quality)','Done'];
-    const _CODECS_CPU_MAP = {{'starting':0,
-        'h264_cpu_baseline':0,'h264_cpu_encode':0,
-        'h265_cpu_rest':1,
-        'h265_cpu_baseline':2,'h265_cpu_encode':2,
-        'av1_cpu_rest':3,
-        'av1_cpu_baseline':4,'av1_cpu_encode':4,
-        'vmaf':5,'done':6}};
-    const _CODECS_GPU_MAP = {{'starting':0,
-        'h264_gpu_baseline':0,'h264_gpu_encode':0,
-        'h265_gpu_rest':1,
-        'h265_gpu_baseline':2,'h265_gpu_encode':2,
-        'av1_gpu_rest':3,
-        'av1_gpu_baseline':4,'av1_gpu_encode':4,
-        'vmaf':5,'done':6}};
-    const STAGES = {{
-        cpu:        _SINGLE,
-        gpu:        _SINGLE,
-        h265_cpu:   _SINGLE,
-        h265_gpu:   _SINGLE,
-        av1_cpu:    _SINGLE,
-        av1_gpu:    _SINGLE,
-        both:       _BOTH_STAGES,
-        h265_both:  _BOTH_STAGES,
-        av1_both:   _BOTH_STAGES,
-        all_codecs: _ALL_STAGES,
-        codecs_cpu: _CODECS_CPU_STAGES,
-        codecs_gpu: _CODECS_GPU_STAGES,
-    }};
-
-    const STAGE_MAP = {{
-        cpu:        _SINGLE_MAP,
-        gpu:        _SINGLE_MAP,
-        h265_cpu:   _SINGLE_MAP,
-        h265_gpu:   _SINGLE_MAP,
-        av1_cpu:    _SINGLE_MAP,
-        av1_gpu:    _SINGLE_MAP,
-        both:       _BOTH_MAP,
-        h265_both:  _BOTH_MAP,
-        av1_both:   _BOTH_MAP,
-        all_codecs: _ALL_MAP,
-        codecs_cpu: _CODECS_CPU_MAP,
-        codecs_gpu: _CODECS_GPU_MAP,
-    }};
+    // Stage lists + server-stage→index maps are shared globals in the
+    // progress bundle (WL_VIDEO_PRESET_STAGES / WL_VIDEO_PRESET_IDX) — one
+    // definition for this page AND /demo's tour poll, so the lists can't
+    // drift again (2026-07-17: /demo's local copy was missing the 'vmaf'
+    // stage and showed "Baseline" through the whole scoring pass).
+    const STAGES = WL_VIDEO_PRESET_STAGES;
+    const STAGE_MAP = WL_VIDEO_PRESET_IDX;
 
     function selectPreset(key) {{
         selectedPreset = key;
@@ -563,14 +503,8 @@ async def video_page(request: Request):
         const stages = STAGES[mode];
         const stageMap = STAGE_MAP[mode];
         const currentStage = stageMap[serverStage] !== undefined ? stageMap[serverStage] : 0;
-        // VMAF (CR-044) doesn't pipe ffmpeg progress, but the server surfaces
-        // vmaf_done / vmaf_total so we can still show "N of M".
-        let vmafLine = '';
-        if (serverStage === 'vmaf' && data && data.vmaf_total) {{
-            vmafLine = '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.4rem">'
-                     + 'VMAF \xb7 ' + (data.vmaf_done || 0) + ' of ' + data.vmaf_total
-                     + ' encode' + (data.vmaf_total > 1 ? 's' : '') + ' scored</div>';
-        }}
+        // "VMAF · N of M scored" — shared helper in the progress bundle.
+        let vmafLine = wlVmafLine(serverStage, data);
         // Idle-wait cooldown readout \u2014 shared single source (wlCooldownLine in
         // _PROGRESS_JS). cooldown_waited_s is set ONLY by the active-probe path
         // (power.wait_for_thermal_floor), so the line shows only during a real
