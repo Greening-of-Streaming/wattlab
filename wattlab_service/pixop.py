@@ -1385,10 +1385,17 @@ def probe_fr_sandwich(output_path, input_name) -> Optional[dict]:
              "reference": ref.name}
     anchors = _fr_anchors()
     if anchors.get("vmaf_model") == block["vmaf_model"]:
-        base = ((anchors.get("fixtures") or {}).get(stem) or {}).get("vmaf")
+        fx = (anchors.get("fixtures") or {}).get(stem) or {}
         ceil = ((anchors.get("ceilings") or {}).get(stem.split("_")[0]) or {}).get("vmaf")
-        if base is not None:
-            block["baseline_vmaf"] = base
+        # baseline_vmaf = source as a player would DISPLAY it (no pipeline
+        # encode — context only, a different path). floor_vmaf = the naive
+        # upscale THROUGH the matched encode (compare-mode ffmpeg arm) — the
+        # fair same-path "did the ML add value" comparison. Only floor and
+        # ceiling may be presented as ordered against the live score.
+        if fx.get("vmaf") is not None:
+            block["baseline_vmaf"] = fx["vmaf"]
+        if fx.get("floor_vmaf") is not None:
+            block["floor_vmaf"] = fx["floor_vmaf"]
         if ceil is not None:
             block["ceiling_vmaf"] = ceil
     return block

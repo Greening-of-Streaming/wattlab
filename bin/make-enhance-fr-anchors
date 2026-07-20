@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "wattlab_service"))
 import settings as cfg  # noqa: E402
 import quality  # noqa: E402
+import pixop  # noqa: E402
 
 DEG = Path("/srv/data/owl/test_content/degraded")
 PIPE_OUT = Path("/srv/data/owl/pixop/output")
@@ -41,7 +42,15 @@ N_THREADS = 20    # offline tool on an otherwise-idle 24-core box
 
 UPSCALE_NOTE = ("player-style naive upscale: lanczos to 3840x2160, lossless "
                 "x264 intermediate (qp 0), scored vs ref_4k. 4k_dirty scored "
-                "directly (upscale is identity at 4K).")
+                "directly (upscale is identity at 4K). NO pipeline encode — a "
+                "display-path context number, not comparable with through-"
+                "pipeline scores.")
+FLOOR_NOTE = ("naive-through-pipeline floor: the compare mode's ffmpeg arm "
+              "(pixop.build_ffmpeg_upscale_cmd — lanczos + matched HEVC "
+              "encode at the preset's bitrate/pix_fmt), scored vs ref_4k. "
+              "Pays the same encode cost as enhanced outputs: the fair "
+              "'did the ML add value over dumb scaling' baseline.")
+FLOOR_PRESET = "generated/owl_sdr_4k_35mbps.args"
 
 
 def scoring_settings() -> dict:
@@ -86,7 +95,28 @@ def main() -> int:
     data.setdefault("ceilings", {})
     data.update({"vmaf_model": model, "n_subsample": N_SUBSAMPLE,
                  "baseline_definition": UPSCALE_NOTE,
+                 "floor_definition": FLOOR_NOTE,
                  "generated": str(date.today())})
+
+    c = pixop.config()
+    spec = pixop.parse_preset_spec(FLOOR_PRESET, c)
+    pix_fmt = pixop._ffmpeg_pix_fmt(spec)
+    kbps = spec.get("bitrate_kbps")
+    out_dir = Path(c["workdir"]) / "output"
+
+    def floor_score(fixture_name: str, ref: Path) -> dict:
+        """Encode the fixture through the compare-mode ffmpeg arm (the one
+        canonical naive-through-pipeline definition) and score the result."""
+        tmp_name = f"_floor_anchor_{fixture_name}.mp4"
+        cmd = pixop.build_ffmpeg_upscale_cmd(
+            f"{fixture_name}.mp4", tmp_name, 3840, 2160, kbps, "lanczos",
+            c, pix_fmt=pix_fmt)
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=1800)
+            row = score(out_dir / tmp_name, ref, s)
+        finally:
+            (out_dir / tmp_name).unlink(missing_ok=True)
+        return row
 
     def checkpoint():
         ANCHORS.write_text(json.dumps(data, indent=2) + "\n")
@@ -114,27 +144,40 @@ def main() -> int:
 
         for rung in RUNGS:
             name = f"{src_name}_{rung}"
-            if data["fixtures"].get(name, {}).get("vmaf") is not None:
-                print(f"baseline {name}: already scored, skipping")
-                continue
             fixture = DEG / f"{name}.mp4"
             if not fixture.exists():
-                print(f"baseline {name}: MISSING")
+                print(f"{name}: MISSING")
                 incomplete += 1
                 continue
-            print(f"baseline {name}: ...", flush=True)
-            if rung.startswith("4k"):
-                row = score(fixture, ref, s)
+            fx = data["fixtures"].setdefault(name, {})
+
+            if fx.get("vmaf") is not None:
+                print(f"baseline {name}: already scored, skipping")
             else:
-                with tempfile.TemporaryDirectory(dir=DEG) as td:
-                    up = Path(td) / f"{name}_naive4k.mp4"
-                    naive_upscale(fixture, up)
-                    row = score(up, ref, s)
-            data["fixtures"][name] = row
-            checkpoint()
-            print(f"  {row}", flush=True)
-            if row["vmaf"] is None:
-                incomplete += 1
+                print(f"baseline {name}: ...", flush=True)
+                if rung.startswith("4k"):
+                    row = score(fixture, ref, s)
+                else:
+                    with tempfile.TemporaryDirectory(dir=DEG) as td:
+                        up = Path(td) / f"{name}_naive4k.mp4"
+                        naive_upscale(fixture, up)
+                        row = score(up, ref, s)
+                fx.update(row)
+                checkpoint()
+                print(f"  {row}", flush=True)
+                if row["vmaf"] is None:
+                    incomplete += 1
+
+            if fx.get("floor_vmaf") is not None:
+                print(f"floor {name}: already scored, skipping")
+            else:
+                print(f"floor {name}: ...", flush=True)
+                row = floor_score(name, ref)
+                fx.update({f"floor_{k}": v for k, v in row.items()})
+                checkpoint()
+                print(f"  floor {row}", flush=True)
+                if row["vmaf"] is None:
+                    incomplete += 1
 
     print(f"done — {ANCHORS} ({'INCOMPLETE: ' + str(incomplete) + ' rows failed' if incomplete else 'all rows scored'})")
     return 2 if incomplete else 0

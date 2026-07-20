@@ -66,6 +66,20 @@ switched to the module's non-lifespan client.
   which fr_scores.json's v0 rows describe) — both were backed up first and restored after
   verification. Post-hoc scoring of today's outputs stays possible from the stored fr blocks.
 
+**Addendum 2 — the fair floor (Ben's call: "dangerous to publish source > enhanced"):** the
+original sandwich compared across paths — the naive baseline never paid an encode while the
+enhanced output always does (~10 pts at ceiling level), so "enhanced below naive" conflated
+ML value with pipeline encode cost. Fixed by adding a third anchor: **floor** = the naive
+lanczos upscale pushed through the SAME matched encode (reuses `pixop.build_ffmpeg_upscale_cmd`,
+the compare-mode ffmpeg arm — hevc_nvenc CBR 35 Mbps p010le — so OWL keeps ONE definition of
+"naive through pipeline"). Ordered comparisons on the cards are now same-path only
+(floor ≤ score ≤ ceiling); the source-as-displayed number stays as an explicitly-labelled
+context line ("different path; not directly comparable"). Floors run 0.03–4.35 above the
+display baselines — coherent: on noisy rungs the CBR encode smooths noise toward the master.
+Verified live (job `a2d4ab73`, 🟢): bbb_sd_dirty fr = 31.57 vs floor 32.69 — still at-or-below
+the FAIR floor on that rung (n=1; the FR-limits-on-ML-video framing stands, now unconfounded).
+Tests 894→895.
+
 **Addendum (same evening, from Ben's first real run):** he ran a ladder fixture with the HD
 preset and the FR absence was silent — a fixture run with a non-4K output now persists
 `fr: {skipped: "output_not_4k"}` and both renderers explain it ("anchors are 4K-denominated;

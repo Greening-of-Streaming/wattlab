@@ -1058,19 +1058,28 @@
       vqaHtml += '<div style="margin-top:0.3rem;font-size:0.72rem;color:var(--text-4)">'
               + 'FR sandwich n/a — anchors are 4K-denominated and this output is not 4K.</div>';
     } else if (d.fr && d.fr.vmaf != null) {
+      // Ordered comparison only vs same-path numbers (floor + ceiling pay the
+      // same pipeline encode); the source-as-displayed score is context only.
       var sand = '';
-      if (d.fr.baseline_vmaf != null && d.fr.ceiling_vmaf != null) {
-        var inChain = d.fr.baseline_vmaf <= d.fr.vmaf && d.fr.vmaf <= d.fr.ceiling_vmaf;
+      if (d.fr.floor_vmaf != null && d.fr.ceiling_vmaf != null) {
+        var inChain = d.fr.floor_vmaf <= d.fr.vmaf && d.fr.vmaf <= d.fr.ceiling_vmaf;
         sand = inChain
-          ? ' — naive ' + _f(d.fr.baseline_vmaf, 2) + ' ≤ ​' + _f(d.fr.vmaf, 2)
+          ? ' — floor ' + _f(d.fr.floor_vmaf, 2) + ' ≤ ​' + _f(d.fr.vmaf, 2)
             + ' ≤ ceiling ' + _f(d.fr.ceiling_vmaf, 2)
-          : ' — naive ' + _f(d.fr.baseline_vmaf, 2) + ' · ceiling ' + _f(d.fr.ceiling_vmaf, 2)
-            + (d.fr.vmaf < d.fr.baseline_vmaf ? ' (below the naive baseline)'
-                                              : ' (above the pipeline ceiling)');
+          : ' — floor ' + _f(d.fr.floor_vmaf, 2) + ' · ceiling ' + _f(d.fr.ceiling_vmaf, 2)
+            + (d.fr.vmaf < d.fr.floor_vmaf ? ' (below the naive-encode floor)'
+                                           : ' (above the pipeline ceiling)');
+      } else if (d.fr.ceiling_vmaf != null) {
+        sand = ' — ceiling ' + _f(d.fr.ceiling_vmaf, 2);
       }
       vqaHtml += '<div style="margin-top:0.3rem;font-size:0.78rem;color:var(--text-3)">'
               + 'Fidelity vs pristine master (' + (d.fr.vmaf_model || 'VMAF') + ', 4K): '
               + _f(d.fr.vmaf, 2) + sand + '</div>';
+      if (d.fr.baseline_vmaf != null) {
+        vqaHtml += '<div style="margin-top:0.15rem;font-size:0.72rem;color:var(--text-4)">'
+                + 'Source as displayed (player upscale, no pipeline encode): '
+                + _f(d.fr.baseline_vmaf, 2) + ' — different path, not directly comparable.</div>';
+      }
     }
     html += '<div class="result-card">'
           + '<p class="headline">' + (d.preset_label || 'Enhancement run') + '</p>'

@@ -1117,34 +1117,46 @@ function _frRows(mlfr, fffr) {
   }
   function line(lbl, fr) {
     if (!fr || fr.vmaf == null) return '';
+    // Ordered comparison ONLY against same-path numbers (floor + ceiling both
+    // pay the same pipeline encode as the live output). The chain is asserted
+    // only when it actually holds; inversions are stated plainly.
     var sand = '';
-    if (fr.baseline_vmaf != null && fr.ceiling_vmaf != null) {
-      // Only assert the ≤ chain when it actually holds; an inverted result
-      // gets stated plainly instead of rendering false arithmetic.
-      var inChain = fr.baseline_vmaf <= fr.vmaf && fr.vmaf <= fr.ceiling_vmaf;
+    if (fr.floor_vmaf != null && fr.ceiling_vmaf != null) {
+      var inChain = fr.floor_vmaf <= fr.vmaf && fr.vmaf <= fr.ceiling_vmaf;
       sand = ' <span style="color:var(--text-4);font-weight:400">'
         + (inChain
-            ? '(naive ' + fr.baseline_vmaf + ' &#8804; &#8203;' + fr.vmaf
+            ? '(floor ' + fr.floor_vmaf + ' &#8804; &#8203;' + fr.vmaf
               + ' &#8804; ceiling ' + fr.ceiling_vmaf + ')'
-            : '(naive ' + fr.baseline_vmaf + ' &middot; ceiling ' + fr.ceiling_vmaf
-              + ' — ' + (fr.vmaf < fr.baseline_vmaf
-                          ? 'below the naive-upscale baseline'
+            : '(floor ' + fr.floor_vmaf + ' &middot; ceiling ' + fr.ceiling_vmaf
+              + ' — ' + (fr.vmaf < fr.floor_vmaf
+                          ? 'below the naive-encode floor'
                           : 'above the pipeline ceiling') + ')')
         + '</span>';
+    } else if (fr.ceiling_vmaf != null) {
+      sand = ' <span style="color:var(--text-4);font-weight:400">(ceiling '
+        + fr.ceiling_vmaf + ')</span>';
     }
     return _row(lbl, fr.vmaf + sand, '');
   }
   var rows = line('FR fidelity — AI output', mlfr) + line('FR fidelity — ffmpeg output', fffr);
   if (!rows) return '';
-  var model = (mlfr && mlfr.vmaf_model) || (fffr && fffr.vmaf_model) || '';
-  return '<div style="margin-top:0.5rem">' + rows + '</div>'
+  var anyfr = mlfr || fffr;
+  var model = anyfr.vmaf_model || '';
+  var srcLine = anyfr.baseline_vmaf != null
+    ? '<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.25rem">'
+      + 'Source as a player would display it (no pipeline encode): '
+      + anyfr.baseline_vmaf + ' — a different path; not directly comparable '
+      + 'with the through-pipeline scores above.</div>'
+    : '';
+  return '<div style="margin-top:0.5rem">' + rows + '</div>' + srcLine
     + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
     + 'Full-reference VMAF (' + model + ', 4K) vs this fixture&#39;s pristine master — '
-    + 'ladder fixtures only. Sandwich: player-style naive upscale of the degraded input '
-    + '&#8804; enhanced output &#8804; pipeline ceiling (the pristine master through the '
-    + 'same pipeline — its gap to 100 is encode cost alone). Ordering is expected, not '
-    + 'guaranteed: an output scoring below the naive baseline while looking subjectively '
-    + 'better is a finding about FR metrics on ML-enhanced video, not a bug. '
+    + 'ladder fixtures only. All ordered numbers share the same pipeline encode: '
+    + 'floor = naive lanczos upscale through the matched encode (did the ML add value '
+    + 'over dumb scaling?); ceiling = the pristine master through the same pipeline '
+    + '(its gap to 100 is encode cost alone). Ordering is expected, not guaranteed: '
+    + 'an output scoring below the floor while looking subjectively better is a '
+    + 'finding about FR metrics on ML-enhanced video, not a bug. '
     + 'v1 scores are not comparable with v0-era scores.</div>';
 }
 // Resulting-file complexity comparison (SI/TI + frame-size stats from the

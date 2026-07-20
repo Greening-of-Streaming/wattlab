@@ -2119,16 +2119,28 @@ def _arm_fr(monkeypatch, tmp_path, *, model="vmaf_v1.0.16_1d5h_2160",
 
 def test_probe_fr_sandwich_attaches_anchors(monkeypatch, tmp_path):
     anchors = {"vmaf_model": "vmaf_v1.0.16_1d5h_2160",
-               "fixtures": {"bbb_hd_clean": {"vmaf": 61.2}},
+               "fixtures": {"bbb_hd_clean": {"vmaf": 61.2, "floor_vmaf": 58.0}},
                "ceilings": {"bbb": {"vmaf": 89.4}}}
     seen = _arm_fr(monkeypatch, tmp_path, anchors=anchors)
     b = pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4")
     assert b == {"vmaf": 88.5, "vmaf_model": "vmaf_v1.0.16_1d5h_2160",
                  "n_subsample": 4, "reference": "bbb_ref_4k.mp4",
-                 "baseline_vmaf": 61.2, "ceiling_vmaf": 89.4}
+                 "baseline_vmaf": 61.2, "floor_vmaf": 58.0, "ceiling_vmaf": 89.4}
     # the live score must use the anchors' config: uhd model, subsample 4
     assert seen["variant"] == "uhd"
     assert seen["s"]["vmaf_n_subsample"] == 4
+
+
+def test_probe_fr_sandwich_floorless_anchors_still_attach(monkeypatch, tmp_path):
+    # Anchors built before the floor pass (or a failed floor row) — the block
+    # carries what exists; renderers fall back to ceiling-only ordering.
+    anchors = {"vmaf_model": "vmaf_v1.0.16_1d5h_2160",
+               "fixtures": {"bbb_hd_clean": {"vmaf": 61.2}},
+               "ceilings": {"bbb": {"vmaf": 89.4}}}
+    _arm_fr(monkeypatch, tmp_path, anchors=anchors)
+    b = pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4")
+    assert b["baseline_vmaf"] == 61.2 and b["ceiling_vmaf"] == 89.4
+    assert "floor_vmaf" not in b
 
 
 def test_probe_fr_sandwich_model_mismatch_drops_anchors(monkeypatch, tmp_path):
@@ -2185,5 +2197,9 @@ def test_fr_wired_into_both_runners_after_vqa():
 def test_enhance_pages_render_fr_rows():
     page = client.get("/enhance-run", headers=LAB).text
     assert "_frRows" in page and "pristine master" in page
+    # ordered comparisons are same-path only; the source-as-displayed score is
+    # context, never part of a ≤ chain (owner concern 2026-07-20)
+    assert "naive-encode floor" in page and "not directly comparable" in page
     js = (Path(__file__).parent.parent / "static" / "wl-result.js").read_text()
     assert "Fidelity vs pristine master" in js and "d.fr" in js
+    assert "floor_vmaf" in js and "not directly comparable" in js
