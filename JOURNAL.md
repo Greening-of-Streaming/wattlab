@@ -66,6 +66,16 @@ switched to the module's non-lifespan client.
   which fr_scores.json's v0 rows describe) — both were backed up first and restored after
   verification. Post-hoc scoring of today's outputs stays possible from the stored fr blocks.
 
+**Addendum 3 — HDR outputs gated out (Ben's SDR→HDR run, job `6c67c7b2`):** an hdr_4k-preset
+run on bbb_4k_dirty passed the fixture+4K gate and FR-scored the PQ/BT.2020 output against the
+SDR master → **3.3**, rendered as "below the naive-encode floor" — garbage asserted as data
+(VMAF reads the PQ transfer as luminance distortion). `probe_fr_sandwich` now probes the
+output's `color_transfer` and skips PQ/HLG with `fr: {skipped: "output_transfer_mismatch"}`
+(mirrors compare mode's ffmpeg_comparable rule); both renderers explain it. The stored
+6c67c7b2 fr block was invalidated in place — raw score preserved under `invalidated` with the
+reason, never silently deleted. Anchors/floor stay SDR-pipeline-only by construction. Tests
+895→896. (`7e35d87`)
+
 **Addendum 2 — the fair floor (Ben's call: "dangerous to publish source > enhanced"):** the
 original sandwich compared across paths — the naive baseline never paid an encode while the
 enhanced output always does (~10 pts at ceiling level), so "enhanced below naive" conflated
