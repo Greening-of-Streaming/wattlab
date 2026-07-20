@@ -1106,14 +1106,18 @@ function _vqaRows(srcv, mlv, ffv) {
   if (!rows) return '';
   return '<div style="margin-top:0.5rem">' + rows + '</div>' + _VQA_NOTE;
 }
-// Full-reference sandwich — only present on degraded-ladder fixture runs
+// Full-reference fidelity — only present on degraded-ladder fixture runs
 // (uploads and non-ladder sources have no pristine master; NR-only there).
+// Two-axis framing (2026-07-20): FR = fidelity to the master, NR = standalone
+// perceptual quality. ML enhancement synthesises detail rather than recovering
+// it, so it typically RAISES the NR axis while LOWERING the FR axis — the
+// anchors are context, never an expected ordering.
 function _frRows(mlfr, fffr) {
   var _skipMsg = {
-    output_not_4k: 'FR sandwich n/a for this run — the fidelity anchors are '
+    output_not_4k: 'FR fidelity n/a for this run — the fidelity anchors are '
       + '4K-denominated and this output is not 4K. Choose the 4K output target '
       + 'on a ladder fixture to get the full-reference score.',
-    output_transfer_mismatch: 'FR sandwich n/a for this run — the output is HDR '
+    output_transfer_mismatch: 'FR fidelity n/a for this run — the output is HDR '
       + '(PQ/HLG) while the pristine reference is SDR, and VMAF across transfer '
       + 'functions is not meaningful. Choose an SDR output target on a ladder '
       + 'fixture to get the full-reference score.'
@@ -1125,24 +1129,17 @@ function _frRows(mlfr, fffr) {
   }
   function line(lbl, fr) {
     if (!fr || fr.vmaf == null) return '';
-    // Ordered comparison ONLY against same-path numbers (floor + ceiling both
-    // pay the same pipeline encode as the live output). The chain is asserted
-    // only when it actually holds; inversions are stated plainly.
+    // Anchors are shown as same-path context (both pay the identical pipeline
+    // encode); no ordering is asserted — generative output routinely lands
+    // below the naive-encode anchor on this axis while winning the NR axis.
     var sand = '';
     if (fr.floor_vmaf != null && fr.ceiling_vmaf != null) {
-      var inChain = fr.floor_vmaf <= fr.vmaf && fr.vmaf <= fr.ceiling_vmaf;
-      sand = ' <span style="color:var(--text-4);font-weight:400">'
-        + (inChain
-            ? '(floor ' + fr.floor_vmaf + ' &#8804; &#8203;' + fr.vmaf
-              + ' &#8804; ceiling ' + fr.ceiling_vmaf + ')'
-            : '(floor ' + fr.floor_vmaf + ' &middot; ceiling ' + fr.ceiling_vmaf
-              + ' — ' + (fr.vmaf < fr.floor_vmaf
-                          ? 'below the naive-encode floor'
-                          : 'above the pipeline ceiling') + ')')
-        + '</span>';
-    } else if (fr.ceiling_vmaf != null) {
-      sand = ' <span style="color:var(--text-4);font-weight:400">(ceiling '
+      sand = ' <span style="color:var(--text-4);font-weight:400">(anchors: '
+        + 'naive encode ' + fr.floor_vmaf + ' &middot; pristine encode '
         + fr.ceiling_vmaf + ')</span>';
+    } else if (fr.ceiling_vmaf != null) {
+      sand = ' <span style="color:var(--text-4);font-weight:400">(anchor: '
+        + 'pristine encode ' + fr.ceiling_vmaf + ')</span>';
     }
     return _row(lbl, fr.vmaf + sand, '');
   }
@@ -1158,14 +1155,17 @@ function _frRows(mlfr, fffr) {
     : '';
   return '<div style="margin-top:0.5rem">' + rows + '</div>' + srcLine
     + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
-    + 'Full-reference VMAF (' + model + ', 4K) vs this fixture&#39;s pristine master — '
-    + 'ladder fixtures only. All ordered numbers share the same pipeline encode: '
-    + 'floor = naive lanczos upscale through the matched encode (did the ML add value '
-    + 'over dumb scaling?); ceiling = the pristine master through the same pipeline '
-    + '(its gap to 100 is encode cost alone). Ordering is expected, not guaranteed: '
-    + 'an output scoring below the floor while looking subjectively better is a '
-    + 'finding about FR metrics on ML-enhanced video, not a bug. '
-    + 'v1 scores are not comparable with v0-era scores.</div>';
+    + 'Two axes, read together: full-reference VMAF (' + model + ', 4K) scores '
+    + '<em>fidelity</em> — how close the output stays to this fixture&#39;s pristine '
+    + 'master — while the no-reference score above rates how good the output looks '
+    + 'on its own. ML enhancement typically trades the first for the second: it '
+    + 'synthesises plausible detail rather than recovering the original signal, so '
+    + 'an enhanced output often scores below the naive-encode anchor on fidelity '
+    + 'while beating it on perceived quality. That divergence is the measurement, '
+    + 'not a fault. Both anchors pay the same pipeline encode as the output: '
+    + 'naive = plain lanczos upscale through the matched encode; pristine = the '
+    + 'master itself through the same pipeline (its gap to 100 is encode cost '
+    + 'alone). v1 scores are not comparable with v0-era scores.</div>';
 }
 // Resulting-file complexity comparison (SI/TI + frame-size stats from the
 // terminal probe), source vs both outputs. Renders only rows with ≥1 value.

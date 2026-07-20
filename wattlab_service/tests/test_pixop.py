@@ -2216,9 +2216,13 @@ def test_fr_wired_into_both_runners_after_vqa():
 def test_enhance_pages_render_fr_rows():
     page = client.get("/enhance-run", headers=LAB).text
     assert "_frRows" in page and "pristine master" in page
-    # ordered comparisons are same-path only; the source-as-displayed score is
-    # context, never part of a ≤ chain (owner concern 2026-07-20)
-    assert "naive-encode floor" in page and "not directly comparable" in page
+    # two-axis framing (owner decision 2026-07-20): FR = fidelity, NR = looks;
+    # anchors are same-path context, no ordering asserted, no "below the floor"
+    # alarm wording; the source-as-displayed score stays a separate path
+    assert "naive-encode anchor" in page and "not directly comparable" in page
+    assert "synthesises plausible detail" in page
+    assert "naive-encode floor" not in page
     js = (Path(__file__).parent.parent / "static" / "wl-result.js").read_text()
     assert "Fidelity vs pristine master" in js and "d.fr" in js
     assert "floor_vmaf" in js and "not directly comparable" in js
+    assert "synthesis, not" in js and "naive-encode floor" not in js

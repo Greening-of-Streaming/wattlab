@@ -1053,27 +1053,23 @@
               + (delta != null ? ' (Δ ' + (delta >= 0 ? '+' : '') + _f(delta, 2) + ')' : '')
               + '</div>';
     }
-    // FR sandwich — ladder-fixture runs only (pristine master exists).
+    // FR fidelity — ladder-fixture runs only (pristine master exists).
+    // Two-axis framing: FR = fidelity to the master, NR (above) = standalone
+    // perceptual quality. Anchors are same-path context, never an expected
+    // ordering — generative enhancement routinely trades fidelity for looks.
     if (d.fr && d.fr.skipped) {
       vqaHtml += '<div style="margin-top:0.3rem;font-size:0.72rem;color:var(--text-4)">'
               + (d.fr.skipped === 'output_transfer_mismatch'
-                  ? 'FR sandwich n/a — HDR output vs SDR reference; cross-transfer VMAF is not meaningful.'
-                  : 'FR sandwich n/a — anchors are 4K-denominated and this output is not 4K.')
+                  ? 'FR fidelity n/a — HDR output vs SDR reference; cross-transfer VMAF is not meaningful.'
+                  : 'FR fidelity n/a — anchors are 4K-denominated and this output is not 4K.')
               + '</div>';
     } else if (d.fr && d.fr.vmaf != null) {
-      // Ordered comparison only vs same-path numbers (floor + ceiling pay the
-      // same pipeline encode); the source-as-displayed score is context only.
       var sand = '';
       if (d.fr.floor_vmaf != null && d.fr.ceiling_vmaf != null) {
-        var inChain = d.fr.floor_vmaf <= d.fr.vmaf && d.fr.vmaf <= d.fr.ceiling_vmaf;
-        sand = inChain
-          ? ' — floor ' + _f(d.fr.floor_vmaf, 2) + ' ≤ ​' + _f(d.fr.vmaf, 2)
-            + ' ≤ ceiling ' + _f(d.fr.ceiling_vmaf, 2)
-          : ' — floor ' + _f(d.fr.floor_vmaf, 2) + ' · ceiling ' + _f(d.fr.ceiling_vmaf, 2)
-            + (d.fr.vmaf < d.fr.floor_vmaf ? ' (below the naive-encode floor)'
-                                           : ' (above the pipeline ceiling)');
+        sand = ' (anchors: naive encode ' + _f(d.fr.floor_vmaf, 2)
+             + ' · pristine encode ' + _f(d.fr.ceiling_vmaf, 2) + ')';
       } else if (d.fr.ceiling_vmaf != null) {
-        sand = ' — ceiling ' + _f(d.fr.ceiling_vmaf, 2);
+        sand = ' (anchor: pristine encode ' + _f(d.fr.ceiling_vmaf, 2) + ')';
       }
       vqaHtml += '<div style="margin-top:0.3rem;font-size:0.78rem;color:var(--text-3)">'
               + 'Fidelity vs pristine master (' + (d.fr.vmaf_model || 'VMAF') + ', 4K): '
@@ -1083,6 +1079,10 @@
                 + 'Source as displayed (player upscale, no pipeline encode): '
                 + _f(d.fr.baseline_vmaf, 2) + ' — different path, not directly comparable.</div>';
       }
+      vqaHtml += '<div style="margin-top:0.15rem;font-size:0.72rem;color:var(--text-4)">'
+              + 'Fidelity (FR) and standalone quality (NR) are different axes: ML enhancement '
+              + 'typically raises the second while lowering the first — synthesis, not '
+              + 'restoration. See /methodology.</div>';
     }
     html += '<div class="result-card">'
           + '<p class="headline">' + (d.preset_label || 'Enhancement run') + '</p>'
