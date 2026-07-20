@@ -35,6 +35,13 @@ DEFAULTS = {
     # Wait-again / Run-anyway / Cancel dialog. Auto-resolve to the non-interactive
     # default (one fixed fallback sleep, then proceed, settled:false) after:
     "cooldown_dialog_watchdog_s": 75,
+    # CR-070 — pre-job idle guard: between queued jobs the worker waits for
+    # wall power to return to the previous job's baseline floor before the
+    # next job's first baseline (queue_control._pre_job_idle_guard). Attended
+    # Lab runs get a "Run job anyway" button in the live idle-wait readout
+    # once the wait has lasted this many seconds (UI threshold only — the
+    # wait itself still settles or times out at cooldown_idle_max_wait_s):
+    "pre_job_skip_after_s": 5,
     # Confidence — poll count thresholds (kept)
     "conf_green_polls": 10,
     "conf_yellow_polls": 5,

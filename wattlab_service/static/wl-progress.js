@@ -5,7 +5,7 @@
 window.WL_CFG = window.WL_CFG || {baseline_s: '\u2014', cooldown_s: '\u2014',
   cooldown_label: 'Cooldown', cooldown_paren: '', rest_label: 'Rest',
   idle_label: 'Idle', llm_rest_s: '\u2014', meter_name: 'power meter',
-  show_wait_detail: true, idle_tolerance_w: 3, urls: {}};
+  show_wait_detail: true, idle_tolerance_w: 3, pre_job_skip_after_s: 5, urls: {}};
 var WL_CFG = window.WL_CFG;
 function wlFmt(v, dec) { if (v === null || v === undefined) return '—'; return Number(v).toFixed(dec ?? 2); }
 function wlFormatElapsed(ms) {
@@ -39,9 +39,27 @@ function wlCooldownLine(data) {
     var tgt = data.cooldown_reference_w != null
         ? '≤ ' + (Number(data.cooldown_reference_w) + tol).toFixed(1) + ' W' : '?';
     var cw  = data.cooldown_w != null ? Number(data.cooldown_w).toFixed(1) : '?';
+    // CR-070 — "Run job anyway" escape hatch during the PRE-JOB idle guard.
+    // cooldown_skippable (value = the job id) is set only by the queue
+    // worker's guard on attended Lab runs; the button appears once the wait
+    // has lasted pre_job_skip_after_s. Skip is recorded as settled:false —
+    // the result honestly says it wasn't cleanly spaced. Endpoint is
+    // Lab-gated server-side; non-Lab viewers never receive the flag.
+    var skipBtn = '';
+    var skipAfter = Number(WL_CFG.pre_job_skip_after_s);
+    if (isNaN(skipAfter)) skipAfter = 5;
+    if (data.cooldown_skippable && Number(data.cooldown_waited_s) >= skipAfter) {
+        skipBtn = ' <button onclick="fetch(\'/job/' + data.cooldown_skippable
+            + '/cooldown-skip\', {method: \'POST\'}); this.disabled = true;'
+            + ' this.textContent = \'skipping…\'"'
+            + ' style="background:none;border:1px solid var(--warn);'
+            + 'color:var(--warn);font-family:monospace;font-size:0.72rem;'
+            + 'padding:0.1rem 0.5rem;margin-left:0.5rem;cursor:pointer">'
+            + '▶ Run job anyway</button>';
+    }
     return '<div style="color:var(--warn);font-size:0.72rem;margin-top:0.4rem">'
          + '⏳ Idle wait ' + Number(data.cooldown_waited_s).toFixed(0)
-         + 's · ' + cw + ' W → target ' + tgt + '</div>';
+         + 's · ' + cw + ' W → target ' + tgt + skipBtn + '</div>';
 }
 // CR-019 — widget targets default to '#status' for back-compat with the
 // main pages (/video /llm /image /rag), but accept opts.target so /demo

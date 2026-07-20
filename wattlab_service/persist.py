@@ -62,6 +62,18 @@ def save_result(job_type: str, job_id: str, data: dict,
     # gpu_hardware. A future PDU/IPMI swap (CR-031 §2) then can't be silently
     # compared against Tapo P110 runs; records meter name + polling resolution.
     payload["power_hardware"] = power.stamp()
+    # CR-070 — pre-job idle guard provenance. The queue worker's guard outcome
+    # (did wall power return to the previous job's floor before this job's
+    # first baseline?) rides on the job's FIRST stored result — consume-once,
+    # matched to the currently running job, so calibration artifacts and
+    # re-saves never inherit it.
+    try:
+        import queue_control as _qc
+        _stamp = _qc.consume_pre_job_stamp(job_id)
+        if _stamp is not None and "pre_job_cooldown" not in payload:
+            payload["pre_job_cooldown"] = _stamp
+    except Exception:
+        pass
     carbon.walk_and_enrich(payload)
     # CR-037 — anchor AI energy to a real video encode ("≈ N× a 120s encode").
     # AI result types only; video would just read "≈ 1×" of itself.

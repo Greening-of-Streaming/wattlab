@@ -375,6 +375,26 @@ async def cooldown_decision(job_id: str, decision: str = Form(...)):
     return {"ok": True, "decision": decision}
 
 
+@app.post("/job/{job_id}/cooldown-skip", dependencies=[Depends(requires(BENCHMARK_RUN))])
+async def cooldown_skip(job_id: str):
+    """CR-070 — "Run job anyway": end the pre-job idle wait now.
+
+    Valid only while power.cooldown_between_runs advertises the affordance
+    (cooldown_skippable on the job — pre-job guard, attended Lab runs).
+    wait_for_thermal_floor picks the flag up on its next 1 Hz poll and the
+    guard records method="idle+skipped", settled:false. Gated to Lab
+    (BENCHMARK_RUN), same as the cooldown-decision dialog."""
+    j = jobs.get(job_id)
+    if not j:
+        return JSONResponse({"ok": False, "error": "unknown job"}, status_code=404)
+    if not j.get("cooldown_skippable"):
+        return JSONResponse({"ok": False,
+                             "error": "job is not in a skippable idle wait"},
+                            status_code=409)
+    j["cooldown_skip"] = True
+    return {"ok": True}
+
+
 @app.get("/queue", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_status_endpoint():
     return queue_control.snapshot()

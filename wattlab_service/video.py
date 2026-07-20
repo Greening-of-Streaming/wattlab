@@ -428,7 +428,9 @@ async def measure_baseline(polls: int = 10) -> dict:
                                    if s["cpu_tctl"]) / len(sensor_readings), 1),
         "gpu_temp_base": round(sum(s["gpu_junction"] for s in sensor_readings
                                    if s["gpu_junction"]) / len(sensor_readings), 1),
-        **{k: b[k] for k in ("baseline_samples_w_2", "meter2_degraded") if k in b},
+        **{k: b[k] for k in ("baseline_samples_w_2", "meter2_degraded",
+                             "baseline_reference_w", "baseline_elevated")
+           if k in b},
     }
 
 async def poll_during_task(stop_event: asyncio.Event) -> list:

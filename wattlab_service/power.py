@@ -215,12 +215,29 @@ async def _poll_secondary_task(stop_event: asyncio.Event, interval: float):
     return samples, False
 
 
+# CR-070 — rolling idle-floor reference. The most recent baseline mean any
+# module measured; sample_baseline() stamps it on every run. The queue worker
+# uses it as the floor for the pre-job idle guard ("the next job may not start
+# hotter than the last one did"). Deliberately updated on EVERY baseline,
+# clean or elevated: a floor that legitimately rose (hardware change, warmer
+# room) self-corrects after one flagged job instead of locking all later jobs
+# into the max wait.
+LAST_W_BASE: float | None = None
+
+
 async def sample_baseline(polls: int, *, read_watts, read_sensors=None,
                           interval: float = None) -> dict:
     """Shared baseline sampler. Returns
         {w_base, samples_w, sensor_readings?, baseline_samples_w_2?, meter2_degraded?}
     where the *_2 keys appear only on a dual-meter run. `w_base` and
-    `samples_w` are always the primary meter — identical to the legacy loops."""
+    `samples_w` are always the primary meter — identical to the legacy loops.
+
+    CR-070: when a previous baseline exists (LAST_W_BASE), the result also
+    carries {baseline_reference_w, baseline_elevated} — the sanity flag for a
+    baseline captured above the rolling idle floor + tolerance. Persisted with
+    the raw samples so a hot start is queryable, never silently accepted."""
+    global LAST_W_BASE
+    reference_w = LAST_W_BASE
     interval = METER_RESOLUTION_S if interval is None else interval
     second = asyncio.create_task(_poll_secondary_baseline(polls, interval)) \
         if meter_count() >= 2 else None
@@ -240,6 +257,15 @@ async def sample_baseline(polls: int, *, read_watts, read_sensors=None,
         "w_base": round(sum(power_readings) / len(power_readings), 2),
         "samples_w": [round(w, 2) for w in power_readings],
     }
+    if reference_w is not None:
+        try:
+            import settings as _settings
+            tol = float(_settings.load().get("cooldown_idle_tolerance_w", 3.0))
+        except Exception:
+            tol = 3.0
+        out["baseline_reference_w"] = round(reference_w, 2)
+        out["baseline_elevated"] = bool(out["w_base"] > reference_w + tol)
+    LAST_W_BASE = out["w_base"]
     if read_sensors is not None:
         out["sensor_readings"] = sensor_readings
     if second is not None:
@@ -385,6 +411,18 @@ async def wait_for_thermal_floor(reference_w: float,
                     "readings": readings,
                     "reference_w": reference_w,
                     "tolerance_w": tolerance_w}
+        # CR-070 — operator skip ("Run job anyway", pre-job idle guard only).
+        # The Lab-gated /job/{id}/cooldown-skip endpoint sets the flag; picked
+        # up here on the next 1 Hz poll, so skip latency is ≤ 1 s.
+        if jobs is not None and job_id is not None \
+                and (jobs.get(job_id) or {}).pop("cooldown_skip", None):
+            return {"waited_s": round(elapsed, 2),
+                    "final_w": readings[-1] if readings else None,
+                    "settled": False,
+                    "skipped": True,
+                    "readings": readings,
+                    "reference_w": reference_w,
+                    "tolerance_w": tolerance_w}
         w = await get_power_watts()
         readings.append(round(w, 2))
         if jobs is not None and job_id is not None:
@@ -436,7 +474,8 @@ def _clear_live_cooldown_fields(jobs, job_id):
 
 async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
                                 stage="cooldown", jobs=None, job_id=None,
-                                respect_toggle=True, allow_dialog=False) -> dict:
+                                respect_toggle=True, allow_dialog=False,
+                                skippable=False) -> dict:
     """Cool down between two measurement passes.
 
     Strategy is chosen by the `cooldown_wait_for_idle` setting:
@@ -450,6 +489,11 @@ async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
                                     watchdog that auto-applies the default.
               timeout, otherwise  → ONE fixed_seconds fallback sleep, proceed.
                                     method="idle+fallback",  settled=False
+
+    CR-070: skippable=True (pre-job idle guard only) advertises a live "Run
+    job anyway" affordance on the job dict (cooldown_skippable, value = the
+    job id so wlCooldownLine can address the skip endpoint). An operator skip
+    ends the wait immediately → method="idle+skipped", settled=False.
 
     Forced-through runs carry settled=False + timed_out=True so a result is never
     silently treated as cleanly-spaced. Returns a dict meant to be persisted into
@@ -483,56 +527,72 @@ async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
     total_waited = 0.0
     re_waits = 0
     MAX_RE_WAITS = 3
-    while True:
-        _stage(stage)
-        cd = await wait_for_thermal_floor(
-            reference_w, tolerance_w=tol, poll_interval_s=1.0,
-            settle_polls=settle_polls, max_wait_s=max_wait,
-            jobs=jobs, job_id=job_id,
-        )
-        total_waited += cd["waited_s"]
-        if cd["settled"]:
-            _clear_live_cooldown_fields(jobs, job_id)
-            return {"method": "idle", "waited_s": round(total_waited, 2),
-                    "settled": True, "final_w": cd["final_w"], "timed_out": False}
-
-        # --- idle-wait timed out ---
-        # Offer the dialog only when the call site opted in (allow_dialog — set
-        # at the compare-flow sites where nothing is held across the cooldown so
-        # a Cancel unwinds cleanly) AND the run is an attended Lab one
-        # (interactive_eligible, read off the job dict — set at enqueue,
-        # overridden False by batch/benchmark). No call site threads a tier flag
-        # through the measurement functions.
-        interactive = bool(allow_dialog and jobs is not None and job_id is not None
-                           and jobs.get(job_id, {}).get("interactive_eligible"))
-        decision = "fallback"
-        if interactive and jobs is not None and job_id is not None:
-            decision = await _await_cooldown_decision(
-                jobs, job_id,
-                allow_wait_again=(re_waits < MAX_RE_WAITS),
-                watchdog_s=watchdog_s,
+    if skippable and jobs is not None and job_id is not None and job_id in jobs:
+        jobs[job_id]["cooldown_skippable"] = job_id
+    try:
+        while True:
+            _stage(stage)
+            cd = await wait_for_thermal_floor(
+                reference_w, tolerance_w=tol, poll_interval_s=1.0,
+                settle_polls=settle_polls, max_wait_s=max_wait,
+                jobs=jobs, job_id=job_id,
             )
+            total_waited += cd["waited_s"]
+            if cd.get("skipped"):
+                _clear_live_cooldown_fields(jobs, job_id)
+                return {"method": "idle+skipped",
+                        "waited_s": round(total_waited, 2),
+                        "settled": False, "final_w": cd["final_w"],
+                        "timed_out": False}
+            if cd["settled"]:
+                _clear_live_cooldown_fields(jobs, job_id)
+                return {"method": "idle", "waited_s": round(total_waited, 2),
+                        "settled": True, "final_w": cd["final_w"],
+                        "timed_out": False}
 
-        if decision == "wait" and re_waits < MAX_RE_WAITS:
-            re_waits += 1
-            continue
-        if decision == "cancel":
-            raise CooldownCancelled()
-        if decision == "run":
-            # Operator chose to proceed NOW — no extra sleep.
+            # --- idle-wait timed out ---
+            # Offer the dialog only when the call site opted in (allow_dialog — set
+            # at the compare-flow sites where nothing is held across the cooldown so
+            # a Cancel unwinds cleanly) AND the run is an attended Lab one
+            # (interactive_eligible, read off the job dict — set at enqueue,
+            # overridden False by batch/benchmark). No call site threads a tier flag
+            # through the measurement functions.
+            interactive = bool(allow_dialog and jobs is not None and job_id is not None
+                               and jobs.get(job_id, {}).get("interactive_eligible"))
+            decision = "fallback"
+            if interactive and jobs is not None and job_id is not None:
+                decision = await _await_cooldown_decision(
+                    jobs, job_id,
+                    allow_wait_again=(re_waits < MAX_RE_WAITS),
+                    watchdog_s=watchdog_s,
+                )
+
+            if decision == "wait" and re_waits < MAX_RE_WAITS:
+                re_waits += 1
+                continue
+            if decision == "cancel":
+                raise CooldownCancelled()
+            if decision == "run":
+                # Operator chose to proceed NOW — no extra sleep.
+                _clear_live_cooldown_fields(jobs, job_id)
+                return {"method": "idle", "waited_s": round(total_waited, 2),
+                        "settled": False, "final_w": cd["final_w"], "timed_out": True}
+            # 'fallback' — non-interactive default or watchdog expiry: one fixed
+            # sleep guarantees a minimum gap, then proceed.
+            _stage(stage)
+            if jobs is not None and job_id is not None:
+                jobs[job_id]["cooldown_fixed_s"] = fixed_seconds
+            await asyncio.sleep(fixed_seconds)
+            total_waited += fixed_seconds
             _clear_live_cooldown_fields(jobs, job_id)
-            return {"method": "idle", "waited_s": round(total_waited, 2),
+            return {"method": "idle+fallback", "waited_s": round(total_waited, 2),
                     "settled": False, "final_w": cd["final_w"], "timed_out": True}
-        # 'fallback' — non-interactive default or watchdog expiry: one fixed
-        # sleep guarantees a minimum gap, then proceed.
-        _stage(stage)
-        if jobs is not None and job_id is not None:
-            jobs[job_id]["cooldown_fixed_s"] = fixed_seconds
-        await asyncio.sleep(fixed_seconds)
-        total_waited += fixed_seconds
-        _clear_live_cooldown_fields(jobs, job_id)
-        return {"method": "idle+fallback", "waited_s": round(total_waited, 2),
-                "settled": False, "final_w": cd["final_w"], "timed_out": True}
+    finally:
+        # Withdraw the skip affordance however the wait concluded; drop a skip
+        # that raced in after the wait already resolved.
+        if jobs is not None and job_id is not None and job_id in jobs:
+            jobs[job_id].pop("cooldown_skippable", None)
+            jobs[job_id].pop("cooldown_skip", None)
 
 
 async def _await_cooldown_decision(jobs, job_id, *, allow_wait_again, watchdog_s):

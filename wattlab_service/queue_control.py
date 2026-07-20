@@ -107,6 +107,59 @@ PAUSE_FLAG = "/tmp/owl-paused"
 _jobs: dict | None = None
 _lock_file: Path | None = None
 
+# --- CR-070 — pre-job idle guard --------------------------------------------
+# Between queued jobs the box may still be hot from the previous job, and the
+# next job's very first baseline had no protection (the CR-062 idle-wait only
+# ran BETWEEN passes inside one job). The worker now verifies wall power has
+# returned to the rolling idle floor (power.LAST_W_BASE — the previous job's
+# baseline) before dispatching. The guard's outcome is held here for exactly
+# one save: persist.save_result() consumes it into the job's first stored
+# result as `pre_job_cooldown`, so a forced-through hot start is never
+# silently presented as cleanly spaced.
+_pre_job_stamp: dict | None = None
+
+
+def consume_pre_job_stamp(job_id: str) -> Optional[dict]:
+    """Hand the pending pre-job cooldown record to persist.save_result — once,
+    and only for the currently running job (calibration/parity artifacts and
+    re-saves of other jobs never inherit it)."""
+    global _pre_job_stamp
+    if _pre_job_stamp is not None and job_id == current_job_id:
+        stamp, _pre_job_stamp = _pre_job_stamp, None
+        return stamp
+    return None
+
+
+async def _pre_job_idle_guard(job_id: str):
+    """Wait for the rolling idle floor before dispatching a job.
+
+    Reference = power.LAST_W_BASE (the previous job's baseline): the contract
+    is "job N+1 may not start hotter than job N did", which self-corrects
+    after a legitimate floor change (see the LAST_W_BASE note in power.py).
+    First job since service start (no reference) starts immediately, as
+    before. Attended Lab jobs get the "Run job anyway" skip affordance
+    (skippable=True → wlCooldownLine button, ≥ pre_job_skip_after_s).
+    Fail-soft: a guard error must never kill the job."""
+    global _pre_job_stamp
+    _pre_job_stamp = None
+    try:
+        import power
+        ref = power.LAST_W_BASE
+        if ref is None:
+            return
+        interactive = bool((_jobs.get(job_id) or {}).get("interactive_eligible"))
+        cd = await power.cooldown_between_runs(
+            fixed_seconds=0, reference_w=ref, stage="pre-job idle",
+            jobs=_jobs, job_id=job_id, allow_dialog=False,
+            skippable=interactive)
+        cd = {**cd, "reference_w": round(ref, 2)}
+        if job_id in _jobs:
+            _jobs[job_id]["pre_job_cooldown"] = cd
+        _pre_job_stamp = cd
+    except Exception:
+        log.exception("pre-job idle guard failed for %s — starting job anyway",
+                      job_id)
+
 
 def start(jobs: dict, lock_file: Path) -> asyncio.Task:
     """Wire shared state and spawn the worker.
@@ -253,7 +306,7 @@ def snapshot() -> dict:
 async def _worker():
     """Single sequential worker. Pops from pending_queue, dispatches the
     coroutine, cleans up on exception. Honours PAUSE_FLAG between jobs."""
-    global current_job_id, current_visitor_key
+    global current_job_id, current_visitor_key, _pre_job_stamp
     while True:
         await queue_event.wait()
         queue_event.clear()
@@ -272,6 +325,10 @@ async def _worker():
             for i, e in enumerate(pending_queue):
                 if e["job_id"] in _jobs:
                     _jobs[e["job_id"]]["queue_position"] = i + 1
+            # CR-070 — verify the box is back at the idle floor before this
+            # job's first baseline (a hot leftover from the previous job used
+            # to become the next W_base, silently).
+            await _pre_job_idle_guard(job_id)
             try:
                 await entry["coro_fn"]()
             except Exception as ex:
@@ -299,5 +356,8 @@ async def _worker():
                 except Exception:
                     log.debug("could not journal job failure", exc_info=True)
             finally:
+                # CR-070 — a stamp the job never saved (errored / saves no
+                # result) must not leak into the next job's first result.
+                _pre_job_stamp = None
                 current_job_id = None
                 current_visitor_key = None

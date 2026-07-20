@@ -234,3 +234,185 @@ def test_decision_endpoint_rejects_disallowed_option(monkeypatch):
     resp = asyncio.run(main.cooldown_decision("jz", "wait"))   # 'wait' not offered
     assert getattr(resp, "status_code", None) == 400
     del main.jobs["jz"]
+
+
+# ── CR-070 — pre-job idle guard ─────────────────────────────────────────────
+#
+# The CR-062 idle-wait only ran BETWEEN passes inside one job; between queued
+# jobs the next job's first baseline had no protection (the "baseline bug").
+# These pin: the operator skip in wait_for_thermal_floor, the idle+skipped
+# stamp, the rolling-floor reference + elevated flag in sample_baseline, the
+# worker guard, the consume-once persist stamp, and the skip endpoint.
+
+def test_wait_for_thermal_floor_operator_skip(monkeypatch, no_sleep):
+    # Skip flag set (via POST /job/{id}/cooldown-skip) → the wait ends on the
+    # next poll with skipped:True, settled:False — it never reaches the meter.
+    async def _hot():
+        raise AssertionError("skip must resolve before the next meter read")
+    monkeypatch.setattr(power, "get_power_watts", _hot)
+    jobs = {"j": {"cooldown_skip": True}}
+    r = asyncio.run(power.wait_for_thermal_floor(55.0, jobs=jobs, job_id="j"))
+    assert r["skipped"] is True
+    assert r["settled"] is False
+    assert "cooldown_skip" not in jobs["j"]     # flag consumed
+
+
+def test_skippable_advertises_and_returns_idle_skipped(monkeypatch, no_sleep):
+    _settings(monkeypatch)
+    seen = {}
+    async def _skipped(*a, **k):
+        seen["skippable"] = k["jobs"]["j"].get("cooldown_skippable")
+        return {"waited_s": 6.0, "final_w": 82.0, "settled": False,
+                "skipped": True}
+    monkeypatch.setattr(power, "wait_for_thermal_floor", _skipped)
+    jobs = {"j": {"interactive_eligible": True}}
+    r = asyncio.run(power.cooldown_between_runs(
+        fixed_seconds=10, reference_w=55.0, jobs=jobs, job_id="j",
+        skippable=True))
+    assert r["method"] == "idle+skipped"
+    assert r["settled"] is False
+    assert r["timed_out"] is False
+    assert r["waited_s"] == 6.0
+    # affordance was advertised as the job id (wlCooldownLine addresses the
+    # skip endpoint with it) and withdrawn once the wait concluded
+    assert seen["skippable"] == "j"
+    assert "cooldown_skippable" not in jobs["j"]
+
+
+def test_not_skippable_never_advertises(monkeypatch, no_sleep):
+    _settings(monkeypatch)
+    seen = {}
+    async def _settled(*a, **k):
+        seen["skippable"] = k["jobs"]["j"].get("cooldown_skippable")
+        return {"waited_s": 4.0, "final_w": 56.0, "settled": True}
+    monkeypatch.setattr(power, "wait_for_thermal_floor", _settled)
+    jobs = {"j": {"interactive_eligible": True}}
+    asyncio.run(power.cooldown_between_runs(
+        fixed_seconds=10, reference_w=55.0, jobs=jobs, job_id="j"))
+    assert seen["skippable"] is None            # inter-pass sites: unchanged
+
+
+def test_sample_baseline_rolling_floor_and_elevated_flag(monkeypatch, no_sleep):
+    _settings(monkeypatch)
+    monkeypatch.setattr(power, "meter_count", lambda: 1)
+    monkeypatch.setattr(power, "LAST_W_BASE", None)
+
+    async def _w60():
+        return 60.0
+    r1 = asyncio.run(power.sample_baseline(3, read_watts=_w60))
+    assert "baseline_elevated" not in r1        # no reference yet
+    assert power.LAST_W_BASE == 60.0
+
+    async def _w70():
+        return 70.0
+    r2 = asyncio.run(power.sample_baseline(3, read_watts=_w70))
+    assert r2["baseline_reference_w"] == 60.0
+    assert r2["baseline_elevated"] is True      # 70 > 60 + tol(3)
+    assert power.LAST_W_BASE == 70.0            # floor updates even when hot
+
+    async def _w61():
+        return 61.0
+    r3 = asyncio.run(power.sample_baseline(3, read_watts=_w61))
+    assert r3["baseline_elevated"] is False     # 61 ≤ 70 + tol
+
+
+def test_pre_job_guard_no_reference_starts_immediately(monkeypatch):
+    import queue_control as qc
+    monkeypatch.setattr(power, "LAST_W_BASE", None)
+    async def _boom(**k):
+        raise AssertionError("no reference → guard must not wait")
+    monkeypatch.setattr(power, "cooldown_between_runs", _boom)
+    monkeypatch.setattr(qc, "_jobs", {"j": {}})
+    asyncio.run(qc._pre_job_idle_guard("j"))
+    assert qc._pre_job_stamp is None
+
+
+def test_pre_job_guard_waits_stamps_and_consumes_once(monkeypatch):
+    import queue_control as qc
+    monkeypatch.setattr(power, "LAST_W_BASE", 57.3)
+    seen = {}
+    async def _cd(**k):
+        seen.update(k)
+        return {"method": "idle", "waited_s": 4.0, "settled": True,
+                "final_w": 58.0, "timed_out": False}
+    monkeypatch.setattr(power, "cooldown_between_runs", _cd)
+    jobs = {"j": {"interactive_eligible": True}}
+    monkeypatch.setattr(qc, "_jobs", jobs)
+    monkeypatch.setattr(qc, "current_job_id", "j")
+    asyncio.run(qc._pre_job_idle_guard("j"))
+    assert seen["reference_w"] == 57.3
+    assert seen["skippable"] is True            # attended Lab run
+    assert seen["allow_dialog"] is False        # never the modal between jobs
+    assert jobs["j"]["pre_job_cooldown"]["reference_w"] == 57.3
+    # consume-once, and only for the running job
+    assert qc.consume_pre_job_stamp("other") is None
+    assert qc.consume_pre_job_stamp("j")["settled"] is True
+    assert qc.consume_pre_job_stamp("j") is None
+
+
+def test_pre_job_guard_not_skippable_for_unattended_jobs(monkeypatch):
+    import queue_control as qc
+    monkeypatch.setattr(power, "LAST_W_BASE", 57.3)
+    seen = {}
+    async def _cd(**k):
+        seen.update(k)
+        return {"method": "idle", "waited_s": 1.0, "settled": True,
+                "final_w": 58.0, "timed_out": False}
+    monkeypatch.setattr(power, "cooldown_between_runs", _cd)
+    monkeypatch.setattr(qc, "_jobs", {"j": {"interactive_eligible": False}})
+    asyncio.run(qc._pre_job_idle_guard("j"))
+    assert seen["skippable"] is False
+
+
+def test_worker_guards_before_dispatch():
+    # Wiring pin: the guard must run before the job coroutine is awaited.
+    import inspect
+    import queue_control as qc
+    src = inspect.getsource(qc._worker)
+    dispatch = src.index('entry["coro_fn"]')
+    assert "_pre_job_idle_guard" in src[:dispatch]
+
+
+def test_save_result_carries_pre_job_stamp_once(monkeypatch, tmp_path):
+    import json
+    import persist
+    import queue_control as qc
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(qc, "current_job_id", "jj")
+    monkeypatch.setattr(qc, "_pre_job_stamp",
+                        {"method": "idle+skipped", "waited_s": 6.0,
+                         "settled": False, "final_w": 82.0,
+                         "timed_out": False, "reference_w": 57.0})
+    p = persist.save_result("video", "jj", {"mode": "single"})
+    data = json.loads(p.read_text())
+    assert data["pre_job_cooldown"]["method"] == "idle+skipped"
+    assert data["pre_job_cooldown"]["settled"] is False
+    assert qc._pre_job_stamp is None
+    # a second save (or another job's save) does not inherit it
+    p2 = persist.save_result("video", "jj", {"mode": "single"})
+    assert "pre_job_cooldown" not in json.loads(p2.read_text())
+
+
+# ── skip endpoint (logic, auth-independent — route is Lab-gated) ────────────
+
+def test_skip_endpoint_sets_flag():
+    import main
+    main.jobs["js"] = {"cooldown_skippable": "js"}
+    out = asyncio.run(main.cooldown_skip("js"))
+    assert out == {"ok": True}
+    assert main.jobs["js"]["cooldown_skip"] is True
+    del main.jobs["js"]
+
+
+def test_skip_endpoint_rejects_outside_skippable_wait():
+    import main
+    main.jobs["jn"] = {"stage": "baseline"}
+    resp = asyncio.run(main.cooldown_skip("jn"))
+    assert getattr(resp, "status_code", None) == 409
+    del main.jobs["jn"]
+
+
+def test_skip_endpoint_unknown_job():
+    import main
+    resp = asyncio.run(main.cooldown_skip("nope-does-not-exist"))
+    assert getattr(resp, "status_code", None) == 404

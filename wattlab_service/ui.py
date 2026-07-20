@@ -711,6 +711,9 @@ def _ui_cfg() -> dict:
         # the tolerance that folds into the displayed target (floor + tol).
         "show_wait_detail": bool(s.get("cooldown_show_wait_detail", True)),
         "idle_tolerance_w": s.get("cooldown_idle_tolerance_w", 3.0),
+        # CR-070 — seconds of pre-job idle wait before wlCooldownLine offers
+        # the "Run job anyway" skip button (attended Lab runs only).
+        "pre_job_skip_after_s": s.get("pre_job_skip_after_s", 5),
         "meter_name": meter_display_name(),
         "meter_cadence": meter_cadence_label(),
         # Registry/source URLs for wl-carbon.js links — constants above stay
