@@ -1109,11 +1109,19 @@ function _vqaRows(srcv, mlv, ffv) {
 // Full-reference sandwich — only present on degraded-ladder fixture runs
 // (uploads and non-ladder sources have no pristine master; NR-only there).
 function _frRows(mlfr, fffr) {
-  if ((mlfr && mlfr.skipped === 'output_not_4k') || (fffr && fffr.skipped === 'output_not_4k')) {
+  var _skipMsg = {
+    output_not_4k: 'FR sandwich n/a for this run — the fidelity anchors are '
+      + '4K-denominated and this output is not 4K. Choose the 4K output target '
+      + 'on a ladder fixture to get the full-reference score.',
+    output_transfer_mismatch: 'FR sandwich n/a for this run — the output is HDR '
+      + '(PQ/HLG) while the pristine reference is SDR, and VMAF across transfer '
+      + 'functions is not meaningful. Choose an SDR output target on a ladder '
+      + 'fixture to get the full-reference score.'
+  };
+  var skip = (mlfr && mlfr.skipped) || (fffr && fffr.skipped);
+  if (skip && _skipMsg[skip]) {
     return '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.5rem">'
-      + 'FR sandwich n/a for this run — the fidelity anchors are 4K-denominated '
-      + 'and this output is not 4K. Choose the 4K output target on a ladder '
-      + 'fixture to get the full-reference score.</div>';
+      + _skipMsg[skip] + '</div>';
   }
   function line(lbl, fr) {
     if (!fr || fr.vmaf == null) return '';

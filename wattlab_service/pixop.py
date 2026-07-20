@@ -1359,6 +1359,22 @@ def _fr_anchors() -> dict:
         return {}
 
 
+_HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}  # PQ, HLG
+
+
+def _probe_color_transfer(path) -> Optional[str]:
+    """color_transfer of the first video stream, or None."""
+    try:
+        r = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=color_transfer", "-of", "csv=p=0",
+             str(path)], capture_output=True, text=True, timeout=10)
+        val = (r.stdout or "").strip()
+        return val if r.returncode == 0 and val and val != "unknown" else None
+    except Exception:
+        return None
+
+
 def probe_fr_sandwich(output_path, input_name) -> Optional[dict]:
     """FR VMAF of an enhanced output vs its fixture's pristine ref, with the
     sandwich anchors attached. None (silently) unless the input is a ladder
@@ -1374,6 +1390,12 @@ def probe_fr_sandwich(output_path, input_name) -> Optional[dict]:
         # the UI can say so instead of silently omitting the row (owner
         # report 2026-07-20 — an HD-preset fixture run looked like a bug).
         return {"skipped": "output_not_4k"}
+    if _probe_color_transfer(output_path) in _HDR_TRANSFERS:
+        # The ref masters are SDR; VMAF across transfer functions reads PQ as
+        # luminance distortion and produces garbage (measured: 3.3 on an
+        # HDR-preset fixture run, job 6c67c7b2). Same rule as the compare
+        # mode's ffmpeg_comparable gate.
+        return {"skipped": "output_transfer_mismatch"}
     s = dict(cfg.load())
     s["vmaf_n_subsample"] = _FR_N_SUBSAMPLE
     score = quality.compute_vmaf(output_path, ref, s, variant="uhd")

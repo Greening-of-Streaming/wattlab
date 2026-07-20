@@ -1054,9 +1054,12 @@
               + '</div>';
     }
     // FR sandwich — ladder-fixture runs only (pristine master exists).
-    if (d.fr && d.fr.skipped === 'output_not_4k') {
+    if (d.fr && d.fr.skipped) {
       vqaHtml += '<div style="margin-top:0.3rem;font-size:0.72rem;color:var(--text-4)">'
-              + 'FR sandwich n/a — anchors are 4K-denominated and this output is not 4K.</div>';
+              + (d.fr.skipped === 'output_transfer_mismatch'
+                  ? 'FR sandwich n/a — HDR output vs SDR reference; cross-transfer VMAF is not meaningful.'
+                  : 'FR sandwich n/a — anchors are 4K-denominated and this output is not 4K.')
+              + '</div>';
     } else if (d.fr && d.fr.vmaf != null) {
       // Ordered comparison only vs same-path numbers (floor + ceiling pay the
       // same pipeline encode); the source-as-displayed score is context only.

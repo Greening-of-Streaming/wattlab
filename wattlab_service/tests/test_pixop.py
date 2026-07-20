@@ -2106,6 +2106,7 @@ def _arm_fr(monkeypatch, tmp_path, *, model="vmaf_v1.0.16_1d5h_2160",
     if anchors is not None:
         (tmp_path / "fr_anchors_v1.json").write_text(_json.dumps(anchors))
     monkeypatch.setattr(quality, "_probe_dims", lambda p: dims)
+    monkeypatch.setattr(pixop, "_probe_color_transfer", lambda p: None)  # SDR
     seen = {}
 
     def fake_vmaf(dist, ref, s=None, variant="hd"):
@@ -2158,6 +2159,24 @@ def test_probe_fr_sandwich_missing_anchors_score_only(monkeypatch, tmp_path):
     b = pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4")
     assert b["vmaf"] == 88.5
     assert "baseline_vmaf" not in b and "ceiling_vmaf" not in b
+
+
+def test_probe_fr_sandwich_hdr_output_is_marked_skipped(monkeypatch, tmp_path):
+    # SDR→HDR preset on a fixture: cross-transfer VMAF is garbage (job
+    # 6c67c7b2 scored 3.3 vs SDR ref) — must skip with the marker, and never
+    # invoke compute_vmaf.
+    _arm_fr(monkeypatch, tmp_path)
+    monkeypatch.setattr(pixop, "_probe_color_transfer", lambda p: "smpte2084")
+
+    def boom(*a, **kw):
+        raise AssertionError("compute_vmaf must not run for HDR outputs")
+    monkeypatch.setattr(quality, "compute_vmaf", boom)
+    assert pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4") == \
+        {"skipped": "output_transfer_mismatch"}
+    page = client.get("/enhance-run", headers=LAB).text
+    assert "not meaningful" in page
+    js = (Path(__file__).parent.parent / "static" / "wl-result.js").read_text()
+    assert "output_transfer_mismatch" in js
 
 
 def test_probe_fr_sandwich_non_4k_output_is_marked_skipped(monkeypatch, tmp_path):
