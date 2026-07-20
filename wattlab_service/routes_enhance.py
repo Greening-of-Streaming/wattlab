@@ -834,6 +834,7 @@ function renderResultHtml(meas) {
     + '</div>'
     + (streamRows ? '<div style="margin-top:0.5rem">' + streamRows + '</div>' : '')
     + _vqaRows(r.source_vqa, r.vqa, null)
+    + _frRows(r.fr, null)
     + outHtml
     + (window.wlCarbonStrip ? wlCarbonStrip(e.delta_e_wh,
           (r.preset_label || 'Partner GPU transcode'), e.delta_t_s,
@@ -1105,6 +1106,31 @@ function _vqaRows(srcv, mlv, ffv) {
   if (!rows) return '';
   return '<div style="margin-top:0.5rem">' + rows + '</div>' + _VQA_NOTE;
 }
+// Full-reference sandwich — only present on degraded-ladder fixture runs
+// (uploads and non-ladder sources have no pristine master; NR-only there).
+function _frRows(mlfr, fffr) {
+  function line(lbl, fr) {
+    if (!fr || fr.vmaf == null) return '';
+    var sand = (fr.baseline_vmaf != null && fr.ceiling_vmaf != null)
+      ? ' <span style="color:var(--text-4);font-weight:400">(naive '
+        + fr.baseline_vmaf + ' &#8804; &#8203;' + fr.vmaf + ' &#8804; ceiling '
+        + fr.ceiling_vmaf + ')</span>'
+      : '';
+    return _row(lbl, fr.vmaf + sand, '');
+  }
+  var rows = line('FR fidelity — AI output', mlfr) + line('FR fidelity — ffmpeg output', fffr);
+  if (!rows) return '';
+  var model = (mlfr && mlfr.vmaf_model) || (fffr && fffr.vmaf_model) || '';
+  return '<div style="margin-top:0.5rem">' + rows + '</div>'
+    + '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.3rem">'
+    + 'Full-reference VMAF (' + model + ', 4K) vs this fixture&#39;s pristine master — '
+    + 'ladder fixtures only. Sandwich: player-style naive upscale of the degraded input '
+    + '&#8804; enhanced output &#8804; pipeline ceiling (the pristine master through the '
+    + 'same pipeline — its gap to 100 is encode cost alone). Ordering is expected, not '
+    + 'guaranteed: an output scoring below the naive baseline while looking subjectively '
+    + 'better is a finding about FR metrics on ML-enhanced video, not a bug. '
+    + 'v1 scores are not comparable with v0-era scores.</div>';
+}
 // Resulting-file complexity comparison (SI/TI + frame-size stats from the
 // terminal probe), source vs both outputs. Renders only rows with ≥1 value.
 function _cxTable(srccx, mlcx, ffcx) {
@@ -1218,6 +1244,7 @@ function renderCompareHtml(meas) {
              + 'Difference between the two outputs (same resolution) — higher = more alike; not a quality ranking.</div>';
       })()
     + _vqaRows(meas.source_vqa, mlr.vqa, ffr.vqa)
+    + _frRows(mlr.fr, ffr.fr)
     + _cxTable(meas.source_complexity, mlr.complexity, ffr.complexity)
     + '<div style="color:var(--text-4);font-size:0.74rem;margin-top:0.6rem;border-left:2px solid var(--border-2);padding-left:0.7rem">'
     +   (c.quality_note || '') + '</div>'

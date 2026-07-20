@@ -7,6 +7,65 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 57 — 2026-07-20 (same day as S56)
+
+**FR "sandwich" live on /enhance-run — full-reference VMAF for the degraded-ladder fixtures**
+(the piece deferred from S55, resumed on Ben's ask; NR-VQA alone can be flattered by sharpening —
+this adds the "recovered real fidelity" claim for inputs that have a pristine master).
+
+**Anchors first** (`bin/make-enhance-fr-anchors` → `test_content/degraded/fr_anchors_v1.json`):
+for each of the 10 ladder fixtures, the *baseline* = player-style naive upscale (lanczos to
+3840×2160, lossless x264 intermediate — same filter family as the demo preview's 'before' side;
+4k_dirty scored directly) vs its `ref_4k` master; per-source *ceilings* = the pristine masters
+through the S48 pipeline outputs. All scoring through quality.py (`variant="uhd"` →
+`vmaf_v1.0.16_1d5h_2160`, n_subsample=4, ~27 s/pass measured — well under the funnel's 600 s
+cap), per-row checkpointing, aborts if settings resolve to a non-v1 model. All 12 rows scored
+first run. Ceilings: **BBB 89.40, Meridian 91.49** (v0 era: 93.22/97.62 — scales differ, as
+expected). Baselines range 29.74 (meridian_sd_dirty) to 93.09 (bbb_hd_clean).
+
+**⚠ The bbb_hd_clean inversion — the caveat is real in the anchors themselves:** the naive
+lanczos upscale of the *clean HD* rung (93.09) scores ABOVE the BBB pipeline ceiling (89.40) —
+a high-bitrate clean HD source loses less to naive upscaling than the pipeline's own 35 Mbps
+encode costs. The sandwich ordering (naive ≤ enhanced ≤ ceiling) is *expected* for degraded
+rungs, not guaranteed — kept in the UI copy verbatim. The interesting fixtures for enhancement
+claims are the dirty/SD rungs, where the baseline sits far below the ceiling.
+
+**Live wiring** (`pixop.probe_fr_sandwich`): fixture→ref map (exactly the 10 ladder stems;
+uploads/kranjska/ref runs → None, NR-only unchanged); runs in the same terminal post-lock
+executor slot as `probe_vqa_nr` (substage `fr-vmaf` — zero measurement-integrity cost), on both
+the single and compare runners (compare scores ml AND ff outputs — the naive-ffmpeg side doubles
+as a measured baseline check). Output must be 4K (anchors are 4K-denominated) and anchors only
+attach when computed under the SAME `vmaf_model` as the live score — a future v-next upgrade
+degrades to score-only rather than mixing scales. Result block:
+`fr: {vmaf, vmaf_model, n_subsample, reference, baseline_vmaf?, ceiling_vmaf?}`.
+
+**UI:** `/enhance-run` result cards (single + compare) render "FR fidelity" rows with the inline
+sandwich `(naive B ≤ score ≤ ceiling C)` + a caveat note (ladder-fixtures-only, ceiling gap =
+encode cost, ordering expected-not-guaranteed, v1≠v0); `wl-result.js` enhance card (stored
+results + findings embeds) gained the same line compactly.
+
+**Tests 884→894** (test_pixop.py): ref-map gating (uploads/kranjska/near-miss names → None),
+anchors attach + subsample/variant contract, model-mismatch drops anchors, non-4K → None,
+non-fixture never invokes compute_vmaf, score-failure → None, source-order guard (FR after VQA
+in both runners), page render. One flake found and fixed: the new page test used
+`with TestClient(...)` (runs app lifespan; polluted queue state for a later queue test) —
+switched to the module's non-lifespan client.
+
+**Verified live, two real runs — and the first two data points are already interesting:**
+- `bbb_hd_clean` (job `171dcdd4`, 🟢 10.35 Wh): fr = **84.98** (naive 93.09 ≤ · ≤ ceiling 89.40)
+  — on the CLEAN rung the enhanced output lands below BOTH anchors, consistent with the
+  inversion above.
+- `bbb_sd_dirty` (job `4e4c034f`, 🟢 12.66 Wh): fr = **31.57** vs naive baseline **32.14** —
+  FR-VMAF says the ML output ties the naive upscale, while NR-VQA scored a big improvement
+  (source 5.45 → 7.56). Exactly the FR/NR divergence the sandwich exists to expose (the
+  pre-registered "FR-metric limits on ML-enhanced video" scenario). n=1 per rung, one preset
+  (sdr_4k 35 Mbps), 45 s clips — data points, not a verdict; a finding needs more rungs/repeats.
+- Bonus: job 2 re-verified CR-070 live — pre-job guard waited 4.17 s against job 1's warm
+  94.81 W baseline (anchor-build residue), settled at 79.57 W; stamp persisted.
+- The fresh outputs clobber the S48 sweep artifacts by name (`{fixture}__owl_sdr_4k_35mbps.mp4`,
+  which fr_scores.json's v0 rows describe) — both were backed up first and restored after
+  verification. Post-hoc scoring of today's outputs stays possible from the stored fr blocks.
+
 ## Session 56 — 2026-07-20
 
 **CR-070 — pre-job idle guard (the meeting's "baseline bug", assessed → fixed → verified live,

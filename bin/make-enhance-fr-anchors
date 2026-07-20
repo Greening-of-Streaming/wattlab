@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Build the FR "sandwich" anchors for the degraded-ladder fixtures, in VMAF v1.
+
+For each of the 10 ladder fixtures (bbb/meridian x 4k_dirty/hd_clean/hd_dirty/
+sd_clean/sd_dirty):
+  baseline = player-style naive upscale of the degraded input (lanczos to
+             3840x2160, lossless intermediate) scored vs the ref_4k master.
+             4k_dirty is already 4K and is scored directly.
+Plus per-source ceilings: the pristine ref_4k run through the enhancement
+pipeline (existing S48 outputs) scored vs itself-as-master — NOT 100, the
+gap is the pipeline's 35 Mbps encode cost.
+
+All scoring goes through quality.py (the one funnel — model + scoring binary
+from settings, provenance stamped). Anchors are written to
+test_content/degraded/fr_anchors_v1.json with per-row checkpointing, so an
+interrupted run resumes where it left off. Re-run after any re-cal that
+changes vmaf_model.
+
+Offline prep tool — run while the queue is idle; it never touches the
+measurement path.
+"""
+import json
+import subprocess
+import sys
+import tempfile
+from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "wattlab_service"))
+import settings as cfg  # noqa: E402
+import quality  # noqa: E402
+
+DEG = Path("/srv/data/owl/test_content/degraded")
+PIPE_OUT = Path("/srv/data/owl/pixop/output")
+PRESET_STEM = "owl_sdr_4k_35mbps"
+ANCHORS = DEG / "fr_anchors_v1.json"
+SOURCES = ("bbb", "meridian")
+RUNGS = ("4k_dirty", "hd_clean", "hd_dirty", "sd_clean", "sd_dirty")
+N_SUBSAMPLE = 4   # matches the S48 offline pass AND the live enhance FR path
+N_THREADS = 20    # offline tool on an otherwise-idle 24-core box
+
+UPSCALE_NOTE = ("player-style naive upscale: lanczos to 3840x2160, lossless "
+                "x264 intermediate (qp 0), scored vs ref_4k. 4k_dirty scored "
+                "directly (upscale is identity at 4K).")
+
+
+def scoring_settings() -> dict:
+    s = dict(cfg.load())
+    s["vmaf_n_subsample"] = N_SUBSAMPLE
+    s["vmaf_n_threads"] = N_THREADS
+    return s
+
+
+def naive_upscale(src: Path, dst: Path) -> None:
+    """The baseline definition — same lanczos family as the demo preview's
+    'before' side. Lossless intermediate so the encode adds nothing."""
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(src),
+           "-vf", "scale=3840:2160:flags=lanczos,setsar=1",
+           "-c:v", "libx264", "-qp", "0", "-preset", "ultrafast", "-an",
+           str(dst)]
+    subprocess.run(cmd, check=True, timeout=1800)
+
+
+def score(dist: Path, ref: Path, s: dict) -> dict:
+    out = {"vmaf": quality.compute_vmaf(dist, ref, s, variant="uhd")}
+    out.update(quality.compute_psnr_ssim(dist, ref, s))
+    return out
+
+
+def main() -> int:
+    s = scoring_settings()
+    model = quality.vmaf_model_id(s, "uhd")
+    if "v1" not in model:
+        print(f"ABORT: resolved model is {model} — expected a v1 model; "
+              "check vmaf_model/vmaf_model_dir settings.")
+        return 1
+
+    try:
+        data = json.loads(ANCHORS.read_text())
+        if data.get("vmaf_model") != model:
+            print(f"existing anchors are {data.get('vmaf_model')} — starting fresh for {model}")
+            data = {}
+    except FileNotFoundError:
+        data = {}
+    data.setdefault("fixtures", {})
+    data.setdefault("ceilings", {})
+    data.update({"vmaf_model": model, "n_subsample": N_SUBSAMPLE,
+                 "baseline_definition": UPSCALE_NOTE,
+                 "generated": str(date.today())})
+
+    def checkpoint():
+        ANCHORS.write_text(json.dumps(data, indent=2) + "\n")
+
+    incomplete = 0
+    for src_name in SOURCES:
+        ref = DEG / f"{src_name}_ref_4k.mp4"
+
+        # ceiling: pristine ref through the pipeline, vs the ref itself
+        pipe = PIPE_OUT / f"{src_name}_ref_4k__{PRESET_STEM}.mp4"
+        if data["ceilings"].get(src_name, {}).get("vmaf") is not None:
+            print(f"ceiling {src_name}: already scored, skipping")
+        elif not pipe.exists():
+            print(f"ceiling {src_name}: MISSING {pipe.name}")
+            incomplete += 1
+        else:
+            print(f"ceiling {src_name}: scoring {pipe.name} ...", flush=True)
+            row = score(pipe, ref, s)
+            row["output"] = pipe.name
+            data["ceilings"][src_name] = row
+            checkpoint()
+            print(f"  {row}", flush=True)
+            if row["vmaf"] is None:
+                incomplete += 1
+
+        for rung in RUNGS:
+            name = f"{src_name}_{rung}"
+            if data["fixtures"].get(name, {}).get("vmaf") is not None:
+                print(f"baseline {name}: already scored, skipping")
+                continue
+            fixture = DEG / f"{name}.mp4"
+            if not fixture.exists():
+                print(f"baseline {name}: MISSING")
+                incomplete += 1
+                continue
+            print(f"baseline {name}: ...", flush=True)
+            if rung.startswith("4k"):
+                row = score(fixture, ref, s)
+            else:
+                with tempfile.TemporaryDirectory(dir=DEG) as td:
+                    up = Path(td) / f"{name}_naive4k.mp4"
+                    naive_upscale(fixture, up)
+                    row = score(up, ref, s)
+            data["fixtures"][name] = row
+            checkpoint()
+            print(f"  {row}", flush=True)
+            if row["vmaf"] is None:
+                incomplete += 1
+
+    print(f"done — {ANCHORS} ({'INCOMPLETE: ' + str(incomplete) + ' rows failed' if incomplete else 'all rows scored'})")
+    return 2 if incomplete else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

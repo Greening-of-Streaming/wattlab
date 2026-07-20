@@ -1053,6 +1053,16 @@
               + (delta != null ? ' (Δ ' + (delta >= 0 ? '+' : '') + _f(delta, 2) + ')' : '')
               + '</div>';
     }
+    // FR sandwich — ladder-fixture runs only (pristine master exists).
+    if (d.fr && d.fr.vmaf != null) {
+      var sand = (d.fr.baseline_vmaf != null && d.fr.ceiling_vmaf != null)
+        ? ' — naive ' + _f(d.fr.baseline_vmaf, 2) + ' ≤ ​' + _f(d.fr.vmaf, 2)
+          + ' ≤ ceiling ' + _f(d.fr.ceiling_vmaf, 2)
+        : '';
+      vqaHtml += '<div style="margin-top:0.3rem;font-size:0.78rem;color:var(--text-3)">'
+              + 'Fidelity vs pristine master (' + (d.fr.vmaf_model || 'VMAF') + ', 4K): '
+              + _f(d.fr.vmaf, 2) + sand + '</div>';
+    }
     html += '<div class="result-card">'
           + '<p class="headline">' + (d.preset_label || 'Enhancement run') + '</p>'
           + '<div style="font-size:0.78rem;color:var(--text-3);font-family:monospace;'

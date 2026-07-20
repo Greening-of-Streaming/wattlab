@@ -1322,6 +1322,75 @@ def probe_vqa_nr(path, c: Optional[dict] = None) -> Optional[dict]:
     return quality.probe_vqa_nr(path, c or config())
 
 
+# --- Full-reference "sandwich" — degraded-ladder fixtures only ---------------
+# Runs on the 10 ladder fixtures have a pristine ref_4k master, so alongside
+# the NR-VQA score (which sharpening can flatter) we can score recovered
+# fidelity: naive-upscale baseline ≤ ML-enhanced output ≤ pipeline ceiling
+# (the ceiling is NOT 100 — the gap is the pipeline's own encode cost).
+# Anchors are precomputed by bin/make-enhance-fr-anchors into
+# fr_anchors_v1.json; re-run it after any vmaf_model change. Ordering is
+# EXPECTED, not guaranteed — an enhancer can score below the naive baseline
+# while looking subjectively better (that would be a finding about FR metrics
+# on ML-enhanced video, not a method bug). Uploads and non-ladder sources
+# have no ref → None, NR-only as before.
+
+_DEGRADED_DIR = Path("/srv/data/owl/test_content/degraded")
+_FR_ANCHORS_FILE = _DEGRADED_DIR / "fr_anchors_v1.json"
+_FR_SOURCES = ("bbb", "meridian")
+_FR_RUNGS = ("4k_dirty", "hd_clean", "hd_dirty", "sd_clean", "sd_dirty")
+_FR_N_SUBSAMPLE = 4  # matches the anchors; keeps a 4K pass well under quality.py's 600 s cap
+
+
+def _fr_ref_for(input_name) -> Optional[tuple[str, Path]]:
+    """(fixture_stem, ref_4k path) when the input is a ladder fixture, else None."""
+    stem = Path(str(input_name)).stem
+    for src in _FR_SOURCES:
+        if stem in {f"{src}_{r}" for r in _FR_RUNGS}:
+            ref = _DEGRADED_DIR / f"{src}_ref_4k.mp4"
+            if ref.exists():
+                return stem, ref
+    return None
+
+
+def _fr_anchors() -> dict:
+    try:
+        return json.loads(_FR_ANCHORS_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def probe_fr_sandwich(output_path, input_name) -> Optional[dict]:
+    """FR VMAF of an enhanced output vs its fixture's pristine ref, with the
+    sandwich anchors attached. None (silently) unless the input is a ladder
+    fixture AND the output is 4K (the anchors are 4K-denominated). Terminal
+    pass — never inside the energy bracket. Anchors only attach when computed
+    under the SAME vmaf model as this score (never mix v0/v1 scales)."""
+    hit = _fr_ref_for(input_name)
+    if hit is None:
+        return None
+    stem, ref = hit
+    if quality._probe_dims(output_path) != (3840, 2160):
+        return None
+    s = dict(cfg.load())
+    s["vmaf_n_subsample"] = _FR_N_SUBSAMPLE
+    score = quality.compute_vmaf(output_path, ref, s, variant="uhd")
+    if score is None:
+        return None
+    block = {"vmaf": score,
+             "vmaf_model": quality.vmaf_model_id(s, "uhd"),
+             "n_subsample": _FR_N_SUBSAMPLE,
+             "reference": ref.name}
+    anchors = _fr_anchors()
+    if anchors.get("vmaf_model") == block["vmaf_model"]:
+        base = ((anchors.get("fixtures") or {}).get(stem) or {}).get("vmaf")
+        ceil = ((anchors.get("ceilings") or {}).get(stem.split("_")[0]) or {}).get("vmaf")
+        if base is not None:
+            block["baseline_vmaf"] = base
+        if ceil is not None:
+            block["ceiling_vmaf"] = ceil
+    return block
+
+
 # NVEncC prints a summary line like
 #   "encoded 705 frames, 51.91 fps, 18067.47 kbps, 63.27 MB"
 # when the encode completes. That fps is the steady-state throughput (excludes
@@ -1804,6 +1873,11 @@ async def run_enhance_measurement(input_name: str, preset_name: str,
                      and output_path.exists())
         res["result"]["vqa"] = (await loop.run_in_executor(
             None, lambda: probe_vqa_nr(output_path, c))) if tc_ok else None
+        # FR sandwich (ladder fixtures only) — same terminal/post-lock slot.
+        if tc_ok and jobs is not None:
+            jobs[job_id]["substage"] = "fr-vmaf"
+        res["result"]["fr"] = (await loop.run_in_executor(
+            None, lambda: probe_fr_sandwich(output_path, input_name))) if tc_ok else None
         # CR-064 provenance — the exact args used + where the preset came from +
         # what the input actually was (never drives behaviour; record-keeping).
         res["result"]["preset_args"] = _preset_args_soft(pre / preset_name)
@@ -1992,6 +2066,14 @@ async def run_enhance_compare_measurement(input_name: str, preset_name: str,
             None, lambda: probe_vqa_nr(out / ml_output, c))) if ml_ok else None
         ff["result"]["vqa"] = (await loop.run_in_executor(
             None, lambda: probe_vqa_nr(out / ff_output, c))) if ff_ok else None
+        # FR sandwich (ladder fixtures only) — both outputs vs the same ref,
+        # so the naive-ffmpeg side doubles as a measured baseline check.
+        if jobs is not None and (ml_ok or ff_ok):
+            jobs[job_id]["substage"] = "fr-vmaf"
+        ml["result"]["fr"] = (await loop.run_in_executor(
+            None, lambda: probe_fr_sandwich(out / ml_output, input_name))) if ml_ok else None
+        ff["result"]["fr"] = (await loop.run_in_executor(
+            None, lambda: probe_fr_sandwich(out / ff_output, input_name))) if ff_ok else None
 
         # CR-064 provenance — exact AI-side args + preset origin + what the input
         # actually was. The ffmpeg side's full command is already in its

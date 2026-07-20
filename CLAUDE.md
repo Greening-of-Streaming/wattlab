@@ -1,6 +1,15 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-07-20 (Session 56 — CR-070 pre-job idle guard, the meeting's "baseline bug":
+# Last updated: 2026-07-20 (Session 57 — FR "sandwich" live on /enhance-run: full-reference VMAF v1
+#   for the 10 degraded-ladder fixtures ONLY (uploads/kranjska stay NR-only). Anchors in
+#   test_content/degraded/fr_anchors_v1.json via bin/make-enhance-fr-anchors (re-run after any
+#   vmaf_model change): baseline = player-style lanczos naive upscale vs ref_4k; ceilings = ref through
+#   pipeline, BBB 89.40 / Meridian 91.49 in v1 (gap to 100 = encode cost). pixop.probe_fr_sandwich in
+#   the terminal post-lock slot (substage fr-vmaf), single + compare runners; anchors attach only under
+#   the SAME vmaf_model; result block fr:{vmaf, vmaf_model, baseline_vmaf, ceiling_vmaf}. ⚠ bbb_hd_clean
+#   naive baseline 93.09 > BBB ceiling 89.40 — ordering expected NOT guaranteed, caveat in UI copy.
+#   Tests 894.)
+# Previous: 2026-07-20 (Session 56 — CR-070 pre-job idle guard, the meeting's "baseline bug":
 #   between queued jobs OWL took every job's first baseline unverified (CR-062 only guarded intra-job
 #   gaps). Now the queue worker waits for the previous baseline's floor before dispatching —
 #   power.LAST_W_BASE rolling reference (updated EVERY baseline; a risen floor self-corrects after one
@@ -16,19 +25,6 @@
 #   scoring). v0/v1 scales NOT comparable (77.95 vs 83.59 same pair); every new score stamps
 #   vmaf_model; stored results without it = vmaf_v0.6.1, UI labels both. Budget/parity/target_vmaf
 #   stay v0-denominated until the next re-cal. /video per-run VMAF checkbox. Tests 871.)
-# Previous: 2026-07-07 (Session 54 — GUIDED TOUR v2 + ANON EXPERIENCE. The 2026-06-24 9-step tour was
-#   found stranded in a stash (never merged; its /enhance-run link-out 403'd anon = "the broken tour").
-#   Recovered + redesigned: core path Welcome→Video→Energy Budget→Video Enhancement→Confidence→Findings
-#   with LLM/Image/RAG as a clearly-optional AI detour (honest "Step n of 6" / "AI detour · n of 3"
-#   counter). Tour steps now preload PINNED results (`demo_pinned_results` in settings; enhance pin-ONLY,
-#   rag = pseudo-type over results/llm mode=rag_compare — fixes the weeks-empty RAG step). /video's rich
-#   renderers unified into wl-result.js `wlRenderVideoCard` (fresh == stored == findings embeds; CSS
-#   self-injects under .wl-rich). Slim public nav on every page (Tour·Video·Energy budget·Findings·
-#   Methodology) — anon previously had NO nav. Budget step teaser reads routes_budget.current_fixture().
-#   07-08: enhance step got REAL before/after video — bin/make-demo-enhance-previews derives web-safe
-#   detail-crop clips (native-4K-pixel window; before = player-style upscale) from the pinned job's own
-#   artifacts, served pinned-only via GET /demo/enhance-preview/{kind} (raw assets stay Member-gated).
-#   Re-run the script after changing the enhance pin. Tests 853.)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
@@ -183,6 +179,7 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S54 (07-07): Guided Tour v2 — stranded 9-step tour recovered from stash + redesigned (core path w/ optional AI detour, honest counter) · pinned tour preloads (`demo_pinned_results`; enhance pin-only, rag pseudo-type) · /video rich renderer unified into wl-result.js (fresh==stored==embeds) · slim public nav all pages · budget-step teaser from current_fixture(). →849.
 - S55 (07-17): VMAF v1 adoption — quality.py single funnel (FR+NR metrics, delegate pattern), vmaf_model/vmaf_ffmpeg_bin settings lever, provenance stamping (`vmaf_model`; absent = legacy v0.6.1, UI labels both), /methodology v1 note, /video per-run VMAF checkbox · scoring binary separate from encode binary · budget/target_vmaf stay v0 until re-cal · tour/video progress bars unified (WL_VIDEO_PRESET_STAGES in wl-progress.js; demo VMAF stage was invisible). →872.
 - S56 (07-20): CR-070 pre-job idle guard (meeting's "baseline bug" — real, was only intra-job-fixed by CR-062) — rolling floor power.LAST_W_BASE, queue-worker wait before every job, "Run job anyway" skip after 5 s (Lab, /job/{id}/cooldown-skip), consume-once pre_job_cooldown persist stamp, baseline_elevated provenance · verified live (job 02dc670c, 22.7 s settle) · 1bf87d6. →884.
+- S57 (07-20): FR sandwich live on /enhance-run — v1 anchors for the 10 ladder fixtures (bin/make-enhance-fr-anchors → fr_anchors_v1.json; ceilings BBB 89.40/Meridian 91.49), pixop.probe_fr_sandwich terminal slot both runners, fr result block + sandwich on result cards; same-model guard; bbb_hd_clean naive 93.09 > ceiling (ordering caveat is real). →894.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

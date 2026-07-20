@@ -2071,3 +2071,111 @@ def test_probe_siti_windows_fail_soft(monkeypatch):
     monkeypatch.setattr(pixop, "_siti_pass", lambda *a, **kw: next(seq))
     out = pixop.probe_siti("long.mp4")
     assert out["si_mean"] == 10.0 and "1×" in out["siti_sampling"]
+
+
+# ── FR sandwich — degraded-ladder fixtures only (vs pristine ref_4k) ─────────
+# Gating contract: uploads/kranjska/non-4K outputs stay NR-only; anchors only
+# attach when computed under the SAME vmaf model (never mix v0/v1 scales).
+
+import inspect
+import json as _json
+
+
+def test_fr_ref_for_matches_only_ladder_fixtures(monkeypatch, tmp_path):
+    (tmp_path / "bbb_ref_4k.mp4").write_bytes(b"x")
+    (tmp_path / "meridian_ref_4k.mp4").write_bytes(b"x")
+    monkeypatch.setattr(pixop, "_DEGRADED_DIR", tmp_path)
+    stem, ref = pixop._fr_ref_for("bbb_hd_clean.mp4")
+    assert stem == "bbb_hd_clean" and ref.name == "bbb_ref_4k.mp4"
+    assert pixop._fr_ref_for("meridian_4k_dirty.mp4")[0] == "meridian_4k_dirty"
+    for name in ("upload_keep_x.mov", "kranjska_dh_120s.mp4", "meridian_120s.mp4",
+                 "bbb_ref_4k.mp4", "bbb_hd_clean_extra.mp4"):
+        assert pixop._fr_ref_for(name) is None, name
+
+
+def test_fr_ref_for_missing_ref_fails_soft(monkeypatch, tmp_path):
+    monkeypatch.setattr(pixop, "_DEGRADED_DIR", tmp_path)  # nothing staged
+    assert pixop._fr_ref_for("bbb_hd_clean.mp4") is None
+
+
+def _arm_fr(monkeypatch, tmp_path, *, model="vmaf_v1.0.16_1d5h_2160",
+            anchors=None, dims=(3840, 2160), score=88.5):
+    (tmp_path / "bbb_ref_4k.mp4").write_bytes(b"x")
+    monkeypatch.setattr(pixop, "_DEGRADED_DIR", tmp_path)
+    monkeypatch.setattr(pixop, "_FR_ANCHORS_FILE", tmp_path / "fr_anchors_v1.json")
+    if anchors is not None:
+        (tmp_path / "fr_anchors_v1.json").write_text(_json.dumps(anchors))
+    monkeypatch.setattr(quality, "_probe_dims", lambda p: dims)
+    seen = {}
+
+    def fake_vmaf(dist, ref, s=None, variant="hd"):
+        seen.update({"s": s, "variant": variant})
+        return score
+    monkeypatch.setattr(quality, "compute_vmaf", fake_vmaf)
+    monkeypatch.setattr(quality, "vmaf_model_id",
+                        lambda s=None, variant="hd": model)
+    return seen
+
+
+def test_probe_fr_sandwich_attaches_anchors(monkeypatch, tmp_path):
+    anchors = {"vmaf_model": "vmaf_v1.0.16_1d5h_2160",
+               "fixtures": {"bbb_hd_clean": {"vmaf": 61.2}},
+               "ceilings": {"bbb": {"vmaf": 89.4}}}
+    seen = _arm_fr(monkeypatch, tmp_path, anchors=anchors)
+    b = pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4")
+    assert b == {"vmaf": 88.5, "vmaf_model": "vmaf_v1.0.16_1d5h_2160",
+                 "n_subsample": 4, "reference": "bbb_ref_4k.mp4",
+                 "baseline_vmaf": 61.2, "ceiling_vmaf": 89.4}
+    # the live score must use the anchors' config: uhd model, subsample 4
+    assert seen["variant"] == "uhd"
+    assert seen["s"]["vmaf_n_subsample"] == 4
+
+
+def test_probe_fr_sandwich_model_mismatch_drops_anchors(monkeypatch, tmp_path):
+    anchors = {"vmaf_model": "vmaf_4k_v0.6.1",   # stale v0 anchors
+               "fixtures": {"bbb_hd_clean": {"vmaf": 55.0}},
+               "ceilings": {"bbb": {"vmaf": 93.2}}}
+    _arm_fr(monkeypatch, tmp_path, anchors=anchors)
+    b = pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4")
+    assert b["vmaf"] == 88.5
+    assert "baseline_vmaf" not in b and "ceiling_vmaf" not in b
+
+
+def test_probe_fr_sandwich_missing_anchors_score_only(monkeypatch, tmp_path):
+    _arm_fr(monkeypatch, tmp_path, anchors=None)
+    b = pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4")
+    assert b["vmaf"] == 88.5
+    assert "baseline_vmaf" not in b and "ceiling_vmaf" not in b
+
+
+def test_probe_fr_sandwich_non_4k_output_is_none(monkeypatch, tmp_path):
+    _arm_fr(monkeypatch, tmp_path, dims=(1920, 1080))
+    assert pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4") is None
+
+
+def test_probe_fr_sandwich_non_fixture_never_scores(monkeypatch, tmp_path):
+    _arm_fr(monkeypatch, tmp_path)
+
+    def boom(*a, **kw):
+        raise AssertionError("compute_vmaf must not run for non-fixtures")
+    monkeypatch.setattr(quality, "compute_vmaf", boom)
+    assert pixop.probe_fr_sandwich("out.mp4", "upload_keep_x.mov") is None
+
+
+def test_probe_fr_sandwich_score_failure_is_none(monkeypatch, tmp_path):
+    _arm_fr(monkeypatch, tmp_path, score=None)
+    assert pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4") is None
+
+
+def test_fr_wired_into_both_runners_after_vqa():
+    for fn in (pixop.run_enhance_measurement, pixop.run_enhance_compare_measurement):
+        src = inspect.getsource(fn)
+        assert "probe_fr_sandwich" in src, fn.__name__
+        assert src.index("probe_vqa_nr") < src.index("probe_fr_sandwich"), fn.__name__
+
+
+def test_enhance_pages_render_fr_rows():
+    page = client.get("/enhance-run", headers=LAB).text
+    assert "_frRows" in page and "pristine master" in page
+    js = (Path(__file__).parent.parent / "static" / "wl-result.js").read_text()
+    assert "Fidelity vs pristine master" in js and "d.fr" in js
