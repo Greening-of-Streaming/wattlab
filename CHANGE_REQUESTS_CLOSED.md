@@ -2007,3 +2007,26 @@ Defaults match the CLI so the button and the CLI produce identical CSVs.
 - The **65-min probe is untested end-to-end** (needs the box); the queue/endpoint/UI wiring is covered, the encode loop is exercised only by the physical run.
 - `results/diagnostics/` CSV shape unchanged — `/precalibration/data` doesn't care which path produced it.
 - Don't auto-chain probe → variance; separate buttons (unchanged).
+
+---
+
+## CR-070 · Pre-job idle guard — rolling baseline floor + operator skip
+
+**Status:** ✅ shipped 2026-07-20, same-day open→close (never entered the active list). Commit `1bf87d6`; full record in JOURNAL.md S56. Verified live: job `02dc670c` waited 22.67 s pre-job and persisted the `pre_job_cooldown` stamp. Tests 872→884.
+**Triggered by:** meeting note — *"If GoS1 is not idle after a job, OWL may use that non-idle state as the baseline for the next job → corrupts results. Has this been fixed?"* Assessed REAL, only partially fixed (CR-062 covered intra-job gaps only).
+
+### Problem
+
+Between separately queued jobs there was no idle guard: `queue_control._worker` dispatched back-to-back, every job's first baseline was unverified, and nothing sanity-checked W_base. A hot baseline silently under-counts ΔW (negative-ΔW RAG incident class) and drags confidence down without ever flagging contamination.
+
+### What shipped
+
+1. **Rolling idle floor** `power.LAST_W_BASE` — stamped by `sample_baseline()` on every baseline (clean or hot, so a legitimately risen floor self-corrects after one flagged job). Contract: job N+1 may not start hotter than job N did. Rejected alternative: a static calibrated idle-watts setting (ambient-sensitive).
+2. **Pre-job guard in the queue worker** — `_pre_job_idle_guard()` before each job's coroutine, via the CR-062 dispatcher (`stage="pre-job idle"`, 120 s cap, toggle-respecting, fail-soft). First job after service start: no reference, no wait.
+3. **"Run job anyway" escape hatch** (owner addition) — attended Lab jobs show a skip button in the live cooldown line after `pre_job_skip_after_s` (default 5); `POST /job/{id}/cooldown-skip` (BENCHMARK_RUN-gated) → wait returns early stamped `method="idle+skipped"`. Wait keeps polling while the button shows; unattended behavior unchanged.
+4. **Provenance** — consume-once `pre_job_cooldown` stamp in the stored result (`persist.save_result` ← `queue_control.consume_pre_job_stamp`); `baseline_elevated`/`baseline_reference_w` flags from `sample_baseline`.
+
+### Residual / boundaries (deliberate, not follow-ups)
+
+- `baseline_elevated` persists on video/pixop paths only (they store whole baseline dicts); llm/rag/image pluck scalars — covered at job level by `pre_job_cooldown`.
+- parity.py fixed sleeps and benchmark.py inter-step gaps stay as-is (own validated protocol / accepted trade-off).

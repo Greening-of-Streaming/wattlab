@@ -1,6 +1,15 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-07-17 (Session 55 — VMAF v1 + quality.py single funnel. All quality metrics
+# Last updated: 2026-07-20 (Session 56 — CR-070 pre-job idle guard, the meeting's "baseline bug":
+#   between queued jobs OWL took every job's first baseline unverified (CR-062 only guarded intra-job
+#   gaps). Now the queue worker waits for the previous baseline's floor before dispatching —
+#   power.LAST_W_BASE rolling reference (updated EVERY baseline; a risen floor self-corrects after one
+#   flagged job); attended Lab jobs get a "Run job anyway" button after pre_job_skip_after_s (5 s) via
+#   POST /job/{id}/cooldown-skip (→ method="idle+skipped"); outcome persists consume-once as
+#   pre_job_cooldown; baseline_elevated/baseline_reference_w stamped (persisted video/pixop paths only —
+#   llm/rag/image pluck scalars, covered at job level). 120 s cap unchanged; hot baselines under-count
+#   ΔW, never inflate. Commit 1bf87d6. Tests 884.)
+# Previous: 2026-07-17 (Session 55 — VMAF v1 + quality.py single funnel. All quality metrics
 #   (FR VMAF/PSNR/SSIM + NR VQA) route through quality.py (video.py/pixop.py keep delegates);
 #   vmaf_model/vmaf_ffmpeg_bin settings = the one upgrade/rollback lever. Live scoring = VMAF v1
 #   (vmaf_v1.0.16_3d0h, scoring-only ffmpeg at /srv/data/owl/vmaf/ — NEVER bump ffmpeg_bin for
@@ -20,24 +29,6 @@
 #   detail-crop clips (native-4K-pixel window; before = player-style upscale) from the pinned job's own
 #   artifacts, served pinned-only via GET /demo/enhance-preview/{kind} (raw assets stay Member-gated).
 #   Re-run the script after changing the enhance pin. Tests 853.)
-# Previous: 2026-06-19 (Session 53 — ENCODE-PARITY & ENERGY-QUALITY CALIBRATION. New harness `parity.py`
-#   + `bin/run-encode-parity` (importable; shared by the new /reconfigure route): sweeps codec × {CPU, GPU
-#   baseline, GPU tuned} × bitrate × {BBB, Meridian}, 1080p, via the real measured path + terminal VMAF.
-#   Live /video gpu.py args UNTOUCHED (tuned injected as custom args). 30s clips; NVENC too fast for 1Hz so
-#   REPEAT-to-≥20s wall-clock then normalise by content → all 90 rows 🟢. Per-row checkpoint + `complete`.
-#   "Pause don't stop": runtime.power_poller backs off the 5s meter poll while /tmp/owl-paused set.
-#   First full run (90 enc, 79 min, all 🟢; results/calibration/encode_parity_nvenc_24c_2026-06-18.json):
-#   NVENC 2.5–4.4× less Wh/min than CPU (win = SPEED not draw); the "GPU worse esp. AV1" gap is real ONLY
-#   on low-complexity/low-bitrate (AV1/BBB up to −8.9 VMAF) — on Meridian it vanishes & NVENC AV1 BEATS
-#   libsvtav1. Tuned NVENC bundle measured & REJECTED for live (1.6–2.8× energy AND lower VMAF for h264/av1;
-#   AQ trades metric fidelity). /video/budget now auto-flips illustrative→measured via budget_data.py.
-#   target_vmaf=92 on /settings. Method note docs/encode_parity_calibration_2026-06.md. /video/budget/
-#   reconfigure (Lab) = one-button re-cal for NetInt. THEN: codec pulled out to its own "compare codecs"
-#   axis; 5-rung ABR ladder (1080p target + 720/540/480/360 fixed, codec-scaled) built end-to-end —
-#   ladder Wh/min = top@target + Σ lower rungs; `--ladder` merges +48 encodes into the artifact (no
-#   re-run); new /methodology#energy-budget section the budget page links to. Tests 704. COMMITTED+PUSHED.
-#   ⚠ ONE restart still pending to load budget/methodology/reconfigure code; 48-encode ladder pass runs
-#   after. Formal /findings entry deferred (lab-review). settings.json excluded from commit (live state).)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
@@ -191,6 +182,7 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S53 (06-18/19): encode-parity & energy-quality calibration — `parity.py`+`bin/run-encode-parity` harness (repeat-to-20s for NVENC sampling, per-row checkpoint, pause-not-stop poller guard); first 90-encode run (all 🟢) → NVENC 2.5–4.4× less Wh/min than CPU, GPU-worse-esp-AV1 gap is low-complexity/low-bitrate only (Meridian: NVENC AV1 beats libsvtav1), tuned NVENC bundle REJECTED for live (more energy, lower VMAF) · /video/budget auto-flips to measured (`budget_data.py`) · target_vmaf=92 on /settings · method note + /video/budget/reconfigure (Lab re-cal). Tests 704. ⚠ 1 restart pending. →704.
 - S54 (07-07): Guided Tour v2 — stranded 9-step tour recovered from stash + redesigned (core path w/ optional AI detour, honest counter) · pinned tour preloads (`demo_pinned_results`; enhance pin-only, rag pseudo-type) · /video rich renderer unified into wl-result.js (fresh==stored==embeds) · slim public nav all pages · budget-step teaser from current_fixture(). →849.
 - S55 (07-17): VMAF v1 adoption — quality.py single funnel (FR+NR metrics, delegate pattern), vmaf_model/vmaf_ffmpeg_bin settings lever, provenance stamping (`vmaf_model`; absent = legacy v0.6.1, UI labels both), /methodology v1 note, /video per-run VMAF checkbox · scoring binary separate from encode binary · budget/target_vmaf stay v0 until re-cal · tour/video progress bars unified (WL_VIDEO_PRESET_STAGES in wl-progress.js; demo VMAF stage was invisible). →872.
+- S56 (07-20): CR-070 pre-job idle guard (meeting's "baseline bug" — real, was only intra-job-fixed by CR-062) — rolling floor power.LAST_W_BASE, queue-worker wait before every job, "Run job anyway" skip after 5 s (Lab, /job/{id}/cooldown-skip), consume-once pre_job_cooldown persist stamp, baseline_elevated provenance · verified live (job 02dc670c, 22.7 s settle) · 1bf87d6. →884.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

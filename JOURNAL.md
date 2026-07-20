@@ -7,6 +7,63 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 56 — 2026-07-20
+
+**CR-070 — pre-job idle guard (the meeting's "baseline bug", assessed → fixed → verified live,
+same session).** A meeting note asked: *"If GoS1 is not idle after a job, OWL may use that
+non-idle state as the baseline for the next job → corrupts results. Has this been fixed?"*
+
+**Assessment: REAL, only partially fixed.** CR-062 (S38) guards the gaps *within* a multi-pass
+job (active `wait_for_thermal_floor` between passes), but between separately queued jobs
+`queue_control._worker` dispatched back-to-back with no guard at all; every job's first
+baseline was taken unverified; nothing sanity-checked W_base against any idle reference. It had
+bitten before: back-to-back RAG runs (baseline 53→64 W warm, negative ΔW — patched locally with
+a sleep), Ollama keep_alive residency (60→130 W — cause-specific unload fix), benchmark GPU P3
+linger (~108 W, accepted trade-off). Impact direction: a hot baseline silently *under-counts*
+ΔW (can clamp negative at carbon.py) and drags confidence Φ(ΔW/SE) down — it degrades as a
+"weak result", never as a flagged contaminated baseline. Conservative, but still corrupt.
+
+**The fix — one guard at the queue-worker choke point, reusing CR-062 machinery** (commit
+`1bf87d6`):
+- **Rolling idle floor** `power.LAST_W_BASE`: stamped by `sample_baseline()` on EVERY baseline,
+  clean or hot — deliberate, so a legitimately risen floor (warmer room, hardware change)
+  self-corrects after one flagged job instead of locking all later jobs into the 120 s max
+  wait. Contract: *job N+1 may not start hotter than job N did.* No static idle-watts setting
+  (ambient-sensitive; recalibration burden — the rolling reference sidesteps both).
+- **Pre-job guard**: `_pre_job_idle_guard()` runs in `_worker` before each job's coroutine —
+  `cooldown_between_runs(fixed_seconds=0, reference_w=floor, stage="pre-job idle",
+  allow_dialog=False)`. Toggle-respecting (`cooldown_wait_for_idle`); a cold box passes in
+  ~3 s (asymmetric settle); first job after service start has no reference → starts
+  immediately, unchanged. Fail-soft (`log.exception`, job still runs).
+- **"Run job anyway" escape hatch** (Ben's addition — the floor may be legitimately
+  unreachable): attended Lab jobs (`interactive_eligible`) are marked `skippable`; the live
+  cooldown line (`wlCooldownLine`, wl-progress.js) grows the button once `waited_s ≥
+  pre_job_skip_after_s` (new setting, default 5, served via /ui-config.js). Button POSTs
+  `/job/{id}/cooldown-skip` (BENCHMARK_RUN-gated; 409 outside a skippable wait) → the wait
+  checks the flag each poll and returns early, stamped `method="idle+skipped"`,
+  `settled: false`. The wait keeps polling toward the floor while the button shows; the 120 s
+  cap stays the unattended backstop — the button is an accelerator, not a correctness path.
+- **Provenance**: guard outcome lands consume-once in the job's stored result as
+  `pre_job_cooldown` (`{method, waited_s, settled, final_w, timed_out, reference_w}`) —
+  `persist.save_result` pulls it via `queue_control.consume_pre_job_stamp` (job-id-matched;
+  first save only, multi-result jobs don't repeat it). `sample_baseline` additionally flags
+  `baseline_elevated` + `baseline_reference_w` when w_base > reference + tolerance — a forced-
+  through hot start is now queryable in the stored JSON, never silently "cleanly spaced".
+
+**Scope boundary (deliberate):** `baseline_elevated` persists on video/pixop paths (they store
+whole baseline dicts) but not llm/rag/image (they pluck scalar keys through helpers). Coherent
+anyway — `pre_job_cooldown` is job-level and covers all result types, and intra-job gaps
+already persist their own cooldown stamps. Also out of scope per plan: parity.py fixed sleeps
+(own validated protocol), benchmark inter-step guard (accepted trade-off above).
+
+**Verified live** post-restart: two queued qwen3:1.7b/gpu runs — job 2 (`02dc670c`) showed
+stage "pre-job idle" with the skip affordance advertised, settled after 22.67 s (80.43 W vs
+reference 78.7 + 3 tol), stored result carries the full `pre_job_cooldown` stamp; job 1
+(first after restart) correctly has none. Skip endpoint 409s outside a wait, 404s unknown
+jobs. Tests 872→884 (12 new in test_cooldown.py; plus conftest autouse
+`_reset_rolling_idle_floor` — a test's fake baseline must not arm the guard, or grow baseline
+dicts provenance keys, in a later test; two full-suite-only failures traced to exactly that).
+
 ## Session 55 — 2026-07-17
 
 **VMAF v1 adoption + quality.py single funnel.** Ben asked whether Netflix's newly
