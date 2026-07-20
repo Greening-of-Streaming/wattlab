@@ -1370,7 +1370,10 @@ def probe_fr_sandwich(output_path, input_name) -> Optional[dict]:
         return None
     stem, ref = hit
     if quality._probe_dims(output_path) != (3840, 2160):
-        return None
+        # A fixture run whose output isn't 4K: mark WHY there's no score, so
+        # the UI can say so instead of silently omitting the row (owner
+        # report 2026-07-20 — an HD-preset fixture run looked like a bug).
+        return {"skipped": "output_not_4k"}
     s = dict(cfg.load())
     s["vmaf_n_subsample"] = _FR_N_SUBSAMPLE
     score = quality.compute_vmaf(output_path, ref, s, variant="uhd")

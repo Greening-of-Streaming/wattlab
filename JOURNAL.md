@@ -66,6 +66,14 @@ switched to the module's non-lifespan client.
   which fr_scores.json's v0 rows describe) — both were backed up first and restored after
   verification. Post-hoc scoring of today's outputs stays possible from the stored fr blocks.
 
+**Addendum (same evening, from Ben's first real run):** he ran a ladder fixture with the HD
+preset and the FR absence was silent — a fixture run with a non-4K output now persists
+`fr: {skipped: "output_not_4k"}` and both renderers explain it ("anchors are 4K-denominated;
+choose the 4K target"). Also fixed the sandwich display asserting the ≤ chain even when the
+ordering didn't hold (bbb_sd_dirty rendered "32.14 ≤ 31.57" — false arithmetic): the chain now
+renders only when true; inverted results state "below the naive-upscale baseline" / "above the
+pipeline ceiling" plainly. Tests stay 894 (non-4K test reshaped to the marker + note coverage).
+
 ## Session 56 — 2026-07-20
 
 **CR-070 — pre-job idle guard (the meeting's "baseline bug", assessed → fixed → verified live,

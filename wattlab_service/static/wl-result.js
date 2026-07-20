@@ -1054,11 +1054,20 @@
               + '</div>';
     }
     // FR sandwich — ladder-fixture runs only (pristine master exists).
-    if (d.fr && d.fr.vmaf != null) {
-      var sand = (d.fr.baseline_vmaf != null && d.fr.ceiling_vmaf != null)
-        ? ' — naive ' + _f(d.fr.baseline_vmaf, 2) + ' ≤ ​' + _f(d.fr.vmaf, 2)
-          + ' ≤ ceiling ' + _f(d.fr.ceiling_vmaf, 2)
-        : '';
+    if (d.fr && d.fr.skipped === 'output_not_4k') {
+      vqaHtml += '<div style="margin-top:0.3rem;font-size:0.72rem;color:var(--text-4)">'
+              + 'FR sandwich n/a — anchors are 4K-denominated and this output is not 4K.</div>';
+    } else if (d.fr && d.fr.vmaf != null) {
+      var sand = '';
+      if (d.fr.baseline_vmaf != null && d.fr.ceiling_vmaf != null) {
+        var inChain = d.fr.baseline_vmaf <= d.fr.vmaf && d.fr.vmaf <= d.fr.ceiling_vmaf;
+        sand = inChain
+          ? ' — naive ' + _f(d.fr.baseline_vmaf, 2) + ' ≤ ​' + _f(d.fr.vmaf, 2)
+            + ' ≤ ceiling ' + _f(d.fr.ceiling_vmaf, 2)
+          : ' — naive ' + _f(d.fr.baseline_vmaf, 2) + ' · ceiling ' + _f(d.fr.ceiling_vmaf, 2)
+            + (d.fr.vmaf < d.fr.baseline_vmaf ? ' (below the naive baseline)'
+                                              : ' (above the pipeline ceiling)');
+      }
       vqaHtml += '<div style="margin-top:0.3rem;font-size:0.78rem;color:var(--text-3)">'
               + 'Fidelity vs pristine master (' + (d.fr.vmaf_model || 'VMAF') + ', 4K): '
               + _f(d.fr.vmaf, 2) + sand + '</div>';

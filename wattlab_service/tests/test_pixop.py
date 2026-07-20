@@ -2148,9 +2148,17 @@ def test_probe_fr_sandwich_missing_anchors_score_only(monkeypatch, tmp_path):
     assert "baseline_vmaf" not in b and "ceiling_vmaf" not in b
 
 
-def test_probe_fr_sandwich_non_4k_output_is_none(monkeypatch, tmp_path):
+def test_probe_fr_sandwich_non_4k_output_is_marked_skipped(monkeypatch, tmp_path):
+    # A FIXTURE run with a non-4K output must say why there's no score (the
+    # anchors are 4K-denominated) rather than silently omitting the block.
     _arm_fr(monkeypatch, tmp_path, dims=(1920, 1080))
-    assert pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4") is None
+    assert pixop.probe_fr_sandwich("out.mp4", "bbb_hd_clean.mp4") == \
+        {"skipped": "output_not_4k"}
+    # ...and both renderers explain it.
+    page = client.get("/enhance-run", headers=LAB).text
+    assert "4K-denominated" in page
+    js = (Path(__file__).parent.parent / "static" / "wl-result.js").read_text()
+    assert "4K-denominated" in js
 
 
 def test_probe_fr_sandwich_non_fixture_never_scores(monkeypatch, tmp_path):

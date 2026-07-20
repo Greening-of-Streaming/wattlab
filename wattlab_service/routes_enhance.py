@@ -1109,13 +1109,29 @@ function _vqaRows(srcv, mlv, ffv) {
 // Full-reference sandwich — only present on degraded-ladder fixture runs
 // (uploads and non-ladder sources have no pristine master; NR-only there).
 function _frRows(mlfr, fffr) {
+  if ((mlfr && mlfr.skipped === 'output_not_4k') || (fffr && fffr.skipped === 'output_not_4k')) {
+    return '<div style="color:var(--text-4);font-size:0.7rem;margin-top:0.5rem">'
+      + 'FR sandwich n/a for this run — the fidelity anchors are 4K-denominated '
+      + 'and this output is not 4K. Choose the 4K output target on a ladder '
+      + 'fixture to get the full-reference score.</div>';
+  }
   function line(lbl, fr) {
     if (!fr || fr.vmaf == null) return '';
-    var sand = (fr.baseline_vmaf != null && fr.ceiling_vmaf != null)
-      ? ' <span style="color:var(--text-4);font-weight:400">(naive '
-        + fr.baseline_vmaf + ' &#8804; &#8203;' + fr.vmaf + ' &#8804; ceiling '
-        + fr.ceiling_vmaf + ')</span>'
-      : '';
+    var sand = '';
+    if (fr.baseline_vmaf != null && fr.ceiling_vmaf != null) {
+      // Only assert the ≤ chain when it actually holds; an inverted result
+      // gets stated plainly instead of rendering false arithmetic.
+      var inChain = fr.baseline_vmaf <= fr.vmaf && fr.vmaf <= fr.ceiling_vmaf;
+      sand = ' <span style="color:var(--text-4);font-weight:400">'
+        + (inChain
+            ? '(naive ' + fr.baseline_vmaf + ' &#8804; &#8203;' + fr.vmaf
+              + ' &#8804; ceiling ' + fr.ceiling_vmaf + ')'
+            : '(naive ' + fr.baseline_vmaf + ' &middot; ceiling ' + fr.ceiling_vmaf
+              + ' — ' + (fr.vmaf < fr.baseline_vmaf
+                          ? 'below the naive-upscale baseline'
+                          : 'above the pipeline ceiling') + ')')
+        + '</span>';
+    }
     return _row(lbl, fr.vmaf + sand, '');
   }
   var rows = line('FR fidelity — AI output', mlfr) + line('FR fidelity — ffmpeg output', fffr);
