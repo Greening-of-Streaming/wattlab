@@ -1080,9 +1080,10 @@
                 + _f(d.fr.baseline_vmaf, 2) + ' — different path, not directly comparable.</div>';
       }
       vqaHtml += '<div style="margin-top:0.15rem;font-size:0.72rem;color:var(--text-4)">'
-              + 'Fidelity (FR) and standalone quality (NR) are different axes: ML enhancement '
-              + 'typically raises the second while lowering the first — synthesis, not '
-              + 'restoration. See /methodology.</div>';
+              + 'Fidelity (FR) and standalone quality (NR) are different axes: enhanced output '
+              + 'mixes recovered structure with synthesis, not one or the other, so it can look '
+              + 'better while scoring lower on fidelity — a below-anchor score '
+              + 'does not mean it looks worse. See /methodology.</div>';
     }
     html += '<div class="result-card">'
           + '<p class="headline">' + (d.preset_label || 'Enhancement run') + '</p>'

@@ -2216,13 +2216,20 @@ def test_fr_wired_into_both_runners_after_vqa():
 def test_enhance_pages_render_fr_rows():
     page = client.get("/enhance-run", headers=LAB).text
     assert "_frRows" in page and "pristine master" in page
-    # two-axis framing (owner decision 2026-07-20): FR = fidelity, NR = looks;
-    # anchors are same-path context, no ordering asserted, no "below the floor"
-    # alarm wording; the source-as-displayed score stays a separate path
+    # two-axis framing (owner decision 2026-07-20, wording reviewed with Pixop
+    # 2026-07-23): FR = similarity to the reference (not broader perceived
+    # quality), NR = looks; enhanced output is a MIXTURE of recovered structure
+    # and synthesis (never worded as a binary); below-anchor fidelity is never
+    # worded as "looks worse"; anchors are same-path context, no ordering
+    # asserted; the source-as-displayed score stays a separate path
     assert "naive-encode anchor" in page and "not directly comparable" in page
-    assert "synthesises plausible detail" in page
+    assert "similarity to the reference" in page
+    assert "recovered structure" in page and "learned priors" in page
+    assert "does not mean the output looks worse" in page
     assert "naive-encode floor" not in page
+    assert "synthesis, not restoration" not in page
     js = (Path(__file__).parent.parent / "static" / "wl-result.js").read_text()
     assert "Fidelity vs pristine master" in js and "d.fr" in js
     assert "floor_vmaf" in js and "not directly comparable" in js
-    assert "synthesis, not" in js and "naive-encode floor" not in js
+    assert "does not mean it looks worse" in js and "naive-encode floor" not in js
+    assert "synthesis, not restoration" not in js

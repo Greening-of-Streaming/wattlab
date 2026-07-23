@@ -1108,10 +1108,12 @@ function _vqaRows(srcv, mlv, ffv) {
 }
 // Full-reference fidelity — only present on degraded-ladder fixture runs
 // (uploads and non-ladder sources have no pristine master; NR-only there).
-// Two-axis framing (2026-07-20): FR = fidelity to the master, NR = standalone
-// perceptual quality. ML enhancement synthesises detail rather than recovering
-// it, so it typically RAISES the NR axis while LOWERING the FR axis — the
-// anchors are context, never an expected ordering.
+// Two-axis framing (2026-07-20, wording reviewed with the partner 2026-07-23):
+// FR = fidelity to the master, NR = standalone perceptual quality. Enhanced
+// output mixes recovered structure, learned-prior reconstruction, and newly
+// synthesised detail (not a binary), so it typically RAISES the NR axis while
+// LOWERING the FR axis — anchors are context, never an expected ordering, and
+// below-anchor fidelity must never be worded as "looks worse".
 function _frRows(mlfr, fffr) {
   var _skipMsg = {
     output_not_4k: 'FR fidelity n/a for this run — the fidelity anchors are '
@@ -1158,11 +1160,14 @@ function _frRows(mlfr, fffr) {
     + 'Two axes, read together: full-reference VMAF (' + model + ', 4K) scores '
     + '<em>fidelity</em> — how close the output stays to this fixture&#39;s pristine '
     + 'master — while the no-reference score above rates how good the output looks '
-    + 'on its own. ML enhancement typically trades the first for the second: it '
-    + 'synthesises plausible detail rather than recovering the original signal, so '
-    + 'an enhanced output often scores below the naive-encode anchor on fidelity '
-    + 'while beating it on perceived quality. That divergence is the measurement, '
-    + 'not a fault. Both anchors pay the same pipeline encode as the output: '
+    + 'on its own. VMAF rewards similarity to the reference, not perceived quality '
+    + 'in the broader sense. Enhanced output is typically a mixture of recovered '
+    + 'structure, reconstruction from learned priors, and newly synthesised detail; '
+    + 'the synthesised share can look convincing without matching the master&#39;s '
+    + 'exact pixels, so an enhanced output can score below the naive-encode anchor '
+    + 'on fidelity while beating it on perceived quality. A below-anchor fidelity '
+    + 'score does not mean the output looks worse — the divergence between the axes '
+    + 'is the measurement, not a fault. Both anchors pay the same pipeline encode as the output: '
     + 'naive = plain lanczos upscale through the matched encode; pristine = the '
     + 'master itself through the same pipeline (its gap to 100 is encode cost '
     + 'alone). v1 scores are not comparable with v0-era scores.</div>';
