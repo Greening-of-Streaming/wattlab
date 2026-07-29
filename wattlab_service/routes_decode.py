@@ -264,9 +264,12 @@ _BODY = """
              onchange="modeChanged()"> on screen — exclusive</label>
     </div>
     <div class="rig-runrow" id="dev-picks" style="margin-top:0.4rem">
-      <label><input type="checkbox" id="dev-pi5" checked> Pi 5</label>
-      <label><input type="checkbox" id="dev-pi400" checked> Pi 400</label>
-      <label><input type="checkbox" id="dev-gtv"> Google TV</label>
+      <label><input type="checkbox" id="dev-pi5" checked
+             onchange="devPicked(this)"> Pi 5</label>
+      <label><input type="checkbox" id="dev-pi400" checked
+             onchange="devPicked(this)"> Pi 400</label>
+      <label><input type="checkbox" id="dev-gtv"
+             onchange="devPicked(this)"> Google TV</label>
       <label id="cal-wrap" style="display:none">
         <input type="checkbox" id="calibrate" checked>
         white/black panel calibration</label>
@@ -465,15 +468,28 @@ var PHASE_LABELS = {device:'Power device', staging:'Stage clips',
                     finishing:'Confidence', done:'Done', error:'Error'};
 var DEV_LABELS = {pi5:'Pi 5', pi400:'Pi 400', gtv:'Google TV'};
 
+function screenMode() {
+  return document.querySelector('input[name=mode]:checked').value === 'screen';
+}
+
 function modeChanged() {
-  var screen = document.querySelector('input[name=mode]:checked').value === 'screen';
-  document.getElementById('cal-wrap').style.display = screen ? '' : 'none';
-  if (screen) {  // enforce single selection
+  document.getElementById('cal-wrap').style.display = screenMode() ? '' : 'none';
+  if (screenMode()) {  // collapse to a single selection
     var first = true;
     ['pi5','pi400','gtv'].forEach(function(d){
       var cb = document.getElementById('dev-' + d);
       if (cb.checked && !first) cb.checked = false;
       if (cb.checked) first = false;
+    });
+  }
+}
+
+function devPicked(box) {
+  // Screen mode is exclusive: checking one box unchecks the others.
+  if (screenMode() && box.checked) {
+    ['pi5','pi400','gtv'].forEach(function(d){
+      var cb = document.getElementById('dev-' + d);
+      if (cb !== box) cb.checked = false;
     });
   }
 }
