@@ -272,7 +272,7 @@ _BODY = """
              onchange="devPicked(this)"> Google TV</label>
       <label id="cal-wrap" style="display:none">
         <input type="checkbox" id="calibrate" checked>
-        white/black panel calibration</label>
+        marker head (5 s black·white·black in-clip)</label>
     </div>
     <div class="rig-runrow" style="margin-top:0.4rem">
       <select id="recipe">{RECIPE_OPTIONS}</select>

@@ -31,16 +31,29 @@ def test_materialize_headless_pi_uses_null_sink(tmp_path):
         p.unlink()
 
 
-def test_materialize_screen_pi_uses_mpv_and_monitor_context(tmp_path):
+def test_materialize_screen_pi_uses_marked_clip_and_monitor_context(tmp_path):
     p = decode_run._materialize("tj2", "bbb_h264_rt", "pi5", "screen", True)
     try:
         cfg = json.loads(p.read_text())
         assert cfg["monitor_meter_ip"] == rig.RIG["monitor"]["plug_ip"]
-        names = [r["name"] for r in cfg["runs"]]
-        assert names[:2] == ["panel_cal_white", "panel_cal_black"]
-        assert all(r["window_s"] == decode_run._CAL_WINDOW_S
-                   for r in cfg["runs"][:2])
-        assert "mpv --fs" in cfg["runs"][-1]["cmd"]
+        assert len(cfg["runs"]) == 1                     # no bracket rows
+        row = cfg["runs"][0]
+        assert "marked_bbb_h264_6min.mp4" in row["cmd"]  # marker-headed clip
+        assert "mpv --fs" in row["cmd"]
+        # window extends over the 15 s head; skip shrinks so the head is sampled
+        assert row["window_s"] == (decode_run.TEMPLATES["bbb_h264_rt"]["bench"]
+                                   ["window_s"] + decode_run.MARKER_HEAD_S)
+        assert cfg["startup_skip_s"] == 2
+        assert cfg["cadence_s"] == 1.0
+    finally:
+        p.unlink()
+
+
+def test_materialize_screen_without_calibrate_uses_plain_clip(tmp_path):
+    p = decode_run._materialize("tj2b", "bbb_h264_rt", "pi5", "screen", False)
+    try:
+        cfg = json.loads(p.read_text())
+        assert "marked_" not in cfg["runs"][0]["cmd"]
     finally:
         p.unlink()
 

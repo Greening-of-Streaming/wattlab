@@ -51,13 +51,13 @@ TEMPLATES: dict = {
     "bbb_h264_smoke": {
         "label": "Smoke — BBB H.264, one 90 s row",
         "clips": {"bbb_h264_smoke": "bbb_h264_6min.mp4"},
-        "bench": {"cadence_s": 1.5, "baseline_samples": 20, "settle_s": 15,
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 10, "window_s": 90, "gap_s": 5},
     },
     "bbb_h264_rt": {
         "label": "BBB H.264 — realtime 150 s (July replication row)",
         "clips": {"bbb_h264_rt": "bbb_h264_6min.mp4"},
-        "bench": {"cadence_s": 1.5, "baseline_samples": 20, "settle_s": 15,
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
     "bbb_codecs_rt": {
@@ -65,14 +65,20 @@ TEMPLATES: dict = {
         "clips": {"bbb_h264_rt": "bbb_h264_6min.mp4",
                   "bbb_hevc_rt": "bbb_h265_6min.mp4",
                   "bbb_av1_rt": "bbb_av1_6min.mp4"},
-        "bench": {"cadence_s": 1.5, "baseline_samples": 20, "settle_s": 15,
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
 }
 
-_CAL_CLIPS = {"panel_cal_white": "probe_white.mp4",
-              "panel_cal_black": "probe_black.mp4"}
-_CAL_WINDOW_S = 30
+# Screen-mode marker head (2026-07-30, Ben's design): 5 s black · 5 s white ·
+# 5 s black prepended to the CONTENT clip as one contiguous video (content
+# stream-copied — re-encoding would change the decode workload; markers are
+# codec/res/fps-matched NVENC segments). At 1 s cadence each segment carries
+# ~5 samples; raw per-second samples are persisted, so the panel response
+# segments out post-hoc by edge detection — the hackathon energy-signature
+# technique, one row instead of the old 2×90 s bracket.
+MARKER_HEAD_S = 15
+_MARKER_PATTERN = "black5-white5-black5"
 
 
 def template_phases(tpl: dict) -> list:
@@ -120,14 +126,19 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
                  calibrate: bool) -> Path:
     tpl = TEMPLATES[tpl_key]
     dev_cfg = rig.RIG["devices"][dev_name]
+    marked = mode == "screen" and calibrate
     runs = []
-    if mode == "screen" and calibrate:
-        for cal_name, cal_clip in _CAL_CLIPS.items():
-            runs.append(_row_for(dev_cfg, cal_name, cal_clip, "screen",
-                                 window_s=_CAL_WINDOW_S))
     for run_name, clip in tpl["clips"].items():
-        runs.append(_row_for(dev_cfg, run_name, clip, mode))
+        if marked:
+            # Marker-headed variant: window extends over the 15 s head; the
+            # skip shrinks so the head lands inside the sampled window.
+            runs.append(_row_for(dev_cfg, run_name, f"marked_{clip}", mode,
+                                 window_s=tpl["bench"]["window_s"] + MARKER_HEAD_S))
+        else:
+            runs.append(_row_for(dev_cfg, run_name, clip, mode))
     cfg = dict(tpl["bench"])
+    if marked:
+        cfg["startup_skip_s"] = 2
     cfg["name"] = f"ui-{tpl_key}-{job_id}-{dev_name}"
     cfg["meter_ip"] = dev_cfg["plug_ip"]
     if mode == "screen":
@@ -147,22 +158,56 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
 def _needed_clips(tpl_key: str, mode: str, calibrate: bool) -> list:
     clips = list(TEMPLATES[tpl_key]["clips"].values())
     if mode == "screen" and calibrate:
-        clips += list(_CAL_CLIPS.values())
+        return [f"marked_{c}" for c in clips]
     return clips
 
 
-def _ensure_probe_clips_sync() -> None:
-    """The white/black calibration clips live in streams/ (also serves the
-    GTV via :8123). Generate once if missing — 30 s lavfi solids."""
-    for clip in _CAL_CLIPS.values():
-        dst = STREAMS / clip
-        if not dst.exists():
-            color = "white" if "white" in clip else "black"
+_FFMPEG = "/usr/local/bin/ffmpeg-master"
+_NVENC = {"h264": "h264_nvenc", "hevc": "hevc_nvenc", "av1": "av1_nvenc"}
+
+
+def _ensure_marked_clips_sync(clips: list) -> None:
+    """Build `marked_<clip>` (5 s black·white·black head + stream-copied
+    content) for any clip missing its marked variant. Marker segments are
+    codec/res/fps-matched NVENC encodes, cached in streams/marked_segments/."""
+    ff = _FFMPEG if Path(_FFMPEG).exists() else "ffmpeg"
+    seg_dir = STREAMS / "marked_segments"
+    seg_dir.mkdir(exist_ok=True)
+    for clip in clips:
+        dst = STREAMS / f"marked_{clip}"
+        if dst.exists():
+            continue
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name,width,height,r_frame_rate,pix_fmt",
+             "-of", "csv=p=0", str(STREAMS / clip)],
+            capture_output=True, text=True, check=True, timeout=30).stdout.strip()
+        codec, w, h, pix, fps = probe.split(",")
+        enc = _NVENC.get(codec)
+        if enc is None:
+            raise RuntimeError(f"no marker encoder for codec {codec!r}")
+        seg_paths = []
+        for seg, color in (("black", "black"), ("white", "white"),
+                           ("black2", "black")):
+            seg_p = seg_dir / f"{codec}_{w}x{h}_{fps.split('/')[0]}_{seg}.mp4"
+            if not seg_p.exists():
+                subprocess.run(
+                    [ff, "-loglevel", "error", "-f", "lavfi",
+                     "-i", f"color=c={color}:s={w}x{h}:r={fps}", "-t", "5",
+                     "-pix_fmt", pix, "-c:v", enc, "-y", str(seg_p)],
+                    check=True, timeout=120)
+            seg_paths.append(seg_p)
+        listing = "".join(f"file '{p}'\n" for p in seg_paths
+                          + [STREAMS / clip])
+        list_path = Path(f"/tmp/owl-marked-{clip}.txt")
+        list_path.write_text(listing)
+        try:
             subprocess.run(
-                ["ffmpeg", "-loglevel", "error", "-f", "lavfi",
-                 "-i", f"color=c={color}:s=1920x1080:r=30", "-t", "30",
-                 "-pix_fmt", "yuv420p", "-y", str(dst)],
-                check=True, timeout=120)
+                [ff, "-loglevel", "error", "-f", "concat", "-safe", "0",
+                 "-i", str(list_path), "-c", "copy", "-y", str(dst)],
+                check=True, timeout=600)
+        finally:
+            list_path.unlink(missing_ok=True)
 
 
 def _stage_clips_sync(dev_cfg: dict, clips: list) -> None:
@@ -282,7 +327,7 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
     tpl = TEMPLATES[tpl_key]
     job = jobs[job_id]
     phases = template_phases(tpl)
-    n_rows = len(tpl["clips"]) + (2 if mode == "screen" and calibrate else 0)
+    n_rows = len(tpl["clips"])
     job.update({"status": "running", "stage": "running",
                 "template": tpl_key, "mode": mode, "calibrate": calibrate,
                 "phases": phases, "row_n": n_rows,
@@ -291,7 +336,9 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                             for name in devices}})
     try:
         if mode == "screen" and calibrate:
-            await asyncio.to_thread(_ensure_probe_clips_sync)
+            job["stage"] = "preparing marker clips"
+            await asyncio.to_thread(_ensure_marked_clips_sync,
+                                    list(tpl["clips"].values()))
         if mode == "screen":
             # Exclusive: power/ready first, then hand it the monitor.
             name = devices[0]
@@ -326,6 +373,11 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
             "runs": flat_runs,
             "protocol": {"harness": "decode-bench bench.py (July 2026 protocol)",
                          "launched_from": "/decode", "parallel": mode == "headless",
+                         **({"marker_head": {"pattern": _MARKER_PATTERN,
+                                             "seconds": MARKER_HEAD_S,
+                                             "note": "in-window; segment via "
+                                                     "raw-sample edge detection"}}
+                            if mode == "screen" and calibrate else {}),
                          **{k: tpl["bench"].get(k) for k in
                             ("window_s", "cadence_s", "baseline_samples",
                              "settle_s", "startup_skip_s")}},
