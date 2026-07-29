@@ -111,6 +111,89 @@ def test_run_endpoint_lab_only():
     assert r.status_code == 403
 
 
+def test_protocol_settings_defaults_v3(monkeypatch):
+    import settings as cfg
+    monkeypatch.setattr(cfg, "load", lambda: {})
+    p = decode_run.protocol_settings()
+    assert p["cadence_s"] == 1.0
+    assert p["idle_guard"] == {"tolerance_w": 0.5, "settle_polls": 4,
+                               "max_wait_s": 60}
+    assert p["protocol_version"] == 3
+
+
+def test_protocol_settings_guard_off_is_v2(monkeypatch):
+    import settings as cfg
+    monkeypatch.setattr(cfg, "load", lambda: {"decode_idle_guard": False,
+                                              "decode_cadence_s": 1.5})
+    p = decode_run.protocol_settings()
+    assert p["idle_guard"] is None
+    assert p["protocol_version"] == 2
+    assert p["cadence_s"] == 1.5
+
+
+def test_materialize_injects_settings_protocol(monkeypatch):
+    import settings as cfg
+    monkeypatch.setattr(cfg, "load", lambda: {})
+    p = decode_run._materialize("tj4", "bbb_h264_rt", "pi5", "headless", False)
+    try:
+        c = json.loads(p.read_text())
+        assert c["cadence_s"] == 1.0
+        assert c["protocol_version"] == 3
+        assert c["idle_guard"]["settle_polls"] == 4
+    finally:
+        p.unlink()
+
+
+def test_segment_marker_trace_on_reference_run():
+    """The actual screen trace from reference run 2026-07-30_14366b25."""
+    trace = [17.5, 13.3, 32.4, 28.0, 28.1, 27.9, 28.0, 28.1,
+             32.8, 33.1, 33.0, 33.0, 32.9,
+             28.0, 28.0, 27.9, 28.0, 27.9,
+             31.8, 32.6, 32.6, 32.4] + [30.9] * 60
+    seg = decode_run.segment_marker_trace(trace)
+    assert seg is not None
+    assert 27.5 <= seg["black_w"] <= 28.5        # resync lows excluded
+    assert 32.5 <= seg["white_w"] <= 33.5
+    assert 27.5 <= seg["black2_w"] <= 28.5
+    assert seg["marker_swing_w"] >= 4.0
+    assert 30.0 <= seg["content_w"] <= 32.0
+
+
+def test_segment_marker_trace_rejects_flat_and_short():
+    assert decode_run.segment_marker_trace([30.0] * 40) is None
+    assert decode_run.segment_marker_trace([1, 2, 3]) is None
+    assert decode_run.segment_marker_trace(None) is None
+
+
+def test_lem_csv_export_shape(monkeypatch):
+    import persist
+
+    def _fake_load(job_type, job_id, visitor_key=None):
+        assert job_type == "decode"
+        return {"devices": {"pi5": {"rows": [{
+            "raw_baseline_t": [1000.0, 1001.0], "raw_baseline_w": [3.4, 3.5],
+            "raw_task_t": [1002.0], "raw_task_w": [4.9],
+            "raw_context_t": [1002.5], "raw_context_w": [30.5],
+        }]}}}
+    monkeypatch.setattr(persist, "load_result", _fake_load)
+    r = client.get("/decode/result/testjob/lem.csv", headers=_LAB)
+    assert r.status_code == 200
+    lines = r.text.strip().split("\n")
+    assert lines[0] == "timestamp,alias,power_w"
+    assert len(lines) == 5
+    assert ",pi5,3.4" in lines[1] and lines[1].startswith("1970-01-01T00:16:40")
+    assert ",monitor,30.5" in lines[-1]
+
+
+def test_lem_csv_404_without_timestamps(monkeypatch):
+    import persist
+    monkeypatch.setattr(persist, "load_result",
+                        lambda *a, **k: {"devices": {"pi5": {"rows": [
+                            {"raw_task_w": [1.0]}]}}})
+    r = client.get("/decode/result/x/lem.csv", headers=_LAB)
+    assert r.status_code == 404
+
+
 def test_page_has_mode_and_device_controls():
     page = client.get("/decode", headers=_LAB).text
     for frag in ("headless — parallel", "on screen — exclusive",

@@ -28,6 +28,7 @@ import asyncio
 import json
 import logging
 import re
+import statistics
 import subprocess
 import time
 from pathlib import Path
@@ -79,6 +80,28 @@ TEMPLATES: dict = {
 # technique, one row instead of the old 2×90 s bracket.
 MARKER_HEAD_S = 15
 _MARKER_PATTERN = "black5-white5-black5"
+
+
+def protocol_settings() -> dict:
+    """The decode protocol knobs — /settings wins over template defaults
+    (owner directive 2026-07-30: all parameters in /settings; same machinery
+    as GoS1 where possible). idle_guard present ⇒ protocol v3 (the guard is
+    a protocol change vs the July rows — envelopes carry the stamp)."""
+    import settings as _cfg
+    s = _cfg.load()
+    guard = None
+    if s.get("decode_idle_guard", True) in (True, "true", "on", "1", 1):
+        guard = {"tolerance_w": float(s.get("decode_idle_tolerance_w", 0.5)),
+                 "settle_polls": int(s.get("decode_idle_settle_polls", 4)),
+                 "max_wait_s": int(s.get("decode_idle_max_wait_s", 60))}
+    return {
+        "cadence_s": float(s.get("decode_cadence_s", 1.0)),
+        "settle_s": int(s.get("decode_settle_s", 15)),
+        "baseline_samples": int(s.get("decode_baseline_samples", 20)),
+        "screen_startup_skip_s": int(s.get("decode_screen_startup_skip_s", 5)),
+        "idle_guard": guard,
+        "protocol_version": 3 if guard else 2,
+    }
 
 
 def template_phases(tpl: dict) -> list:
@@ -144,8 +167,14 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
         else:
             runs.append(_row_for(dev_cfg, run_name, clip, mode))
     cfg = dict(tpl["bench"])
+    proto = protocol_settings()
+    cfg.update({k: proto[k] for k in
+                ("cadence_s", "settle_s", "baseline_samples",
+                 "protocol_version")})
+    if proto["idle_guard"]:
+        cfg["idle_guard"] = proto["idle_guard"]
     if marked:
-        cfg["startup_skip_s"] = 2
+        cfg["startup_skip_s"] = proto["screen_startup_skip_s"]
     cfg["name"] = f"ui-{tpl_key}-{job_id}-{dev_name}"
     cfg["meter_ip"] = dev_cfg["plug_ip"]
     if mode == "screen":
@@ -160,6 +189,51 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
     path = Path(f"/tmp/owl-decode-{job_id}-{dev_name}.json")
     path.write_text(json.dumps(cfg, indent=1))
     return path
+
+
+def segment_marker_trace(w: list) -> dict | None:
+    """Split a screen trace with the black·white·black marker head into
+    segment means — the hackathon energy-signature technique, automated.
+
+    Edge-detects (threshold at the head's lo/hi midpoint) rather than
+    trusting clocks, so the mode-resync transient and start offsets don't
+    matter. Per segment the first sample is dropped as transition; the first
+    black's mean uses only its last 4 samples (the resync transient can
+    extend that run). Returns None when no credible marker pattern is found
+    (e.g. headless rows, panel not responding)."""
+    if not w or len(w) < 12:
+        return None
+    n_head = MARKER_HEAD_S + 8
+    head = w[:n_head]
+    lo, hi = min(head), max(head)
+    if hi - lo < 1.0:
+        return None
+    mid = (lo + hi) / 2
+    runs = []          # [is_high, start_idx, end_idx]
+    for i, x in enumerate(head):
+        st = x >= mid
+        if runs and runs[-1][0] == st:
+            runs[-1][2] = i
+        else:
+            runs.append([st, i, i])
+    for j in range(len(runs) - 2):
+        a, b, c = runs[j], runs[j + 1], runs[j + 2]
+        if ((not a[0]) and b[0] and (not c[0])
+                and min(a[2] - a[1], b[2] - b[1], c[2] - c[1]) >= 2):
+            def _mean(lo_i, hi_i):
+                xs = w[lo_i:hi_i + 1]
+                return round(statistics.mean(xs), 2) if xs else None
+            black = _mean(max(a[1] + 1, a[2] - 3), a[2])
+            white = _mean(b[1] + 1, b[2])
+            black2 = _mean(c[1] + 1, c[2])
+            content = (round(statistics.mean(w[c[2] + 2:]), 2)
+                       if len(w) > c[2] + 2 else None)
+            return {"black_w": black, "white_w": white, "black2_w": black2,
+                    "content_w": content,
+                    "marker_swing_w": (round(white - min(black, black2), 2)
+                                       if white and black and black2 else None),
+                    "content_from_idx": c[2] + 2}
+    return None
 
 
 def _needed_clips(tpl_key: str, mode: str, calibrate: bool) -> list:
@@ -306,6 +380,11 @@ async def _run_bench_for(job_id: str, tpl_key: str, name: str, mode: str,
             raise RuntimeError(
                 f"bench.py exit {rc}: {' | '.join(lines[-3:])[:300]}")
         bench_out = json.loads(result_path.read_text())
+        if mode == "screen" and calibrate:
+            for row in bench_out.get("rows", []):
+                seg = segment_marker_trace(row.get("raw_context_w") or [])
+                if seg:
+                    row["screen_marker_segments"] = seg
         section = {
             "label": dev_cfg["label"], "kind": dev_cfg["kind"],
             "meter": {"model": "Tapo P110", "ip": cfg["meter_ip"],
@@ -378,16 +457,15 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
             "calibrate": bool(mode == "screen" and calibrate),
             "devices": sections,
             "runs": flat_runs,
-            "protocol": {"harness": "decode-bench bench.py (July 2026 protocol)",
+            "protocol": {"harness": "decode-bench bench.py",
                          "launched_from": "/decode", "parallel": mode == "headless",
+                         "window_s": tpl["bench"]["window_s"],
                          **({"marker_head": {"pattern": _MARKER_PATTERN,
                                              "seconds": MARKER_HEAD_S,
                                              "note": "in-window; segment via "
                                                      "raw-sample edge detection"}}
                             if mode == "screen" and calibrate else {}),
-                         **{k: tpl["bench"].get(k) for k in
-                            ("window_s", "cadence_s", "baseline_samples",
-                             "settle_s", "startup_skip_s")}},
+                         **protocol_settings()},
         }
         save_result("decode", job_id, envelope)
         status = "done" if not errors else "done"

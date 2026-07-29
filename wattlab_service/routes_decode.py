@@ -11,13 +11,15 @@ Page JS polls /decode/status.json every 2.5 s; layout is flex-wrap so the
 tiles stack single-column on a phone. All rig state/IO lives in rig.py —
 this module is routes + HTML only.
 """
+import datetime
 import time
 import uuid
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 import decode_run
+import persist
 import queue_control
 import rig
 import ui
@@ -121,6 +123,45 @@ async def decode_device_power(name: str, payload: dict):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
     return {"ok": True}
+
+
+@router.get("/decode/result/{job_id}/lem.csv",
+            dependencies=[Depends(requires(RIG_CONTROL))])
+async def decode_result_lem_csv(job_id: str):
+    """Raw run data as a LEM-style combined CSV: timestamp,alias,power_w —
+    the exact shape LEM writes (and REM ingests). Aliases are the rig device
+    names plus 'monitor' for the screen's context meter; baseline and window
+    samples are both included, chronologically. Needs per-sample timestamps
+    (runs from 2026-07-30 on)."""
+    data = persist.load_result("decode", job_id)
+    if not data:
+        return PlainTextResponse("unknown decode result", status_code=404)
+    lines = []
+
+    def _iso(t):
+        return datetime.datetime.fromtimestamp(
+            t, tz=datetime.timezone.utc).isoformat(timespec="milliseconds")
+
+    def _emit(alias, ts, ws):
+        for t, w in zip(ts or [], ws or []):
+            lines.append((t, f"{_iso(t)},{alias},{w}"))
+
+    for name, section in (data.get("devices") or {}).items():
+        for row in section.get("rows", []):
+            _emit(name, row.get("raw_baseline_t"), row.get("raw_baseline_w"))
+            _emit(name, row.get("raw_task_t"), row.get("raw_task_w"))
+            _emit("monitor", row.get("raw_context_baseline_t"),
+                  row.get("raw_context_baseline_w"))
+            _emit("monitor", row.get("raw_context_t"), row.get("raw_context_w"))
+    if not lines:
+        return PlainTextResponse(
+            "this run has no per-sample timestamps (pre-2026-07-30 protocol) "
+            "— re-run to get a LEM-style export", status_code=404)
+    lines.sort(key=lambda x: x[0])
+    csv = "timestamp,alias,power_w\n" + "\n".join(l for _, l in lines) + "\n"
+    return PlainTextResponse(csv, media_type="text/csv", headers={
+        "Content-Disposition":
+            f'attachment; filename="decode_{job_id}_lem.csv"'})
 
 
 @router.post("/decode/device/{name}/screen",
@@ -587,6 +628,12 @@ function resultTable(result) {
        + '<td>base ' + r.w_base + ' W</td><td>task ' + r.w_task + ' W</td>'
        + '<td><b>ΔW ' + (r.delta_w >= 0 ? '+' : '') + r.delta_w + '</b> ' + flag + '</td>'
        + dwh + scr + '</tr>';
+    var seg = r.screen_marker_segments;
+    if (seg)
+      h += '<tr><td></td><td colspan=5 class="rig-detail" style="font-size:0.76rem">'
+         + '↳ screen segmented: black ' + seg.black_w + ' W · white ' + seg.white_w
+         + ' W · content ' + seg.content_w + ' W (marker swing '
+         + seg.marker_swing_w + ' W)</td></tr>';
   }
   return h + '</table>';
 }
@@ -611,7 +658,10 @@ function renderJob(j) {
   for (var name in devs) h += deviceProgress(name, devs[name], j);
   h += '</div>';
   if (j.status === 'done') {
-    h += stageRow('✓', 'var(--accent)', 'done — result saved');
+    h += stageRow('✓', 'var(--accent)', 'done — result saved',
+      CUR_JOB ? ' <a href="/decode/result/' + CUR_JOB + '/lem.csv" '
+              + 'style="color:var(--accent);font-size:0.78rem;margin-left:0.6rem">'
+              + '⬇ raw samples (LEM CSV)</a>' : '');
     if (j.partial_errors)
       h += '<div class="rig-err">partial: ' + JSON.stringify(j.partial_errors) + '</div>';
     h += resultTable(j.result);
@@ -622,7 +672,9 @@ function renderJob(j) {
   return false;
 }
 
+var CUR_JOB = null;
 async function pollJob(id) {
+  CUR_JOB = id;
   try {
     var r = await fetch('/decode/job/' + id);
     var j = await r.json();

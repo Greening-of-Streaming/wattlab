@@ -72,19 +72,26 @@ class Meters:
 
 
 def sample_window(meters, seconds, cadence):
-    pri, ctx = [], []
+    """Returns (primary_w, context_w, primary_t, context_t) — real epoch
+    timestamps per sample (2026-07-30) so raw traces export as
+    timestamp,alias,power_w (LEM-shaped) and marker segmentation aligns on
+    wall-clock rather than assumed cadence."""
+    pri, ctx, pri_t, ctx_t = [], [], [], []
     t0 = time.monotonic()
     while time.monotonic() - t0 < seconds:
         t1 = time.monotonic()
         p, c = meters.read()
+        now = time.time()
         if p is not None:
             pri.append(p)
+            pri_t.append(round(now, 2))
             # live feed for the /decode progress UI (additive, 2026-07-29)
             log(f"sample {p:.3f}W" + (f" ctx={c:.2f}W" if c is not None else ""))
         if c is not None:
             ctx.append(c)
+            ctx_t.append(round(now, 2))
         time.sleep(max(0, cadence - (time.monotonic() - t1)))
-    return pri, ctx
+    return pri, ctx, pri_t, ctx_t
 
 
 class AdbDevice:
@@ -178,23 +185,57 @@ class SshDevice:
 DRIVERS = {"adb": AdbDevice, "ssh": SshDevice}
 
 
+def wait_for_stable_idle(meters, ig, cadence):
+    """Pre-baseline guard (2026-07-30, protocol v3): the SAME settle loop
+    GoS1's CR-070 floor guard uses (wattlab_service/idle_wait.py), run in
+    self-stability mode — a freshly booted device has no prior floor, so
+    settle when the last N readings span ≤ tolerance. Configured via the
+    cfg["idle_guard"] block (absent → no guard, protocol v2 behaviour)."""
+    import asyncio
+    import idle_wait
+
+    async def _read():
+        while True:
+            p, _ = meters.read()
+            if p is not None:
+                return p
+            await asyncio.sleep(1)
+
+    return asyncio.run(idle_wait.wait_for_stable(
+        _read, tolerance_w=ig["tolerance_w"],
+        settle_polls=ig["settle_polls"], max_wait_s=ig["max_wait_s"],
+        poll_interval_s=cadence))
+
+
 def one_run(dev, meters, run, cfg, results_dir):
     cadence = cfg.get("cadence_s", 1.5)
     dev.prepare(run)
     log(f"{run['name']}: settle {cfg.get('settle_s', 15)}s")
     time.sleep(cfg.get("settle_s", 15))
+    guard = None
+    if cfg.get("idle_guard"):
+        log(f"{run['name']}: idle-guard (tol {cfg['idle_guard']['tolerance_w']}W)")
+        g = wait_for_stable_idle(meters, cfg["idle_guard"], cadence)
+        guard = {"settled": g["settled"], "waited_s": g["waited_s"],
+                 "final_w": g["final_w"]}
+        log(f"{run['name']}: idle-guard "
+            f"{'settled' if g['settled'] else 'TIMEOUT'} after {g['waited_s']}s "
+            f"(final {g['final_w']}W)")
     log(f"{run['name']}: baseline {cfg.get('baseline_samples', 20)} samples @{cadence}s")
-    base_p, base_c = sample_window(meters, cfg.get("baseline_samples", 20) * cadence, cadence)
+    base_p, base_c, base_pt, base_ct = sample_window(
+        meters, cfg.get("baseline_samples", 20) * cadence, cadence)
     dev.start(run)
     time.sleep(cfg.get("startup_skip_s", 10))
     window = run.get("window_s", cfg["window_s"])
     log(f"{run['name']}: started — sampling {window}s")
     half = window / 2
-    task_p, task_c = sample_window(meters, half, cadence)
+    task_p, task_c, task_pt, task_ct = sample_window(meters, half, cadence)
     prov = dev.provenance(run, results_dir)
-    p2, c2 = sample_window(meters, window - half, cadence)
+    p2, c2, pt2, ct2 = sample_window(meters, window - half, cadence)
     task_p += p2
     task_c += c2
+    task_pt += pt2
+    task_ct += ct2
     alive_at_end = dev.still_running(run)
     dev.stop(run)
 
@@ -228,6 +269,12 @@ def one_run(dev, meters, run, cfg, results_dir):
                        ("flag", "label", "method", "confidence_positive", "ci_delta_w_95")},
         "raw_baseline_w": [round(x, 3) for x in base_p],
         "raw_task_w": [round(x, 3) for x in task_p],
+        # Epoch timestamps parallel to the raw arrays (2026-07-30) — feed the
+        # LEM-style export and wall-clock marker segmentation.
+        "raw_baseline_t": base_pt, "raw_task_t": task_pt,
+        "raw_context_t": task_ct or None,
+        "raw_context_baseline_t": base_ct or None,
+        "idle_guard": guard,
     }
     log(f"{run['name']}: base={w_base:.2f}W task={w_task:.2f}W dW={delta_w:+.2f}W "
         f"({conf.get('flag', '?')}) alive_at_end={alive_at_end}")
@@ -264,7 +311,8 @@ def main():
             "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
             "protocol": {k: cfg.get(k) for k in
                          ("window_s", "cadence_s", "baseline_samples",
-                          "settle_s", "startup_skip_s")},
+                          "settle_s", "startup_skip_s", "idle_guard",
+                          "protocol_version")},
             "config": cfg["name"], "rows": rows}, indent=1))
         time.sleep(cfg.get("gap_s", 10))
     log("ALL DONE")
