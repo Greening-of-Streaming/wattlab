@@ -111,8 +111,15 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         row["url"] = f"{STREAM_BASE_URL}/{clip}"
         return row
     if mode == "screen":
-        row["cmd"] = (f"{_WL_ENV} mpv --fs --no-audio --loop=inf "
-                      f"/dev/shm/decode/{clip}")
+        # Pin scanout to the July display protocol (1080p60) before playback:
+        # discovered live 2026-07-30 that both Pis default to 4K on this
+        # panel — the Pi 400 (4K30 ceiling) then renders mpv --fs unscaled
+        # in a quarter of the screen, and 4K scanout differs from every July
+        # display-attached baseline anyway.
+        row["cmd"] = (
+            f"o=$({_WL_ENV} wlr-randr | awk '/^[[:alnum:]]/{{print $1}}' | head -1); "
+            f"{_WL_ENV} wlr-randr --output $o --mode 1920x1080@60; sleep 2; "
+            f"{_WL_ENV} mpv --fs --no-audio --loop=inf /dev/shm/decode/{clip}")
         row["stop_cmd"] = "pkill mpv"
     else:
         stem = Path(clip).stem
