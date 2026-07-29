@@ -323,28 +323,29 @@ def set_signal(dev: dict, on: bool) -> None:
     - GTV wake/sleep must retry + verify mWakefulness: a single keyevent
       frequently doesn't stick (same finding as bench.py's prepare())."""
     if dev["kind"] == "ssh":
-        # Discover the board's actual output names at call time — a guessed
-        # connector name silently no-ops (2026-07-29: Pi 400 kept its signal
-        # through every claim because "HDMI-A-1" was wrong for that board).
-        list_cmd = f"{_WL_ENV} wlr-randr | awk '/^[[:alnum:]]/{{print $1}}'"
+        # DPMS via wlopm, NOT output disable via wlr-randr: labwc auto-revives
+        # a session's only output when disabled (seen live 2026-07-29 as the
+        # Pi 400's black-desktop-with-cursor stealing the panel back). DPMS
+        # drops the TMDS signal while the output stays configured — nothing
+        # for the compositor to revert.
         if on:
-            cmd = (f"outs=$({list_cmd}); [ -n \"$outs\" ] || exit 9; "
-                   f"for o in $outs; do {_WL_ENV} wlr-randr --output $o --off; done; "
-                   f"sleep 2; "
-                   f"for o in $outs; do {_WL_ENV} wlr-randr --output $o --on; done")
+            cmd = (f"{_WL_ENV} wlopm --off '*'; sleep 2; "
+                   f"{_WL_ENV} wlopm --on '*'")
         else:
-            cmd = (f"outs=$({list_cmd}); [ -n \"$outs\" ] || exit 9; "
-                   f"for o in $outs; do {_WL_ENV} wlr-randr --output $o --off; done")
+            cmd = f"{_WL_ENV} wlopm --off '*'"
         r = _run(["ssh"] + _SSH_OPTS + [dev["target"], cmd], timeout=30)
         if r.returncode != 0:
             raise RuntimeError(
-                f"{dev['label']}: output control failed "
+                f"{dev['label']}: wlopm failed "
                 f"(rc={r.returncode} {(r.stderr or '').strip()[:120]})")
         return
     serial = dev["target"]
     _run([ADB_BIN, "connect", serial], timeout=10)
     key = "KEYCODE_WAKEUP" if on else "KEYCODE_SLEEP"
-    want = "mWakefulness=Awake" if on else "mWakefulness=Asleep"
+    # Sleeping boxes report Asleep OR Dozing (ambient/screensaver state) —
+    # both mean the HDMI signal is down. Only Awake counts for wake.
+    wants = ("mWakefulness=Awake",) if on else ("mWakefulness=Asleep",
+                                                "mWakefulness=Dozing")
     for _ in range(4):
         _run([ADB_BIN, "-s", serial, "shell", "input", "keyevent", key],
              timeout=15)
@@ -352,9 +353,10 @@ def set_signal(dev: dict, on: bool) -> None:
         state = _run([ADB_BIN, "-s", serial, "shell",
                       "dumpsys power | grep -m1 mWakefulness"],
                      timeout=15).stdout
-        if want in state:
+        if any(w in state for w in wants):
             return
-    raise RuntimeError(f"{dev['label']}: did not reach {want.split('=')[1]}")
+    raise RuntimeError(f"{dev['label']}: did not reach "
+                       + "/".join(w.split('=')[1] for w in wants))
 
 
 def send_shutdown(dev: dict) -> None:
