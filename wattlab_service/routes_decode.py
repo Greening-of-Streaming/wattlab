@@ -11,12 +11,18 @@ Page JS polls /decode/status.json every 2.5 s; layout is flex-wrap so the
 tiles stack single-column on a phone. All rig state/IO lives in rig.py —
 this module is routes + HTML only.
 """
+import time
+import uuid
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+import decode_run
+import queue_control
 import rig
 import ui
 from capabilities import requires, RIG_CONTROL
+from runtime import job_status as _job_status
 
 router = APIRouter()
 
@@ -28,8 +34,41 @@ def _refuse(e: rig.RigError) -> JSONResponse:
 @router.get("/decode", response_class=HTMLResponse,
             dependencies=[Depends(requires(RIG_CONTROL))])
 async def decode_page(request: Request):
-    return ui.render_page(request, "Decode Rig",
-                          styles=_STYLES, body=_BODY, tail=_JS)
+    options = "".join(
+        f'<option value="{k}">{r["label"]}</option>'
+        for k, r in decode_run.RECIPES.items())
+    return ui.render_page(request, "Decode Rig", styles=_STYLES,
+                          body=_BODY.replace("{RECIPE_OPTIONS}", options),
+                          tail=_JS)
+
+
+@router.post("/decode/run", dependencies=[Depends(requires(RIG_CONTROL))])
+async def decode_run_start(request: Request, payload: dict):
+    key = (payload or {}).get("recipe")
+    if key not in decode_run.RECIPES:
+        return JSONResponse({"error": f"unknown recipe {key!r}"}, status_code=400)
+    recipe = decode_run.RECIPES[key]
+    job_id = str(uuid.uuid4())[:8]
+
+    async def coro(job_id=job_id, key=key):
+        await decode_run.run_decode_job(job_id, key)
+
+    position = queue_control.enqueue(job_id, "decode", recipe["label"], coro,
+                                     request=request, page="/decode")
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."},
+                            status_code=429)
+    return {"job_id": job_id, "queue_position": position}
+
+
+@router.get("/decode/job/{job_id}",
+            dependencies=[Depends(requires(RIG_CONTROL))])
+async def decode_job_status(job_id: str):
+    s = _job_status(job_id)
+    if s.get("phase_started"):
+        s["phase_elapsed_s"] = round(time.monotonic() - s["phase_started"], 1)
+        s.pop("phase_started", None)
+    return s
 
 
 @router.get("/decode/status.json",
@@ -132,6 +171,19 @@ body { font-family: monospace; background: var(--bg); color: var(--text);
              border-radius:3px; padding:0 0.35rem; color:var(--text-3); }
 .rig-err { color:var(--err); font-size:0.8rem; min-height:1.1rem;
            margin:0.4rem 0; }
+.rig-run { border:1px solid var(--border-3); border-radius:6px;
+           padding:0.8rem 0.9rem; margin-top:1rem; background:var(--panel); }
+.rig-run h3 { margin:0 0 0.5rem; font-size:0.95rem; color:var(--text); }
+.rig-runrow { display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; }
+.rig-runrow select { background:var(--panel-2); color:var(--text);
+                     border:1px solid var(--border-3); border-radius:4px;
+                     font-family:inherit; font-size:0.85rem;
+                     padding:0.35rem 0.5rem; max-width:100%; }
+.rig-runrow .rig-btn { margin-top:0; }
+.rig-stage { display:flex; align-items:center; gap:0.55rem;
+             font-size:0.82rem; margin-bottom:0.25rem; }
+.rig-rows td { padding:0.15rem 0.8rem 0.15rem 0; font-size:0.84rem;
+               color:var(--text-2); }
 """
 
 _BODY = """
@@ -162,6 +214,19 @@ _BODY = """
       <div class="rig-detail" id="d-monitor"></div>
       <button class="rig-btn" id="btn-monitor" onclick="monitorToggle()">…</button>
     </div>
+  </div>
+
+  <div class="rig-run">
+    <h3>Run a recipe</h3>
+    <div class="rig-runrow">
+      <select id="recipe">{RECIPE_OPTIONS}</select>
+      <button class="rig-btn" id="btn-run" onclick="runRecipe()">Run</button>
+    </div>
+    <div class="rig-detail" style="margin-top:0.3rem">Powers the device if
+      needed, stages clips, then runs the July decode protocol (settle →
+      baseline → play → confidence). Runs queue behind any measurement in
+      progress.</div>
+    <div id="run-status" style="margin-top:0.7rem"></div>
   </div>
 
   <div class="rig-note">
@@ -326,5 +391,94 @@ async function tick() {
 }
 tick();
 setInterval(tick, 2500);
+
+// --- Recipe runs ---
+var PHASE_LABELS = {settle:'Settle', baseline:'Baseline', starting:'Start playback',
+                    sampling:'Sampling', finishing:'Confidence'};
+
+function stageRow(icon, color, label, extra) {
+  return '<div class="rig-stage"><span style="color:' + color + ';width:1rem">'
+       + icon + '</span><span style="color:' + color + '">' + label + '</span>'
+       + (extra || '') + '</div>';
+}
+
+function renderJob(j) {
+  var el = document.getElementById('run-status');
+  if (j.status === 'error') {
+    el.innerHTML = '<div class="rig-err">✗ ' + (j.error || 'failed') + '</div>';
+    return true;
+  }
+  if (j.stage === 'queued') {
+    el.innerHTML = stageRow('…', 'var(--warn)',
+      'queued — position ' + (j.queue_position || '?')); return false;
+  }
+  var h = '';
+  if (j.row && j.row_n > 1) h += '<div class="rig-detail">row ' + j.row + ' / ' + j.row_n + '</div>';
+  if (j.status === 'done') {
+    h += stageRow('✓', 'var(--accent)', 'done — result saved');
+    var rows = (j.result && j.result.runs) || [];
+    if (rows.length) {
+      h += '<table class="rig-rows">';
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (r.error) { h += '<tr><td>' + r.run + '</td><td colspan=3>✗ ' + r.error + '</td></tr>'; continue; }
+        var flag = (r.confidence && r.confidence.flag) || '';
+        h += '<tr><td>' + r.run + '</td><td>base ' + r.w_base + ' W</td>'
+           + '<td>task ' + r.w_task + ' W</td><td><b>ΔW ' + (r.delta_w >= 0 ? '+' : '')
+           + r.delta_w + '</b> ' + flag + '</td></tr>';
+      }
+      h += '</table>';
+    }
+    el.innerHTML = h;
+    return true;
+  }
+  // running: walk phases
+  var names = ['device', 'staging'].concat((j.phases || []).map(function(p){ return p[0]; }));
+  var labels = {device: 'Power device', staging: 'Stage clips'};
+  var cur = names.indexOf(j.stage);
+  for (var i = 0; i < names.length; i++) {
+    var n = names[i], lbl = labels[n] || PHASE_LABELS[n] || n;
+    if (i < cur) h += stageRow('✓', 'var(--accent)', lbl);
+    else if (i === cur) {
+      var extra = '';
+      var ph = (j.phases || []).filter(function(p){ return p[0] === n; })[0];
+      if (ph && j.phase_elapsed_s != null) {
+        var pct = Math.min(98, 100 * j.phase_elapsed_s / ph[1]);
+        extra = '<span class="rig-detail" style="margin-left:0.5rem">'
+              + Math.round(j.phase_elapsed_s) + ' / ~' + ph[1] + ' s</span>'
+              + '<span style="flex:1;max-width:10rem;margin-left:0.6rem" class="rig-bar">'
+              + '<span style="display:block;height:100%;width:' + pct.toFixed(0)
+              + '%;background:var(--warn)"></span></span>';
+      }
+      h += stageRow('▶', 'var(--warn)', lbl, extra);
+    } else h += stageRow('·', 'var(--text-5)', lbl);
+  }
+  if (j.detail) h += '<div class="rig-detail">' + j.detail + '</div>';
+  el.innerHTML = h;
+  return false;
+}
+
+async function pollJob(id) {
+  try {
+    var r = await fetch('/decode/job/' + id);
+    var j = await r.json();
+    if (renderJob(j)) { document.getElementById('btn-run').disabled = false; return; }
+  } catch (e) {}
+  setTimeout(function(){ pollJob(id); }, 2000);
+}
+
+async function runRecipe() {
+  var key = document.getElementById('recipe').value;
+  document.getElementById('btn-run').disabled = true;
+  try {
+    var r = await fetch('/decode/run', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({recipe:key})});
+    var j = await r.json();
+    if (!r.ok) { err(j.error || ('HTTP ' + r.status));
+                 document.getElementById('btn-run').disabled = false; return; }
+    pollJob(j.job_id);
+  } catch (e) { err(String(e)); document.getElementById('btn-run').disabled = false; }
+}
 </script>
 """
