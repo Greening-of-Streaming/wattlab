@@ -88,8 +88,17 @@ body { font-family: monospace; background: var(--bg); color: var(--text);
        margin: 0; padding: 1.2rem; }
 .rig-wrap { max-width: 62rem; margin: 0 auto; }
 .rig-wrap h2 { color: var(--accent); letter-spacing: 0.04em; }
-.rig-strip { display:flex; flex-wrap:wrap; gap:0.8rem; align-items:stretch;
+.rig-strip { display:flex; flex-wrap:wrap; gap:1.1rem; align-items:flex-start;
              margin-bottom:1rem; }
+.rig-col { flex:2 1 32rem; min-width:0; }
+.rig-aside { flex:1 1 15rem; }
+.rig-connector { width:2px; height:1.05rem; background:var(--border-3);
+                 margin-left:2.2rem; }
+.rig-stripbox { border:1px dashed var(--border-3); border-radius:6px;
+                padding:1.25rem 0.8rem 0.8rem; position:relative; }
+.rig-striplabel { position:absolute; top:-0.65rem; left:0.9rem;
+                  background:var(--bg); padding:0 0.45rem;
+                  color:var(--text-4); font-size:0.72rem; }
 .rig-agg { font-size:0.85rem; color:var(--text-3); margin:0.3rem 0 0.9rem; }
 .rig-tiles { display:flex; flex-wrap:wrap; gap:0.9rem; }
 .rig-tile { border:1px solid var(--border-3); border-radius:6px;
@@ -132,28 +141,35 @@ _BODY = """
   <div class="rig-err" id="rig-err"></div>
 
   <div class="rig-strip">
-    <div class="rig-tile" id="tile-master" style="display:none">
-      <h3><span class="rig-dot" id="dot-master"></span>Master (Shelly)</h3>
-      <div class="rig-w" id="w-master">—</div>
-      <div class="rig-detail" id="d-master"></div>
-      <button class="rig-btn" id="btn-master" onclick="masterToggle()">…</button>
+    <div class="rig-col">
+      <div class="rig-tile" id="tile-master" style="display:none">
+        <h3><span class="rig-dot" id="dot-master"></span>Master (Shelly)
+            <span class="rig-badge">strip</span></h3>
+        <div class="rig-w" id="w-master">—</div>
+        <div class="rig-detail" id="d-master"></div>
+        <button class="rig-btn" id="btn-master" onclick="masterToggle()">…</button>
+      </div>
+      <div class="rig-connector" id="rig-connector" style="display:none"></div>
+      <div class="rig-stripbox">
+        <span class="rig-striplabel">⏚ power strip — Lab-A · Lab-B · Lab-D</span>
+        <div class="rig-tiles" id="rig-tiles"></div>
+      </div>
     </div>
-    <div class="rig-tile" id="tile-monitor">
+    <div class="rig-tile rig-aside" id="tile-monitor">
       <h3><span class="rig-dot" id="dot-monitor"></span>Monitor <span
-          class="rig-badge">Lab-E</span></h3>
+          class="rig-badge">Lab-E</span> <span class="rig-badge">not on strip</span></h3>
       <div class="rig-w" id="w-monitor">—</div>
       <div class="rig-detail" id="d-monitor"></div>
       <button class="rig-btn" id="btn-monitor" onclick="monitorToggle()">…</button>
     </div>
   </div>
 
-  <div class="rig-tiles" id="rig-tiles"></div>
-
   <div class="rig-note">
     Boxes are <b>off by default</b>. The screen auto-switches to the single
     powered device — run one box at a time for display work. “Off” is always a
-    graceful shutdown (SSH/ADB) before the relay cut. Boot expectations:
-    Pi 5 ≈ 29 s; Pi 400 and Google TV get measured on first use.
+    graceful shutdown (SSH/ADB) before the relay cut. The monitor has its own
+    wall socket — cutting the strip never darkens the screen. Boot
+    expectations: Pi 5 ≈ 29 s; Pi 400 and Google TV get measured on first use.
   </div>
 </div>
 """
@@ -209,25 +225,29 @@ function render(s) {
 
   var m = s.master;
   var tile = document.getElementById('tile-master');
+  document.getElementById('rig-connector').style.display = m.configured ? '' : 'none';
   if (m.configured) {
     tile.style.display = '';
     var dot = document.getElementById('dot-master');
     var btn = document.getElementById('btn-master');
     document.getElementById('w-master').textContent = fmtW(m.apower_w);
     if (!m.switchable) {
-      // Metering-only Shelly (Plug PM): strip total, no relay to drive.
+      // Metering-only Shelly (Plug PM): strip total; the toggle is shown but
+      // dead until a relay-equipped model replaces it (auto-detected).
       dot.className = 'rig-dot ' + (!m.reachable ? 'grey' : 'green');
       document.getElementById('d-master').textContent =
         !m.reachable ? 'not answering'
-          : 'strip meter (no relay) — Tapo overhead visible when boxes are off';
-      btn.style.display = 'none';
+          : 'strip meter — this Shelly has no relay; swap in a switching model to enable the toggle';
+      btn.textContent = 'Rig on/off';
+      btn.disabled = true;
+      btn.title = 'Installed Shelly (Plug PM Gen3) is metering-only — it cannot switch the strip';
     } else {
-      btn.style.display = '';
       dot.className = 'rig-dot ' + (!m.reachable ? 'grey' : (m.on ? 'green' : 'red'));
       document.getElementById('d-master').textContent =
         !m.reachable ? 'not answering' : (m.on ? 'strip live' : 'rig cold');
       btn.textContent = m.on ? 'Rig off' : 'Rig on';
       btn.disabled = !m.reachable;
+      btn.title = '';
     }
   } else tile.style.display = 'none';
 
