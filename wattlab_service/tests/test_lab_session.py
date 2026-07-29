@@ -62,12 +62,14 @@ def test_handler_registered_and_maps_to_503():
 
 def test_banner_on_public_pages_during_session(_session_flag):
     _session_flag.touch()
-    page = client.get("/findings", headers=_ANON).text
+    # /demo goes through ui.render_page (the banner's injection point);
+    # /findings hand-rolls its HTML and deliberately has no banner.
+    page = client.get("/demo", headers=_ANON).text
     assert "Lab session in progress" in page
 
 
 def test_no_banner_without_flag(_session_flag):
-    page = client.get("/findings", headers=_ANON).text
+    page = client.get("/demo", headers=_ANON).text
     assert "Lab session in progress" not in page
 
 
