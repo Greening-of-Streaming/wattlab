@@ -154,6 +154,18 @@ async def _capability_error_handler(request: Request, exc: CapabilityError):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
+@app.exception_handler(queue_control.LabSessionActive)
+async def _lab_session_handler(request: Request, exc: queue_control.LabSessionActive):
+    """Non-Lab run submission during a lab session (bin/lab-session-on).
+    Browsing is untouched — only enqueue raises this — so the message can be
+    specific: the box is reserved, come back for runs later."""
+    return JSONResponse(status_code=503, content={"error": (
+        "Lab session in progress — GoS1 is reserved for hands-on measurement "
+        "work right now, so new runs are paused. Browsing (guided tour, "
+        "findings, past results) stays open; runs re-open when the session "
+        "ends.")})
+
+
 # --- Queue ---
 # Queue state, enqueue chokepoint, and worker live in queue_control.py.
 # CR-001 (per-tier rate limits) and CR-001b (demo lock) plug into the

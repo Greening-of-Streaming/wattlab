@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# lab-session-on — reserve the box for hands-on lab work WITHOUT going dark.
+#
+# Softer than stage-on: the public site stays fully browsable (guided tour,
+# findings, results), but non-Lab job submission is refused with a 503 that
+# says why, and every page shows a "Lab session in progress" banner.
+# Use stage-on instead when the CODE is being swapped/restarted.
+#
+# Lower with lab-session-off. The flag survives service restarts (it's a
+# /tmp file read per-request) but not a host reboot.
+touch /tmp/owl-lab-session
+echo "✓ lab session active."
+echo "  public browsing:   open (banner shown on every page)"
+echo "  non-Lab runs:      refused with 503 + explanation"
+echo "  Lab runs (LAN/tunnel): unaffected"
+echo "  lower with:        lab-session-off"
