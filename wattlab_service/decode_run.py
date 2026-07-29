@@ -90,6 +90,8 @@ _PHASE_PATTERNS = [
     (re.compile(r": started — sampling|: started - sampling"), "sampling"),
     (re.compile(r": base=.*task=.*dW="), "finishing"),
 ]
+# bench.py's live sample feed (added 2026-07-29): "] sample 4.958W ctx=30.66W"
+_SAMPLE_RE = re.compile(r"\] sample ([0-9.]+)W(?: ctx=([0-9.]+)W)?")
 
 
 # --- Materialisation ---------------------------------------------------------
@@ -232,6 +234,12 @@ async def _run_bench_for(job_id: str, tpl_key: str, name: str, mode: str,
             if not raw:
                 break
             line = raw.decode(errors="replace").rstrip()
+            m = _SAMPLE_RE.search(line)
+            if m:
+                sub["live_w"] = float(m.group(1))
+                if m.group(2):
+                    sub["monitor_w"] = float(m.group(2))
+                continue
             lines.append(line)
             for pat, phase in _PHASE_PATTERNS:
                 if pat.search(line):

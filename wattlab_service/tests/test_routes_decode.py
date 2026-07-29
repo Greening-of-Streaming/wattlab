@@ -44,7 +44,7 @@ def test_status_shape():
     assert r.status_code == 200
     body = r.json()
     assert set(body) == {"master", "monitor", "devices", "screen_owner",
-                         "total_w", "saving_note", "age_s"}
+                         "screen_settling", "total_w", "saving_note", "age_s"}
     assert set(body["devices"]) == set(rig.RIG["devices"])
 
 

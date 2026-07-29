@@ -633,6 +633,7 @@ async def claim_screen(name: str) -> None:
         # Do NOT record ownership we can't have delivered — the UI must not lie.
         raise RigError(502, "claim incomplete: " + "; ".join(failures)[:300])
     rig_cache["screen_owner"] = name
+    rig_cache["screen_claimed_at"] = time.monotonic()
 
 
 async def monitor_power(on: bool) -> None:
@@ -696,8 +697,12 @@ def status_payload() -> dict:
     if master["configured"] and master.get("switchable") and master["on"] is False:
         saving = (f"rig fully off — saving ~"
                   f"{n_plugs * RIG['tapo_standby_w']:.1f} W of Tapo standby")
+    claimed_at = rig_cache.get("screen_claimed_at")
+    settling = bool(rig_cache["screen_owner"] and claimed_at
+                    and time.monotonic() - claimed_at < 12)
     return {"master": master, "monitor": monitor, "devices": devices,
             "screen_owner": rig_cache["screen_owner"],
+            "screen_settling": settling,
             "total_w": round(total, 2), "saving_note": saving,
             "age_s": (None if rig_cache["updated_monotonic"] is None else
                       round(time.monotonic() - rig_cache["updated_monotonic"], 1))}

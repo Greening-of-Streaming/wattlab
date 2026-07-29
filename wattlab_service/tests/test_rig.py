@@ -236,7 +236,7 @@ def test_screen_owner_cleared_when_owner_powers_off(monkeypatch):
 def test_status_payload_shape():
     p = rig.status_payload()
     assert set(p) == {"master", "monitor", "devices", "screen_owner",
-                      "total_w", "saving_note", "age_s"}
+                      "screen_settling", "total_w", "saving_note", "age_s"}
     for name, d in p["devices"].items():
         assert set(d) == {"label", "plug_name", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s"}

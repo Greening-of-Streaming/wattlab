@@ -206,6 +206,8 @@ body { font-family: monospace; background: var(--bg); color: var(--text);
             line-height:1.5; }
 .rig-badge { font-size:0.68rem; border:1px solid var(--border-3);
              border-radius:3px; padding:0 0.35rem; color:var(--text-3); }
+.rig-badge.blink { animation:rigpulse 0.8s infinite; color:var(--warn);
+                   border-color:var(--warn); }
 .rig-err { color:var(--err); font-size:0.8rem; min-height:1.1rem;
            margin:0.4rem 0; }
 .rig-run { border:1px solid var(--border-3); border-radius:6px;
@@ -304,13 +306,15 @@ function dotClass(dev) {
 
 function fmtW(w) { return (w === null || w === undefined) ? '—' : w.toFixed(w < 10 ? 2 : 1) + ' W'; }
 
-function deviceTile(name, dev, screenOwner) {
+function deviceTile(name, dev, screenOwner, screenSettling) {
   var pct = null;
   if ((dev.state === 'booting' || dev.state === 'powering') && dev.elapsed_s != null)
     pct = Math.min(97, 100 * dev.elapsed_s / dev.expected_s);
   var busy = dev.busy ? ' <span class="rig-badge">job running</span>' : '';
   var stuck = dev.state === 'stuck' ? ' <span class="rig-badge" style="color:#ffaa00">stuck</span>' : '';
-  var screen = screenOwner === name ? ' <span class="rig-badge">📺 screen</span>' : '';
+  var screen = screenOwner === name
+    ? ' <span class="rig-badge' + (screenSettling ? ' blink' : '') + '">📺 screen'
+      + (screenSettling ? '…' : '') + '</span>' : '';
   var h = '<div class="rig-tile"><h3><span class="rig-dot ' + dotClass(dev) + '"></span>'
         + dev.label + ' <span class="rig-badge">' + dev.plug_name + '</span>' + busy + stuck + screen + '</h3>'
         + '<div class="rig-w">' + fmtW(dev.watts) + '</div>';
@@ -391,7 +395,8 @@ function render(s) {
   mb.disabled = !mon.reachable;
 
   var tiles = '';
-  for (var name in s.devices) tiles += deviceTile(name, s.devices[name], s.screen_owner);
+  for (var name in s.devices)
+    tiles += deviceTile(name, s.devices[name], s.screen_owner, s.screen_settling);
   document.getElementById('rig-tiles').innerHTML = tiles;
 }
 
@@ -484,6 +489,11 @@ function deviceProgress(name, sub, j) {
   var names = ['device', 'staging'].concat((j.phases || []).map(function(p){ return p[0]; }));
   var cur = names.indexOf(sub.stage);
   if (sub.stage === 'done') cur = names.length;
+  if (sub.live_w != null)
+    h += '<div class="rig-w">⚡ ' + fmtW(sub.live_w)
+       + (sub.monitor_w != null
+          ? ' <span class="rig-detail">· screen ' + fmtW(sub.monitor_w) + '</span>'
+          : '') + '</div>';
   if (sub.row && j.row_n > 1)
     h += '<div class="rig-detail">row ' + sub.row + ' / ' + j.row_n + '</div>';
   for (var i = 0; i < names.length; i++) {
@@ -517,9 +527,14 @@ function resultTable(result) {
     if (r.error) { h += '<tr><td>' + (DEV_LABELS[r.device] || r.device) + ' ' + r.run
                       + '</td><td colspan=3>✗ ' + r.error + '</td></tr>'; continue; }
     var flag = (r.confidence && r.confidence.flag) || '';
+    var dwh = (r.window_s != null)
+      ? '<td>Δ' + (r.delta_w * r.window_s / 3600).toFixed(4) + ' Wh · total '
+        + (r.wh_window_device_total != null ? r.wh_window_device_total : '—')
+        + ' Wh</td>' : '<td></td>';
     h += '<tr><td>' + (DEV_LABELS[r.device] || r.device) + '</td><td>' + r.run + '</td>'
        + '<td>base ' + r.w_base + ' W</td><td>task ' + r.w_task + ' W</td>'
-       + '<td><b>ΔW ' + (r.delta_w >= 0 ? '+' : '') + r.delta_w + '</b> ' + flag + '</td></tr>';
+       + '<td><b>ΔW ' + (r.delta_w >= 0 ? '+' : '') + r.delta_w + '</b> ' + flag + '</td>'
+       + dwh + '</tr>';
   }
   return h + '</table>';
 }
