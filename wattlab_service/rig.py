@@ -73,8 +73,10 @@ RIG: dict = {
         },
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
-            "plug_ip": ["192.168.1.36", "192.168.1.1"],
-            "kind": "adb", "target": "192.168.1.126:5555",
+            "plug_ip": "192.168.1.36",
+            # Router reservation pins the box's Ethernet MAC at .189 (the old
+            # .126 belonged to its Wi-Fi era) — verified cold-boot ADB 2026-07-29.
+            "kind": "adb", "target": "192.168.1.189:5555",
             "expected_boot_s": 90, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
         },
