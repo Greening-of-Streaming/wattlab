@@ -809,7 +809,8 @@
           llm:   window.wlRenderLLMCard,
           rag:   window.wlRenderRAGCard,
           image: window.wlRenderImageCard,
-          enhance: window.wlRenderEnhanceCard
+          enhance: window.wlRenderEnhanceCard,
+          decode: window.wlRenderDecodeCard
         };
         var renderer = renderers[kind];
         if (!renderer) {
@@ -993,6 +994,56 @@
   // Compact card for enhance results — findings cite these (S48 sweet-spot
   // sweep) and /results lists them. Unlike image/llm, the enhance envelope
   // nests its payload under `.result`, so normalise first.
+  // decode_panel — external decode-bench import (client-device decode energy;
+  // Google TV / Raspberry Pi rig). One envelope per device, runs[] rows each
+  // with a contract-shaped energy{} block. docs/result_envelope.md `decode`.
+  window.wlRenderDecodeCard = function(opts){
+    var r = (opts && opts.result) || {};
+    var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
+    var runs = r.runs || [];
+    if (!runs.length) return html + _wlBadRecord('Decode', r);
+    var dev = r.device || {};
+    var pw = r.power_hardware || {};
+    var rows = runs.map(function(x){
+      var e = x.energy || {};
+      var c = e.confidence || {};
+      return '<tr>'
+        + '<td style="font-family:monospace">' + (x.content || '?') + '</td>'
+        + '<td style="font-family:monospace">' + (x.codec || '?') + '</td>'
+        + '<td>' + (x.decode_path === 'hw' ? '<b>hw</b>' : 'sw') + '</td>'
+        + '<td>' + (x.regime === 'realtime' ? '1×' : 'full-speed') + '</td>'
+        + '<td style="text-align:right">' + (e.delta_w != null ? '+' + _f(e.delta_w, 2) + ' W' : '?') + '</td>'
+        + '<td style="text-align:right;color:var(--text-4)">' + _f(e.w_task, 2) + ' W</td>'
+        + '<td>' + (c.flag || '') + '</td>'
+        + (x.note ? '<td style="color:var(--warn);font-size:0.68rem">⚠</td>' : '<td></td>')
+        + '</tr>';
+    }).join('');
+    var notes = runs.filter(function(x){ return x.note; }).map(function(x){
+      return '<div style="font-size:0.72rem;color:var(--text-4)">⚠ ' + x.name + ': ' + x.note + '</div>';
+    }).join('');
+    var disc = (r.discarded || []).map(function(x){
+      return '<div style="font-size:0.72rem;color:var(--text-4)">✗ ' + x.name + ' (ΔW ' + _f(x.delta_w, 2) + '): ' + x.reason + '</div>';
+    }).join('');
+    html += '<div class="result-card">'
+      + '<p class="headline">Client decode energy — ' + (dev.name || 'device') + '</p>'
+      + '<div style="font-size:0.75rem;color:var(--text-3);margin-bottom:0.5rem">'
+      +   (dev.soc || '') + (dev.decode_paths ? ' · ' + dev.decode_paths : '')
+      +   (pw.meter ? '<br>' + pw.meter + ' @ ' + (pw.cadence_s || '?') + ' s' : '')
+      +   (r.measured_on ? ' · measured ' + r.measured_on : '')
+      + '</div>'
+      + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.78rem">'
+      + '<thead><tr style="color:var(--text-3);text-align:left">'
+      + '<th>content</th><th>codec</th><th>path</th><th>regime</th>'
+      + '<th style="text-align:right">ΔW</th><th style="text-align:right">device W</th><th></th><th></th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + notes + disc
+      + (r.comparability_note
+          ? '<div style="margin-top:0.4rem;font-size:0.72rem;color:var(--text-4)">'
+            + r.comparability_note + '</div>' : '')
+      + '</div>';
+    return html;
+  };
+
   window.wlRenderEnhanceCard = function(opts){
     var r = (opts && opts.result) || {};
     var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);

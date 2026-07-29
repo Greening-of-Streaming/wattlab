@@ -147,7 +147,8 @@ def _finding_page_html(f, public_base_url: str) -> str:
     llm: window.wlRenderLLMCard,
     image: window.wlRenderImageCard,
     rag: window.wlRenderRAGCard,
-    enhance: window.wlRenderEnhanceCard
+    enhance: window.wlRenderEnhanceCard,
+    decode: window.wlRenderDecodeCard
   };
   for (const el of els) {
     const rid = el.dataset.resultId;
@@ -462,7 +463,7 @@ async def finding_page(slug: str, request: Request):
 @router.get("/findings/source/{job_type}/{job_id}/download.json",
          dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def finding_source_result(job_type: str, job_id: str):
-    if job_type not in ("video", "llm", "image", "enhance"):
+    if job_type not in ("video", "llm", "image", "enhance", "decode"):
         return JSONResponse({"error": "Invalid type"}, status_code=400)
     # Set of (type, token) the published catalog cites, with token normalised
     # the same way the embed JS / result_download_url do (bare job_id = last

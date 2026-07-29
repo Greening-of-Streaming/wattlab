@@ -19,13 +19,13 @@ Built by [Greening of Streaming](https://greeningofstreaming.org), a French NGO 
 | Test | What you get |
 |---|---|
 | Video transcode | Energy (Wh) and time for CPU vs GPU — H.264, H.265, AV1 at matched ABR bitrates. "Compare all codecs" runs all six presets in one go. |
-| LLM inference | mWh per output token, tokens/sec — TinyLlama 1.1B, Qwen3 (1.7B / 4B / 8B), Mistral-Nemo 12B, Phi-4 14B, GPT-OSS 20B. Model panel is dynamic (CR-050) — `ollama pull <name>` + tick in `/settings`. |
-| Image generation | Wh per image — SD-Turbo (~1B), SDXL-Turbo (~3.5B). "Compare Models" runs both with same prompt + seed so model size is the only variable. |
+| LLM inference | mWh per output token, tokens/sec — a dynamic model ladder ~1B–20B (CR-050): `ollama pull <name>` + tick in `/settings`; live panel on `/llm`. |
+| Image generation | Wh per image — distilled diffusion panel ~0.6B–3.5B (live panel on `/image`). "Compare Models" fixes prompt + seed so the model is the only variable. |
 | RAG energy test | Energy cost of retrieval-augmented generation vs plain LLM — baseline / rag / rag_large compared side-by-side |
 
 All figures are delta above idle baseline, sampled at 1-second intervals via a Tapo P110 smart plug on the mains supply.
 
-**Scope: device layer only.** Network, CDN, and CPE are explicitly excluded. No amortised training cost in LLM measurements.
+**Scope: device layer only.** Network, CDN, and CPE are explicitly excluded. No amortised training cost in LLM measurements. (One extension: since 2026-07 the findings catalog also carries client-device *decode* panels measured on a separate rig under the same protocol — each states its own device scope.)
 
 ---
 

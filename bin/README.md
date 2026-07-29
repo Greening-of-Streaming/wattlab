@@ -242,6 +242,25 @@ CR-015. One-shot script, designed to be invoked by `systemd/owl-maintenance-watc
 - **The watchdog only writes when it actually fires.** The journal stays quiet during normal operation; expect a single line per stage-off event.
 - **Disable temporarily.** `sudo systemctl stop owl-maintenance-watchdog.timer` — useful if the timer fires mid-test and you want to debug without the rug pulled.
 
+## import-decode-bench-results — client decode panels → OWL envelopes
+
+Convert the decode-bench rig's raw row JSON (Google TV / Raspberry Pi 5 / Pi 400,
+`/srv/data/owl/decode-bench/results/` + the July STB round) into OWL result envelopes
+under `results/decode/` (mode `decode_panel` — see `docs/result_envelope.md`).
+
+```bash
+~/wattlab/bin/import-decode-bench-results
+```
+
+### Things to know
+
+- **Idempotent** — re-running overwrites the same three files (`dec0de04/05/06`); re-run after
+  any change to the bench data.
+- Contaminated rows are imported into a visible `discarded[]` block with reasons, never dropped
+  silently; per-run raw samples are preserved.
+- These envelopes are **external imports**, not queue jobs: no `gpu_hardware`/`owl_version` stamp
+  applies (an `import_note` says so). The findings catalog cites them (`decode/…` source ids).
+
 ## usage-report
 
 Aggregate OWL usage from data already on disk — zero new collection, no

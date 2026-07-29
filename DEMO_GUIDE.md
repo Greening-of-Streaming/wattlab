@@ -1,6 +1,6 @@
 # OWL — 15-Minute Demo Guide
 
-**Framing (say once, up front):** *"Not eco-warriors — we just dislike waste. If it can't be measured, it shouldn't be asserted."*
+**Framing (say once, up front):** *"If it can't be measured, it shouldn't be asserted."*
 
 Audience lens: CTOs / operators / infra players. OWL = a **bench** that measures real device-layer energy of streaming & AI workloads.
 

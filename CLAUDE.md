@@ -1,6 +1,15 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-07-20 (Session 57 — FR "sandwich" live on /enhance-run: full-reference VMAF v1
+# Last updated: 2026-07-29 (Session 58 — client decode goes first-class: portable decode-bench rig
+#   (/srv/data/owl/decode-bench/ — Google TV + Raspberry Pi 5 + Pi 400, adb/ssh drivers, July-protocol)
+#   → new `decode` result type (mode decode_panel; envelopes results/decode/2026-07-29_dec0de{04,05,06}.json
+#   via bin/import-decode-bench-results, idempotent) + two DRAFT findings on /findings
+#   (hw-decoder-cuts-client-energy-4x · codec-decode-energy-depends-on-silicon-and-regime).
+#   Headlines: hw decoder 3.6–4.1× cheaper than sw SAME board; Pi 5 (dropped hw H.264) pays ~4.5×;
+#   sw codec ranking h264<av1<hevc at 1× on both Pis, INVERTS saturated — state the regime.
+#   /methodology → v0.6 (REM+LEM named in Principle, "1 W API" myth corrected to mW, redundancy pruned,
+#   client-decode disclosed in Scope/Test Types). Report: docs/pi_decode_energy_2026-07.md. Tests 896.)
+# Previous: 2026-07-20 (Session 57 — FR "sandwich" live on /enhance-run: full-reference VMAF v1
 #   for the 10 degraded-ladder fixtures ONLY (uploads/kranjska stay NR-only). Anchors in
 #   test_content/degraded/fr_anchors_v1.json via bin/make-enhance-fr-anchors (re-run after any
 #   vmaf_model change): baseline = player-style lanczos naive upscale vs ref_4k; ceilings = ref through
@@ -18,19 +27,12 @@
 #   pre_job_cooldown; baseline_elevated/baseline_reference_w stamped (persisted video/pixop paths only —
 #   llm/rag/image pluck scalars, covered at job level). 120 s cap unchanged; hot baselines under-count
 #   ΔW, never inflate. Commit 1bf87d6. Tests 884.)
-# Previous: 2026-07-17 (Session 55 — VMAF v1 + quality.py single funnel. All quality metrics
-#   (FR VMAF/PSNR/SSIM + NR VQA) route through quality.py (video.py/pixop.py keep delegates);
-#   vmaf_model/vmaf_ffmpeg_bin settings = the one upgrade/rollback lever. Live scoring = VMAF v1
-#   (vmaf_v1.0.16_3d0h, scoring-only ffmpeg at /srv/data/owl/vmaf/ — NEVER bump ffmpeg_bin for
-#   scoring). v0/v1 scales NOT comparable (77.95 vs 83.59 same pair); every new score stamps
-#   vmaf_model; stored results without it = vmaf_v0.6.1, UI labels both. Budget/parity/target_vmaf
-#   stay v0-denominated until the next re-cal. /video per-run VMAF checkbox. Tests 871.)
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
 #   - CHANGE_REQUESTS.md — 17 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (662 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - TESTING.md — pytest suite (896 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - OWL_AUDIT.md — 2026-07-05 nine-dimension re-audit → CR-066–069 + CR-031/008 updates; disposition in AUDIT_RESPONSE.md
@@ -46,8 +48,7 @@
 - **Mission:** Measure environmental impact of streaming. Neutral, technically credible.
 
 ## GoS Framing (always apply)
-- "Not eco-warriors. Just people who dislike waste."
-- If it can't be measured, it shouldn't be asserted.
+- If it can't be measured, it shouldn't be asserted. (The old "not eco-warriors" line is retired from public copy.)
 - Separate device / network / data center / production+storage impacts explicitly.
 - State scoping assumptions. Signal uncertainty. Traffic Light Confidence on all claims.
 - Audience: CTOs, operators, infrastructure players, policymakers.
@@ -180,6 +181,7 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S55 (07-17): VMAF v1 adoption — quality.py single funnel (FR+NR metrics, delegate pattern), vmaf_model/vmaf_ffmpeg_bin settings lever, provenance stamping (`vmaf_model`; absent = legacy v0.6.1, UI labels both), /methodology v1 note, /video per-run VMAF checkbox · scoring binary separate from encode binary · budget/target_vmaf stay v0 until re-cal · tour/video progress bars unified (WL_VIDEO_PRESET_STAGES in wl-progress.js; demo VMAF stage was invisible). →872.
 - S56 (07-20): CR-070 pre-job idle guard (meeting's "baseline bug" — real, was only intra-job-fixed by CR-062) — rolling floor power.LAST_W_BASE, queue-worker wait before every job, "Run job anyway" skip after 5 s (Lab, /job/{id}/cooldown-skip), consume-once pre_job_cooldown persist stamp, baseline_elevated provenance · verified live (job 02dc670c, 22.7 s settle) · 1bf87d6. →884.
 - S57 (07-20): FR sandwich live on /enhance-run — v1 anchors for the 10 ladder fixtures (bin/make-enhance-fr-anchors → fr_anchors_v1.json; ceilings BBB 89.40/Meridian 91.49), pixop.probe_fr_sandwich terminal slot both runners, fr result block + sandwich on result cards; same-model guard; bbb_hd_clean naive 93.09 > ceiling (ordering caveat is real) · non-4K fixture runs stamp fr.skipped + note · fair FLOOR added (naive upscale through the matched encode via the compare ffmpeg arm; ordered lines are same-path only, source-as-displayed = context) — bbb_sd_dirty enhanced 31.57 vs floor 32.69. →895.
+- S58 (07-28/29): client decode first-class — decode-bench rig (GTV smoke replicates July 1.91 vs 1.887 W; Pi 5 sw-only + Pi 400 hw-vs-sw panels, 21 rows 🟢, contaminated rows discarded+documented) → `decode` result type + 2 DRAFT findings (hw-decoder ~4×; codec ranking depends on silicon+regime) · /methodology v0.6 (REM/LEM named, mW-API fix, redundancy pruned) · report docs/pi_decode_energy_2026-07.md. →896.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -199,7 +201,8 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real
 stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs:
 `abr-all-codecs-meridian-120s` · `av1-hw-sw-vmaf-tradeoff` ⭐ · `input-master-sensitivity` ·
-`llm-cold-inference-mwh-per-token` 🟡 · `rag-faithfulness-rem-question` 🟡 · `sd-turbo-cpu-image-first-run`.
+`llm-cold-inference-mwh-per-token` 🟡 · `rag-faithfulness-rem-question` 🟡 · `sd-turbo-cpu-image-first-run` ·
+`hw-decoder-cuts-client-energy-4x` (DRAFT) · `codec-decode-energy-depends-on-silicon-and-regime` 🟡 (DRAFT).
 Not catalogued (live on `/methodology`): French grid evolution (Eco2mix lifecycle series); CR-016 insight —
 Eco2mix `taux_co2` is combustion-only, never compare it to lifecycle means.
 

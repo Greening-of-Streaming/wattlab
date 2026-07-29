@@ -565,6 +565,23 @@ def _sum_llm_single(summary: dict, data: dict) -> dict:
     return _llm_tail(summary, data.get("energy", {}), data.get("inference", {}))
 
 
+def _sum_decode_panel(summary: dict, data: dict) -> dict:
+    """decode_panel — external decode-bench import (client-device decode energy).
+    One envelope per device; runs[] carry per-run energy blocks."""
+    runs = data.get("runs", [])
+    summary["device"] = (data.get("device") or {}).get("name")
+    summary["runs"] = len(runs)
+    flags = [((r.get("energy") or {}).get("confidence") or {}).get("flag")
+             for r in runs]
+    summary["all_green"] = bool(flags) and all(f == "🟢" for f in flags if f)
+    deltas = [(r.get("energy") or {}).get("delta_w") for r in runs
+              if (r.get("energy") or {}).get("delta_w") is not None]
+    if deltas:
+        summary["delta_w_min"] = min(deltas)
+        summary["delta_w_max"] = max(deltas)
+    return summary
+
+
 # mode → summariser, per job_type. The single-run summariser doubles as the
 # fallback for each family (matching the pre-dispatch else-branches, so
 # legacy records keep their exact summaries).
@@ -584,6 +601,9 @@ _SUMMARISERS = {
         "enhance": _sum_enhance_single,
         "enhance_compare": _sum_enhance_compare,
     },
+    "decode": {
+        "decode_panel": _sum_decode_panel,
+    },
     "llm": {
         "single": _sum_llm_single,
         "rag": _sum_llm_rag,
@@ -600,9 +620,10 @@ _SUMMARISERS = {
 }
 
 _MODE_DEFAULTS = {"image": "cpu", "video": "?", "llm": "single",
-                  "enhance": "enhance"}
+                  "enhance": "enhance", "decode": "decode_panel"}
 _FALLBACKS = {"image": _sum_image_single, "video": _sum_video_single,
-              "llm": _sum_llm_single, "enhance": _sum_enhance_single}
+              "llm": _sum_llm_single, "enhance": _sum_enhance_single,
+              "decode": _sum_decode_panel}
 
 
 def _summarise(job_type: str, data: dict) -> dict:

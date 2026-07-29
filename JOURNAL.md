@@ -7,6 +7,47 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 58 — 2026-07-28/29 (overnight)
+
+**Client decode goes first-class — decode-bench rig, Pi 4/5 + Google TV panels, `decode` result type, two draft findings**
+
+- **Portable decode-bench harness** at `/srv/data/owl/decode-bench/` (`bench.py`): one protocol
+  (July STB shape — settle → baseline → start → skip → sampled window → OWL `confidence.py` →
+  per-row checkpoint), pluggable device drivers (`adb` for the Google TV, `ssh` for Linux boxes),
+  conditions in JSON configs. GTV smoke **replicated July** (1.91 W vs 1.887 W, 🟢). Driver
+  hardening: KEYCODE_WAKEUP + `mWakefulness=Awake` gate (a sleeping box silently measures 0.64 W
+  standby — itself a useful datum), no `pm clear` (kills the July first-run-overlay confound),
+  mid-window screenshot as provenance, Tapo 403-backoff in the meter reader.
+- **Panels** (BBB 1080p60 matched-VMAF encodes, clips in tmpfs, headless `-an -f null` pure decode;
+  21 rows all 🟢, key realtime rows n=2–3): Pi 5 (16GB, **no usable hw decode on stock Bookworm**) —
+  realtime sw h264 +1.57/+1.60 · hevc +2.56/+2.57/+2.63 · av1 +1.81/+1.85 W; full-speed inverts
+  h264/av1. Pi 400 — **hw H.264 +0.35 W vs sw +1.25 W at 1× (3.6×); +0.64 vs +2.62 saturated
+  (4.1×)**; sw hevc +2.54 / av1 +1.75. Two early realtime rows discarded as contaminated (a
+  concurrent full-speed job overlapped their windows) — retained in raw logs, excluded and
+  documented; a third-party repeat also showed the hot-baseline ΔW under-count (CR-070's failure
+  mode, now flagged for `bench.py` too). Report: `docs/pi_decode_energy_2026-07.md` (measured vs
+  conjecture split; OWL-bench × REM-field × LEM-instrument narrative).
+- **`decode` result type** (mode `decode_panel`) per the envelope contract: importer
+  `bin/import-decode-bench-results` → `results/decode/2026-07-29_dec0de{04,05,06}.json`
+  (Pi 400 / Pi 5 / GTV; runs[] with contract-shaped energy{} + raw samples; `discarded[]` visible);
+  `_sum_decode_panel` in persist, `wlRenderDecodeCard` in wl-result.js, findings source allowlist +
+  embed dispatch, doc section in `result_envelope.md`.
+- **Two DRAFT findings** live: `hw-decoder-cuts-client-energy-4x` (green) and
+  `codec-decode-energy-depends-on-silicon-and-regime` (yellow) — verified rendering + Anonymous-tier
+  access via the findings source carve-out.
+- **/methodology v0.6**: REM + LEM properly named in Measurement Principle (dual-track framing);
+  the "P110 exposes 1 W via local API" claim corrected (local path preserves ~1 mW; the real limits
+  are meter refresh + system noise); stale `/precalibration/run`-is-future note fixed; duplicate
+  GOP/profile + autocorrelation items deduped into Open Questions; client-decode extension disclosed
+  in Scope and Test Types; hardware-table model lists de-drifted (point at live panels).
+- Doc pass for the deep-analysis reset: TESTING.md count (896), README model rows + scope note,
+  "not eco-warriors" retired from DEMO_GUIDE/CLAUDE.md framing, `tmp/` gitignored. Known remaining
+  doc-debt unchanged (ARCHITECTURE.md map refresh, bin/README backfill — 7 of 17 scripts documented).
+
+**Tests 895→896.**
+
+---
+
 ## Session 57 — 2026-07-20 (same day as S56)
 
 **FR "sandwich" live on /enhance-run — full-reference VMAF for the degraded-ladder fixtures**

@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Import decode-bench rows (Google TV / Pi 5 / Pi 400) into OWL result envelopes.
+
+Writes results/decode/{date}_{job_id}.json in the common-envelope shape
+(mode "decode_panel", runs[] each carrying a contract-shaped energy{} block
+with raw samples). Idempotent: re-running overwrites the same three files.
+
+Source data (external bench, NOT produced by OWL's job queue):
+  /srv/data/owl/stb-decode-2026-07/results/decode6min_justplayer_results.json
+  /srv/data/owl/decode-bench/results/{pi_sw_matrix,pi_rt_redo,pi5_rt_v2,
+                                      pi5_rt_v3,pi_rt_bbb,pi_rt_bbb2,
+                                      pi4_matrix,pi4_rt2}.json
+
+Contaminated rows (see docs/pi_decode_energy_2026-07.md) are imported into a
+top-level `discarded[]` block — visible provenance, excluded from runs[].
+"""
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+BENCH = Path("/srv/data/owl/decode-bench/results")
+STB = Path("/srv/data/owl/stb-decode-2026-07/results")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "wattlab_service"))
+from persist import RESULTS_DIR  # noqa: E402
+
+OUT_DIR = RESULTS_DIR / "decode"
+DATE = "2026-07-29"
+
+# run-name → (codec, path, regime, content) for the Pi rows
+def classify(name: str):
+    codec = "h264" if "h264" in name else "hevc" if "hevc" in name else "av1"
+    path = "hw" if "_hw" in name else "sw"
+    regime = "realtime" if ("_rt" in name or "-re" in name) else "full_speed"
+    content = name.split("_")[0]
+    return codec, path, regime, content
+
+
+def energy_block(row, window_s):
+    conf = dict(row.get("confidence", {}))
+    return {
+        "w_base": row["w_base"], "w_task": row["w_task"],
+        "delta_w": row["delta_w"],
+        "delta_t_s": window_s,
+        "delta_e_wh": round(row["delta_w"] * window_s / 3600.0, 4),
+        "poll_count": row["n_task"],
+        "confidence": conf,
+        "baseline_samples_w": row.get("raw_baseline_w", []),
+        "task_samples_w": row.get("raw_task_w", []),
+    }
+
+
+def pi_run(row, window_s, note=None, repeat_of=None):
+    codec, path, regime, content = classify(row["run"])
+    r = {
+        "name": row["run"], "codec": codec, "decode_path": path,
+        "regime": regime, "content": content,
+        "player": "ffmpeg -f null (headless pure decode, -an)",
+        "cmd": row.get("url_or_cmd"),
+        "energy": energy_block(row, window_s),
+    }
+    if note:
+        r["note"] = note
+    if repeat_of:
+        r["repeat_of"] = repeat_of
+    return r
+
+
+def load_rows(fname):
+    p = BENCH / fname
+    if not p.exists():
+        return []
+    return [r for r in json.loads(p.read_text())["rows"] if "error" not in r]
+
+
+def write_envelope(job_id, data):
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / f"{DATE}_{job_id}.json"
+    payload = {
+        "job_id": job_id,
+        "saved_at": datetime.now().isoformat(),
+        "visitor_key": None,  # lab-measured
+        "mode": "decode_panel",
+        **data,
+        "import_note": "external decode-bench import (bin/import-decode-bench-results); "
+                       "not produced by the OWL job queue — no gpu_hardware stamp applies",
+    }
+    path.write_text(json.dumps(payload, indent=1))
+    print(f"wrote {path}  ({len(payload.get('runs', []))} runs)")
+
+
+def main():
+    # ---- Pi 5 -------------------------------------------------------------
+    runs5 = [pi_run(r, 120) for r in load_rows("pi_sw_matrix.json")]
+    for r in load_rows("pi_rt_redo.json"):
+        runs5.append(pi_run(r, 150))
+    for r in load_rows("pi5_rt_v2.json"):
+        runs5.append(pi_run(r, 150))
+    for r in load_rows("pi5_rt_v3.json"):
+        runs5.append(pi_run(r, 150, repeat_of={"bbb_h264_rt_v3": "bbb_h264_rt_v2",
+                                               "bbb_hevc_rt_v2": "bbb_hevc_rt_redo"}.get(r["run"])))
+    for r in load_rows("pi_rt_bbb2.json"):
+        note = ("baseline_elevated (4.12 W vs ~3.4 W typical) — delta_w under-counts; "
+                "w_task replicates the clean repeats" if r["run"] == "bbb_h264_rt" else None)
+        runs5.append(pi_run(dict(r, run=r["run"] + "_bbb2"), 150, note=note))
+    discarded5 = [
+        {"name": r["run"] + "_v1_DISCARDED", "delta_w": r["delta_w"],
+         "reason": "contaminated: a concurrent full-speed decode job overlapped this "
+                   "realtime window (2026-07-28 ~23:06-23:11); see report"}
+        for r in load_rows("pi_rt_bbb.json") if r["run"] in ("bbb_h264_rt", "bbb_hevc_rt")
+    ]
+    write_envelope("dec0de05", {
+        "device": {"name": "Raspberry Pi 5 Model B Rev 1.1", "ram": "16GB",
+                   "soc": "BCM2712 4x Cortex-A76 @ 2.4 GHz",
+                   "os": "Debian 12 Bookworm, kernel 6.12.96-rpi-2712",
+                   "decode_paths": "software only (no hw H.264/AV1 on the SoC; "
+                                   "hw HEVC block unreachable from stock userspace)",
+                   "display_state": "desktop at 1920x1080@60 (headless decode, no video output)"},
+        "power_hardware": {"meter": "Tapo P110 'Lab-A' (local mW API)",
+                           "meter_ip": "192.168.1.146", "fw": "1.3.1", "cadence_s": 1.5},
+        "protocol": {"harness": "decode-bench bench.py (settle/baseline/window/confidence, "
+                                "OWL confidence.py)", "clips": "/dev/shm (tmpfs)",
+                     "content": "BBB/Meridian/Kranjska 1080p matched-VMAF (~92-93) NVENC encodes"},
+        "runs": runs5,
+        "discarded": discarded5,
+        "measured_on": "2026-07-28/29",
+        "report": "docs/pi_decode_energy_2026-07.md",
+    })
+
+    # ---- Pi 400 -----------------------------------------------------------
+    runs4 = []
+    for r in load_rows("pi4_matrix.json"):
+        w = 150 if r["run"].endswith("_rt") else 120
+        runs4.append(pi_run(r, w))
+    for r in load_rows("pi4_rt2.json"):
+        runs4.append(pi_run(r, 150))
+    write_envelope("dec0de04", {
+        "device": {"name": "Raspberry Pi 400 Rev 1.0", "ram": "4GB",
+                   "soc": "BCM2711 4x Cortex-A72 @ 1.8 GHz",
+                   "os": "Debian 12 Bookworm, kernel 6.12.20-rpt-rpi-v8",
+                   "decode_paths": "software + hardware H.264 (bcm2835-codec, stateful "
+                                   "v4l2m2m); hw HEVC (rpivid) unreachable from stock userspace",
+                   "display_state": "desktop at 1920x1080@60 (headless decode, no video output)"},
+        "power_hardware": {"meter": "Tapo P110 'Lab-B' (local mW API)",
+                           "meter_ip": "192.168.1.31", "fw": "1.3.1", "cadence_s": 1.5},
+        "protocol": {"harness": "decode-bench bench.py", "clips": "/dev/shm (tmpfs)",
+                     "content": "BBB 1080p60 matched-VMAF NVENC encodes"},
+        "runs": runs4,
+        "measured_on": "2026-07-29",
+        "report": "docs/pi_decode_energy_2026-07.md",
+    })
+
+    # ---- Google TV (July 6-min round: realtime playback, hw decode) -------
+    rows_g = json.loads((STB / "decode6min_justplayer_results.json").read_text())["rows"]
+    runs_g = []
+    for r in [x for x in rows_g if "error" not in x]:
+        content, codec = r["content"], r["codec"].replace("h265", "hevc")
+        row = {"run": r["run"], "w_base": r["w_base_stb"], "w_task": r["w_task_stb"],
+               "delta_w": r["delta_w"], "n_task": r["n_task"],
+               "raw_baseline_w": r.get("raw_baseline_w", []),
+               "raw_task_w": r.get("raw_task_w", []),
+               "confidence": r.get("confidence", {})}
+        runs_g.append({
+            "name": r["run"], "codec": codec, "decode_path": "hw",
+            "regime": "realtime", "content": content,
+            "player": "Just Player (media3), full playback incl. display output + audio",
+            "decoders_allocated": r.get("decoders_allocated"),
+            "energy": energy_block(row, 330),
+        })
+    write_envelope("dec0de06", {
+        "device": {"name": "Google TV Streamer", "soc": "MediaTek (fixed-function "
+                   "c2.mtk.{avc,hevc,av1}.decoder)", "os": "Google TV / Android",
+                   "decode_paths": "hardware H.264/HEVC/AV1",
+                   "display_state": "HDMI out to monitor (metered separately, not included)"},
+        "power_hardware": {"meter": "Tapo P110 (local mW API)",
+                           "meter_ip": "192.168.1.94", "fw": "1.4.6", "cadence_s": 1.5},
+        "protocol": {"harness": "run_decode6_experiment.py (same protocol family)",
+                     "clips": "HTTP from GoS1 (burst-buffered 6-min files)",
+                     "content": "BBB/Meridian/Kranjska 1080p matched-VMAF NVENC encodes"},
+        "runs": runs_g,
+        "measured_on": "2026-07-26/27",
+        "report": "docs/stb_decode_energy_2026-07.md",
+        "comparability_note": "full playback (display pipeline + audio decode active) — "
+                              "indicative context vs the Pis' headless -an pure decode",
+    })
+
+
+if __name__ == "__main__":
+    main()

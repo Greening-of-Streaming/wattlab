@@ -403,6 +403,8 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <p>This scoping decision means OWL results are <em>not</em> lifecycle assessments and should not be cited as total-cost-of-delivery figures. They answer a specific question: how much additional energy does this server draw to perform this task, above its idle baseline?</p>
 
+  <p>One deliberate extension exists: since 2026-07 the <a href="/findings" style="color:var(--accent);text-decoration:none">findings catalog</a> also carries <strong>client-device decode panels</strong> measured on a separate rig under the same protocol; each states its own device scope (see Test Types).</p>
+
   <h2 id="principle">Measurement Principle</h2>
 
   <p>OWL uses <strong>wall-power delta measurement</strong>: the difference between what the server draws at idle and what it draws under load, captured by an external smart plug.</p>
@@ -411,7 +413,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     The plug measures the entire system &mdash; not a model, not a software estimate, not a per-component reading. If the CPU fan spins faster, the PSU runs less efficiently, or the GPU draws from the 12V rail, it&rsquo;s all in the number.
   </div>
 
-  <p>This follows the GoS <strong>REM (Remote Energy Measurement)</strong> approach: real devices, real workloads, measured externally, at polling intervals short enough to capture the task&rsquo;s energy profile.</p>
+  <p>OWL is the <strong>bench</strong> half of GoS&rsquo;s dual-track methodology: its sister programme <strong>REM (Remote Energy Measurement)</strong> observes real devices in the field at fleet scale &mdash; <em>where</em> effects exist &mdash; while OWL quantifies <em>why, and by how much</em>, under controlled conditions. Both tracks share one instrument principle, documented by GoS&rsquo;s <strong>LEM (Local Energy Measurement)</strong> programme: real hardware running real workloads, measured externally at the wall by a smart plug read over the <em>local</em> network &mdash; milliwatt-resolution readings at second-scale cadence, no software estimation.</p>
 
   <h2 id="protocol">Measurement Protocol</h2>
 
@@ -528,7 +530,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="callout">
-    <strong>Inputs (CR-028 Phase 2, &ldquo;option C&rdquo;).</strong> The single-run flag uses only <code>variance_idle_pct</code> as the calibrated idle noise floor. The per-codec calibration CVs (<code>variance_cpu_pct</code> / <code>variance_gpu_pct</code>) are run-to-run repeatability measures, reserved for a future aggregate-confidence layer rather than mixed into the single-run formula. The first pass uses raw sample counts and a 1.96 (95%) critical value; an autocorrelation correction (effective sample count) and a Student-t critical value are documented future refinements.
+    <strong>Inputs (CR-028 Phase 2, &ldquo;option C&rdquo;).</strong> The single-run flag uses only <code>variance_idle_pct</code> as the calibrated idle noise floor. The per-codec calibration CVs (<code>variance_cpu_pct</code> / <code>variance_gpu_pct</code>) are run-to-run repeatability measures, reserved for a future aggregate-confidence layer rather than mixed into the single-run formula. Planned refinements to the critical value and sample counts are listed under Open Questions.
   </div>
 
   <div class="callout">
@@ -536,7 +538,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="callout">
-    <strong>P110 and total system noise:</strong> The Tapo P110 smart plug exposes power readings at <strong>1&nbsp;W resolution via its local API</strong> (the path OWL currently uses, chosen for portability and the Python <code>tapo</code> library&rsquo;s reliability). The underlying instrument is more precise &mdash; <strong>~1&nbsp;mW resolution via direct device read</strong> &mdash; so future versions could lower the hardware noise floor by ~3 orders of magnitude if needed. In practice, however, the dominant noise sources are OS background processes (apt, cron, systemd timers) and thermal drift between runs, not hardware quantisation. Focus mode suppresses the worst offenders, but residual variance remains. The variance calibration process measures this combined noise empirically and stores it as the reference for all confidence calculations.
+    <strong>Meter and total system noise:</strong> OWL polls the {METER_NAME} over its <strong>local API, which preserves the instrument&rsquo;s full ~1&nbsp;mW reading</strong> (the coarser 1&nbsp;W figure sometimes quoted for these plugs applies to cloud-API paths, not this deployment). In practice the noise floor is set not by the meter but by OS background processes (apt, cron, systemd timers) and thermal drift between runs. Focus mode suppresses the worst offenders; the variance calibration measures the residual combined noise empirically and stores it as the reference for all confidence calculations.
   </div>
 
   <p>The confidence framework follows GoS&rsquo;s broader principle: <em>if it can&rsquo;t be measured, it shouldn&rsquo;t be asserted.</em> A &#x1F534; result is not a failure &mdash; it&rsquo;s an honest signal that the measurement instrument isn&rsquo;t sensitive enough for that task. Publishing it transparently is more useful than hiding it.</p>
@@ -584,7 +586,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <p>The same curve is also on the Settings page (lab access), where it refreshes live from the probe endpoint. Each probe run overwrites nothing &mdash; it leaves a fresh timestamped CSV pair under <code>results/diagnostics/</code> so historical curves can be diffed if hardware or thermal conditions change.</p>
 
   <h3>Why the probe matters</h3>
-  <p>The probe was the seam that exposed the <code>scale_vaapi</code> leak (the GPU encode failed within 90 seconds of starting the diagnostic) and the silent-failure path in the calibration loop. Generalisable lesson: <em>measurement code should fail loudly, not interpolate around brokenness.</em> The probe predates being a first-class server feature, so its on-server execution is currently CLI-only; a queue-aware <code>/precalibration/run</code> endpoint with an in-page &ldquo;Re-run&rdquo; button is captured as a follow-up.</p>
+  <p>The probe was the seam that exposed the <code>scale_vaapi</code> leak (the GPU encode failed within 90 seconds of starting the diagnostic) and the silent-failure path in the calibration loop. Generalisable lesson: <em>measurement code should fail loudly, not interpolate around brokenness.</em> It now runs queue-aware from the Settings page (<code>/precalibration/run</code>, lab access) as well as the CLI.</p>
 
   <h2 id="hardware">Hardware Disclosure</h2>
 
@@ -599,8 +601,8 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     <tr><td>Idle power</td><td>~79W at the wall (settled, display-blanked). The mid-2026 RTX 5080 swap raised idle ~+20W over the prior AMD 7800 XT (~57&ndash;59W) &mdash; intrinsic to the larger card, not a fault. The 5080 idle is display-state-sensitive: a blanked desktop sits at ~79W, an active (non-blanked) desktop ~101W; GoS1 blanks ~15&nbsp;min after the last input, so the like-for-like figure is ~79W</td></tr>
     <tr><td>Measurement</td><td>{METER_NAME}, polled at {METER_CADENCE} via local API (tapo 0.8.12)</td></tr>{METER_TOPOLOGY_ROW}
     <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code> &mdash; ships the NVENC encoders + <code>scale_cuda</code> filter) &mdash; libx264, libx265, libsvtav1 (CPU); {VIDEO_GPU_ENCODERS}</td></tr>
-    <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; ladder of TinyLlama 1.1B, Qwen3 1.7B/4B/8B, Mistral-NeMo 12B, Phi-4 14B, GPT-OSS 20B (CPU + CUDA GPU); Qwen3 4B is the canonical RAG model</td></tr>
-    <tr><td>Image</td><td>PyTorch + diffusers &mdash; SD-Turbo (~1B), SDXL-Turbo (~3.5B, GPU only); CPU + CUDA GPU</td></tr>
+    <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; model ladder ~1B&ndash;20B, CPU + CUDA GPU (live panel on <a href="/llm" style="color:var(--accent);text-decoration:none">/llm</a>); Qwen3 4B is the canonical RAG model</td></tr>
+    <tr><td>Image</td><td>PyTorch + diffusers &mdash; panel of distilled diffusion models ~0.6B&ndash;3.5B, CPU + CUDA GPU, larger models GPU-only (live panel on <a href="/image" style="color:var(--accent);text-decoration:none">/image</a>)</td></tr>
   </table>
 
   <div class="callout">
@@ -621,19 +623,18 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
   <p><strong>Contributed technology.</strong> Some measured workloads use technology contributed by GoS member organisations &mdash; the AI video-enhancement harness measures <strong>{PARTNER_NAME}</strong>, contributed by {PARTNER_ORG}. Contributed technologies run on GoS hardware under this methodology; results are energy data, not endorsements. GoS members can contribute streaming technologies for measurement on the same terms.</p>
   <p><strong>4K&nbsp;HDR enhancement &mdash; reduced-capacity note.</strong> The HDR&nbsp;&rarr;&nbsp;4K super-resolution combo sits close to the GPU&rsquo;s memory ceiling on this hardware (peak ~94&nbsp;% of 16&nbsp;GB). To run it reliably, OWL applies two {PARTNER_ORG}-supplied pipeline settings that lower the in-flight memory pressure (a smaller input buffer and fewer concurrent super-resolution threads), which bring the peak down to ~85&nbsp;%. A controlled A/B on identical content found this changed the measured energy and encode throughput by less than the run-to-run noise &mdash; so the figure is reported normally, with the settings recorded in the result JSON. This note applies <em>only</em> to the 4K&nbsp;HDR combo; every other enhancement preset runs at the pipeline&rsquo;s default settings.</p>
 
-  <div class="callout">
-    <strong>Open item (narrower than before):</strong> With ABR, the bitrate target is now equal across devices. GOP structure and profile level are not yet explicitly controlled and may differ between CPU and GPU encoder defaults &mdash; a working session with the measurement team is planned to confirm apples-to-apples output at the profile/GOP level. A second benchmark family at each codec&rsquo;s natural operating point (CRF for CPU, QP for GPU) is also on the roadmap.
-  </div>
-
   <h3>AI workloads <span style="color:var(--text-dim);font-weight:400;font-size:13px">— beta, exploratory</span></h3>
   <p>Video transcoding is OWL&rsquo;s core benchmark. Three AI workloads run alongside it on the same protocol and confidence framework, but they are explicitly <strong>beta</strong> &mdash; useful for relative comparisons, with headline numbers still being hardened (see Open Questions). In brief:</p>
   <ul style="margin: 12px 0 18px 20px; font-size: 14px; line-height: 1.7;">
     <li><strong>LLM inference</strong> &mdash; mWh/token across a model ladder (TinyLlama&nbsp;1.1B, Qwen3&nbsp;1.7B/4B/8B, Mistral-NeMo&nbsp;12B, Phi-4&nbsp;14B, up to GPT-OSS&nbsp;20B), cold or warm, CPU or GPU, with an optional batch mode. Prompts are saved in the result JSON; output streams word-by-word as live-run proof.</li>
-    <li><strong>Image generation</strong> &mdash; Wh/image for the SD-Turbo (~1B) and SDXL-Turbo (~3.5B) distilled diffusion models, CPU or GPU, with a Compare-Models mode that fixes prompt, seed and resolution so model size is the only variable.</li>
+    <li><strong>Image generation</strong> &mdash; Wh/image across the distilled diffusion panel (~0.6B&ndash;3.5B), CPU or GPU, with a Compare-Models mode that fixes prompt, seed and resolution so the model is the only variable.</li>
     <li><strong>RAG</strong> &mdash; the energy delta of retrieval: baseline (no retrieval) vs RAG with 3 context chunks vs 8, retrieved from a document corpus via ChromaDB + sentence-transformer embeddings, compared side by side.</li>
   </ul>
 
   <p><strong>Framing (GoS Language Lab position paper, Jan 2026):</strong> AI in streaming is <strong>neither inherently sustainable nor unsustainable</strong> &mdash; type, size and deployment decide net impact. The type matters enormously: streaming leans on <strong>small specialised CNNs</strong> (per-title encoding, scene classification, super-resolution) that are orders of magnitude cheaper than the general-purpose LLMs and diffusion models these tabs measure as an upper bound. OWL measures the energy AI <strong>adds</strong> (inference only); it does not measure the infrastructure energy AI <strong>avoids</strong> through better compression, caching or routing &mdash; both halves are needed for net impact, and OWL has the first. Each AI result is also shown as a multiple of a real video encode (the pinned canonical H.265&nbsp;GPU encode of Meridian-120s) so the number stays anchored to a streaming workload rather than floating free. Full framing: <a href="{POSITION_PAPER_URL}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Language Lab AI position paper &rarr;</a>.</p>
+
+  <h3>Client-device decode panels <span style="color:var(--text-dim);font-weight:400;font-size:13px">— external rig, 2026-07</span></h3>
+  <p>Encode energy is paid once per title; <strong>decode energy is paid per viewer</strong> &mdash; so in 2026-07 the protocol went to the client side. A portable rig (a Google TV set-top box; Raspberry Pi 5 and Pi 400) measured decode power per codec, per decode path (hardware vs software) and per regime (paced playback vs flat-out), with the same baseline/&Delta;W/confidence method and local-mW metering. Headlines: a hardware decoder cuts decode power ~3.6&ndash;4&times; on the same board; codec choice is nearly free on decode silicon but moves software decode power by up to ~60%. Full results, replication counts and caveats are in the <a href="/findings" style="color:var(--accent);text-decoration:none">findings catalog</a>; these panels state their own device scope and are not GoS1-server results.</p>
 
   <h2 id="energy-budget">Energy budget &amp; encode parity</h2>
 
@@ -660,9 +661,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <h2 id="limits">Known Limitations</h2>
 
-  <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 temporal resolution.</strong> 1-second polling means tasks shorter than ~5 seconds produce few data points. Very fast models (e.g., TinyLlama single inference at 1&ndash;4 seconds) are at the edge of measurability. Batching mitigates this but changes what&rsquo;s being measured (batch cost, not single-inference cost). The same constraint puts a floor on any artificially-shortened encode: a workload that finishes in 3&ndash;4 seconds yields only 3&ndash;4 P110 polls, and the resulting per-run &Delta;W mean becomes noisy enough to inflate the coefficient of variation independently of any real measurement issue.</span></div>
-
-  <div class="open-q"><span class="marker">&#9658;</span><span><strong>P110 power resolution.</strong> The Tapo P110 instrument itself reports at <strong>1&nbsp;mW</strong> resolution via direct device read, but its <strong>public HTTP API exposes only 1&nbsp;W</strong> &mdash; and the public API is what this deployment polls. The effective ~&plusmn;1&nbsp;W noise floor is therefore an API-shape limit, not a hardware limit: low-delta tasks (e.g., idle audio processing, lightweight network operations) cannot be reliably measured against it. A future direct-device path would unlock ~1000&times; finer resolution from the same plug.</span></div>
+  <div class="open-q"><span class="marker">&#9658;</span><span><strong>Temporal resolution.</strong> Polling at {METER_CADENCE} means tasks shorter than ~5 seconds produce few data points. Very fast models (e.g., TinyLlama single inference at 1&ndash;4 seconds) are at the edge of measurability. Batching mitigates this but changes what&rsquo;s being measured (batch cost, not single-inference cost). The same constraint puts a floor on any artificially-shortened encode: a workload that finishes in 3&ndash;4 seconds yields only 3&ndash;4 polls, and the resulting per-run &Delta;W mean becomes noisy enough to inflate the coefficient of variation independently of any real measurement issue. The binding limit is the meter&rsquo;s <em>internal refresh rate</em> (firmware-dependent; measured per plug with <code>bin/probe-p110-fw</code>) &mdash; polling faster than the refresh yields duplicate readings, not more information. Power <em>resolution</em> is not the limit: the local API preserves the instrument&rsquo;s ~1&nbsp;mW reading (see Confidence above).</span></div>
 
   <div class="open-q"><span class="marker">&#9658;</span><span><strong>Single server.</strong> All results are from one machine. Generalisability to other hardware configurations is unknown without cross-platform measurement.</span></div>
 
@@ -695,7 +694,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <div class="footer-note">
     OWL is built and maintained by <a href="{GOS_URL}" style="color:var(--accent);text-decoration:none;">Greening of Streaming</a>, a French NGO (loi 1901).<br>
-    Methodology version 0.5 &middot; last updated 2026-06-09 &middot; Feedback: bs@ctoic.net<br>
+    Methodology version 0.6 &middot; last updated 2026-07-29 &middot; Feedback: bs@ctoic.net<br>
     Source: <a href="{GITHUB_REPO_URL}" style="color:var(--accent);text-decoration:none;">github.com/greeningofstreaming/wattlab</a>
   </div>
 

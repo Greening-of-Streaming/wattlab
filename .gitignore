@@ -48,3 +48,4 @@ blobs/
 oci-layout
 index.json
 manifest.json
+tmp/

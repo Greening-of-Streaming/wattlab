@@ -102,6 +102,21 @@ the inline `renderResultHtml`/`renderCompareHtml`; `wl-result.js` also maps
 `enhance → wlRenderEnhanceCard` in the `wlExpandPrevRow` registry for
 cross-page embeds (findings, /demo's pinned Video-Enhancement step).
 
+### `decode` (writer: `bin/import-decode-bench-results` — external import, NOT the job queue)
+
+| mode | shape | summariser | JS renderer |
+|---|---|---|---|
+| `decode_panel` | `device{}, power_hardware{}, protocol{}, runs[{name, codec, decode_path: sw\|hw, regime: realtime\|full_speed, content, player, energy{}}], discarded[]?, measured_on, report` | `_sum_decode_panel` | `wlRenderDecodeCard` |
+
+Client-device decode-energy panels from the decode-bench rig (Google TV `dec0de06`,
+Raspberry Pi 5 `dec0de05`, Pi 400 `dec0de04` — 2026-07-28/29; harness
+`/srv/data/owl/decode-bench/bench.py`, narrative `docs/pi_decode_energy_2026-07.md`).
+Each `runs[].energy{}` is contract-shaped (w_base/w_task/delta_w/delta_e_wh/poll_count/
+confidence{}/raw sample arrays). Imported envelopes carry `import_note` and no
+`gpu_hardware`/`owl_version` stamp (not produced by GoS1's queue). `discarded[]` keeps
+contaminated rows visible with reasons instead of deleting them. Findings source
+allowlist includes `decode` (`routes_findings.py`).
+
 ## Consumers (the blast-radius list)
 
 A mode/shape change fans out to, in order of how quickly the break is noticed:
