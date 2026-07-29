@@ -98,6 +98,18 @@ async def decode_device_power(name: str, payload: dict):
     return {"ok": True}
 
 
+@router.post("/decode/device/{name}/screen",
+             dependencies=[Depends(requires(RIG_CONTROL))])
+async def decode_claim_screen(name: str):
+    try:
+        await rig.claim_screen(name)
+    except rig.RigError as e:
+        return _refuse(e)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    return {"ok": True}
+
+
 @router.post("/decode/monitor/power",
              dependencies=[Depends(requires(RIG_CONTROL))])
 async def decode_monitor_power(payload: dict):
@@ -253,14 +265,15 @@ function dotClass(dev) {
 
 function fmtW(w) { return (w === null || w === undefined) ? '—' : w.toFixed(w < 10 ? 2 : 1) + ' W'; }
 
-function deviceTile(name, dev) {
+function deviceTile(name, dev, screenOwner) {
   var pct = null;
   if ((dev.state === 'booting' || dev.state === 'powering') && dev.elapsed_s != null)
     pct = Math.min(97, 100 * dev.elapsed_s / dev.expected_s);
   var busy = dev.busy ? ' <span class="rig-badge">job running</span>' : '';
   var stuck = dev.state === 'stuck' ? ' <span class="rig-badge" style="color:#ffaa00">stuck</span>' : '';
+  var screen = screenOwner === name ? ' <span class="rig-badge">📺 screen</span>' : '';
   var h = '<div class="rig-tile"><h3><span class="rig-dot ' + dotClass(dev) + '"></span>'
-        + dev.label + ' <span class="rig-badge">' + dev.plug_name + '</span>' + busy + stuck + '</h3>'
+        + dev.label + ' <span class="rig-badge">' + dev.plug_name + '</span>' + busy + stuck + screen + '</h3>'
         + '<div class="rig-w">' + fmtW(dev.watts) + '</div>';
   if (pct !== null)
     h += '<div class="rig-bar"><div style="width:' + pct.toFixed(0) + '%"></div></div>'
@@ -270,8 +283,12 @@ function deviceTile(name, dev) {
 
   if (dev.state === 'off')
     h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'on\\')">On</button>';
-  else if (dev.state === 'ready')
+  else if (dev.state === 'ready') {
     h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Off</button>';
+    if (screenOwner !== name && !dev.busy)
+      h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
+         + '/screen\\', {})">Claim screen</button>';
+  }
   else if (dev.state === 'stuck')
     h += '<button class="rig-btn warn" onclick="devPower(\\'' + name + '\\',\\'cycle\\')">Power-cycle</button>'
        + ' <button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Force off</button>';
@@ -335,7 +352,7 @@ function render(s) {
   mb.disabled = !mon.reachable;
 
   var tiles = '';
-  for (var name in s.devices) tiles += deviceTile(name, s.devices[name]);
+  for (var name in s.devices) tiles += deviceTile(name, s.devices[name], s.screen_owner);
   document.getElementById('rig-tiles').innerHTML = tiles;
 }
 

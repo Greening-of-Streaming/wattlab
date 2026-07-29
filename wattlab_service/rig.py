@@ -63,6 +63,7 @@ RIG: dict = {
             "kind": "ssh", "target": "admin@192.168.1.102",
             "expected_boot_s": 29, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
+            "hdmi_output": "HDMI-A-2",   # wlr-randr name, verified 2026-07-29
         },
         "pi400": {
             "label": "Pi 400", "plug_name": "Lab-B",
@@ -70,6 +71,7 @@ RIG: dict = {
             "kind": "ssh", "target": "nebul2@192.168.1.108",
             "expected_boot_s": 45, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
+            "hdmi_output": "HDMI-A-1",   # unverified — check on first claim
         },
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
@@ -306,6 +308,29 @@ def probe_ready(dev: dict) -> bool:
         return False
 
 
+_WL_ENV = "WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000"
+
+
+def set_signal(dev: dict, on: bool) -> None:
+    """Raise/drop the device's HDMI signal WITHOUT touching power.
+
+    The shared monitor does not gate hot-plug per input (verified 2026-07-29:
+    the GTV still saw full EDID while the Pi 5 held the picture), so devices
+    cannot detect losing the screen. Arbitration is therefore active: the
+    screen goes to whichever single device has a live signal — Pis via
+    wlr-randr output off/on, the GTV via sleep/wake keyevents."""
+    if dev["kind"] == "ssh":
+        out = dev.get("hdmi_output", "HDMI-A-1")
+        _run(["ssh"] + _SSH_OPTS + [dev["target"],
+              f"{_WL_ENV} wlr-randr --output {out} {'--on' if on else '--off'}"])
+    else:
+        serial = dev["target"]
+        _run([ADB_BIN, "connect", serial], timeout=10)
+        key = "KEYCODE_WAKEUP" if on else "KEYCODE_SLEEP"
+        _run([ADB_BIN, "-s", serial, "shell", "input", "keyevent", key],
+             timeout=15)
+
+
 def send_shutdown(dev: dict) -> None:
     """Best-effort graceful shutdown; the relay cut follows after
     shutdown_wait_s regardless."""
@@ -341,6 +366,7 @@ rig_cache: dict = {
                 "reachable": False},
     "master": {"configured": False, "reachable": False, "on": None,
                "apower_w": None, "gen": None, "switchable": False},
+    "screen_owner": None,
     "updated_monotonic": None,
 }
 
@@ -365,6 +391,8 @@ async def _step_device(name: str, master_off: bool) -> None:
     if master_off:
         d.update({"state": "unpowered", "watts": None, "boot_started": None,
                   "elapsed_s": None, "detail": "master off"})
+        if rig_cache["screen_owner"] == name:
+            rig_cache["screen_owner"] = None
         return
 
     try:
@@ -378,6 +406,8 @@ async def _step_device(name: str, master_off: bool) -> None:
     if not ps["on"]:
         d.update({"state": "off", "boot_started": None, "elapsed_s": None,
                   "detail": f"{dev_cfg['plug_name']} ready"})
+        if rig_cache["screen_owner"] == name:
+            rig_cache["screen_owner"] = None
         return
 
     # Relay is on.
@@ -504,6 +534,8 @@ async def device_off(name: str) -> None:
             await plug_set(dev_cfg["plug_ip"], False)
             d.update({"state": "off", "watts": 0.0,
                       "detail": f"{dev_cfg['plug_name']} ready"})
+            if rig_cache["screen_owner"] == name:
+                rig_cache["screen_owner"] = None
         except Exception as e:
             d.update({"state": "stuck", "detail": f"stop failed: {e}"})
 
@@ -522,6 +554,27 @@ async def device_cycle(name: str) -> None:
         await plug_set(dev_cfg["plug_ip"], True)
         d.update({"state": "powering", "boot_started": time.monotonic(),
                   "elapsed_s": 0.0, "probe_fails": 0, "detail": "power-cycled"})
+
+
+async def claim_screen(name: str) -> None:
+    """Hand the shared monitor to `name`: drop every other powered device's
+    HDMI signal, raise the target's — the panel's verified auto-switch
+    behaviour does the rest. Others stay dark until claimed or power-cycled
+    (restoring them would steal the input straight back)."""
+    dev_cfg = _dev_cfg(name)
+    d = rig_cache["devices"][name]
+    if d["state"] in _STOPPED_STATES or d["state"] == "stopping":
+        raise RigError(409, f"{dev_cfg['label']} is not powered")
+    busy = [RIG["devices"][n]["label"]
+            for n, dd in rig_cache["devices"].items() if dd["busy"]]
+    if busy:
+        raise RigError(409, "job running on: " + ", ".join(busy)
+                            + " — signal changes would contaminate the row")
+    for other, dd in rig_cache["devices"].items():
+        if other != name and dd["state"] not in _STOPPED_STATES:
+            await asyncio.to_thread(set_signal, RIG["devices"][other], False)
+    await asyncio.to_thread(set_signal, dev_cfg, True)
+    rig_cache["screen_owner"] = name
 
 
 async def monitor_power(on: bool) -> None:
@@ -586,6 +639,7 @@ def status_payload() -> dict:
         saving = (f"rig fully off — saving ~"
                   f"{n_plugs * RIG['tapo_standby_w']:.1f} W of Tapo standby")
     return {"master": master, "monitor": monitor, "devices": devices,
+            "screen_owner": rig_cache["screen_owner"],
             "total_w": round(total, 2), "saving_note": saving,
             "age_s": (None if rig_cache["updated_monotonic"] is None else
                       round(time.monotonic() - rig_cache["updated_monotonic"], 1))}

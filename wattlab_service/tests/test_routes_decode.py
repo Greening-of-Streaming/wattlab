@@ -43,8 +43,8 @@ def test_status_shape():
     r = client.get("/decode/status.json", headers=_LAB)
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"master", "monitor", "devices", "total_w",
-                         "saving_note", "age_s"}
+    assert set(body) == {"master", "monitor", "devices", "screen_owner",
+                         "total_w", "saving_note", "age_s"}
     assert set(body["devices"]) == set(rig.RIG["devices"])
 
 

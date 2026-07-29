@@ -23,9 +23,11 @@ def _fresh_rig(monkeypatch):
                                "switchable": False}
     rig.PAUSED_PLUGS.clear()
     rig._OP_LOCKS.clear()   # asyncio locks can't be reused across event loops
+    rig.rig_cache["screen_owner"] = None
     monkeypatch.setattr(rig, "shelly_ip", lambda: None)
     monkeypatch.setattr(rig, "probe_ready", lambda dev: False)
     monkeypatch.setattr(rig, "send_shutdown", lambda dev: None)
+    monkeypatch.setattr(rig, "set_signal", lambda dev, on: None)
 
     async def _no_plug(ip, **kw):
         raise RuntimeError("plug IO not stubbed in this test")
@@ -181,10 +183,45 @@ def test_unknown_device_404():
     assert e.value.status == 404
 
 
+def test_claim_screen_darkens_all_other_powered_devices(monkeypatch):
+    calls = []
+    monkeypatch.setattr(rig, "set_signal",
+                        lambda dev, on: calls.append((dev["label"], on)))
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["gtv"]["state"] = "ready"    # pi400 stays off
+    _run(rig.claim_screen("pi5"))
+    assert ("Google TV", False) in calls
+    assert ("Pi 5", True) in calls
+    assert all(label != "Pi 400" for label, _ in calls)
+    assert rig.rig_cache["screen_owner"] == "pi5"
+
+
+def test_claim_screen_refused_for_unpowered_target():
+    with pytest.raises(rig.RigError) as e:
+        _run(rig.claim_screen("pi5"))   # state off
+    assert e.value.status == 409
+
+
+def test_claim_screen_refused_while_any_job_runs():
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["gtv"]["busy"] = True
+    with pytest.raises(rig.RigError) as e:
+        _run(rig.claim_screen("pi5"))
+    assert e.value.status == 409
+
+
+def test_screen_owner_cleared_when_owner_powers_off(monkeypatch):
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["screen_owner"] = "pi5"
+    _stub_plugs(monkeypatch, on=False, watts=0.0)
+    _run(rig.poll_once())
+    assert rig.rig_cache["screen_owner"] is None
+
+
 def test_status_payload_shape():
     p = rig.status_payload()
-    assert set(p) == {"master", "monitor", "devices", "total_w",
-                      "saving_note", "age_s"}
+    assert set(p) == {"master", "monitor", "devices", "screen_owner",
+                      "total_w", "saving_note", "age_s"}
     for name, d in p["devices"].items():
         assert set(d) == {"label", "plug_name", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s"}
