@@ -195,6 +195,48 @@ def test_lem_csv_404_without_timestamps(monkeypatch):
     assert r.status_code == 404
 
 
+def test_upload_rejects_bad_extension():
+    r = client.post("/decode/upload", headers=_LAB,
+                    files={"file": ("evil.exe", b"xx")})
+    assert r.status_code == 400
+
+
+def test_upload_lab_only():
+    r = client.post("/decode/upload", headers=_ANON,
+                    files={"file": ("a.mp4", b"xx")})
+    assert r.status_code == 403
+
+
+def test_upload_saves_with_retention(monkeypatch, tmp_path):
+    import uploads
+
+    def _fake_save(blob, orig, *, retention, feature, dest_dir):
+        assert feature == "decode"
+        assert retention == "keep"
+        assert str(dest_dir).endswith("_uploads")
+        return {"name": f"keep__decode__{orig}", "path": tmp_path / orig,
+                "size_mb": 0.1, "retention": retention}
+    monkeypatch.setattr(uploads, "save", _fake_save)
+    r = client.post("/decode/upload", headers=_LAB,
+                    files={"file": ("clip.mp4", b"data")},
+                    data={"retention": "keep"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "keep__decode__clip.mp4"
+
+
+def test_run_upload_template_requires_existing_upload():
+    r = client.post("/decode/run", headers=_LAB, json={
+        "template": "upload", "upload_name": "nope.mp4",
+        "devices": ["pi5"], "mode": "headless"})
+    assert r.status_code == 400
+    assert "upload a clip first" in r.json()["error"]
+
+
+def test_marked_name_is_subdir_safe():
+    assert decode_run.marked_name("bbb.mp4") == "marked_bbb.mp4"
+    assert decode_run.marked_name("_uploads/x.mp4") == "_uploads/marked_x.mp4"
+
+
 def test_page_has_mode_and_device_controls():
     page = client.get("/decode", headers=_LAB).text
     for frag in ("headless — parallel", "on screen — exclusive",

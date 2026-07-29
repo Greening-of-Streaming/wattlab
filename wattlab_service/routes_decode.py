@@ -14,8 +14,9 @@ this module is routes + HTML only.
 import datetime
 import time
 import uuid
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 import decode_run
@@ -23,10 +24,18 @@ import persist
 import queue_control
 import rig
 import ui
+import uploads
 from capabilities import requires, RIG_CONTROL
 from runtime import job_status as _job_status
 
 router = APIRouter()
+
+_UPLOAD_EXTS = {".mp4", ".mkv", ".mov", ".m4v", ".webm"}
+
+# Same shared upload store as /enhance-run and /prepare-rem: retention-
+# prefixed names, free-space eviction, periodic sweep. The dir sits inside
+# the :8123-served streams tree so the GTV can play uploads by URL.
+uploads.register_dir(decode_run.STREAMS / decode_run.UPLOADS_SUBDIR)
 
 
 def _refuse(e: rig.RigError) -> JSONResponse:
@@ -51,7 +60,14 @@ async def decode_run_start(request: Request, payload: dict):
     mode = p.get("mode", "headless")
     devices = p.get("devices") or []
     calibrate = bool(p.get("calibrate", True))
-    if tpl_key not in decode_run.TEMPLATES:
+    upload_name = None
+    if tpl_key == "upload":
+        upload_name = p.get("upload_name") or ""
+        if uploads.resolve(decode_run.STREAMS / decode_run.UPLOADS_SUBDIR,
+                           upload_name) is None:
+            return JSONResponse({"error": "upload a clip first"},
+                                status_code=400)
+    elif tpl_key not in decode_run.TEMPLATES:
         return JSONResponse({"error": f"unknown template {tpl_key!r}"},
                             status_code=400)
     if mode not in decode_run.MODES:
@@ -63,14 +79,17 @@ async def decode_run_start(request: Request, payload: dict):
     if mode == "screen" and len(devices) != 1:
         return JSONResponse({"error": "screen mode is exclusive — pick "
                                       "exactly one device"}, status_code=400)
-    tpl = decode_run.TEMPLATES[tpl_key]
+    try:
+        tpl = decode_run.resolve_template(tpl_key, upload_name)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     job_id = str(uuid.uuid4())[:8]
     label = (f"decode {mode} — {tpl['label']} on "
              + ", ".join(rig.RIG['devices'][d]['label'] for d in devices))
 
     async def coro(job_id=job_id):
         await decode_run.run_decode_job(job_id, tpl_key, devices, mode,
-                                        calibrate)
+                                        calibrate, upload_name)
 
     position = queue_control.enqueue(job_id, "decode", label, coro,
                                      request=request, page="/decode")
@@ -123,6 +142,23 @@ async def decode_device_power(name: str, payload: dict):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
     return {"ok": True}
+
+
+@router.post("/decode/upload", dependencies=[Depends(requires(RIG_CONTROL))])
+async def decode_upload(request: Request, file: UploadFile = File(...),
+                        retention: str = Form(uploads.DEFAULT_RETENTION)):
+    orig = Path(file.filename or "clip").name
+    ext = Path(orig).suffix.lower()
+    if ext not in _UPLOAD_EXTS:
+        return JSONResponse(
+            {"error": f"Unsupported container '{ext or '(none)'}' — use one "
+                      f"of: " + ", ".join(sorted(_UPLOAD_EXTS))},
+            status_code=400)
+    blob = await file.read()
+    saved = uploads.save(blob, orig, retention=retention, feature="decode",
+                         dest_dir=decode_run.STREAMS / decode_run.UPLOADS_SUBDIR)
+    return {"name": saved["name"], "size_mb": saved["size_mb"],
+            "retention": saved["retention"]}
 
 
 @router.get("/decode/result/{job_id}/lem.csv",
@@ -318,6 +354,15 @@ _BODY = """
     <div class="rig-runrow" style="margin-top:0.4rem">
       <select id="recipe">{RECIPE_OPTIONS}</select>
       <button class="rig-btn" id="btn-run" onclick="runRecipe()">Run</button>
+    </div>
+    <div class="rig-runrow" style="margin-top:0.4rem;font-size:0.8rem">
+      <input type="file" id="up-file" accept=".mp4,.mkv,.mov,.m4v,.webm"
+             style="font-size:0.75rem;max-width:16rem">
+      <label><input type="radio" name="up-ret" value="evict" checked> evict</label>
+      <label><input type="radio" name="up-ret" value="proc"> keep-until-processed</label>
+      <label><input type="radio" name="up-ret" value="keep"> keep</label>
+      <button class="rig-btn" id="btn-upload" onclick="uploadClip()">Upload</button>
+      <span class="rig-detail" id="up-status"></span>
     </div>
     <div class="rig-detail" style="margin-top:0.3rem" id="run-hint">Headless:
       selected devices measure in parallel (each on its own meter); GTV rows
@@ -683,6 +728,35 @@ async function pollJob(id) {
   setTimeout(function(){ pollJob(id); }, 2000);
 }
 
+var UPLOADED = null;
+async function uploadClip() {
+  var f = document.getElementById('up-file').files[0];
+  if (!f) { err('choose a file first'); return; }
+  var st = document.getElementById('up-status');
+  st.textContent = 'uploading…';
+  document.getElementById('btn-upload').disabled = true;
+  try {
+    var form = new FormData();
+    form.append('file', f);
+    form.append('retention',
+      document.querySelector('input[name=up-ret]:checked').value);
+    var r = await fetch('/decode/upload', {method: 'POST', body: form});
+    var j = await r.json();
+    if (!r.ok) { err(j.error || ('HTTP ' + r.status)); st.textContent = ''; }
+    else {
+      UPLOADED = j.name;
+      st.textContent = '✓ ' + j.name + ' (' + j.size_mb + ' MB)';
+      var sel = document.getElementById('recipe');
+      var opt = sel.querySelector('option[value=upload]');
+      if (!opt) { opt = document.createElement('option');
+                  opt.value = 'upload'; sel.appendChild(opt); }
+      opt.textContent = 'uploaded clip — ' + f.name;
+      sel.value = 'upload';
+    }
+  } catch (e) { err(String(e)); }
+  document.getElementById('btn-upload').disabled = false;
+}
+
 async function runRecipe() {
   var mode = document.querySelector('input[name=mode]:checked').value;
   var devices = ['pi5','pi400','gtv'].filter(function(d){
@@ -690,8 +764,10 @@ async function runRecipe() {
   if (!devices.length) { err('pick at least one device'); return; }
   if (mode === 'screen' && devices.length !== 1) {
     err('screen mode is exclusive — pick exactly one device'); return; }
-  var body = {template: document.getElementById('recipe').value,
-              mode: mode, devices: devices,
+  var tpl = document.getElementById('recipe').value;
+  if (tpl === 'upload' && !UPLOADED) { err('upload a clip first'); return; }
+  var body = {template: tpl, mode: mode, devices: devices,
+              upload_name: tpl === 'upload' ? UPLOADED : undefined,
               calibrate: document.getElementById('calibrate').checked};
   document.getElementById('btn-run').disabled = true;
   try {

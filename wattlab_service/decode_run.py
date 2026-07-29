@@ -133,6 +133,7 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
     if dev_cfg["kind"] == "adb":
         row["url"] = f"{STREAM_BASE_URL}/{clip}"
         return row
+    shm = Path(clip).name       # staged flat into /dev/shm/decode/
     if mode == "screen":
         # Pin scanout to the July display protocol (1080p60) before playback:
         # discovered live 2026-07-30 that both Pis default to 4K on this
@@ -142,19 +143,19 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         row["cmd"] = (
             f"o=$({_WL_ENV} wlr-randr | awk '/^[[:alnum:]]/{{print $1}}' | head -1); "
             f"{_WL_ENV} wlr-randr --output $o --mode 1920x1080@60; sleep 2; "
-            f"{_WL_ENV} mpv --fs --no-audio --loop=inf /dev/shm/decode/{clip}")
+            f"{_WL_ENV} mpv --fs --no-audio --loop=inf /dev/shm/decode/{shm}")
         row["stop_cmd"] = "pkill mpv"
     else:
         stem = Path(clip).stem
-        row["cmd"] = (f"ffmpeg -nostdin -re -i /dev/shm/decode/{clip} "
+        row["cmd"] = (f"ffmpeg -nostdin -re -i /dev/shm/decode/{shm} "
                       f"-an -f null - ")
         row["stop_cmd"] = f"pkill -f 'ffmpeg.*{stem}'"
     return row
 
 
 def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
-                 calibrate: bool) -> Path:
-    tpl = TEMPLATES[tpl_key]
+                 calibrate: bool, upload_name: str | None = None) -> Path:
+    tpl = resolve_template(tpl_key, upload_name)
     dev_cfg = rig.RIG["devices"][dev_name]
     marked = mode == "screen" and calibrate
     runs = []
@@ -162,7 +163,7 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
         if marked:
             # Marker-headed variant: window extends over the 15 s head; the
             # skip shrinks so the head lands inside the sampled window.
-            runs.append(_row_for(dev_cfg, run_name, f"marked_{clip}", mode,
+            runs.append(_row_for(dev_cfg, run_name, marked_name(clip), mode,
                                  window_s=tpl["bench"]["window_s"] + MARKER_HEAD_S))
         else:
             runs.append(_row_for(dev_cfg, run_name, clip, mode))
@@ -246,10 +247,47 @@ def segment_marker_trace(w: list) -> dict | None:
     return None
 
 
-def _needed_clips(tpl_key: str, mode: str, calibrate: bool) -> list:
-    clips = list(TEMPLATES[tpl_key]["clips"].values())
+UPLOADS_SUBDIR = "_uploads"     # inside STREAMS → served by :8123 for the GTV
+
+
+def marked_name(clip: str) -> str:
+    """marked_ variant path for a clip, subdir-safe (_uploads/x.mp4 →
+    _uploads/marked_x.mp4)."""
+    p = Path(clip)
+    return str(p.parent / f"marked_{p.name}") if p.parent != Path(".") \
+        else f"marked_{clip}"
+
+
+def _clip_duration_s(clip: str) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(STREAMS / clip)],
+        capture_output=True, text=True, check=True, timeout=30).stdout.strip()
+    return float(out)
+
+
+def resolve_template(tpl_key: str, upload_name: str | None) -> dict:
+    """TEMPLATES[key], or a dynamic single-row template for an uploaded clip
+    (key 'upload'). Upload window fits the clip: min(150 s, duration − 15 s),
+    floor 30 s — a too-short window is refused rather than measured wrong."""
+    if tpl_key != "upload":
+        return TEMPLATES[tpl_key]
+    clip = f"{UPLOADS_SUBDIR}/{upload_name}"
+    dur = _clip_duration_s(clip)
+    window = min(150, int(dur) - 15)
+    if window < 30:
+        raise ValueError(f"clip too short ({dur:.0f}s) — need ≥45 s")
+    return {"label": f"uploaded clip — {upload_name}",
+            "clips": {"uploaded_clip": clip},
+            "bench": {"cadence_s": 1.0, "baseline_samples": 20,
+                      "settle_s": 15, "startup_skip_s": 8,
+                      "window_s": window, "gap_s": 10}}
+
+
+def _needed_clips(tpl: dict, mode: str, calibrate: bool) -> list:
+    clips = list(tpl["clips"].values())
     if mode == "screen" and calibrate:
-        return [f"marked_{c}" for c in clips]
+        return [marked_name(c) for c in clips]
     return clips
 
 
@@ -265,7 +303,7 @@ def _ensure_marked_clips_sync(clips: list) -> None:
     seg_dir = STREAMS / "marked_segments"
     seg_dir.mkdir(exist_ok=True)
     for clip in clips:
-        dst = STREAMS / f"marked_{clip}"
+        dst = STREAMS / marked_name(clip)
         if dst.exists():
             continue
         probe = subprocess.run(
@@ -290,7 +328,7 @@ def _ensure_marked_clips_sync(clips: list) -> None:
             seg_paths.append(seg_p)
         listing = "".join(f"file '{p}'\n" for p in seg_paths
                           + [STREAMS / clip])
-        list_path = Path(f"/tmp/owl-marked-{clip}.txt")
+        list_path = Path(f"/tmp/owl-marked-{Path(clip).name}.txt")
         list_path.write_text(listing)
         try:
             subprocess.run(
@@ -329,8 +367,9 @@ async def _wait_ready(name: str, sub: dict, timeout_s: float) -> None:
     raise RuntimeError(f"not ready after {int(timeout_s)}s")
 
 
-async def _run_bench_for(job_id: str, tpl_key: str, name: str, mode: str,
-                         calibrate: bool, sub: dict) -> dict:
+async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
+                         mode: str, calibrate: bool, sub: dict,
+                         upload_name: str | None = None) -> dict:
     """Full per-device pipeline: ready → stage → bench.py → rows. Updates
     `sub` (the job's per-device progress dict) as it goes; returns the
     device section of the combined envelope. Raises on failure."""
@@ -346,9 +385,10 @@ async def _run_bench_for(job_id: str, tpl_key: str, name: str, mode: str,
             sub.update({"stage": "staging",
                         "detail": "copying clips to /dev/shm"})
             await asyncio.to_thread(_stage_clips_sync, dev_cfg,
-                                    _needed_clips(tpl_key, mode, calibrate))
+                                    _needed_clips(tpl, mode, calibrate))
 
-        cfg_path = _materialize(job_id, tpl_key, name, mode, calibrate)
+        cfg_path = _materialize(job_id, tpl_key, name, mode, calibrate,
+                                upload_name)
         cfg = json.loads(cfg_path.read_text())
         result_path = BENCH_DIR / "results" / f"{cfg['name']}.json"
 
@@ -419,8 +459,9 @@ async def _run_bench_for(job_id: str, tpl_key: str, name: str, mode: str,
 
 
 async def run_decode_job(job_id: str, tpl_key: str, devices: list,
-                         mode: str, calibrate: bool) -> None:
-    tpl = TEMPLATES[tpl_key]
+                         mode: str, calibrate: bool,
+                         upload_name: str | None = None) -> None:
+    tpl = resolve_template(tpl_key, upload_name)
     job = jobs[job_id]
     phases = template_phases(tpl)
     n_rows = len(tpl["clips"])
@@ -444,8 +485,9 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
             await rig.claim_screen(name)
 
         outcomes = await asyncio.gather(
-            *[_run_bench_for(job_id, tpl_key, name, mode, calibrate,
-                             job["devices"][name]) for name in devices],
+            *[_run_bench_for(job_id, tpl_key, tpl, name, mode, calibrate,
+                             job["devices"][name], upload_name)
+              for name in devices],
             return_exceptions=True)
 
         sections, flat_runs, errors = {}, [], {}
@@ -484,3 +526,13 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
     except Exception as e:
         log.warning("decode job %s failed: %s", job_id, e)
         job.update({"status": "error", "stage": "error", "error": str(e)})
+    finally:
+        if upload_name:
+            # Same retention rules as /enhance-run: evict-class uploads are
+            # deleted at run end, proc/keep follow uploads.py's sweep. The
+            # generated marked_ variant is always removed (regenerable).
+            import uploads
+            up_dir = STREAMS / UPLOADS_SUBDIR
+            await asyncio.to_thread(uploads.cleanup_after_job, up_dir,
+                                    upload_name)
+            (up_dir / f"marked_{upload_name}").unlink(missing_ok=True)
