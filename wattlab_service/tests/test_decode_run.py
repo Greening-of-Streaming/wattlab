@@ -43,7 +43,8 @@ def test_materialize_screen_pi_uses_marked_clip_and_monitor_context(tmp_path):
         # window extends over the 15 s head; skip shrinks so the head is sampled
         assert row["window_s"] == (decode_run.TEMPLATES["bbb_h264_rt"]["bench"]
                                    ["window_s"] + decode_run.MARKER_HEAD_S)
-        assert cfg["startup_skip_s"] == 2
+        # settings-driven (decode_screen_startup_skip_s, default 5)
+        assert cfg["startup_skip_s"] == 5
         assert cfg["cadence_s"] == 1.0
     finally:
         p.unlink()

@@ -68,7 +68,7 @@ def test_skip_probe_short_circuits():
 def test_on_sample_receives_rounded_values():
     seen = []
     r = _run(idle_wait.wait_for_stable(
-        _feeder([3.333, 3.334, 3.335]), tolerance_w=0.5, settle_polls=3,
+        _feeder([3.333, 3.334, 3.336]), tolerance_w=0.5, settle_polls=3,
         max_wait_s=30, poll_interval_s=0,
         on_sample=lambda w, e: seen.append(w)))
     assert r["settled"] is True

@@ -205,8 +205,18 @@ def segment_marker_trace(w: list) -> dict | None:
         return None
     n_head = MARKER_HEAD_S + 8
     head = w[:n_head]
-    lo, hi = min(head), max(head)
-    if hi - lo < 1.0:
+
+    def _sustained(candidates):
+        """First candidate with ≥3 head samples within ±0.6 W — a one-off
+        transient (e.g. the 13 W mode-resync dip) can't form a rail."""
+        for v in candidates:
+            if sum(1 for x in head if abs(x - v) <= 0.6) >= 3:
+                return v
+        return None
+
+    lo = _sustained(sorted(head))
+    hi = _sustained(sorted(head, reverse=True))
+    if lo is None or hi is None or hi - lo < 1.0:
         return None
     mid = (lo + hi) / 2
     runs = []          # [is_high, start_idx, end_idx]
