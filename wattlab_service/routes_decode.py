@@ -453,6 +453,11 @@ async function tick() {
 tick();
 setInterval(tick, 2500);
 
+// Re-attach to a job after reload/service restart: /decode?job=<id>
+// (queue-status ↩ Resume points here; results also recover from disk).
+var _qjob = new URLSearchParams(location.search).get('job');
+if (_qjob) { document.getElementById('btn-run').disabled = true; pollJob(_qjob); }
+
 // --- Runs (v2: mode + device fan-out) ---
 var PHASE_LABELS = {device:'Power device', staging:'Stage clips',
                     settle:'Settle', baseline:'Baseline',
