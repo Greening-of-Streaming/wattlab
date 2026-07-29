@@ -1,0 +1,22 @@
+{
+ "name": "pi_smoke",
+ "meter_ip": "192.168.1.146",
+ "cadence_s": 1.5,
+ "baseline_samples": 12,
+ "settle_s": 8,
+ "startup_skip_s": 6,
+ "window_s": 40,
+ "gap_s": 5,
+ "device": {
+  "type": "ssh",
+  "host": "192.168.1.102",
+  "user": "admin"
+ },
+ "runs": [
+  {
+   "name": "h264_sw_smoke",
+   "cmd": "ffmpeg -nostdin -re -i /dev/shm/decode/bbb_h264_6min.mp4 -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  }
+ ]
+}

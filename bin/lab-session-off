@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# lab-session-off — lower the lab-session flag raised by lab-session-on.
+rm -f /tmp/owl-lab-session
+echo "✓ lab session ended — public runs re-open."

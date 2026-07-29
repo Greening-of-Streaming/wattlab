@@ -429,6 +429,19 @@ async def settings_page(request: Request):
                   "Show the live idle-wait readout (\u23f3 waited \u00b7 current W \u00b7 target) in the progress "
                   "widget on every page during cooldowns. Display only \u2014 cooldown behaviour is unchanged.")}
 
+    <div class="section" id="s-decode">Decode rig</div>
+    {field("decode_cadence_s", s.get('decode_cadence_s', 1.0), 0.5, 5, "s", "meter sampling cadence for decode rows (device and screen meters)", step=0.5)}
+    {field("decode_settle_s", s.get('decode_settle_s', 15), 0, 120, "s", "fixed settle after device prepare, before idle guard / baseline")}
+    {field("decode_baseline_samples", s.get('decode_baseline_samples', 20), 5, 60, "samples", "baseline samples per row (× cadence = baseline window)")}
+    {toggle_field("decode_idle_guard", s.get('decode_idle_guard', True),
+                  "ON: wait for the device's draw to stabilise before each baseline — the same settle "
+                  "loop as the GoS1 pre-job guard (idle_wait.py), in self-stability mode; rows stamp "
+                  "protocol v3. OFF: fixed settle only (July/v2 protocol).")}
+    {field("decode_idle_tolerance_w", s.get('decode_idle_tolerance_w', 0.5), 0.1, 5, "W", "idle guard: the last N readings must span ≤ this", step=0.1)}
+    {field("decode_idle_settle_polls", s.get('decode_idle_settle_polls', 4), 2, 10, "polls", "idle guard: N consecutive readings that must agree")}
+    {field("decode_idle_max_wait_s", s.get('decode_idle_max_wait_s', 60), 10, 300, "s", "idle guard: cap before proceeding unsettled (recorded in the row)")}
+    {field("decode_screen_startup_skip_s", s.get('decode_screen_startup_skip_s', 5), 0, 30, "s", "screen rows: skip after playback start (absorbs the 1080p mode re-sync)")}
+
     <div class="section" id="s-staging">Staging</div>
     {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
 
@@ -567,6 +580,9 @@ async def settings_page(request: Request):
         const num_fields = ['baseline_polls','video_cooldown_s','llm_rest_s','llm_unload_settle_s',
                             'cooldown_idle_tolerance_w','cooldown_idle_settle_polls',
                             'cooldown_idle_max_wait_s','cooldown_dialog_watchdog_s',
+                            'decode_cadence_s','decode_settle_s','decode_baseline_samples',
+                            'decode_idle_tolerance_w','decode_idle_settle_polls',
+                            'decode_idle_max_wait_s','decode_screen_startup_skip_s',
                             'h264_bitrate_kbps','h265_bitrate_kbps','av1_bitrate_kbps','target_vmaf',
                             'variance_pct','variance_green_x','variance_yellow_x',
                             'conf_positive_green','conf_positive_yellow',
@@ -577,7 +593,8 @@ async def settings_page(request: Request):
                             'enhance_upload_max_mb','enhance_upload_max_duration_s',
                             'enhance_upload_ttl_h',
                             'bench_video_reps'];
-        const bool_fields = ['cooldown_wait_for_idle','cooldown_show_wait_detail'];
+        const bool_fields = ['cooldown_wait_for_idle','cooldown_show_wait_detail',
+                             'decode_idle_guard'];
         const str_fields = ['members'];
         const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};

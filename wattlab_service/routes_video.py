@@ -236,6 +236,9 @@ async def video_page(request: Request):
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>
+        &nbsp;·&nbsp; Encode is half the story:
+        <a href="/decode" style="color:var(--accent);text-decoration:none">Decode rig — client-device energy →</a>
+        <span style="border:1px solid var(--border-3);border-radius:3px;padding:0 0.35rem;font-size:0.7rem">Lab only</span>
     </div>
 
     {findings_beta_html}

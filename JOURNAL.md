@@ -7,6 +7,46 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 59 — 2026-07-29/30 (all day + overnight)
+
+**The decode rig becomes a product: `/decode` Lab console, protocol v3, and the OWL↔LEM convergence**
+
+- **Rig hardware day** (with owner, 2026-07-29): all three client boxes (Pi 5, Pi 400, Google TV)
+  + five Lab P110s (A–E, all fw 1.3.1) moved to Ethernet + router reservations; Pi 5 PSU replaced
+  (was under-voltage-throttling — `throttled=0x0` verified; July rows replicate within ~0.1 W);
+  both Pis Wi-Fi-blocked, blanking off, Pi 400 autologin fixed (was parked at a greeter — no user
+  compositor); monitor auto-switch behaviour mapped (follows the single live signal); Shelly Plug
+  PM Gen3 on the Lab strip (metering-only — no relay; UI degrades to strip meter + software
+  "All off"). ⚠ Lab-C (`.35`) powers the Bouygues router — guard-tested out of every surface.
+- **`/decode` rig console** (`rig.py`, `routes_decode.py`, `RIG_CONTROL` Lab capability): per-device
+  power tiles (off/powering/booting/ready/stopping/stuck state machine, live W, boot progress),
+  graceful off (SSH/ADB shutdown → relay), claim-screen arbitration (wlopm DPMS pulses + verified
+  GTV sleep/wake — the panel doesn't gate hot-plug per input, so arbitration is active), monitor
+  tile with in-use confirm, background rig poller with measurement-pause awareness.
+- **Recipe runs** (`decode_run.py`): device-agnostic templates × device selection; **headless mode
+  fans out bench.py per device in parallel** (own meter each, one queue job — 3-device panel in
+  single-run wall-clock); screen mode is exclusive, auto-claims, meters the monitor as context.
+  Jobs queue through the standard single-job queue; per-device phase progress with live ⚡W from
+  the harness's new sample feed; results in the S58 decode envelope via `persist.save_result`.
+- **Protocol v3** (owner-designed marker head): screen rows play ONE contiguous clip — 5 s
+  black·white·black (codec/res/fps-matched NVENC segments, content stream-copied) + content,
+  markers in-window at 1 s cadence; `segment_marker_trace` auto-splits the screen trace
+  (sustained-level rails — resync transients can't fool it). Pre-baseline **stable-idle guard
+  shares the CR-070 loop**: new `idle_wait.py` core, `power.wait_for_thermal_floor` delegates
+  (contract unchanged, cooldown suite green), bench.py runs it in self-stability mode. All decode
+  parameters live in **/settings → Decode rig**; envelopes stamp `protocol_version`.
+- **LEM-style export**: per-sample epoch timestamps throughout; `/decode/result/{id}/lem.csv`
+  emits `timestamp,alias,power_w` (devices + `monitor`) — LEM-shaped, REM-ingestable.
+- **Also**: Lab clip upload (shared `uploads.py` retention store inside the `:8123` tree),
+  lab-session mode (browsing open, non-Lab runs 503 — `bin/lab-session-on|off` + /queue-status
+  toggle), maintenance page rewritten honestly, `/video` ↔ `/decode` cross-link, job re-attach
+  via `?job=`, harness folded into `decode_bench/` (GoS1 symlinks preserved).
+- **v3 reference run `457f4b0d`** (screen · Pi 400 · marker): 🟢, segmentation black 27.94 /
+  white 33.00 / content 30.98 W (swing 5.06 W — matches every manual calibration); 3-device
+  parallel verification `4c94612b` all 🟢 with guards settled ~3 s. Suite: **964 passing**.
+
+---
+
 ## Session 58 — 2026-07-28/29 (overnight)
 
 **Client decode goes first-class — decode-bench rig, Pi 4/5 + Google TV panels, `decode` result type, two draft findings**

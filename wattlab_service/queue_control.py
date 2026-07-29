@@ -21,6 +21,23 @@ log = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from fastapi import Request
 
+# --- Lab-session mode --------------------------------------------------------
+# Softer than the nginx maintenance flag (stage-on): browsing stays fully open
+# for everyone, but non-Lab job SUBMISSION is refused while the flag is up —
+# the box is reserved for hands-on lab work (bench or decode rig) and stray
+# public runs would contend for the meter and the queue. Raise/lower with
+# bin/lab-session-on / lab-session-off; ui.render_page shows a site banner.
+LAB_SESSION_FLAG = Path("/tmp/owl-lab-session")
+
+
+class LabSessionActive(Exception):
+    """Non-Lab enqueue refused during a lab session. main.py maps this to a
+    503 with the public wording (mirrors the maintenance page's copy)."""
+
+
+def lab_session_active() -> bool:
+    return LAB_SESSION_FLAG.exists()
+
 # --- Public state -----------------------------------------------------------
 pending_queue: list = []        # list of {"job_id", "type", "label", "coro_fn",
                                 #          "visitor_key": Optional[str]}
@@ -189,6 +206,8 @@ def enqueue(job_id: str, job_type: str, label: str, coro_fn,
     email-keyed); Lab is uncapped. Tests pass request=None to opt out.
     """
     vk = visitor_key(request)
+    if vk is not None and lab_session_active():
+        raise LabSessionActive()
     cap = _visitor_cap(vk)
     if cap is not None and _visitor_in_flight(vk) >= cap:
         return None

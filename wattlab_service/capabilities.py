@@ -64,6 +64,11 @@ PREPARE_REM        = "prepare_rem"         # REM↔OWL integration — /prepare-
                                            # REM device-playback experiments (the generated file's SHARE link
                                            # is intentionally un-gated, PUBLIC_PAGE, so a remote collaborator
                                            # can download it without LAN/SSH — security by unguessable token).
+RIG_CONTROL        = "rig_control"         # /decode — client-decode rig power console (Pi 5 / Pi 400 /
+                                           # Google TV + monitor + optional Shelly master). Whole page is
+                                           # Lab-only like /settings: it switches real mains relays.
+LAB_SESSION_TOGGLE = "lab_session_toggle"  # raise/lower the lab-session flag from /queue-status —
+                                           # UI twin of bin/lab-session-on|off.
 
 
 # --- Capability → minimum tier ----------------------------------------------
@@ -101,6 +106,8 @@ _REQUIRED_TIER: dict[str, Tier] = {
     VARIANCE_RUN:       Tier.Lab,
     BENCHMARK_RUN:      Tier.Lab,
     PREPARE_REM:        Tier.Lab,
+    RIG_CONTROL:        Tier.Lab,
+    LAB_SESSION_TOGGLE: Tier.Lab,
 }
 
 

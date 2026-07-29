@@ -597,6 +597,20 @@ _BENCH_HYDRATE_JS = f'<script src="/static/wl-bench-hydrate.js?v={_WL_ASSET_V}">
 # version stamp, queue badge, shared JS bundles). A page brings only its
 # own CSS, body, optional extra <head> content, and optional scripts that
 # must load after the footer's bundles.
+def _lab_session_banner() -> str:
+    """Site-wide strip while bin/lab-session-on holds the box: browsing stays
+    open, non-Lab runs 503 at the enqueue chokepoint (queue_control). Shown to
+    every tier — Lab too, as a reminder the flag is up."""
+    import queue_control
+    if not queue_control.lab_session_active():
+        return ""
+    return ('<div style="background:var(--accent-soft);border:1px solid '
+            'var(--border-3);border-radius:4px;padding:0.45rem 0.8rem;'
+            'margin:0.6rem 0;font-size:0.8rem;color:var(--text-2)">'
+            '🔬 <b>Lab session in progress</b> — browsing is open; new '
+            'measurement runs are paused until the session ends.</div>')
+
+
 def render_page(request: Request, title: str, body: str, *,
                 styles: str = "", head: str = "", tail: str = "",
                 back: bool = True) -> str:
@@ -605,7 +619,8 @@ def render_page(request: Request, title: str, body: str, *,
     tags, early scripts). `tail` renders after the footer — for bundles the
     page's inline JS depends on at call time (e.g. _PROGRESS_JS).
     `back=False` drops the ← Home link (the home page itself)."""
-    header = _auth_chip_html(request) + (_BACK if back else "") + _nav_html(request)
+    header = (_auth_chip_html(request) + (_BACK if back else "")
+              + _nav_html(request) + _lab_session_banner())
     return f"""<!DOCTYPE html>
 <html>
 <head>

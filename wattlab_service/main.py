@@ -26,12 +26,13 @@ import audience
 import carbon
 import queue_control
 import rag as rag_module
+import rig
 import runtime
 import ui
 from capabilities import (
     requires, can, CapabilityError,
     PUBLIC_PAGE, QUEUE_VIEW, LIVE_TELEMETRY, WORKING_NAV,
-    SETTINGS_WRITE, BENCHMARK_RUN,
+    SETTINGS_WRITE, BENCHMARK_RUN, LAB_SESSION_TOGGLE,
 )
 from power import meter_display_name
 from video import LOCK_FILE
@@ -46,6 +47,7 @@ import routes_audience
 import routes_auth
 import routes_benchmark
 import routes_budget   # DEMO — transcode-budget calculator (CR-003 × CR-045 V2); illustrative data
+import routes_decode   # client-decode rig power console (Lab-only, RIG_CONTROL)
 import routes_demo
 import routes_enhance
 import routes_findings
@@ -60,7 +62,8 @@ import routes_results
 import routes_settings
 import routes_video
 
-for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_demo,
+for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_decode,
+                 routes_demo,
                  routes_enhance, routes_findings, routes_image, routes_llm,
                  routes_methodology, routes_mockups, routes_privacy, routes_rag,
                  routes_rem, routes_results, routes_settings, routes_video):
@@ -151,6 +154,18 @@ async def _capability_error_handler(request: Request, exc: CapabilityError):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
+@app.exception_handler(queue_control.LabSessionActive)
+async def _lab_session_handler(request: Request, exc: queue_control.LabSessionActive):
+    """Non-Lab run submission during a lab session (bin/lab-session-on).
+    Browsing is untouched — only enqueue raises this — so the message can be
+    specific: the box is reserved, come back for runs later."""
+    return JSONResponse(status_code=503, content={"error": (
+        "Lab session in progress — GoS1 is reserved for hands-on measurement "
+        "work right now, so new runs are paused. Browsing (guided tour, "
+        "findings, past results) stays open; runs re-open when the session "
+        "ends.")})
+
+
 # --- Queue ---
 # Queue state, enqueue chokepoint, and worker live in queue_control.py.
 # CR-001 (per-tier rate limits) and CR-001b (demo lock) plug into the
@@ -168,6 +183,7 @@ async def startup():
     queue_control.start(jobs, LOCK_FILE)
     asyncio.create_task(runtime.power_poller())
     asyncio.create_task(runtime.sensors_poller())
+    asyncio.create_task(rig.rig_poller())
     asyncio.create_task(carbon.poller(zones=[carbon.HOME_ZONE]))
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, rag_module.check_index)
@@ -450,6 +466,40 @@ async def queue_cancel_current():
         status_code=409)
 
 
+@app.post("/lab-session/toggle",
+          dependencies=[Depends(requires(LAB_SESSION_TOGGLE))])
+async def lab_session_toggle(on: str = Form(...)):
+    """UI twin of bin/lab-session-on|off — same flag file, same semantics
+    (browsing stays open, non-Lab enqueue 503s while the flag is up)."""
+    if on == "1":
+        queue_control.LAB_SESSION_FLAG.touch()
+    else:
+        queue_control.LAB_SESSION_FLAG.unlink(missing_ok=True)
+    return RedirectResponse("/queue-status", status_code=303)
+
+
+def _lab_session_toggle_html(request: Request) -> str:
+    """Lab-only control block on /queue-status; others see nothing."""
+    if not can(audience.tier(request), LAB_SESSION_TOGGLE):
+        return ""
+    active = queue_control.lab_session_active()
+    state = ('<b style="color:var(--warn)">ACTIVE</b> — public runs refused, '
+             'browsing open' if active else
+             '<b style="color:var(--text-3)">off</b> — public runs open')
+    btn = ("End session" if active else "Start session")
+    val = "0" if active else "1"
+    return (
+        '<form method="post" action="/lab-session/toggle" '
+        'style="border:1px solid var(--border-3);border-radius:4px;'
+        'padding:0.6rem 0.9rem;margin-bottom:1.2rem;font-size:0.8rem;'
+        'display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap">'
+        f'<span>🔬 Lab session: {state}</span>'
+        f'<button name="on" value="{val}" style="background:none;'
+        'border:1px solid var(--border-3);color:var(--text-2);'
+        'font-family:monospace;font-size:0.78rem;padding:0.25rem 0.7rem;'
+        f'border-radius:4px;cursor:pointer">{btn}</button></form>')
+
+
 @app.get("/queue-status", response_class=HTMLResponse, dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_page(request: Request):
     # Only Lab (BENCHMARK_RUN) may cancel — gate the button so anonymous
@@ -479,7 +529,7 @@ async def queue_page(request: Request):
         .back:hover { color: var(--accent); }
         .depth { font-size: 2.5rem; color: var(--accent); font-weight: bold; }
         .depth-lbl { color: var(--text-4); font-size: 0.75rem; margin-bottom: 2rem; }
-""", tail=_PROGRESS_JS, body="""
+""", tail=_PROGRESS_JS, body=_lab_session_toggle_html(request) + """
     <h1>Queue</h1>
     <div class="sub">Auto-refreshes every 4s</div>
     <div id="pause-banner"></div>

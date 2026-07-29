@@ -269,6 +269,8 @@ def test_required_tier_table_snapshot():
         "variance_run":        Tier.Lab,
         "benchmark_run":       Tier.Lab,   # CR-061
         "prepare_rem":         Tier.Lab,   # REM↔OWL — /prepare-rem run/upload/delete
+        "rig_control":         Tier.Lab,   # S59 — /decode rig console switches mains relays
+        "lab_session_toggle":  Tier.Lab,   # S59 — /queue-status lab-session flag toggle
     }
     assert capabilities._REQUIRED_TIER == expected
 
