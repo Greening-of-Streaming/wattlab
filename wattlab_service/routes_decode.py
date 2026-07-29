@@ -550,6 +550,11 @@ function renderJob(j) {
     el.innerHTML = '<div class="rig-err">✗ ' + (j.error || 'failed') + '</div>';
     return true;
   }
+  if (j.status === 'not_found') {
+    el.innerHTML = '<div class="rig-err">✗ job lost — the service restarted '
+                 + 'mid-run and no result reached disk. Re-run the recipe.</div>';
+    return true;
+  }
   if (j.stage === 'queued') {
     el.innerHTML = stageRow('…', 'var(--warn)',
       'queued — position ' + (j.queue_position || '?')); return false;
