@@ -372,27 +372,23 @@ _BODY = """
   </div>
 
   <div class="rig-run" style="margin-top:1rem">
-    <h3>Open items <span class="rig-badge">2026-07-30</span></h3>
+    <h3>Open items <span class="rig-badge">2026-07-30 (overnight)</span></h3>
     <div class="rig-note" style="margin-top:0.2rem">
-    <b>Building next:</b><br>
-    · clip upload (same retention rules as /enhance-run; uploads playable on all
-      three boxes)<br>
-    · decode parameters into /settings + shared stable-idle guard (protocol v3,
-      GoS1-convergent)<br>
-    · marker segmentation script — auto black/white/content split from the raw
-      traces (skips the mode-resync transient)<br>
-    · LEM-style raw download per run (timestamp,alias,power_w CSV — device +
-      screen; needs per-sample timestamps in the harness first)<br>
-    · screen rows: +3 s startup skip to absorb the 1080p re-sync<br>
-    <b>Decisions/hardware pending:</b><br>
-    · merge decode-rig-console → main (owner's go)<br>
+    <b>Landed overnight:</b> clip upload (shared retention rules) · decode
+    parameters in /settings (Decode rig section) · shared stable-idle guard
+    (same idle_wait loop as GoS1's pre-job guard; rows stamp protocol v3) ·
+    per-sample timestamps · automated marker segmentation (shown under
+    results) · ⬇ LEM-style CSV export per run · screen-row skip absorbs the
+    1080p re-sync · harness versioned in wattlab/decode_bench/.<br>
+    <b>Still open:</b><br>
     · Pi 400 headless ΔW vs July (+1.57 vs +1.25 W) — deliberate n≥2 recheck<br>
     · LG C2 OLED integration (CEC input claiming + webOS control; meter on
       Lab-C once the router moves to a dumb socket)<br>
-    · version the decode-bench harness dir (tonight's sample-feed + context-trace
-      changes live only on GoS1)<br>
+    · uploaded clips: markers need h264/hevc/av1 sources (NVENC-matched);
+      other codecs run un-marked<br>
     <b>Known quirks:</b> cold-panel first claim may need a second claim ·
-    claim takes 10–20 s by design · deploys never run while the queue is busy.
+    claim takes 10–20 s by design · deploys never run while the queue is busy ·
+    marker-row headline ΔW includes the 15 s head (quote segmented values).
     </div>
   </div>
 
