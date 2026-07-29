@@ -529,13 +529,32 @@ async def monitor_power(on: bool) -> None:
 
 
 async def master_power(on: bool) -> None:
-    if not on:
-        lively = [RIG["devices"][n]["label"]
-                  for n, d in rig_cache["devices"].items()
-                  if d["state"] not in _STOPPED_STATES]
-        if lively:
-            raise RigError(409, "power devices off first: " + ", ".join(lively))
-    await shelly_set(on)
+    """Master toggle. With a relay-equipped Shelly this switches the strip
+    (off refused until every device is down). With the metering-only Plug PM
+    it degrades to a SOFTWARE master: 'off' gracefully stops every powered
+    box; 'on' is refused — boxes are powered individually so the monitor's
+    auto-switch stays deterministic."""
+    switchable = rig_cache["master"].get("switchable")
+    if switchable:
+        if not on:
+            lively = [RIG["devices"][n]["label"]
+                      for n, d in rig_cache["devices"].items()
+                      if d["state"] not in _STOPPED_STATES]
+            if lively:
+                raise RigError(409,
+                               "power devices off first: " + ", ".join(lively))
+        await shelly_set(on)
+        return
+    if on:
+        raise RigError(400, "no strip relay — power boxes individually (the "
+                            "screen follows the single powered device)")
+    busy = [RIG["devices"][n]["label"]
+            for n, d in rig_cache["devices"].items() if d["busy"]]
+    if busy:
+        raise RigError(409, "job running on: " + ", ".join(busy))
+    for name, d in rig_cache["devices"].items():
+        if d["state"] not in _STOPPED_STATES and d["state"] != "stopping":
+            await device_off(name)
 
 
 def _dev_cfg(name: str) -> dict:

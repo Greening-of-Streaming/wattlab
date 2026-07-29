@@ -129,7 +129,8 @@ def test_device_off_graceful_then_relay(monkeypatch):
     assert rig.rig_cache["devices"]["pi5"]["state"] == "off"
 
 
-def test_master_off_refused_while_device_alive(monkeypatch):
+def test_relay_master_off_refused_while_device_alive(monkeypatch):
+    rig.rig_cache["master"]["switchable"] = True
     rig.rig_cache["devices"]["pi5"]["state"] = "ready"
     with pytest.raises(rig.RigError) as e:
         _run(rig.master_power(False))
@@ -137,14 +138,33 @@ def test_master_off_refused_while_device_alive(monkeypatch):
     assert "Pi 5" in e.value.reason
 
 
-def test_master_set_meter_only_refused(monkeypatch):
-    monkeypatch.setattr(rig, "shelly_ip", lambda: "10.0.0.9")
-    monkeypatch.setitem(rig._SHELLY_GEN, "10.0.0.9",
-                        {"gen": 2, "switchable": False, "pm1": True})
+def test_software_master_on_refused():
+    """Meter-only Shelly: 'Rig on' has nothing to switch — explicit 400."""
     with pytest.raises(rig.RigError) as e:
         _run(rig.master_power(True))
     assert e.value.status == 400
-    assert "metering-only" in e.value.reason
+    assert "individually" in e.value.reason
+
+
+def test_software_master_off_cascades_graceful_stops(monkeypatch):
+    stopped = []
+
+    async def _fake_off(name):
+        stopped.append(name)
+        rig.rig_cache["devices"][name]["state"] = "stopping"
+    monkeypatch.setattr(rig, "device_off", _fake_off)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["gtv"]["state"] = "booting"
+    _run(rig.master_power(False))
+    assert sorted(stopped) == ["gtv", "pi5"]
+
+
+def test_software_master_off_refused_while_busy():
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi5"]["busy"] = True
+    with pytest.raises(rig.RigError) as e:
+        _run(rig.master_power(False))
+    assert e.value.status == 409
 
 
 def test_busy_device_refuses_power_ops():

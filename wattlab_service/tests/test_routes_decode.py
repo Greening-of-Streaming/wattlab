@@ -61,8 +61,13 @@ def test_unknown_device_404():
 
 
 def test_master_off_conflict_surfaces_409():
+    # Relay-mode refusal path (no plug IO — refused before any hardware call).
+    rig.rig_cache["master"]["switchable"] = True
     rig.rig_cache["devices"]["pi5"]["state"] = "ready"
-    r = client.post("/decode/master/power", headers=_LAB, json={"on": False})
+    try:
+        r = client.post("/decode/master/power", headers=_LAB, json={"on": False})
+    finally:
+        rig.rig_cache["master"]["switchable"] = False
     assert r.status_code == 409
     assert "Pi 5" in r.json()["error"]
 

@@ -232,15 +232,22 @@ function render(s) {
     var btn = document.getElementById('btn-master');
     document.getElementById('w-master').textContent = fmtW(m.apower_w);
     if (!m.switchable) {
-      // Metering-only Shelly (Plug PM): strip total; the toggle is shown but
-      // dead until a relay-equipped model replaces it (auto-detected).
+      // Metering-only Shelly (Plug PM): strip total + a SOFTWARE master —
+      // "All off" gracefully stops every powered box. A relay-equipped
+      // Shelly at the same IP upgrades this to a true strip switch.
+      var anyUp = false;
+      for (var dn in s.devices) {
+        var st = s.devices[dn].state;
+        if (st !== 'off' && st !== 'unpowered' && st !== 'unreachable') anyUp = true;
+      }
       dot.className = 'rig-dot ' + (!m.reachable ? 'grey' : 'green');
       document.getElementById('d-master').textContent =
         !m.reachable ? 'not answering'
-          : 'strip meter — this Shelly has no relay; swap in a switching model to enable the toggle';
-      btn.textContent = 'Rig on/off';
-      btn.disabled = true;
-      btn.title = 'Installed Shelly (Plug PM Gen3) is metering-only — it cannot switch the strip';
+          : 'strip meter (no relay) — All off gracefully stops every powered box';
+      btn.textContent = 'All off';
+      btn.disabled = !anyUp;
+      btn.title = anyUp ? 'Graceful shutdown of every powered box, then relays off'
+                        : 'Nothing is powered';
     } else {
       dot.className = 'rig-dot ' + (!m.reachable ? 'grey' : (m.on ? 'green' : 'red'));
       document.getElementById('d-master').textContent =
@@ -299,7 +306,13 @@ function monitorToggle() {
 }
 
 function masterToggle() {
-  var on = RIG_LAST && RIG_LAST.master.on;
+  var m = RIG_LAST && RIG_LAST.master;
+  if (m && !m.switchable) {
+    if (!confirm('Gracefully shut down every powered box?')) return;
+    post('/decode/master/power', {on: false});
+    return;
+  }
+  var on = m && m.on;
   if (on && !confirm('Master off cuts the strip: the three Lab plugs go '
                      + 'unreachable until master returns. Continue?')) return;
   post('/decode/master/power', {on: !on});
