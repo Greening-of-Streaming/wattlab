@@ -77,3 +77,27 @@ def test_browsing_stays_open_during_session(_session_flag):
     _session_flag.touch()
     for path in ("/demo", "/findings", "/methodology"):
         assert client.get(path, headers=_ANON).status_code == 200
+
+
+def test_queue_page_toggle_lab_only(_session_flag):
+    assert "Lab session" in client.get("/queue-status", headers=_LAB).text
+    assert "lab-session/toggle" not in client.get("/queue-status",
+                                                  headers=_ANON).text
+
+
+def test_toggle_endpoint_raises_and_lowers_flag(_session_flag):
+    r = client.post("/lab-session/toggle", headers=_LAB, data={"on": "1"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert _session_flag.exists()
+    r = client.post("/lab-session/toggle", headers=_LAB, data={"on": "0"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert not _session_flag.exists()
+
+
+def test_toggle_endpoint_refused_for_anon(_session_flag):
+    r = client.post("/lab-session/toggle", headers=_ANON, data={"on": "1"},
+                    follow_redirects=False)
+    assert r.status_code == 403
+    assert not _session_flag.exists()

@@ -32,7 +32,7 @@ import ui
 from capabilities import (
     requires, can, CapabilityError,
     PUBLIC_PAGE, QUEUE_VIEW, LIVE_TELEMETRY, WORKING_NAV,
-    SETTINGS_WRITE, BENCHMARK_RUN,
+    SETTINGS_WRITE, BENCHMARK_RUN, LAB_SESSION_TOGGLE,
 )
 from power import meter_display_name
 from video import LOCK_FILE
@@ -466,6 +466,40 @@ async def queue_cancel_current():
         status_code=409)
 
 
+@app.post("/lab-session/toggle",
+          dependencies=[Depends(requires(LAB_SESSION_TOGGLE))])
+async def lab_session_toggle(on: str = Form(...)):
+    """UI twin of bin/lab-session-on|off — same flag file, same semantics
+    (browsing stays open, non-Lab enqueue 503s while the flag is up)."""
+    if on == "1":
+        queue_control.LAB_SESSION_FLAG.touch()
+    else:
+        queue_control.LAB_SESSION_FLAG.unlink(missing_ok=True)
+    return RedirectResponse("/queue-status", status_code=303)
+
+
+def _lab_session_toggle_html(request: Request) -> str:
+    """Lab-only control block on /queue-status; others see nothing."""
+    if not can(audience.tier(request), LAB_SESSION_TOGGLE):
+        return ""
+    active = queue_control.lab_session_active()
+    state = ('<b style="color:var(--warn)">ACTIVE</b> — public runs refused, '
+             'browsing open' if active else
+             '<b style="color:var(--text-3)">off</b> — public runs open')
+    btn = ("End session" if active else "Start session")
+    val = "0" if active else "1"
+    return (
+        '<form method="post" action="/lab-session/toggle" '
+        'style="border:1px solid var(--border-3);border-radius:4px;'
+        'padding:0.6rem 0.9rem;margin-bottom:1.2rem;font-size:0.8rem;'
+        'display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap">'
+        f'<span>🔬 Lab session: {state}</span>'
+        f'<button name="on" value="{val}" style="background:none;'
+        'border:1px solid var(--border-3);color:var(--text-2);'
+        'font-family:monospace;font-size:0.78rem;padding:0.25rem 0.7rem;'
+        f'border-radius:4px;cursor:pointer">{btn}</button></form>')
+
+
 @app.get("/queue-status", response_class=HTMLResponse, dependencies=[Depends(requires(QUEUE_VIEW))])
 async def queue_page(request: Request):
     # Only Lab (BENCHMARK_RUN) may cancel — gate the button so anonymous
@@ -495,7 +529,7 @@ async def queue_page(request: Request):
         .back:hover { color: var(--accent); }
         .depth { font-size: 2.5rem; color: var(--accent); font-weight: bold; }
         .depth-lbl { color: var(--text-4); font-size: 0.75rem; margin-bottom: 2rem; }
-""", tail=_PROGRESS_JS, body="""
+""", tail=_PROGRESS_JS, body=_lab_session_toggle_html(request) + """
     <h1>Queue</h1>
     <div class="sub">Auto-refreshes every 4s</div>
     <div id="pause-banner"></div>
