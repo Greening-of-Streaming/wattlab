@@ -552,10 +552,16 @@ function resultTable(result) {
       ? '<td>Δ' + (r.delta_w * r.window_s / 3600).toFixed(4) + ' Wh · total '
         + (r.wh_window_device_total != null ? r.wh_window_device_total : '—')
         + ' Wh</td>' : '<td></td>';
+    var scr = (r.context_task_w != null)
+      ? '<td>screen ' + r.context_task_w + ' W'
+        + (r.context_delta_w != null
+           ? ' (Δ' + (r.context_delta_w >= 0 ? '+' : '') + r.context_delta_w + ')' : '')
+        + (r.context_wh_window != null ? ' · ' + r.context_wh_window + ' Wh' : '')
+        + '</td>' : '';
     h += '<tr><td>' + (DEV_LABELS[r.device] || r.device) + '</td><td>' + r.run + '</td>'
        + '<td>base ' + r.w_base + ' W</td><td>task ' + r.w_task + ' W</td>'
        + '<td><b>ΔW ' + (r.delta_w >= 0 ? '+' : '') + r.delta_w + '</b> ' + flag + '</td>'
-       + dwh + '</tr>';
+       + dwh + scr + '</tr>';
   }
   return h + '</table>';
 }
