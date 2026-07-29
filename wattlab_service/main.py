@@ -26,6 +26,7 @@ import audience
 import carbon
 import queue_control
 import rag as rag_module
+import rig
 import runtime
 import ui
 from capabilities import (
@@ -46,6 +47,7 @@ import routes_audience
 import routes_auth
 import routes_benchmark
 import routes_budget   # DEMO — transcode-budget calculator (CR-003 × CR-045 V2); illustrative data
+import routes_decode   # client-decode rig power console (Lab-only, RIG_CONTROL)
 import routes_demo
 import routes_enhance
 import routes_findings
@@ -60,7 +62,8 @@ import routes_results
 import routes_settings
 import routes_video
 
-for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_demo,
+for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_decode,
+                 routes_demo,
                  routes_enhance, routes_findings, routes_image, routes_llm,
                  routes_methodology, routes_mockups, routes_privacy, routes_rag,
                  routes_rem, routes_results, routes_settings, routes_video):
@@ -168,6 +171,7 @@ async def startup():
     queue_control.start(jobs, LOCK_FILE)
     asyncio.create_task(runtime.power_poller())
     asyncio.create_task(runtime.sensors_poller())
+    asyncio.create_task(rig.rig_poller())
     asyncio.create_task(carbon.poller(zones=[carbon.HOME_ZONE]))
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, rag_module.check_index)
