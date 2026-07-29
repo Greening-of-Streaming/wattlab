@@ -210,6 +210,21 @@ def test_claim_screen_refused_while_any_job_runs():
     assert e.value.status == 409
 
 
+def test_claim_screen_failure_is_reported_not_swallowed(monkeypatch):
+    """2026-07-29 live lesson: a silently failing signal command made the UI
+    claim success while the panel never moved. Failures must 502."""
+    def _boom(dev, on):
+        raise RuntimeError(f"{dev['label']}: output control failed")
+    monkeypatch.setattr(rig, "set_signal", _boom)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["gtv"]["state"] = "ready"
+    with pytest.raises(rig.RigError) as e:
+        _run(rig.claim_screen("gtv"))
+    assert e.value.status == 502
+    assert "claim incomplete" in e.value.reason
+    assert rig.rig_cache["screen_owner"] is None
+
+
 def test_screen_owner_cleared_when_owner_powers_off(monkeypatch):
     rig.rig_cache["devices"]["pi5"]["state"] = "ready"
     rig.rig_cache["screen_owner"] = "pi5"

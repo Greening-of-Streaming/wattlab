@@ -63,7 +63,6 @@ RIG: dict = {
             "kind": "ssh", "target": "admin@192.168.1.102",
             "expected_boot_s": 29, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
-            "hdmi_output": "HDMI-A-2",   # wlr-randr name, verified 2026-07-29
         },
         "pi400": {
             "label": "Pi 400", "plug_name": "Lab-B",
@@ -71,7 +70,6 @@ RIG: dict = {
             "kind": "ssh", "target": "nebul2@192.168.1.108",
             "expected_boot_s": 45, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
-            "hdmi_output": "HDMI-A-1",   # unverified — check on first claim
         },
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
@@ -325,13 +323,23 @@ def set_signal(dev: dict, on: bool) -> None:
     - GTV wake/sleep must retry + verify mWakefulness: a single keyevent
       frequently doesn't stick (same finding as bench.py's prepare())."""
     if dev["kind"] == "ssh":
-        out = dev.get("hdmi_output", "HDMI-A-1")
+        # Discover the board's actual output names at call time — a guessed
+        # connector name silently no-ops (2026-07-29: Pi 400 kept its signal
+        # through every claim because "HDMI-A-1" was wrong for that board).
+        list_cmd = f"{_WL_ENV} wlr-randr | awk '/^[[:alnum:]]/{{print $1}}'"
         if on:
-            cmd = (f"{_WL_ENV} wlr-randr --output {out} --off; sleep 2; "
-                   f"{_WL_ENV} wlr-randr --output {out} --on")
+            cmd = (f"outs=$({list_cmd}); [ -n \"$outs\" ] || exit 9; "
+                   f"for o in $outs; do {_WL_ENV} wlr-randr --output $o --off; done; "
+                   f"sleep 2; "
+                   f"for o in $outs; do {_WL_ENV} wlr-randr --output $o --on; done")
         else:
-            cmd = f"{_WL_ENV} wlr-randr --output {out} --off"
-        _run(["ssh"] + _SSH_OPTS + [dev["target"], cmd], timeout=25)
+            cmd = (f"outs=$({list_cmd}); [ -n \"$outs\" ] || exit 9; "
+                   f"for o in $outs; do {_WL_ENV} wlr-randr --output $o --off; done")
+        r = _run(["ssh"] + _SSH_OPTS + [dev["target"], cmd], timeout=30)
+        if r.returncode != 0:
+            raise RuntimeError(
+                f"{dev['label']}: output control failed "
+                f"(rc={r.returncode} {(r.stderr or '').strip()[:120]})")
         return
     serial = dev["target"]
     _run([ADB_BIN, "connect", serial], timeout=10)
@@ -346,7 +354,7 @@ def set_signal(dev: dict, on: bool) -> None:
                      timeout=15).stdout
         if want in state:
             return
-    log.warning("set_signal: %s did not reach %s", dev.get("label"), want)
+    raise RuntimeError(f"{dev['label']}: did not reach {want.split('=')[1]}")
 
 
 def send_shutdown(dev: dict) -> None:
@@ -588,11 +596,21 @@ async def claim_screen(name: str) -> None:
     if busy:
         raise RigError(409, "job running on: " + ", ".join(busy)
                             + " — signal changes would contaminate the row")
+    failures = []
     for other, dd in rig_cache["devices"].items():
         if other != name and dd["state"] not in _STOPPED_STATES:
-            await asyncio.to_thread(set_signal, RIG["devices"][other], False)
+            try:
+                await asyncio.to_thread(set_signal, RIG["devices"][other], False)
+            except Exception as e:
+                failures.append(str(e))
     await asyncio.sleep(2)   # let the panel register the losses first
-    await asyncio.to_thread(set_signal, dev_cfg, True)
+    try:
+        await asyncio.to_thread(set_signal, dev_cfg, True)
+    except Exception as e:
+        failures.append(str(e))
+    if failures:
+        # Do NOT record ownership we can't have delivered — the UI must not lie.
+        raise RigError(502, "claim incomplete: " + "; ".join(failures)[:300])
     rig_cache["screen_owner"] = name
 
 
