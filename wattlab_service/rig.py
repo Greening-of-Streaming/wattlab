@@ -317,18 +317,36 @@ def set_signal(dev: dict, on: bool) -> None:
     The shared monitor does not gate hot-plug per input (verified 2026-07-29:
     the GTV still saw full EDID while the Pi 5 held the picture), so devices
     cannot detect losing the screen. Arbitration is therefore active: the
-    screen goes to whichever single device has a live signal — Pis via
-    wlr-randr output off/on, the GTV via sleep/wake keyevents."""
+    screen goes to whichever single device has a live signal.
+
+    Reliability lessons (first live claims, 2026-07-29):
+    - Pi raise must PULSE (off → 2 s → on): a plain --on is a no-op when the
+      output is already enabled — no fresh hot-plug, the panel never re-scans.
+    - GTV wake/sleep must retry + verify mWakefulness: a single keyevent
+      frequently doesn't stick (same finding as bench.py's prepare())."""
     if dev["kind"] == "ssh":
         out = dev.get("hdmi_output", "HDMI-A-1")
-        _run(["ssh"] + _SSH_OPTS + [dev["target"],
-              f"{_WL_ENV} wlr-randr --output {out} {'--on' if on else '--off'}"])
-    else:
-        serial = dev["target"]
-        _run([ADB_BIN, "connect", serial], timeout=10)
-        key = "KEYCODE_WAKEUP" if on else "KEYCODE_SLEEP"
+        if on:
+            cmd = (f"{_WL_ENV} wlr-randr --output {out} --off; sleep 2; "
+                   f"{_WL_ENV} wlr-randr --output {out} --on")
+        else:
+            cmd = f"{_WL_ENV} wlr-randr --output {out} --off"
+        _run(["ssh"] + _SSH_OPTS + [dev["target"], cmd], timeout=25)
+        return
+    serial = dev["target"]
+    _run([ADB_BIN, "connect", serial], timeout=10)
+    key = "KEYCODE_WAKEUP" if on else "KEYCODE_SLEEP"
+    want = "mWakefulness=Awake" if on else "mWakefulness=Asleep"
+    for _ in range(4):
         _run([ADB_BIN, "-s", serial, "shell", "input", "keyevent", key],
              timeout=15)
+        time.sleep(2)
+        state = _run([ADB_BIN, "-s", serial, "shell",
+                      "dumpsys power | grep -m1 mWakefulness"],
+                     timeout=15).stdout
+        if want in state:
+            return
+    log.warning("set_signal: %s did not reach %s", dev.get("label"), want)
 
 
 def send_shutdown(dev: dict) -> None:
@@ -573,6 +591,7 @@ async def claim_screen(name: str) -> None:
     for other, dd in rig_cache["devices"].items():
         if other != name and dd["state"] not in _STOPPED_STATES:
             await asyncio.to_thread(set_signal, RIG["devices"][other], False)
+    await asyncio.sleep(2)   # let the panel register the losses first
     await asyncio.to_thread(set_signal, dev_cfg, True)
     rig_cache["screen_owner"] = name
 
