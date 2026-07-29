@@ -329,18 +329,34 @@ def set_signal(dev: dict, on: bool) -> None:
         # drops the TMDS signal while the output stays configured — nothing
         # for the compositor to revert.
         if on:
-            cmd = (f"{_WL_ENV} wlopm --off '*'; sleep 2; "
+            # Repair every layer, then pulse: re-enable any wlr-disabled
+            # output (a leftover --off makes DPMS a no-op on zero heads —
+            # bit the Pi 5 on 2026-07-29), then DPMS off→on for the fresh
+            # signal transition the panel's auto-switch needs.
+            cmd = (f"outs=$({_WL_ENV} wlr-randr | awk '/^[[:alnum:]]/{{print $1}}'); "
+                   f"for o in $outs; do {_WL_ENV} wlr-randr --output $o --on || true; done; "
+                   f"sleep 1; {_WL_ENV} wlopm --off '*'; sleep 2; "
                    f"{_WL_ENV} wlopm --on '*'")
         else:
             cmd = f"{_WL_ENV} wlopm --off '*'"
-        r = _run(["ssh"] + _SSH_OPTS + [dev["target"], cmd], timeout=30)
+        r = _run(["ssh"] + _SSH_OPTS + [dev["target"], cmd], timeout=40)
         if r.returncode != 0:
             raise RuntimeError(
-                f"{dev['label']}: wlopm failed "
+                f"{dev['label']}: signal raise/drop failed "
                 f"(rc={r.returncode} {(r.stderr or '').strip()[:120]})")
         return
     serial = dev["target"]
     _run([ADB_BIN, "connect", serial], timeout=10)
+    if on:
+        # A wake keyevent on an already-Awake box produces NO signal
+        # transition and the panel never re-scans — force one: sleep first
+        # if awake, then wake + HOME so the box actually draws.
+        state = _run([ADB_BIN, "-s", serial, "shell",
+                      "dumpsys power | grep -m1 mWakefulness"], timeout=15).stdout
+        if "mWakefulness=Awake" in state:
+            _run([ADB_BIN, "-s", serial, "shell", "input", "keyevent",
+                  "KEYCODE_SLEEP"], timeout=15)
+            time.sleep(3)
     key = "KEYCODE_WAKEUP" if on else "KEYCODE_SLEEP"
     # Sleeping boxes report Asleep OR Dozing (ambient/screensaver state) —
     # both mean the HDMI signal is down. Only Awake counts for wake.
@@ -354,6 +370,9 @@ def set_signal(dev: dict, on: bool) -> None:
                       "dumpsys power | grep -m1 mWakefulness"],
                      timeout=15).stdout
         if any(w in state for w in wants):
+            if on:
+                _run([ADB_BIN, "-s", serial, "shell", "input", "keyevent",
+                      "KEYCODE_HOME"], timeout=15)
             return
     raise RuntimeError(f"{dev['label']}: did not reach "
                        + "/".join(w.split('=')[1] for w in wants))
