@@ -1,0 +1,28 @@
+{
+ "_comment": "REALTIME (-re, 1x) playback-representative decode power, BBB x 3 codecs. Resolves the full-speed-vs-realtime energy fork: full-speed power ranks AV1 lowest, but realtime playback (equal time per codec) should rank by core-seconds -> H.264 likely lowest energy. -an, local /dev/shm, metered Lab-A .146. Box idle/stable now (earlier -re noise was apt settling).",
+ "name": "pi_rt_bbb2",
+ "meter_ip": "192.168.1.146",
+ "cadence_s": 1.5,
+ "baseline_samples": 20,
+ "settle_s": 15,
+ "startup_skip_s": 8,
+ "window_s": 110,
+ "gap_s": 20,
+ "device": {
+  "type": "ssh",
+  "host": "192.168.1.102",
+  "user": "admin"
+ },
+ "runs": [
+  {
+   "name": "bbb_h264_rt",
+   "cmd": "ffmpeg -nostdin -re -i /dev/shm/decode/bbb_h264_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "bbb_hevc_rt",
+   "cmd": "ffmpeg -nostdin -re -i /dev/shm/decode/bbb_h265_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  }
+ ]
+}

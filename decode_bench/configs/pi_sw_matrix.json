@@ -1,0 +1,64 @@
+{
+ "_comment": "Pi5 software-decode ladder (no usable hw decode on this box: h264/hevc v4l2m2m 'no valid device', mpv finds no v4l2 hwdec). Full-speed decode via -stream_loop -1 (fills the window regardless of codec speed), -an (pure video), metered on Lab-A .146. Metric = sustained decode power; pair with fps timings for Wh/file. Comparable to input-master-sensitivity's sw ladder.",
+ "name": "pi_sw_matrix",
+ "meter_ip": "192.168.1.146",
+ "monitor_meter_ip": "192.168.1.199",
+ "cadence_s": 1.5,
+ "baseline_samples": 20,
+ "settle_s": 15,
+ "startup_skip_s": 6,
+ "window_s": 120,
+ "gap_s": 20,
+ "device": {
+  "type": "ssh",
+  "host": "192.168.1.102",
+  "user": "admin"
+ },
+ "runs": [
+  {
+   "name": "bbb_h264_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/bbb_h264_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "bbb_hevc_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/bbb_h265_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "bbb_av1_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/bbb_av1_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "meridian_h264_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/meridian_h264_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "meridian_hevc_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/meridian_h265_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "meridian_av1_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/meridian_av1_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "kranjska_h264_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/kranjska_h264_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "kranjska_hevc_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/kranjska_h265_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  },
+  {
+   "name": "kranjska_av1_sw",
+   "cmd": "ffmpeg -nostdin -stream_loop -1 -i /dev/shm/decode/kranjska_av1_6min.mp4 -an -f null - ",
+   "stop_cmd": "pkill -f ffmpeg"
+  }
+ ]
+}

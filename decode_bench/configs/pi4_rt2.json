@@ -1,0 +1,16 @@
+{
+  "_comment": "Pi 400 realtime sw arms for hevc/av1 — completes the Pi 400 realtime panel (h264 sw/hw rt already in pi4_matrix). Targeted stop_cmds only.",
+  "name": "pi4_rt2",
+  "meter_ip": "192.168.1.31",
+  "cadence_s": 1.5,
+  "baseline_samples": 20,
+  "settle_s": 15,
+  "startup_skip_s": 8,
+  "window_s": 150,
+  "gap_s": 15,
+  "device": {"type": "ssh", "host": "192.168.1.108", "user": "nebul2"},
+  "runs": [
+    {"name": "bbb_hevc_sw_rt", "cmd": "ffmpeg -nostdin -re -i /dev/shm/decode/bbb_h265_6min.mp4 -an -f null - ", "stop_cmd": "pkill -f 'ffmpeg.*bbb_h265'"},
+    {"name": "bbb_av1_sw_rt",  "cmd": "ffmpeg -nostdin -re -i /dev/shm/decode/bbb_av1_6min.mp4 -an -f null - ",  "stop_cmd": "pkill -f 'ffmpeg.*bbb_av1'"}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "_comment": "Pi 5 realtime-paced redo: hevc_rt (original contaminated by a stray pkill mid-window) + av1_rt confirming repeat (original +1.81 W is n=1 and surprising). Protocol identical to pi_rt_bbb: -re paced, -an, 150 s window, Lab-A .146.",
+  "name": "pi_rt_redo",
+  "meter_ip": "192.168.1.146",
+  "cadence_s": 1.5,
+  "baseline_samples": 20,
+  "settle_s": 15,
+  "startup_skip_s": 8,
+  "window_s": 150,
+  "gap_s": 15,
+  "device": {"type": "ssh", "host": "192.168.1.102", "user": "admin"},
+  "runs": [
+    {"name": "bbb_hevc_rt_redo", "cmd": "ffmpeg -nostdin -re -i /dev/shm/decode/bbb_h265_6min.mp4 -an -f null - ", "stop_cmd": "pkill -f 'ffmpeg.*bbb_h265'"},
+    {"name": "bbb_av1_rt_v2",    "cmd": "ffmpeg -nostdin -re -i /dev/shm/decode/bbb_av1_6min.mp4 -an -f null - ",  "stop_cmd": "pkill -f 'ffmpeg.*bbb_av1'"}
+  ]
+}

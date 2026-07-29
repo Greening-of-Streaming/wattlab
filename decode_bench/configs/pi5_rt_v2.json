@@ -1,0 +1,15 @@
+{
+  "_comment": "Pi 5 realtime n=2 repeats: h264_rt (v1 +3.32 W) to match the av1/hevc repeats. Protocol identical to pi_rt_bbb.",
+  "name": "pi5_rt_v2",
+  "meter_ip": "192.168.1.146",
+  "cadence_s": 1.5,
+  "baseline_samples": 20,
+  "settle_s": 15,
+  "startup_skip_s": 8,
+  "window_s": 150,
+  "gap_s": 15,
+  "device": {"type": "ssh", "host": "192.168.1.102", "user": "admin"},
+  "runs": [
+    {"name": "bbb_h264_rt_v2", "cmd": "ffmpeg -nostdin -re -i /dev/shm/decode/bbb_h264_6min.mp4 -an -f null - ", "stop_cmd": "pkill -f 'ffmpeg.*bbb_h264'"}
+  ]
+}

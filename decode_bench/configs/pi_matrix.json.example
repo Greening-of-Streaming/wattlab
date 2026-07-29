@@ -1,0 +1,25 @@
+{
+  "_comment": "Raspberry Pi decode-option matrix TEMPLATE. Copy to pi4.json / pi5.json, set host + meter_ip (spare P110 on the Pi's USB-C PSU — run bin/probe-p110-fw on it first). Commands below are the intended shapes — VERIFY flags on the Pi before a real round; RPi OS Bookworm ships patched ffmpeg/mpv for the HEVC hw path. mpv --hwdec=no|auto on the KMS console is the realtime playback arm (comparable to the Google TV rows); ffmpeg -f null is the pure-decode throughput arm (report Wh/file, NOT W — decode runs faster than realtime, add -re to pace it).",
+  "name": "pi5_matrix",
+  "meter_ip": "FILL_ME_SPARE_P110_IP",
+  "cadence_s": 1.5,
+  "baseline_samples": 20,
+  "settle_s": 15,
+  "startup_skip_s": 10,
+  "window_s": 300,
+  "gap_s": 15,
+  "device": {"type": "ssh", "host": "FILL_ME_PI_HOST", "user": "pi"},
+  "runs": [
+    {"name": "h264_sw_play",  "cmd": "mpv --fs --hwdec=no --mute=no http://192.168.1.62:8123/bbb_h264_6min.mp4",  "stop_cmd": "pkill mpv"},
+    {"name": "h264_hw_play",  "cmd": "mpv --fs --hwdec=auto http://192.168.1.62:8123/bbb_h264_6min.mp4",          "stop_cmd": "pkill mpv",
+     "_note": "Pi 4 only — Pi 5 has NO H.264 hw decode (block removed); on Pi 5 hwdec=auto falls back to sw, check mpv log"},
+    {"name": "hevc_sw_play",  "cmd": "mpv --fs --hwdec=no http://192.168.1.62:8123/bbb_h265_6min.mp4",            "stop_cmd": "pkill mpv"},
+    {"name": "hevc_hw_play",  "cmd": "mpv --fs --hwdec=auto http://192.168.1.62:8123/bbb_h265_6min.mp4",          "stop_cmd": "pkill mpv",
+     "_note": "hw HEVC on both: Pi 4 rpivid, Pi 5 HEVC block (V4L2 stateless)"},
+    {"name": "av1_sw_play",   "cmd": "mpv --fs --hwdec=no http://192.168.1.62:8123/bbb_av1_6min.mp4",             "stop_cmd": "pkill mpv",
+     "_note": "no AV1 hw on any Pi; dav1d sw — Pi 4 may drop frames at 1080p60, record mpv stats"},
+    {"name": "h264_sw_null",  "cmd": "ffmpeg -re -i http://192.168.1.62:8123/bbb_h264_6min.mp4 -f null -",        "stop_cmd": "pkill ffmpeg"},
+    {"name": "h264_hw_null",  "cmd": "ffmpeg -re -c:v h264_v4l2m2m -i http://192.168.1.62:8123/bbb_h264_6min.mp4 -f null -", "stop_cmd": "pkill ffmpeg",
+     "_note": "Pi 4 only"}
+  ]
+}
