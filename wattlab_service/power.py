@@ -389,65 +389,38 @@ async def wait_for_thermal_floor(reference_w: float,
                                   max_wait_s: int = 120,
                                   jobs: dict = None,
                                   job_id: str = None) -> dict:
-    """Block until N consecutive P110 readings are within ±tolerance_w of
-    reference_w, then return. Max-wait cap prevents the loop hanging on a
-    hot day where the floor itself has drifted up.
+    """Block until N consecutive P110 readings are at/below reference_w +
+    tolerance_w, then return (asymmetric settle — cooler than the captured
+    floor counts; the rationale note now lives in idle_wait.py). Max-wait
+    cap prevents the loop hanging on a hot day where the floor drifted up.
 
-    Updates jobs[job_id] with cooldown_w + cooldown_waited_s on every poll
-    so the UI can show live progress.
+    Since 2026-07-30 this delegates to idle_wait.wait_for_stable — the SAME
+    loop the decode rig's pre-baseline guard runs (self-stability mode) —
+    so the two measurement stacks share one settle implementation. This
+    wrapper contributes the OWL specifics: the P110 read, the live
+    jobs[job_id] cooldown_* fields, and the CR-070 operator-skip probe
+    (Lab-gated /job/{id}/cooldown-skip; picked up on the next 1 Hz poll).
 
-    Returns {'waited_s', 'final_w', 'settled' (bool), 'readings'}.
+    Returns {'waited_s', 'final_w', 'settled' (bool), 'readings', ...} —
+    contract unchanged.
     """
-    import asyncio, time
-    t0 = time.time()
-    consecutive = 0
-    readings = []
-    while True:
-        elapsed = time.time() - t0
-        if elapsed >= max_wait_s:
-            return {"waited_s": round(elapsed, 2),
-                    "final_w": readings[-1] if readings else None,
-                    "settled": False,
-                    "readings": readings,
-                    "reference_w": reference_w,
-                    "tolerance_w": tolerance_w}
-        # CR-070 — operator skip ("Run job anyway", pre-job idle guard only).
-        # The Lab-gated /job/{id}/cooldown-skip endpoint sets the flag; picked
-        # up here on the next 1 Hz poll, so skip latency is ≤ 1 s.
-        if jobs is not None and job_id is not None \
-                and (jobs.get(job_id) or {}).pop("cooldown_skip", None):
-            return {"waited_s": round(elapsed, 2),
-                    "final_w": readings[-1] if readings else None,
-                    "settled": False,
-                    "skipped": True,
-                    "readings": readings,
-                    "reference_w": reference_w,
-                    "tolerance_w": tolerance_w}
-        w = await get_power_watts()
-        readings.append(round(w, 2))
+    import idle_wait
+
+    def _on_sample(w: float, elapsed: float) -> None:
         if jobs is not None and job_id is not None:
-            jobs[job_id]["cooldown_w"] = round(w, 2)
-            jobs[job_id]["cooldown_waited_s"] = round(elapsed, 1)
+            jobs[job_id]["cooldown_w"] = w
+            jobs[job_id]["cooldown_waited_s"] = elapsed
             jobs[job_id]["cooldown_reference_w"] = reference_w
-        # Asymmetric settle: "at or below floor" counts as settled, "above
-        # floor by > tolerance" does not. A reading at or below the captured
-        # reference means residual heat has dissipated — there's no reason
-        # to wait for power to come back UP to a match. Without this, runs
-        # where the system genuinely cooled below the captured reference
-        # (focus mode reducing background load, ambient drop, VRAM freed
-        # since the reference was captured) blocked forever and timed out.
-        if w <= reference_w + tolerance_w:
-            consecutive += 1
-            if consecutive >= settle_polls:
-                return {"waited_s": round(time.time() - t0, 2),
-                        "final_w": round(w, 2),
-                        "settled": True,
-                        "readings": readings,
-                        "reference_w": reference_w,
-                        "tolerance_w": tolerance_w}
-        else:
-            consecutive = 0
-        await asyncio.sleep(poll_interval_s)
+
+    def _should_skip() -> bool:
+        return (jobs is not None and job_id is not None
+                and bool((jobs.get(job_id) or {}).pop("cooldown_skip", None)))
+
+    return await idle_wait.wait_for_stable(
+        get_power_watts, reference_w=reference_w, tolerance_w=tolerance_w,
+        settle_polls=settle_polls, max_wait_s=max_wait_s,
+        poll_interval_s=poll_interval_s,
+        on_sample=_on_sample, should_skip=_should_skip)
 
 
 class CooldownCancelled(Exception):
