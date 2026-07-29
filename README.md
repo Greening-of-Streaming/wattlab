@@ -63,6 +63,7 @@ Published findings live at [`/findings`](https://wattlab.greeningofstreaming.org
 
 - **AV1 hardware vs software** ⭐ — same 1500 kbps target: hw uses ~55% less energy but loses ~2 VMAF and produces ~40% larger files. ([finding](https://wattlab.greeningofstreaming.org/findings/av1-hw-sw-vmaf-tradeoff))
 - **ABR all-codecs** — H.264 / H.265 / AV1 at typical streaming bitrates, CPU vs GPU; GPU wins on time and energy across all three. ([finding](https://wattlab.greeningofstreaming.org/findings/abr-all-codecs-meridian-120s))
+- **Hardware decoder worth ~4× on the client** (draft) — same board, same file: hw H.264 decode +0.35 W vs software +1.25 W; a device that drops the silicon (Pi 5) pays ~4.5×. ([finding](https://wattlab.greeningofstreaming.org/findings/hw-decoder-cuts-client-energy-4x))
 - **LLM cold inference** 🟡 — per-token energy across the size ladder (pre-S30 panel; refresh pending).
 - **RAG faithfulness** 🟡 — retrieval works at small scale, but smaller models still hallucinate against correctly-retrieved chunks.
 
@@ -105,7 +106,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 The service runs as a systemd unit on GoS1 (`systemctl status wattlab`).
 
-**Run the tests:** `cd wattlab_service && pytest tests/` — 628 tests (the suite must be run from `wattlab_service/`; its `conftest.py` sets up the import path).
+**Run the tests:** `cd wattlab_service && pytest tests/` — 896 tests as of 2026-07-29, count drifts upward (the suite must be run from `wattlab_service/`; its `conftest.py` sets up the import path).
 
 ---
 
