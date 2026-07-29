@@ -36,7 +36,7 @@ def _refuse(e: rig.RigError) -> JSONResponse:
 async def decode_page(request: Request):
     options = "".join(
         f'<option value="{k}">{r["label"]}</option>'
-        for k, r in decode_run.RECIPES.items())
+        for k, r in decode_run.TEMPLATES.items())
     return ui.render_page(request, "Decode Rig", styles=_STYLES,
                           body=_BODY.replace("{RECIPE_OPTIONS}", options),
                           tail=_JS)
@@ -44,16 +44,33 @@ async def decode_page(request: Request):
 
 @router.post("/decode/run", dependencies=[Depends(requires(RIG_CONTROL))])
 async def decode_run_start(request: Request, payload: dict):
-    key = (payload or {}).get("recipe")
-    if key not in decode_run.RECIPES:
-        return JSONResponse({"error": f"unknown recipe {key!r}"}, status_code=400)
-    recipe = decode_run.RECIPES[key]
+    p = payload or {}
+    tpl_key = p.get("template")
+    mode = p.get("mode", "headless")
+    devices = p.get("devices") or []
+    calibrate = bool(p.get("calibrate", True))
+    if tpl_key not in decode_run.TEMPLATES:
+        return JSONResponse({"error": f"unknown template {tpl_key!r}"},
+                            status_code=400)
+    if mode not in decode_run.MODES:
+        return JSONResponse({"error": f"unknown mode {mode!r}"}, status_code=400)
+    bad = [d for d in devices if d not in rig.RIG["devices"]]
+    if bad or not devices:
+        return JSONResponse({"error": f"bad device selection {devices!r}"},
+                            status_code=400)
+    if mode == "screen" and len(devices) != 1:
+        return JSONResponse({"error": "screen mode is exclusive — pick "
+                                      "exactly one device"}, status_code=400)
+    tpl = decode_run.TEMPLATES[tpl_key]
     job_id = str(uuid.uuid4())[:8]
+    label = (f"decode {mode} — {tpl['label']} on "
+             + ", ".join(rig.RIG['devices'][d]['label'] for d in devices))
 
-    async def coro(job_id=job_id, key=key):
-        await decode_run.run_decode_job(job_id, key)
+    async def coro(job_id=job_id):
+        await decode_run.run_decode_job(job_id, tpl_key, devices, mode,
+                                        calibrate)
 
-    position = queue_control.enqueue(job_id, "decode", recipe["label"], coro,
+    position = queue_control.enqueue(job_id, "decode", label, coro,
                                      request=request, page="/decode")
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."},
@@ -65,9 +82,17 @@ async def decode_run_start(request: Request, payload: dict):
             dependencies=[Depends(requires(RIG_CONTROL))])
 async def decode_job_status(job_id: str):
     s = _job_status(job_id)
-    if s.get("phase_started"):
-        s["phase_elapsed_s"] = round(time.monotonic() - s["phase_started"], 1)
-        s.pop("phase_started", None)
+    now = time.monotonic()
+    devs = s.get("devices")
+    if isinstance(devs, dict):
+        out = {}
+        for name, sub in devs.items():
+            sub = dict(sub)
+            if sub.get("phase_started"):
+                sub["phase_elapsed_s"] = round(now - sub["phase_started"], 1)
+            sub.pop("phase_started", None)
+            out[name] = sub
+        s = {**s, "devices": out}
     return s
 
 
@@ -229,15 +254,29 @@ _BODY = """
   </div>
 
   <div class="rig-run">
-    <h3>Run a recipe</h3>
+    <h3>Run</h3>
     <div class="rig-runrow">
+      <label><input type="radio" name="mode" value="headless" checked
+             onchange="modeChanged()"> headless — parallel</label>
+      <label><input type="radio" name="mode" value="screen"
+             onchange="modeChanged()"> on screen — exclusive</label>
+    </div>
+    <div class="rig-runrow" id="dev-picks" style="margin-top:0.4rem">
+      <label><input type="checkbox" id="dev-pi5" checked> Pi 5</label>
+      <label><input type="checkbox" id="dev-pi400" checked> Pi 400</label>
+      <label><input type="checkbox" id="dev-gtv"> Google TV</label>
+      <label id="cal-wrap" style="display:none">
+        <input type="checkbox" id="calibrate" checked>
+        white/black panel calibration</label>
+    </div>
+    <div class="rig-runrow" style="margin-top:0.4rem">
       <select id="recipe">{RECIPE_OPTIONS}</select>
       <button class="rig-btn" id="btn-run" onclick="runRecipe()">Run</button>
     </div>
-    <div class="rig-detail" style="margin-top:0.3rem">Powers the device if
-      needed, stages clips, then runs the July decode protocol (settle →
-      baseline → play → confidence). Runs queue behind any measurement in
-      progress.</div>
+    <div class="rig-detail" style="margin-top:0.3rem" id="run-hint">Headless:
+      selected devices measure in parallel (each on its own meter); GTV rows
+      are indicative (Android always renders). Screen mode claims the monitor
+      and meters it as context.</div>
     <div id="run-status" style="margin-top:0.7rem"></div>
   </div>
 
@@ -409,14 +448,80 @@ async function tick() {
 tick();
 setInterval(tick, 2500);
 
-// --- Recipe runs ---
-var PHASE_LABELS = {settle:'Settle', baseline:'Baseline', starting:'Start playback',
-                    sampling:'Sampling', finishing:'Confidence'};
+// --- Runs (v2: mode + device fan-out) ---
+var PHASE_LABELS = {device:'Power device', staging:'Stage clips',
+                    settle:'Settle', baseline:'Baseline',
+                    starting:'Start playback', sampling:'Sampling',
+                    finishing:'Confidence', done:'Done', error:'Error'};
+var DEV_LABELS = {pi5:'Pi 5', pi400:'Pi 400', gtv:'Google TV'};
+
+function modeChanged() {
+  var screen = document.querySelector('input[name=mode]:checked').value === 'screen';
+  document.getElementById('cal-wrap').style.display = screen ? '' : 'none';
+  if (screen) {  // enforce single selection
+    var first = true;
+    ['pi5','pi400','gtv'].forEach(function(d){
+      var cb = document.getElementById('dev-' + d);
+      if (cb.checked && !first) cb.checked = false;
+      if (cb.checked) first = false;
+    });
+  }
+}
 
 function stageRow(icon, color, label, extra) {
   return '<div class="rig-stage"><span style="color:' + color + ';width:1rem">'
        + icon + '</span><span style="color:' + color + '">' + label + '</span>'
        + (extra || '') + '</div>';
+}
+
+function deviceProgress(name, sub, j) {
+  var h = '<div class="rig-tile" style="min-width:13rem"><h3>'
+        + (DEV_LABELS[name] || name) + '</h3>';
+  if (sub.stage === 'error') {
+    h += '<div class="rig-err">✗ ' + (sub.detail || 'failed') + '</div></div>';
+    return h;
+  }
+  var names = ['device', 'staging'].concat((j.phases || []).map(function(p){ return p[0]; }));
+  var cur = names.indexOf(sub.stage);
+  if (sub.stage === 'done') cur = names.length;
+  if (sub.row && j.row_n > 1)
+    h += '<div class="rig-detail">row ' + sub.row + ' / ' + j.row_n + '</div>';
+  for (var i = 0; i < names.length; i++) {
+    var n = names[i], lbl = PHASE_LABELS[n] || n;
+    if (i < cur) h += stageRow('✓', 'var(--accent)', lbl);
+    else if (i === cur) {
+      var extra = '';
+      var ph = (j.phases || []).filter(function(p){ return p[0] === n; })[0];
+      if (ph && sub.phase_elapsed_s != null) {
+        var pct = Math.min(98, 100 * sub.phase_elapsed_s / ph[1]);
+        extra = '<span class="rig-detail" style="margin-left:0.5rem">'
+              + Math.round(sub.phase_elapsed_s) + '/' + ph[1] + 's</span>'
+              + '<span style="flex:1;max-width:8rem;margin-left:0.5rem" class="rig-bar">'
+              + '<span style="display:block;height:100%;width:' + pct.toFixed(0)
+              + '%;background:var(--warn)"></span></span>';
+      }
+      h += stageRow('▶', 'var(--warn)', lbl, extra);
+    } else h += stageRow('·', 'var(--text-5)', lbl);
+  }
+  if (sub.stage === 'done') h += stageRow('✓', 'var(--accent)', 'Done');
+  if (sub.detail) h += '<div class="rig-detail">' + sub.detail + '</div>';
+  return h + '</div>';
+}
+
+function resultTable(result) {
+  var rows = (result && result.runs) || [];
+  if (!rows.length) return '';
+  var h = '<table class="rig-rows">';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (r.error) { h += '<tr><td>' + (DEV_LABELS[r.device] || r.device) + ' ' + r.run
+                      + '</td><td colspan=3>✗ ' + r.error + '</td></tr>'; continue; }
+    var flag = (r.confidence && r.confidence.flag) || '';
+    h += '<tr><td>' + (DEV_LABELS[r.device] || r.device) + '</td><td>' + r.run + '</td>'
+       + '<td>base ' + r.w_base + ' W</td><td>task ' + r.w_task + ' W</td>'
+       + '<td><b>ΔW ' + (r.delta_w >= 0 ? '+' : '') + r.delta_w + '</b> ' + flag + '</td></tr>';
+  }
+  return h + '</table>';
 }
 
 function renderJob(j) {
@@ -429,48 +534,18 @@ function renderJob(j) {
     el.innerHTML = stageRow('…', 'var(--warn)',
       'queued — position ' + (j.queue_position || '?')); return false;
   }
-  var h = '';
-  if (j.row && j.row_n > 1) h += '<div class="rig-detail">row ' + j.row + ' / ' + j.row_n + '</div>';
+  var h = '<div class="rig-tiles">';
+  var devs = j.devices || {};
+  for (var name in devs) h += deviceProgress(name, devs[name], j);
+  h += '</div>';
   if (j.status === 'done') {
     h += stageRow('✓', 'var(--accent)', 'done — result saved');
-    var rows = (j.result && j.result.runs) || [];
-    if (rows.length) {
-      h += '<table class="rig-rows">';
-      for (var i = 0; i < rows.length; i++) {
-        var r = rows[i];
-        if (r.error) { h += '<tr><td>' + r.run + '</td><td colspan=3>✗ ' + r.error + '</td></tr>'; continue; }
-        var flag = (r.confidence && r.confidence.flag) || '';
-        h += '<tr><td>' + r.run + '</td><td>base ' + r.w_base + ' W</td>'
-           + '<td>task ' + r.w_task + ' W</td><td><b>ΔW ' + (r.delta_w >= 0 ? '+' : '')
-           + r.delta_w + '</b> ' + flag + '</td></tr>';
-      }
-      h += '</table>';
-    }
+    if (j.partial_errors)
+      h += '<div class="rig-err">partial: ' + JSON.stringify(j.partial_errors) + '</div>';
+    h += resultTable(j.result);
     el.innerHTML = h;
     return true;
   }
-  // running: walk phases
-  var names = ['device', 'staging'].concat((j.phases || []).map(function(p){ return p[0]; }));
-  var labels = {device: 'Power device', staging: 'Stage clips'};
-  var cur = names.indexOf(j.stage);
-  for (var i = 0; i < names.length; i++) {
-    var n = names[i], lbl = labels[n] || PHASE_LABELS[n] || n;
-    if (i < cur) h += stageRow('✓', 'var(--accent)', lbl);
-    else if (i === cur) {
-      var extra = '';
-      var ph = (j.phases || []).filter(function(p){ return p[0] === n; })[0];
-      if (ph && j.phase_elapsed_s != null) {
-        var pct = Math.min(98, 100 * j.phase_elapsed_s / ph[1]);
-        extra = '<span class="rig-detail" style="margin-left:0.5rem">'
-              + Math.round(j.phase_elapsed_s) + ' / ~' + ph[1] + ' s</span>'
-              + '<span style="flex:1;max-width:10rem;margin-left:0.6rem" class="rig-bar">'
-              + '<span style="display:block;height:100%;width:' + pct.toFixed(0)
-              + '%;background:var(--warn)"></span></span>';
-      }
-      h += stageRow('▶', 'var(--warn)', lbl, extra);
-    } else h += stageRow('·', 'var(--text-5)', lbl);
-  }
-  if (j.detail) h += '<div class="rig-detail">' + j.detail + '</div>';
   el.innerHTML = h;
   return false;
 }
@@ -485,12 +560,20 @@ async function pollJob(id) {
 }
 
 async function runRecipe() {
-  var key = document.getElementById('recipe').value;
+  var mode = document.querySelector('input[name=mode]:checked').value;
+  var devices = ['pi5','pi400','gtv'].filter(function(d){
+    return document.getElementById('dev-' + d).checked; });
+  if (!devices.length) { err('pick at least one device'); return; }
+  if (mode === 'screen' && devices.length !== 1) {
+    err('screen mode is exclusive — pick exactly one device'); return; }
+  var body = {template: document.getElementById('recipe').value,
+              mode: mode, devices: devices,
+              calibrate: document.getElementById('calibrate').checked};
   document.getElementById('btn-run').disabled = true;
   try {
     var r = await fetch('/decode/run', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({recipe:key})});
+      body: JSON.stringify(body)});
     var j = await r.json();
     if (!r.ok) { err(j.error || ('HTTP ' + r.status));
                  document.getElementById('btn-run').disabled = false; return; }

@@ -1,4 +1,4 @@
-"""Stage-2 decode recipes: materialisation, phase parsing, route gating."""
+"""Decode run v2: templates × devices × modes, materialisation, route gating."""
 import json
 
 from fastapi.testclient import TestClient
@@ -12,41 +12,58 @@ _ANON = {"x-real-ip": "8.8.8.8"}
 client = TestClient(main.app)
 
 
-def test_recipes_reference_real_rig_devices():
-    for key, r in decode_run.RECIPES.items():
-        assert r["device"] in rig.RIG["devices"], key
-        assert r["bench"]["runs"], key
+def test_templates_are_device_agnostic():
+    for key, t in decode_run.TEMPLATES.items():
+        assert t["clips"], key
+        assert "device" not in t, key   # devices compose at run time
 
 
-def test_materialize_uses_live_rig_addresses(tmp_path, monkeypatch):
-    p = decode_run._materialize("testjob1", "gtv_smoke")
+def test_materialize_headless_pi_uses_null_sink(tmp_path):
+    p = decode_run._materialize("tj1", "bbb_h264_rt", "pi5", "headless", False)
     try:
         cfg = json.loads(p.read_text())
-        assert cfg["meter_ip"] == rig.RIG["devices"]["gtv"]["plug_ip"]
-        assert cfg["device"]["serial"] == rig.RIG["devices"]["gtv"]["target"]
-        assert cfg["monitor_meter_ip"] == rig.RIG["monitor"]["plug_ip"]
+        assert cfg["meter_ip"] == rig.RIG["devices"]["pi5"]["plug_ip"]
+        assert cfg["device"]["type"] == "ssh"
+        assert "-f null" in cfg["runs"][0]["cmd"]
+        assert "monitor_meter_ip" not in cfg
         assert "192.168.1.35" not in p.read_text()   # Lab-C guard
     finally:
         p.unlink()
 
 
-def test_materialize_ssh_device_splits_target():
-    p = decode_run._materialize("testjob2", "pi5_h264_rt")
+def test_materialize_screen_pi_uses_mpv_and_monitor_context(tmp_path):
+    p = decode_run._materialize("tj2", "bbb_h264_rt", "pi5", "screen", True)
     try:
         cfg = json.loads(p.read_text())
-        assert cfg["device"] == {"type": "ssh", "host": "192.168.1.102",
-                                 "user": "admin"}
+        assert cfg["monitor_meter_ip"] == rig.RIG["monitor"]["plug_ip"]
+        names = [r["name"] for r in cfg["runs"]]
+        assert names[:2] == ["panel_cal_white", "panel_cal_black"]
+        assert all(r["window_s"] == decode_run._CAL_WINDOW_S
+                   for r in cfg["runs"][:2])
+        assert "mpv --fs" in cfg["runs"][-1]["cmd"]
+    finally:
+        p.unlink()
+
+
+def test_materialize_gtv_uses_urls():
+    p = decode_run._materialize("tj3", "bbb_codecs_rt", "gtv", "headless", False)
+    try:
+        cfg = json.loads(p.read_text())
+        assert cfg["device"]["type"] == "adb"
+        assert all(r["url"].startswith(decode_run.STREAM_BASE_URL)
+                   for r in cfg["runs"])
+        assert len(cfg["runs"]) == 3
     finally:
         p.unlink()
 
 
 def test_phase_patterns_match_bench_output():
     lines = {
-        "[12:00:01] bbb_h264_smoke: settle 15s": "settle",
-        "[12:00:16] bbb_h264_smoke: baseline 20 samples @1.5s": "baseline",
-        "[12:00:46] bbb_h264_smoke: started — sampling 90s": "sampling",
-        "[12:02:20] bbb_h264_smoke: base=1.02W task=1.90W dW=+0.88W (🟢) "
-        "alive_at_end=True": "finishing",
+        "[12:00:01] x: settle 15s": "settle",
+        "[12:00:16] x: baseline 20 samples @1.5s": "baseline",
+        "[12:00:46] x: started — sampling 90s": "sampling",
+        "[12:02:20] x: base=1.02W task=1.90W dW=+0.88W (🟢) alive_at_end=True":
+            "finishing",
     }
     for line, expected in lines.items():
         hit = None
@@ -57,25 +74,34 @@ def test_phase_patterns_match_bench_output():
         assert hit == expected, line
 
 
-def test_recipe_phases_have_durations():
-    for key, r in decode_run.RECIPES.items():
-        phases = decode_run.recipe_phases(r)
-        assert [p[0] for p in phases] == ["settle", "baseline", "starting",
-                                          "sampling", "finishing"]
-        assert all(p[1] > 0 for p in phases)
-
-
-def test_run_endpoint_validates_recipe():
-    r = client.post("/decode/run", headers=_LAB, json={"recipe": "nope"})
-    assert r.status_code == 400
+def test_run_endpoint_validations():
+    assert client.post("/decode/run", headers=_LAB, json={
+        "template": "nope", "devices": ["pi5"], "mode": "headless"
+    }).status_code == 400
+    assert client.post("/decode/run", headers=_LAB, json={
+        "template": "bbb_h264_rt", "devices": [], "mode": "headless"
+    }).status_code == 400
+    assert client.post("/decode/run", headers=_LAB, json={
+        "template": "bbb_h264_rt", "devices": ["toaster"], "mode": "headless"
+    }).status_code == 400
+    assert client.post("/decode/run", headers=_LAB, json={
+        "template": "bbb_h264_rt", "devices": ["pi5"], "mode": "sideways"
+    }).status_code == 400
+    assert client.post("/decode/run", headers=_LAB, json={
+        "template": "bbb_h264_rt", "devices": ["pi5", "gtv"], "mode": "screen"
+    }).status_code == 400
 
 
 def test_run_endpoint_lab_only():
-    r = client.post("/decode/run", headers=_ANON, json={"recipe": "gtv_smoke"})
+    r = client.post("/decode/run", headers=_ANON, json={
+        "template": "bbb_h264_rt", "devices": ["pi5"], "mode": "headless"})
     assert r.status_code == 403
 
 
-def test_page_lists_recipes():
+def test_page_has_mode_and_device_controls():
     page = client.get("/decode", headers=_LAB).text
-    for key in decode_run.RECIPES:
+    for frag in ("headless — parallel", "on screen — exclusive",
+                 "dev-pi5", "dev-pi400", "dev-gtv", "calibrate"):
+        assert frag in page, frag
+    for key in decode_run.TEMPLATES:
         assert key in page
