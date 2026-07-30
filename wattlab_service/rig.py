@@ -63,6 +63,10 @@ RIG: dict = {
             "kind": "ssh", "target": "admin@192.168.1.102",
             "expected_boot_s": 29, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
+            # Known settled idle (W) — the decode guard's reference floor
+            # (stability alone settles on post-boot plateaus; see the
+            # 2026-07-30 negative-ΔW row that motivated this).
+            "idle_w": 3.4,
         },
         "pi400": {
             "label": "Pi 400", "plug_name": "Lab-B",
@@ -70,6 +74,7 @@ RIG: dict = {
             "kind": "ssh", "target": "nebul2@192.168.1.108",
             "expected_boot_s": 45, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
+            "idle_w": 3.0,
         },
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
@@ -79,6 +84,7 @@ RIG: dict = {
             "kind": "adb", "target": "192.168.1.189:5555",
             "expected_boot_s": 90, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
+            "idle_w": 1.0,
         },
     },
     "monitor": {

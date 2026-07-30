@@ -200,7 +200,13 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
                 ("cadence_s", "settle_s", "baseline_samples",
                  "protocol_version")})
     if proto["idle_guard"]:
-        cfg["idle_guard"] = proto["idle_guard"]
+        # Reference mode when the device's settled idle is known (rig
+        # config) — same asymmetric floor semantics as GoS1's CR-070 guard.
+        # Self-stability alone settles on post-boot plateaus (negative-ΔW
+        # incident 2026-07-30, run 57e8ba84).
+        cfg["idle_guard"] = dict(proto["idle_guard"])
+        if dev_cfg.get("idle_w") is not None:
+            cfg["idle_guard"]["reference_w"] = dev_cfg["idle_w"]
     if marked:
         cfg["startup_skip_s"] = proto["screen_startup_skip_s"]
     cfg["name"] = f"ui-{tpl_key}-{job_id}-{dev_name}"

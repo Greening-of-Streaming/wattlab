@@ -141,6 +141,8 @@ def test_materialize_injects_settings_protocol(monkeypatch):
         assert c["cadence_s"] == 1.0
         assert c["protocol_version"] == 3
         assert c["idle_guard"]["settle_polls"] == 4
+        # Reference-floor mode from the rig's known idle (2026-07-30 fix)
+        assert c["idle_guard"]["reference_w"] == rig.RIG["devices"]["pi5"]["idle_w"]
     finally:
         p.unlink()
 

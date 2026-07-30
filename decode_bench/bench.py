@@ -204,7 +204,8 @@ def wait_for_stable_idle(meters, ig, cadence):
     return asyncio.run(idle_wait.wait_for_stable(
         _read, tolerance_w=ig["tolerance_w"],
         settle_polls=ig["settle_polls"], max_wait_s=ig["max_wait_s"],
-        poll_interval_s=cadence))
+        reference_w=ig.get("reference_w"),   # floor mode when known (CR-070
+        poll_interval_s=cadence))            # semantics); else self-stability
 
 
 def one_run(dev, meters, run, cfg, results_dir):
