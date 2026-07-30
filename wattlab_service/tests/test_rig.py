@@ -81,7 +81,9 @@ def test_master_off_means_unpowered(monkeypatch):
                 "apower_w": 0.0, "gen": 2, "switchable": True}
     monkeypatch.setattr(rig, "shelly_status", _master)
     _run(rig.poll_once())
-    for d in rig.rig_cache["devices"].values():
+    for name, d in rig.rig_cache["devices"].items():
+        if rig.RIG["devices"][name].get("parked"):
+            continue
         assert d["state"] == "unpowered"
     payload = rig.status_payload()
     assert payload["saving_note"] and "saving" in payload["saving_note"]
@@ -221,7 +223,9 @@ def test_tapo_master_off_unpowers_devices(monkeypatch):
         return {"on": False, "watts": 0.0, "ip": ip}
     monkeypatch.setattr(rig, "plug_status", _status)
     _run(rig.poll_once())
-    for d in rig.rig_cache["devices"].values():
+    for name, d in rig.rig_cache["devices"].items():
+        if rig.RIG["devices"][name].get("parked"):
+            continue
         assert d["state"] == "unpowered"
 
 

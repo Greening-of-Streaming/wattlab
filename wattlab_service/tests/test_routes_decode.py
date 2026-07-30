@@ -99,7 +99,8 @@ def test_status_shape():
     body = r.json()
     assert set(body) == {"master", "monitor", "devices", "screen_owner",
                          "screen_settling", "total_w", "saving_note", "age_s"}
-    assert set(body["devices"]) == set(rig.RIG["devices"])
+    expected = {n for n, c in rig.RIG["devices"].items() if not c.get("parked")}
+    assert set(body["devices"]) == expected
 
 
 def test_unknown_action_400():
