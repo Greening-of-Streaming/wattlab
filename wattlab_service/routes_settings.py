@@ -441,6 +441,12 @@ async def settings_page(request: Request):
     {field("decode_idle_settle_polls", s.get('decode_idle_settle_polls', 4), 2, 10, "polls", "idle guard: N consecutive readings that must agree")}
     {field("decode_idle_max_wait_s", s.get('decode_idle_max_wait_s', 60), 10, 300, "s", "idle guard: cap before proceeding unsettled (recorded in the row)")}
     {field("decode_screen_startup_skip_s", s.get('decode_screen_startup_skip_s', 5), 0, 30, "s", "screen rows: skip after playback start (absorbs the 1080p mode re-sync)")}
+    <div class="row"><label for="rig_master_tapo_ip">rig_master_tapo_ip</label>
+      <input type="text" id="rig_master_tapo_ip" value="{s.get('rig_master_tapo_ip', '')}"
+             placeholder="e.g. 192.168.1.94" style="width:11rem">
+      <span class="hint">Tapo P110 acting as the strip's master SWITCH (wall → this plug →
+      Shelly meter → strip). Empty = no switchable master (installed Shelly is metering-only).
+      The /decode Rig on/off button appears automatically when set.</span></div>
 
     <div class="section" id="s-staging">Staging</div>
     {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
@@ -595,7 +601,7 @@ async def settings_page(request: Request):
                             'bench_video_reps'];
         const bool_fields = ['cooldown_wait_for_idle','cooldown_show_wait_detail',
                              'decode_idle_guard'];
-        const str_fields = ['members'];
+        const str_fields = ['members','rig_master_tapo_ip'];
         const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};
         for (const f of num_fields) {{

@@ -127,6 +127,18 @@ def shelly_ip() -> str | None:
         return RIG["shelly_ip"]
 
 
+def master_tapo_ip() -> str | None:
+    """Optional Tapo P110 acting as the strip's MASTER SWITCH (the installed
+    Shelly Plug PM is metering-only — no relay, verified at RPC level
+    2026-07-29). Chain: wall → this P110 (switch) → Shelly (meter) → strip.
+    Settings key `rig_master_tapo_ip`; None ⇒ no switchable master."""
+    try:
+        import settings as _cfg
+        return (_cfg.load().get("rig_master_tapo_ip") or "").strip() or None
+    except Exception:
+        return None
+
+
 # --- Tapo plug control (arbitrary IPs) --------------------------------------
 #
 # Same recovery pattern as power.py's _read_meter_watts: cached handle per IP,
@@ -274,20 +286,51 @@ def _shelly_set_sync(ip: str, on: bool) -> None:
 
 
 async def shelly_status() -> dict:
-    """{"configured", "reachable", "on" (None when meter-only), "apower_w",
-    "gen", "switchable"}. Never raises."""
+    """Master status — a switchable Tapo master (wall→P110→Shelly→strip)
+    takes precedence when configured; else the Shelly (switch if it has a
+    relay, meter otherwise). {"configured", "reachable", "on" (None when
+    meter-only), "apower_w", "gen", "switchable", "kind"}. Never raises.
+
+    With a Tapo master OFF, the downstream Shelly meter is unpowered — the
+    Tapo's own reading (≈0 W) stands in, so the strip bar shows 0.0 W
+    instead of 'not answering'."""
+    t_ip = master_tapo_ip()
+    if t_ip:
+        try:
+            ps = await plug_status(t_ip)
+            out = {"configured": True, "reachable": True, "on": ps["on"],
+                   "apower_w": round(ps["watts"], 1), "gen": None,
+                   "switchable": True, "kind": "tapo"}
+        except Exception:
+            return {"configured": True, "reachable": False, "on": None,
+                    "apower_w": None, "gen": None, "switchable": True,
+                    "kind": "tapo"}
+        # Prefer the inline Shelly's reading while the strip is live (it
+        # excludes the master's own relay draw); fall back to the Tapo's.
+        if ps["on"]:
+            s_ip = shelly_ip()
+            if s_ip:
+                try:
+                    s = await asyncio.to_thread(_shelly_status_sync, s_ip)
+                    if s.get("apower_w") is not None:
+                        out["apower_w"] = round(s["apower_w"], 1)
+                except Exception:
+                    pass
+        return out
     ip = shelly_ip()
     if not ip:
         return {"configured": False, "reachable": False, "on": None,
-                "apower_w": None, "gen": None, "switchable": False}
+                "apower_w": None, "gen": None, "switchable": False,
+                "kind": None}
     try:
         s = await asyncio.to_thread(_shelly_status_sync, ip)
-        return {"configured": True, "reachable": True, **s}
+        return {"configured": True, "reachable": True, "kind": "shelly", **s}
     except Exception:
         caps = _SHELLY_GEN.get(ip) or {}
         return {"configured": True, "reachable": False, "on": None,
                 "apower_w": None, "gen": caps.get("gen"),
-                "switchable": caps.get("switchable", False)}
+                "switchable": caps.get("switchable", False),
+                "kind": "shelly"}
 
 
 async def shelly_set(on: bool) -> None:
@@ -657,11 +700,12 @@ async def monitor_power(on: bool) -> None:
 
 
 async def master_power(on: bool) -> None:
-    """Master toggle. With a relay-equipped Shelly this switches the strip
-    (off refused until every device is down). With the metering-only Plug PM
-    it degrades to a SOFTWARE master: 'off' gracefully stops every powered
-    box; 'on' is refused — boxes are powered individually so the monitor's
-    auto-switch stays deterministic."""
+    """Master toggle. With a switchable master (Tapo P110 at the wall, or a
+    relay-equipped Shelly) this switches the strip (off refused until every
+    device is down). With only the metering Plug PM it degrades to a
+    SOFTWARE master: 'off' gracefully stops every powered box; 'on' is
+    refused — boxes are powered individually so the monitor's auto-switch
+    stays deterministic."""
     switchable = rig_cache["master"].get("switchable")
     if switchable:
         if not on:
@@ -671,7 +715,11 @@ async def master_power(on: bool) -> None:
             if lively:
                 raise RigError(409,
                                "power devices off first: " + ", ".join(lively))
-        await shelly_set(on)
+        t_ip = master_tapo_ip()
+        if t_ip:
+            await plug_set(t_ip, on)
+        else:
+            await shelly_set(on)
         return
     if on:
         raise RigError(400, "no strip relay — power boxes individually (the "

@@ -25,6 +25,7 @@ def _fresh_rig(monkeypatch):
     rig._OP_LOCKS.clear()   # asyncio locks can't be reused across event loops
     rig.rig_cache["screen_owner"] = None
     monkeypatch.setattr(rig, "shelly_ip", lambda: None)
+    monkeypatch.setattr(rig, "master_tapo_ip", lambda: None)
     monkeypatch.setattr(rig, "probe_ready", lambda dev: False)
     monkeypatch.setattr(rig, "send_shutdown", lambda dev: None)
     monkeypatch.setattr(rig, "set_signal", lambda dev, on: None)
@@ -167,6 +168,61 @@ def test_software_master_off_refused_while_busy():
     with pytest.raises(rig.RigError) as e:
         _run(rig.master_power(False))
     assert e.value.status == 409
+
+
+def test_tapo_master_is_switchable(monkeypatch):
+    monkeypatch.setattr(rig, "master_tapo_ip", lambda: "10.0.0.5")
+
+    async def _status(ip, **kw):
+        assert ip == "10.0.0.5"
+        return {"on": True, "watts": 5.44, "ip": ip}
+    monkeypatch.setattr(rig, "plug_status", _status)
+    s = _run(rig.shelly_status())
+    assert s["switchable"] is True
+    assert s["kind"] == "tapo"
+    assert s["on"] is True
+    assert s["apower_w"] == 5.4
+
+
+def test_tapo_master_off_shows_zero_not_unreachable(monkeypatch):
+    """Master off ⇒ the downstream Shelly meter is dark; the Tapo's own
+    reading stands in so the strip bar shows 0.0 W."""
+    monkeypatch.setattr(rig, "master_tapo_ip", lambda: "10.0.0.5")
+
+    async def _status(ip, **kw):
+        return {"on": False, "watts": 0.0, "ip": ip}
+    monkeypatch.setattr(rig, "plug_status", _status)
+    s = _run(rig.shelly_status())
+    assert s["reachable"] is True
+    assert s["on"] is False
+    assert s["apower_w"] == 0.0
+
+
+def test_tapo_master_power_uses_plug_set(monkeypatch):
+    monkeypatch.setattr(rig, "master_tapo_ip", lambda: "10.0.0.5")
+    rig.rig_cache["master"]["switchable"] = True
+    calls = []
+
+    async def _set(ip, on, **kw):
+        calls.append((ip, on))
+    monkeypatch.setattr(rig, "plug_set", _set)
+    _run(rig.master_power(True))
+    assert calls == [("10.0.0.5", True)]
+    # off refused while a device is up (same rule as the relay Shelly)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    with pytest.raises(rig.RigError):
+        _run(rig.master_power(False))
+
+
+def test_tapo_master_off_unpowers_devices(monkeypatch):
+    monkeypatch.setattr(rig, "master_tapo_ip", lambda: "10.0.0.5")
+
+    async def _status(ip, **kw):
+        return {"on": False, "watts": 0.0, "ip": ip}
+    monkeypatch.setattr(rig, "plug_status", _status)
+    _run(rig.poll_once())
+    for d in rig.rig_cache["devices"].values():
+        assert d["state"] == "unpowered"
 
 
 def test_busy_device_refuses_power_ops():
