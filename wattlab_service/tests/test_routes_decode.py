@@ -28,6 +28,26 @@ def test_page_renders_for_lab():
     assert "rig-tile" in r.text
 
 
+def test_bench_schematic_scaffolding_present():
+    t = client.get("/decode", headers=_LAB).text
+    assert 'id="rig-wires"' in t          # SVG wire overlay
+    assert 'id="rig-bench"' in t          # schematic grid
+    assert 'id="rig-stripbar"' in t       # power strip bar
+    assert "GoS1" in t                    # control rail node
+    assert "SHAPES" in t and "SCREEN_SHAPE" in t   # silhouettes
+    assert "drawWires" in t
+
+
+def test_status_carries_bench_metadata():
+    body = client.get("/decode/status.json", headers=_LAB).json()
+    d = body["devices"]["pi400"]
+    assert d["device_class"] == "sbc"
+    assert "BCM2711" in d["silicon"]
+    assert d["conn"] == "ssh"
+    assert body["devices"]["gtv"]["device_class"] == "stb"
+    assert "PA329C" in body["monitor"]["panel"]
+
+
 def test_control_routes_are_lab_only_read_routes_public():
     # Read surfaces open (guided-tour material)…
     assert client.get("/decode", headers=_ANON).status_code == 200

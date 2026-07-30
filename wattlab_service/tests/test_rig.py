@@ -238,8 +238,13 @@ def test_status_payload_shape():
     assert set(p) == {"master", "monitor", "devices", "screen_owner",
                       "screen_settling", "total_w", "saving_note", "age_s"}
     for name, d in p["devices"].items():
-        assert set(d) == {"label", "plug_name", "state", "watts", "busy",
+        assert set(d) == {"label", "plug_name", "device_class", "silicon",
+                          "conn", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s"}
+        assert d["device_class"] in ("sbc", "stb", "tv")
+        assert d["conn"] in ("ssh", "adb")
+    assert p["monitor"]["panel"]          # bench schematic display identity
+    assert p["monitor"]["plug_name"] == "Lab-E"
 
 
 def test_lab_c_router_plug_never_in_config_or_payload():

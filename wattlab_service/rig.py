@@ -61,6 +61,8 @@ RIG: dict = {
             "label": "Pi 5", "plug_name": "Lab-A",
             "plug_ip": "192.168.1.146",
             "kind": "ssh", "target": "admin@192.168.1.102",
+            "device_class": "sbc",
+            "silicon": "BCM2712 · sw decode only",
             "expected_boot_s": 29, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
             # Known settled idle (W) — the decode guard's reference floor
@@ -72,6 +74,8 @@ RIG: dict = {
             "label": "Pi 400", "plug_name": "Lab-B",
             "plug_ip": "192.168.1.31",
             "kind": "ssh", "target": "nebul2@192.168.1.108",
+            "device_class": "sbc",
+            "silicon": "BCM2711 · hw H.264",
             "expected_boot_s": 45, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
             "idle_w": 3.0,
@@ -83,6 +87,8 @@ RIG: dict = {
             # effect on the 2026-07-30 boot — the interim .189 lease is dead.
             # The "stuck/no-network" episode was this address move mid-flight.
             "kind": "adb", "target": "192.168.1.126:5555",
+            "device_class": "stb",
+            "silicon": "MediaTek · hw H.264/HEVC/AV1",
             "expected_boot_s": 90, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
             "idle_w": 1.0,
@@ -91,6 +97,9 @@ RIG: dict = {
     "monitor": {
         "label": "4K monitor", "plug_name": "Lab-E",
         "plug_ip": "192.168.1.71",
+        # Display identity for the bench schematic — the planned TV swap
+        # (CR-071) is this string + plug_ip, no layout change.
+        "panel": "ASUS PA329C 32″ 4K LCD",
         # Above this draw the panel is showing a picture — could be Ben's Mac
         # extension, so the Off button asks for confirmation client-side.
         "in_use_threshold_w": 15.0,
@@ -689,12 +698,17 @@ def status_payload() -> dict:
         d = rig_cache["devices"][name]
         devices[name] = {
             "label": cfg_d["label"], "plug_name": cfg_d["plug_name"],
+            "device_class": cfg_d.get("device_class", "stb"),
+            "silicon": cfg_d.get("silicon", ""),
+            "conn": cfg_d["kind"],
             "state": d["state"], "watts": d["watts"], "busy": d["busy"],
             "detail": d["detail"], "elapsed_s": d["elapsed_s"],
             "expected_s": cfg_d["expected_boot_s"],
         }
     master = rig_cache["master"]
-    monitor = rig_cache["monitor"]
+    monitor = {**rig_cache["monitor"],
+               "panel": RIG["monitor"].get("panel", ""),
+               "plug_name": RIG["monitor"]["plug_name"]}
     total = sum(w for w in
                 ([d["watts"] for d in rig_cache["devices"].values()]
                  + [monitor.get("watts")])
