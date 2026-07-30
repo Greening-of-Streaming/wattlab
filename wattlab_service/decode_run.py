@@ -72,6 +72,18 @@ TEMPLATES: dict = {
         "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
+    "bbb_h264_gtv_local": {
+        "label": "GTV local-file H.264 — delivery share removed · GTV only",
+        "clips": {"bbb_h264_local": "bbb_h264_6min.mp4"},
+        # July's delivery decomposition arm: clip pushed to the box, played
+        # via file:///sdcard/Download/… — the ~+0.21 W network share is out,
+        # leaving decode+render+player. Pair with the Pi 400 screen HW arm
+        # for the honest like-for-like cross-device comparison.
+        "delivery": "local",
+        "devices": ["gtv"],
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+                  "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+    },
     "bbb_h264_best_rt": {
         "label": "BBB H.264 best-path — Pi 5 SW · Pi 400 HW · GTV HW, parallel",
         "clips": {"bbb_h264_best": "bbb_h264_6min.mp4"},
@@ -150,12 +162,17 @@ _SAMPLE_RE = re.compile(r"\] sample ([0-9.]+)W(?: ctx=([0-9.]+)W)?")
 # --- Materialisation ---------------------------------------------------------
 
 def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
-             window_s: int | None = None, decoder: str | None = None) -> dict:
+             window_s: int | None = None, decoder: str | None = None,
+             delivery: str = "http") -> dict:
     row: dict = {"name": name}
     if window_s:
         row["window_s"] = window_s
     if dev_cfg["kind"] == "adb":
-        row["url"] = f"{STREAM_BASE_URL}/{clip}"
+        if delivery == "local":
+            # July delivery-decomposition arm — clip staged by adb push.
+            row["url"] = f"file:///sdcard/Download/decode/{Path(clip).name}"
+        else:
+            row["url"] = f"{STREAM_BASE_URL}/{clip}"
         return row
     shm = Path(clip).name       # staged flat into /dev/shm/decode/
     if mode == "screen":
@@ -164,10 +181,14 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         # panel — the Pi 400 (4K30 ceiling) then renders mpv --fs unscaled
         # in a quarter of the screen, and 4K scanout differs from every July
         # display-attached baseline anyway.
+        # --hwdec=auto engages the board's decode block when one exists
+        # (verified on the Pi 400: "Using hardware decoding (v4l2m2m)",
+        # 2026-07-30); named per-template via decoder/decoder_by_device.
+        hw = "--hwdec=auto " if decoder else ""
         row["cmd"] = (
             f"o=$({_WL_ENV} wlr-randr | awk '/^[[:alnum:]]/{{print $1}}' | head -1); "
             f"{_WL_ENV} wlr-randr --output $o --mode 1920x1080@60; sleep 2; "
-            f"{_WL_ENV} mpv --fs --no-audio --loop=inf /dev/shm/decode/{shm}")
+            f"{_WL_ENV} mpv --fs --no-audio --loop=inf {hw}/dev/shm/decode/{shm}")
         row["stop_cmd"] = "pkill mpv"
     else:
         stem = Path(clip).stem
@@ -188,15 +209,16 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
     for run_name, clip in tpl["clips"].items():
         decoder = (tpl.get("decoder")
                    or (tpl.get("decoder_by_device") or {}).get(dev_name))
+        delivery = tpl.get("delivery", "http")
         if marked:
             # Marker-headed variant: window extends over the 15 s head; the
             # skip shrinks so the head lands inside the sampled window.
             runs.append(_row_for(dev_cfg, run_name, marked_name(clip), mode,
                                  window_s=tpl["bench"]["window_s"] + MARKER_HEAD_S,
-                                 decoder=decoder))
+                                 decoder=decoder, delivery=delivery))
         else:
             runs.append(_row_for(dev_cfg, run_name, clip, mode,
-                                 decoder=decoder))
+                                 decoder=decoder, delivery=delivery))
     cfg = dict(tpl["bench"])
     proto = protocol_settings()
     cfg.update({k: proto[k] for k in
@@ -388,6 +410,20 @@ def _stage_clips_sync(dev_cfg: dict, clips: list) -> None:
                        check=True, timeout=180)
 
 
+def _stage_clips_adb_sync(dev_cfg: dict, clips: list) -> None:
+    """Local-delivery staging for the GTV: adb push to /sdcard/Download/decode
+    (the July decomposition arm's location; Just Player has media perms)."""
+    serial = dev_cfg["target"]
+    adb = rig.ADB_BIN
+    subprocess.run([adb, "connect", serial], capture_output=True, timeout=15)
+    subprocess.run([adb, "-s", serial, "shell", "mkdir", "-p",
+                    "/sdcard/Download/decode"], check=True, timeout=20)
+    for clip in clips:
+        subprocess.run([adb, "-s", serial, "push", str(STREAMS / clip),
+                        f"/sdcard/Download/decode/{Path(clip).name}"],
+                       check=True, capture_output=True, timeout=600)
+
+
 # --- Orchestration -----------------------------------------------------------
 
 async def _wait_ready(name: str, sub: dict, timeout_s: float) -> None:
@@ -424,6 +460,11 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
             sub.update({"stage": "staging",
                         "detail": "copying clips to /dev/shm"})
             await asyncio.to_thread(_stage_clips_sync, dev_cfg,
+                                    _needed_clips(tpl, mode, calibrate))
+        elif tpl.get("delivery") == "local":
+            sub.update({"stage": "staging",
+                        "detail": "adb push to /sdcard/Download"})
+            await asyncio.to_thread(_stage_clips_adb_sync, dev_cfg,
                                     _needed_clips(tpl, mode, calibrate))
 
         cfg_path = _materialize(job_id, tpl_key, name, mode, calibrate,

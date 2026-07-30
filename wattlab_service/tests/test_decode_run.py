@@ -282,6 +282,36 @@ def test_hw_decoder_template_names_v4l2m2m():
         p.unlink()
 
 
+def test_gtv_local_template_uses_file_uri():
+    p = decode_run._materialize("tj9", "bbb_h264_gtv_local", "gtv",
+                                "headless", False)
+    try:
+        cfg = json.loads(p.read_text())
+        assert cfg["runs"][0]["url"] == \
+            "file:///sdcard/Download/decode/bbb_h264_6min.mp4"
+    finally:
+        p.unlink()
+    assert decode_run.TEMPLATES["bbb_h264_gtv_local"]["devices"] == ["gtv"]
+
+
+def test_pi400_screen_hw_row_uses_mpv_hwdec():
+    p = decode_run._materialize("tj10", "bbb_h264_hw_rt", "pi400",
+                                "screen", False)
+    try:
+        cfg = json.loads(p.read_text())
+        assert "--hwdec=auto" in cfg["runs"][0]["cmd"]
+        assert "mpv --fs" in cfg["runs"][0]["cmd"]
+    finally:
+        p.unlink()
+    # plain sw screen rows must NOT engage hwdec
+    p2 = decode_run._materialize("tj11", "bbb_h264_rt", "pi400", "screen",
+                                 False)
+    try:
+        assert "--hwdec" not in json.loads(p2.read_text())["runs"][0]["cmd"]
+    finally:
+        p2.unlink()
+
+
 def test_marked_name_is_subdir_safe():
     assert decode_run.marked_name("bbb.mp4") == "marked_bbb.mp4"
     assert decode_run.marked_name("_uploads/x.mp4") == "_uploads/marked_x.mp4"
