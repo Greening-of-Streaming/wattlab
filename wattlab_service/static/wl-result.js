@@ -1002,20 +1002,43 @@
     var html = _prevNote(opts && opts.isPrev, opts && opts.savedAt);
     var runs = r.runs || [];
     if (!runs.length) return html + _wlBadRecord('Decode', r);
+    // Two envelope generations: S58 panel imports (x.content/x.codec/
+    // x.decode_path/x.regime, energy nested) and S59 /decode UI runs
+    // (x.run, x.device stamp, delta_w/w_task/confidence at top level,
+    // r.devices map). Normalise per row so neither renders '?'.
+    var uiShape = runs[0].energy == null && runs[0].delta_w != null;
     var dev = r.device || {};
+    if (!dev.name && r.devices) {
+      dev = { name: Object.keys(r.devices).map(function(k){
+        return (r.devices[k] && r.devices[k].label) || k; }).join(' · ') };
+    }
     var pw = r.power_hardware || {};
+    if (!pw.meter && r.devices) {
+      var first = r.devices[Object.keys(r.devices)[0]] || {};
+      if (first.meter) pw = { meter: first.meter.model,
+                              cadence_s: first.meter.cadence_s };
+    }
     var rows = runs.map(function(x){
-      var e = x.energy || {};
-      var c = e.confidence || {};
+      var e = x.energy || x;
+      var c = (x.energy ? e.confidence : x.confidence) || {};
+      var label = x.content || x.run || x.name || '—';
+      if (uiShape && x.device) label = x.device + ' · ' + label;
+      var path = x.decode_path ? (x.decode_path === 'hw' ? '<b>hw</b>' : 'sw')
+               : (/hw|v4l2m2m/.test(x.run || '') ? '<b>hw</b>' : '—');
+      var regime = x.regime ? (x.regime === 'realtime' ? '1×' : 'full-speed')
+                 : (x.window_s ? x.window_s + ' s' : '—');
+      var seg = x.screen_marker_segments;
       return '<tr>'
-        + '<td style="font-family:monospace">' + (x.content || '?') + '</td>'
-        + '<td style="font-family:monospace">' + (x.codec || '?') + '</td>'
-        + '<td>' + (x.decode_path === 'hw' ? '<b>hw</b>' : 'sw') + '</td>'
-        + '<td>' + (x.regime === 'realtime' ? '1×' : 'full-speed') + '</td>'
-        + '<td style="text-align:right">' + (e.delta_w != null ? '+' + _f(e.delta_w, 2) + ' W' : '?') + '</td>'
-        + '<td style="text-align:right;color:var(--text-4)">' + _f(e.w_task, 2) + ' W</td>'
+        + '<td style="font-family:monospace">' + label + '</td>'
+        + '<td style="font-family:monospace">' + (x.codec || '—') + '</td>'
+        + '<td>' + path + '</td>'
+        + '<td>' + regime + '</td>'
+        + '<td style="text-align:right">' + (e.delta_w != null ? '+' + _f(e.delta_w, 2) + ' W' : '—') + '</td>'
+        + '<td style="text-align:right;color:var(--text-4)">' + (e.w_task != null ? _f(e.w_task, 2) + ' W' : '—') + '</td>'
         + '<td>' + (c.flag || '') + '</td>'
-        + (x.note ? '<td style="color:var(--warn);font-size:0.68rem">⚠</td>' : '<td></td>')
+        + '<td style="color:var(--text-4);font-size:0.68rem">'
+        + (seg && seg.content_w != null ? 'scr ' + _f(seg.content_w, 1) + ' W' : (x.note ? '⚠' : ''))
+        + '</td>'
         + '</tr>';
     }).join('');
     var notes = runs.filter(function(x){ return x.note; }).map(function(x){
