@@ -299,7 +299,7 @@ def test_pi400_screen_hw_row_uses_mpv_hwdec():
                                 "screen", False)
     try:
         cfg = json.loads(p.read_text())
-        assert "--hwdec=auto" in cfg["runs"][0]["cmd"]
+        assert "--hwdec=v4l2m2m-copy" in cfg["runs"][0]["cmd"]
         assert "mpv --fs" in cfg["runs"][0]["cmd"]
     finally:
         p.unlink()

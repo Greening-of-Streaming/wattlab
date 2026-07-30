@@ -181,10 +181,11 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         # panel — the Pi 400 (4K30 ceiling) then renders mpv --fs unscaled
         # in a quarter of the screen, and 4K scanout differs from every July
         # display-attached baseline anyway.
-        # --hwdec=auto engages the board's decode block when one exists
-        # (verified on the Pi 400: "Using hardware decoding (v4l2m2m)",
-        # 2026-07-30); named per-template via decoder/decoder_by_device.
-        hw = "--hwdec=auto " if decoder else ""
+        # --hwdec=v4l2m2m-copy, NOT auto: auto picks the zero-copy path,
+        # which decodes but composites garbage (full-blue screen, live
+        # 2026-07-30); the copy variant displays correctly (BBB verified
+        # on the Pi 400 by eye).
+        hw = "--hwdec=v4l2m2m-copy " if decoder else ""
         row["cmd"] = (
             f"o=$({_WL_ENV} wlr-randr | awk '/^[[:alnum:]]/{{print $1}}' | head -1); "
             f"{_WL_ENV} wlr-randr --output $o --mode 1920x1080@60; sleep 2; "
