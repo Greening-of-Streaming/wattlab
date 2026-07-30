@@ -45,7 +45,8 @@ def test_status_carries_bench_metadata():
     assert "BCM2711" in d["silicon"]
     assert d["conn"] == "ssh"
     assert body["devices"]["gtv"]["device_class"] == "stb"
-    assert "PA329C" in body["monitor"]["panel"]
+    assert body["devices"]["bbox"]["device_class"] == "stb"   # operator CPE
+    assert "OLED55C2" in body["monitor"]["panel"]             # C2 display
 
 
 def test_control_routes_are_lab_only_read_routes_public():

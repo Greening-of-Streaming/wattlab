@@ -292,8 +292,9 @@ def test_claim_screen_refused_while_any_job_runs():
 
 
 def test_claim_screen_failure_is_reported_not_swallowed(monkeypatch):
-    """2026-07-29 live lesson: a silently failing signal command made the UI
-    claim success while the panel never moved. Failures must 502."""
+    """2026-07-29 live lesson (legacy PA329C path): a silently failing signal
+    command made the UI claim success while the panel never moved. 502."""
+    monkeypatch.setitem(rig.RIG["monitor"], "lg_host", None)   # legacy path
     def _boom(dev, on):
         raise RuntimeError(f"{dev['label']}: output control failed")
     monkeypatch.setattr(rig, "set_signal", _boom)
