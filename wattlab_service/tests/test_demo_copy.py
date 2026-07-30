@@ -105,11 +105,19 @@ def test_step3_branches_core_vs_ai_detour():
 
 
 def test_counter_is_honest_about_the_detour():
-    """No '4/9 → 8/9' jump: core steps count 1-6, detour counts 1-3."""
+    """No '4/10 → 8/10' jump: core steps count 1-7, detour counts 1-3."""
     t = client.get("/demo").text
-    assert "Step 1 of 6" in t          # initial counter markup
-    assert "'Step 4 of 6'" in t        # STEP_META core entry (step 3)
+    assert "Step 1 of 7" in t          # initial counter markup
+    assert "'Step 4 of 7'" in t        # STEP_META core entry (step 3)
     assert "AI detour · 1 of 3" in t   # STEP_META detour entry
+    assert "'Step 7 of 7'" in t        # findings moved to step 9
+
+
+def test_decode_step_present_with_ladder():
+    t = client.get("/demo").text
+    assert "The Other Half: Client Decode" in t
+    assert "/decode?job=357b087d" in t     # GTV ladder rung links
+    assert "4–7&times;" in t or "4–7×" in t
 
 
 def test_welcome_tour_map_present():

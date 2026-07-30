@@ -295,8 +295,9 @@ _DEMO_HTML = f"""
     <span class="dot opt" id="dot-6" data-opt="1"></span>
     <span class="dot" id="dot-7"></span>
     <span class="dot" id="dot-8"></span>
+    <span class="dot" id="dot-9"></span>
     <span class="label active" id="nav-label">Welcome</span>
-    <span id="step-counter" style="color:var(--text-5);font-size:0.7rem;margin-left:0.25rem">Step 1 of 6</span>
+    <span id="step-counter" style="color:var(--text-5);font-size:0.7rem;margin-left:0.25rem">Step 1 of 7</span>
   </div>
 </div>
 
@@ -729,7 +730,7 @@ _DEMO_HTML = f"""
 
 <!-- Step 7: Confidence -->
 <div class="step" id="step-7">
-  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary conf-back" onclick="goStep(confBack)">&lsaquo; Video enhancement</button><button class="btn btn-primary" onclick="goStep(8)">Findings &rsaquo;</button></div>
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary conf-back" onclick="goStep(confBack)">&lsaquo; Video enhancement</button><button class="btn btn-primary" onclick="goStep(8)">Client decode &rsaquo;</button></div>
   <h1>How We Flag Confidence</h1>
 
   <div class="band">
@@ -788,13 +789,69 @@ _DEMO_HTML = f"""
 
   <div class="btn-row" style="margin-top:0.5rem">
     <button class="btn btn-secondary conf-back" onclick="goStep(confBack)">&lsaquo; Video enhancement</button>
-    <button class="btn btn-primary" onclick="goStep(8)">See findings →</button>
+    <button class="btn btn-primary" onclick="goStep(8)">Client decode →</button>
   </div>
 </div>
 
 <!-- Step 8: Findings -->
+<!-- Step 8: Client decode — the rig ladder (S59) -->
 <div class="step" id="step-8">
-  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(7)">&lsaquo; Confidence</button><button class="btn btn-primary" onclick="goStep(1)">&#8635; Start over</button></div>
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(7)">&lsaquo; Confidence</button><button class="btn btn-primary" onclick="goStep(9)">Findings &rsaquo;</button></div>
+  <h1>The Other Half: Client Decode</h1>
+
+  <div class="band">
+    <div class="band-label">Why it matters</div>
+    <p style="color:var(--text-2);line-height:1.8;max-width:560px">
+      Everything so far measured the <strong>server</strong>. But encode energy is
+      paid once per title — <strong>decode energy is paid per viewer, per hour</strong>.
+      OWL's decode rig applies the same method (idle baseline, ΔW, confidence
+      flags) to real playback devices: two Raspberry Pis and a Google TV
+      streamer, each on its own milliwatt meter, sharing one measured screen.
+    </p>
+  </div>
+
+  <div class="band">
+    <div class="band-label">One clip, four silicon paths — measured 2026-07-30</div>
+    <p style="color:var(--text-3);font-size:0.82rem;margin-bottom:0.6rem">
+      Same 1080p60 file, local delivery, display attached, all rows 🟢 with
+      in-band black/white markers verifying the screen showed real content:</p>
+    <table style="font-size:0.88rem;border-collapse:collapse">
+      <tr><td style="padding:0.2rem 1.2rem 0.2rem 0;color:var(--text-2)">Google TV — fixed-function</td>
+          <td style="color:var(--accent);font-weight:bold">+0.30&thinsp;W</td>
+          <td style="color:var(--text-4);padding-left:0.8rem">1&times;</td>
+          <td style="padding-left:0.8rem"><a href="/decode?job=357b087d" style="color:var(--text-3)">run</a></td></tr>
+      <tr><td style="padding:0.2rem 1.2rem 0.2rem 0;color:var(--text-2)">Pi 400 — hardware H.264</td>
+          <td style="color:var(--text)">+1.32&thinsp;W</td>
+          <td style="color:var(--text-4);padding-left:0.8rem">4.4&times;</td>
+          <td style="padding-left:0.8rem"><a href="/decode?job=606d5ad3" style="color:var(--text-3)">run</a></td></tr>
+      <tr><td style="padding:0.2rem 1.2rem 0.2rem 0;color:var(--text-2)">Pi 400 — software</td>
+          <td style="color:var(--text)">+1.96&thinsp;W</td>
+          <td style="color:var(--text-4);padding-left:0.8rem">6.5&times;</td>
+          <td style="padding-left:0.8rem"><a href="/decode?job=d99775a0" style="color:var(--text-3)">run</a></td></tr>
+      <tr><td style="padding:0.2rem 1.2rem 0.2rem 0;color:var(--text-2)">Pi 5 — software (hw block dropped)</td>
+          <td style="color:var(--text)">+2.03&thinsp;W</td>
+          <td style="color:var(--text-4);padding-left:0.8rem">6.8&times;</td>
+          <td style="padding-left:0.8rem"><a href="/decode?job=ea55f33b" style="color:var(--text-3)">run</a></td></tr>
+    </table>
+    <p style="color:var(--text-2);line-height:1.8;max-width:560px;margin-top:0.8rem">
+      A purpose-built streaming box plays the same video for <strong>4–7&times;
+      less energy</strong> than a general-purpose board — and a device
+      generation that drops a decoder block (Pi&nbsp;5) loses its efficiency
+      to software. Invisible on any spec sheet; visible at the wall.
+    </p>
+  </div>
+
+  <div class="band">
+    <div class="band-label">See it live</div>
+    <p style="color:var(--text-2);line-height:1.8;max-width:560px">
+      The rig is a public page: live device tiles, recent runs, and every
+      result's raw per-second samples as CSV/JSON.
+      <a href="/decode" style="color:var(--accent)">Open the decode rig &rsaquo;</a></p>
+  </div>
+</div>
+
+<div class="step" id="step-9">
+  <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(8)">&lsaquo; Client decode</button><button class="btn btn-primary" onclick="goStep(1)">&#8635; Start over</button></div>
   <h1>Findings</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
     Greening of Streaming · OWL · GoS1</p>
@@ -917,13 +974,13 @@ let llmResult = null;
 let imageResult = null;
 let ragResult = null;
 let enhanceResult = null;
-const stepLabels = ['Welcome', 'Video Transcode', 'Energy Budget', 'Video Enhancement', 'LLM Inference', 'Image Generation', 'RAG', 'Confidence', 'Findings'];
-// Honest progress: the core path is 6 stops (0,1,2,3,7,8); steps 4-6 are the
-// optional AI detour with its own 3-step count — never a "4/9 → 8/9" jump.
+const stepLabels = ['Welcome', 'Video Transcode', 'Energy Budget', 'Video Enhancement', 'LLM Inference', 'Image Generation', 'RAG', 'Confidence', 'Client Decode', 'Findings'];
+// Honest progress: the core path is 7 stops (0,1,2,3,7,8,9); steps 4-6 are the
+// optional AI detour with its own 3-step count — never a "4/10 → 8/10" jump.
 const STEP_META = {{
-  0: 'Step 1 of 6', 1: 'Step 2 of 6', 2: 'Step 3 of 6', 3: 'Step 4 of 6',
+  0: 'Step 1 of 7', 1: 'Step 2 of 7', 2: 'Step 3 of 7', 3: 'Step 4 of 7',
   4: 'AI detour · 1 of 3', 5: 'AI detour · 2 of 3', 6: 'AI detour · 3 of 3',
-  7: 'Step 5 of 6', 8: 'Step 6 of 6'
+  7: 'Step 5 of 7', 8: 'Step 6 of 7', 9: 'Step 7 of 7'
 }};
 // Confidence's back button returns to wherever the visitor came from:
 // the AI detour's RAG step (6) or the core path's enhancement step (3).
@@ -976,7 +1033,7 @@ function revealNext(n) {{
 // Deep-linkable steps — the public nav's Enhancement item sends anonymous
 // visitors to /demo#enhance (the showcase) instead of the members-only
 // /enhance-run gate. hashchange handles same-page nav clicks.
-const HASH_STEPS = {{video: 1, budget: 2, enhance: 3, confidence: 7, findings: 8}};
+const HASH_STEPS = {{video: 1, budget: 2, enhance: 3, confidence: 7, decode: 8, findings: 9}};
 function goHashStep() {{
   const n = HASH_STEPS[location.hash.replace('#', '')];
   if (n !== undefined) goStep(n);
