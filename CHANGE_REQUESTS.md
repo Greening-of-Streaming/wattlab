@@ -726,6 +726,41 @@ move and the C2 physically joining the rig.
 
 ---
 
+## CR-072 · The origin as a measured workload
+
+**Status:** captured 2026-07-30 (owner directive during the Apple TV integration); phase 1 shipped same day.
+**Triggered by:** the `:8123` ad-hoc server's Range defect (broke ffmpeg-over-HTTP in July, 500'd the
+Apple TV's AirPlay player) forcing a proper origin — and the owner's framing decision that came with it.
+
+### Principle (owner, verbatim intent)
+
+If GoS1 serves streams — even temporarily — **serving is a precious process to measure**, not
+plumbing. When a measured delivery run is active, the origin gets the exact treatment an encode
+job gets: **focus mode → stable-idle guard → serve window → energy envelope after**. Delivery
+energy at the origin becomes a first-class OWL number, closing the encode→origin→device chain's
+first segment (S4).
+
+### Phase 1 — shipped 2026-07-30
+
+`decode_bench/origin.py`: dedicated, stdlib-only, Range-correct static server on `:8123`
+(206/Content-Range/suffix/416/HEAD semantics under test in `tests/test_origin.py`), serving the
+streams tree incl. `_uploads/`; `/status` exposes per-request byte counters (bytes_sent,
+ranged_requests, active) — the attribution seed and the live replacement for July's TCP-counter
+scraping. Deliberately NOT system nginx: a single OWL-owned process that a measurement wrapper
+can start, stop and attribute.
+
+### Phase 2 — the measured-origin arm (next)
+
+- Origin runs under OWL's control (start/stop from the runner or a systemd unit OWL manages).
+- A "delivery" recipe arm: focus mode on GoS1, `idle_wait` floor guard, then the serve window is
+  metered on the bench P110 while a device plays over HTTP; envelope carries origin `delta_w`,
+  `/status` byte counts (Wh/GB becomes computable per run), and the device-side row — one
+  experiment identity across origin and client (CR-008 step 4's first half).
+- Cross-check: `/status.bytes_sent` vs device-side RX (the July media3 over-fetch question gets a
+  permanent instrument).
+
+---
+
 ## Unverified reports (compressed 2026-06-11; re-checked same day — the GosOne→OWL sweep item closed by S43's doc pass)
 
 The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, team meeting 2026-05-04, board meeting 2026-05-11) were compressed 2026-06-11: every item that was marked resolved, absorbed into a CR, or is a meeting note recorded elsewhere (JOURNAL.md / board notes / CR cross-refs) was deleted. The genuinely unresolved residue — **all three possibly mooted by the S42 routes refactor; verify with the named 5–15 min spike before deleting**:
