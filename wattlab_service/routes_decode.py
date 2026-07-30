@@ -138,6 +138,15 @@ async def decode_run_start(request: Request, payload: dict):
     if mode == "screen" and len(devices) != 1:
         return JSONResponse({"error": "screen mode is exclusive — pick "
                                       "exactly one device"}, status_code=400)
+    cadence_s = p.get("cadence_s")
+    if cadence_s is not None:
+        try:
+            cadence_s = float(cadence_s)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "bad cadence"}, status_code=400)
+        if not 1.0 <= cadence_s <= 10.0:
+            return JSONResponse({"error": "cadence must be 1–10 s"},
+                                status_code=400)
     try:
         tpl = decode_run.resolve_template(tpl_key, upload_name)
     except Exception as e:
@@ -148,7 +157,7 @@ async def decode_run_start(request: Request, payload: dict):
 
     async def coro(job_id=job_id):
         await decode_run.run_decode_job(job_id, tpl_key, devices, mode,
-                                        calibrate, upload_name)
+                                        calibrate, upload_name, cadence_s)
 
     position = queue_control.enqueue(job_id, "decode", label, coro,
                                      request=request, page="/decode")
@@ -410,6 +419,11 @@ _BODY = """
       <label id="cal-wrap" style="display:none">
         <input type="checkbox" id="calibrate" checked>
         marker head (5 s black·white·black in-clip)</label>
+      <label style="display:flex;align-items:center;gap:0.4rem">
+        poll <input type="range" id="cadence" min="1" max="10" step="1"
+                    value="1" style="width:7rem"
+                    oninput="document.getElementById('cadence-v').textContent=this.value+' s'">
+        <span id="cadence-v" class="rig-detail">1 s</span></label>
     </div>
     <div class="rig-runrow" style="margin-top:0.4rem">
       <select id="recipe" onchange="tplChanged()">{RECIPE_OPTIONS}</select>
@@ -885,8 +899,12 @@ async function runRecipe() {
     err('screen mode is exclusive — pick exactly one device'); return; }
   var tpl = document.getElementById('recipe').value;
   if (tpl === 'upload' && !UPLOADED) { err('upload a clip first'); return; }
+  var cad = parseInt(document.getElementById('cadence').value, 10);
+  if (mode === 'screen' && document.getElementById('calibrate').checked && cad > 1)
+    err('note: marker segments carry ~5/' + cad + ' samples at this cadence');
   var body = {template: tpl, mode: mode, devices: devices,
               upload_name: tpl === 'upload' ? UPLOADED : undefined,
+              cadence_s: cad,
               calibrate: document.getElementById('calibrate').checked};
   document.getElementById('btn-run').disabled = true;
   try {

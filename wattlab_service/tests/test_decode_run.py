@@ -234,6 +234,21 @@ def test_run_upload_template_requires_existing_upload():
     assert "upload a clip first" in r.json()["error"]
 
 
+def test_cadence_override_validated_and_applied(monkeypatch):
+    r = client.post("/decode/run", headers=_LAB, json={
+        "template": "bbb_h264_rt", "devices": ["pi5"], "mode": "headless",
+        "cadence_s": 22})
+    assert r.status_code == 400
+    import settings as cfg
+    monkeypatch.setattr(cfg, "load", lambda: {})
+    p = decode_run._materialize("tj8", "bbb_h264_rt", "pi5", "headless",
+                                False, cadence_s=5)
+    try:
+        assert json.loads(p.read_text())["cadence_s"] == 5.0
+    finally:
+        p.unlink()
+
+
 def test_template_device_restriction_enforced():
     r = client.post("/decode/run", headers=_LAB, json={
         "template": "bbb_h264_hw_rt", "devices": ["pi5", "pi400"],

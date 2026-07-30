@@ -118,7 +118,9 @@ def protocol_settings() -> dict:
                  "max_wait_s": int(s.get("decode_idle_max_wait_s", 60))}
     return {
         "cadence_s": float(s.get("decode_cadence_s", 1.0)),
-        "settle_s": int(s.get("decode_settle_s", 15)),
+        # Short post-prepare quiesce only — the idle guard owns "are we at
+        # the floor yet" (default was 15 s pre-guard; lowered 2026-07-30).
+        "settle_s": int(s.get("decode_settle_s", 5)),
         "baseline_samples": int(s.get("decode_baseline_samples", 20)),
         "screen_startup_skip_s": int(s.get("decode_screen_startup_skip_s", 5)),
         "idle_guard": guard,
@@ -177,7 +179,8 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
 
 
 def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
-                 calibrate: bool, upload_name: str | None = None) -> Path:
+                 calibrate: bool, upload_name: str | None = None,
+                 cadence_s: float | None = None) -> Path:
     tpl = resolve_template(tpl_key, upload_name)
     dev_cfg = rig.RIG["devices"][dev_name]
     marked = mode == "screen" and calibrate
@@ -199,6 +202,8 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
     cfg.update({k: proto[k] for k in
                 ("cadence_s", "settle_s", "baseline_samples",
                  "protocol_version")})
+    if cadence_s is not None:
+        cfg["cadence_s"] = float(cadence_s)   # per-run slider override
     if proto["idle_guard"]:
         # Reference mode when the device's settled idle is known (rig
         # config) — same asymmetric floor semantics as GoS1's CR-070 guard.
@@ -402,7 +407,8 @@ async def _wait_ready(name: str, sub: dict, timeout_s: float) -> None:
 
 async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                          mode: str, calibrate: bool, sub: dict,
-                         upload_name: str | None = None) -> dict:
+                         upload_name: str | None = None,
+                         cadence_s: float | None = None) -> dict:
     """Full per-device pipeline: ready → stage → bench.py → rows. Updates
     `sub` (the job's per-device progress dict) as it goes; returns the
     device section of the combined envelope. Raises on failure."""
@@ -421,7 +427,7 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                                     _needed_clips(tpl, mode, calibrate))
 
         cfg_path = _materialize(job_id, tpl_key, name, mode, calibrate,
-                                upload_name)
+                                upload_name, cadence_s)
         cfg = json.loads(cfg_path.read_text())
         result_path = BENCH_DIR / "results" / f"{cfg['name']}.json"
 
@@ -493,7 +499,8 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
 
 async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                          mode: str, calibrate: bool,
-                         upload_name: str | None = None) -> None:
+                         upload_name: str | None = None,
+                         cadence_s: float | None = None) -> None:
     tpl = resolve_template(tpl_key, upload_name)
     job = jobs[job_id]
     phases = template_phases(tpl)
@@ -519,7 +526,7 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
 
         outcomes = await asyncio.gather(
             *[_run_bench_for(job_id, tpl_key, tpl, name, mode, calibrate,
-                             job["devices"][name], upload_name)
+                             job["devices"][name], upload_name, cadence_s)
               for name in devices],
             return_exceptions=True)
 
@@ -550,7 +557,9 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                                              "note": "in-window; segment via "
                                                      "raw-sample edge detection"}}
                             if mode == "screen" and calibrate else {}),
-                         **protocol_settings()},
+                         **{**protocol_settings(),
+                            **({"cadence_s": float(cadence_s)}
+                               if cadence_s is not None else {})}},
         }
         save_result("decode", job_id, envelope)
         status = "done" if not errors else "done"
