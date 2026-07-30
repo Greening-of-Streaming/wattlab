@@ -99,7 +99,9 @@ RIG: dict = {
         },
         "bbox": {
             "label": "Bbox 4K", "plug_name": "Lab-F",
-            "plug_ip": "192.168.1.22",
+            # Lab-F re-plugged 2026-07-30 (new unit on fw 1.3.1 for 1 s mW
+            # polling; old .22 was fw 1.4.0). New DHCP lease → .155.
+            "plug_ip": "192.168.1.155",
             # Operator CPE (Bouygtel4K, Android 11) — the first operator box
             # on the bench. Wi-Fi TEMP; → Ethernet (~.10) when the cable
             # arrives 2026-07-31 (re-verify IP then; see decode-bench README).
