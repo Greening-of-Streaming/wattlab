@@ -184,6 +184,12 @@ async def startup():
     asyncio.create_task(runtime.power_poller())
     asyncio.create_task(runtime.sensors_poller())
     asyncio.create_task(rig.rig_poller())
+    try:
+        import origin_control
+        print(await asyncio.get_event_loop().run_in_executor(
+            None, origin_control.start), flush=True)
+    except Exception:
+        pass
     asyncio.create_task(carbon.poller(zones=[carbon.HOME_ZONE]))
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, rag_module.check_index)
