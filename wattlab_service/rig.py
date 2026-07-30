@@ -82,6 +82,11 @@ RIG: dict = {
             "expected_boot_s": 45, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
             "idle_w": 3.0,
+            # Physically disconnected 2026-07-30 (its bench slot / HDMI-3 goes
+            # to the incoming Fire TV Stick). Config + hw-decode templates kept
+            # for reference; `parked` hides it from the console until it
+            # returns. Unset this to bring it back.
+            "parked": True,
         },
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
@@ -606,6 +611,8 @@ async def poll_once() -> None:
                                     "in_use_hint": False, "reachable": False}
 
     for name in RIG["devices"]:
+        if RIG["devices"][name].get("parked"):
+            continue
         try:
             await _step_device(name, master_off)
         except Exception:
@@ -781,6 +788,8 @@ def status_payload() -> dict:
     """The /decode/status.json response — assembled from cache only (no IO)."""
     devices = {}
     for name, cfg_d in RIG["devices"].items():
+        if cfg_d.get("parked"):
+            continue          # disconnected — hidden from the console
         d = rig_cache["devices"][name]
         devices[name] = {
             "label": cfg_d["label"], "plug_name": cfg_d["plug_name"],

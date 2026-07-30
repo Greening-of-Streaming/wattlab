@@ -40,13 +40,14 @@ def test_bench_schematic_scaffolding_present():
 
 def test_status_carries_bench_metadata():
     body = client.get("/decode/status.json", headers=_LAB).json()
-    d = body["devices"]["pi400"]
+    d = body["devices"]["pi5"]
     assert d["device_class"] == "sbc"
-    assert "BCM2711" in d["silicon"]
+    assert "BCM2712" in d["silicon"]
     assert d["conn"] == "ssh"
     assert body["devices"]["gtv"]["device_class"] == "stb"
     assert body["devices"]["bbox"]["device_class"] == "stb"   # operator CPE
     assert "OLED55C2" in body["monitor"]["panel"]             # C2 display
+    assert "pi400" not in body["devices"]                     # parked, hidden
 
 
 def test_control_routes_are_lab_only_read_routes_public():
