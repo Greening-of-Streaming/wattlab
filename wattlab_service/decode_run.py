@@ -61,6 +61,19 @@ TEMPLATES: dict = {
         "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
+    "bbb_h264_4k": {
+        "label": "BBB H.264 4K — 90 s (resolution vs 1080p, same content)",
+        "clips": {"bbb_h264_4k": "bbb_h264_4k_2min.mp4"},
+        # Same BBB content upscaled to 3840×2160@60 (NVENC ~20 Mbps), so a run
+        # against the 1080p templates isolates RESOLUTION as the only variable
+        # — the Nov-2025 hackathon's dominant server-side driver, now on the
+        # client. NB fixed-function boxes (GTV) handle 4K60 in hardware;
+        # Pi 5 software-decoding 4K60 H.264 is a genuine stress test — if it
+        # can't sustain realtime the row still measures what it does (a result
+        # in itself). 120 s clip fits the 90 s window + 15 s marker head.
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
+                  "startup_skip_s": 8, "window_s": 90, "gap_s": 10},
+    },
     "bbb_h264_hw_rt": {
         "label": "Pi 400 HW H.264 (v4l2m2m) — realtime 150 s · Pi 400 only",
         "clips": {"bbb_h264_hw_rt": "bbb_h264_6min.mp4"},
