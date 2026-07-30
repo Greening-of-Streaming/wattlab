@@ -43,6 +43,8 @@ import time
 import urllib.request
 from dotenv import dotenv_values
 
+import lg
+
 log = logging.getLogger(__name__)
 
 _config = dotenv_values("/home/gos/wattlab/.env")
@@ -63,6 +65,7 @@ RIG: dict = {
             "kind": "ssh", "target": "admin@192.168.1.102",
             "device_class": "sbc",
             "silicon": "BCM2712 · sw decode only",
+            "hdmi_input": "HDMI_4",   # C2 port map (owner, 2026-07-30)
             "expected_boot_s": 29, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
             # Known settled idle (W) — the decode guard's reference floor
@@ -89,17 +92,34 @@ RIG: dict = {
             "kind": "adb", "target": "192.168.1.126:5555",
             "device_class": "stb",
             "silicon": "MediaTek · hw H.264/HEVC/AV1",
+            "hdmi_input": "HDMI_2",
             "expected_boot_s": 90, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
             "idle_w": 1.0,
         },
+        "bbox": {
+            "label": "Bbox 4K", "plug_name": "Lab-F",
+            "plug_ip": "192.168.1.22",
+            # Operator CPE (Bouygtel4K, Android 11) — the first operator box
+            # on the bench. Wi-Fi TEMP; → Ethernet (~.10) when the cable
+            # arrives 2026-07-31 (re-verify IP then; see decode-bench README).
+            "kind": "adb", "target": "192.168.1.173:5555",
+            "device_class": "stb",
+            "silicon": "operator CPE · Android 11",
+            "hdmi_input": "HDMI_1",
+            "expected_boot_s": 45, "boot_threshold_w": 3.0,
+            "shutdown_wait_s": 15,
+            "idle_w": 3.0,
+        },
     },
     "monitor": {
-        "label": "4K monitor", "plug_name": "Lab-E",
+        "label": "Shared screen", "plug_name": "Lab-E",
         "plug_ip": "192.168.1.71",
-        # Display identity for the bench schematic — the planned TV swap
-        # (CR-071) is this string + plug_ip, no layout change.
-        "panel": "ASUS PA329C 32″ 4K LCD",
+        "panel": "LG OLED55C2 (OLED55C25LB)",
+        # webOS control (CR-071): lg_host set ⇒ claim_screen is an explicit
+        # HDMI input-select, not the auto-switch/DPMS dance. Client key at
+        # lg.CLIENT_KEY_PATH. `.25` (Ethernet); the C2 is also on Wi-Fi `.109`.
+        "lg_host": "192.168.1.25",
         # Above this draw the panel is showing a picture — could be Ben's Mac
         # extension, so the Off button asks for confirmation client-side.
         "in_use_threshold_w": 15.0,
@@ -663,10 +683,12 @@ async def device_cycle(name: str) -> None:
 
 
 async def claim_screen(name: str) -> None:
-    """Hand the shared monitor to `name`: drop every other powered device's
-    HDMI signal, raise the target's — the panel's verified auto-switch
-    behaviour does the rest. Others stay dark until claimed or power-cycled
-    (restoring them would steal the input straight back)."""
+    """Hand the shared display to `name`.
+
+    On the webOS C2 (monitor.lg_host set) this is a single deterministic
+    HDMI input-select — devices stay awake, nothing to juggle. On an
+    auto-switching panel (the PA329C) it falls back to dropping every other
+    powered device's signal and raising the target's."""
     dev_cfg = _dev_cfg(name)
     d = rig_cache["devices"][name]
     if d["state"] in _STOPPED_STATES or d["state"] == "stopping":
@@ -676,6 +698,20 @@ async def claim_screen(name: str) -> None:
     if busy:
         raise RigError(409, "job running on: " + ", ".join(busy)
                             + " — signal changes would contaminate the row")
+
+    lg_host = RIG["monitor"].get("lg_host")
+    if lg_host:
+        hdmi = dev_cfg.get("hdmi_input")
+        if not hdmi:
+            raise RigError(409, f"{dev_cfg['label']} has no HDMI port mapped")
+        try:
+            await asyncio.to_thread(lg.set_input, lg_host, hdmi)
+        except Exception as e:
+            raise RigError(502, f"input switch failed: {e}")
+        rig_cache["screen_owner"] = name
+        rig_cache["screen_claimed_at"] = time.monotonic()
+        return
+
     failures = []
     for other, dd in rig_cache["devices"].items():
         if other != name and dd["state"] not in _STOPPED_STATES:

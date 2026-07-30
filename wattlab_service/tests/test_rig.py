@@ -239,16 +239,41 @@ def test_unknown_device_404():
     assert e.value.status == 404
 
 
-def test_claim_screen_darkens_all_other_powered_devices(monkeypatch):
+def test_claim_screen_webos_sets_input(monkeypatch):
+    """C2 path: a single HDMI input-select, no per-device signal juggling."""
+    calls = []
+    monkeypatch.setitem(rig.RIG["monitor"], "lg_host", "10.0.0.9")
+    monkeypatch.setattr(rig.lg, "set_input",
+                        lambda host, hdmi: calls.append((host, hdmi)))
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["gtv"]["state"] = "ready"
+    _run(rig.claim_screen("pi5"))
+    assert calls == [("10.0.0.9", "HDMI_4")]     # pi5's mapped port
+    assert rig.rig_cache["screen_owner"] == "pi5"
+
+
+def test_claim_screen_webos_refuses_unmapped_device(monkeypatch):
+    monkeypatch.setitem(rig.RIG["monitor"], "lg_host", "10.0.0.9")
+    monkeypatch.setattr(rig.lg, "set_input", lambda host, hdmi: None)
+    # temporarily drop the port map on gtv
+    monkeypatch.setitem(rig.RIG["devices"]["gtv"], "hdmi_input", None)
+    rig.rig_cache["devices"]["gtv"]["state"] = "ready"
+    with pytest.raises(rig.RigError) as e:
+        _run(rig.claim_screen("gtv"))
+    assert e.value.status == 409
+
+
+def test_claim_screen_legacy_darkens_others(monkeypatch):
+    """PA329C fallback path (no lg_host): signal-juggling still works."""
+    monkeypatch.setitem(rig.RIG["monitor"], "lg_host", None)
     calls = []
     monkeypatch.setattr(rig, "set_signal",
                         lambda dev, on: calls.append((dev["label"], on)))
     rig.rig_cache["devices"]["pi5"]["state"] = "ready"
-    rig.rig_cache["devices"]["gtv"]["state"] = "ready"    # pi400 stays off
+    rig.rig_cache["devices"]["gtv"]["state"] = "ready"
     _run(rig.claim_screen("pi5"))
     assert ("Google TV", False) in calls
     assert ("Pi 5", True) in calls
-    assert all(label != "Pi 400" for label, _ in calls)
     assert rig.rig_cache["screen_owner"] == "pi5"
 
 
