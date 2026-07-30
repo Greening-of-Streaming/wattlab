@@ -50,10 +50,13 @@ def _refuse(e: rig.RigError) -> JSONResponse:
 @router.get("/decode", response_class=HTMLResponse,
             dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def decode_page(request: Request):
+    import json as _json
     is_lab = can(audience.tier(request), RIG_CONTROL)
     options = "".join(
         f'<option value="{k}">{r["label"]}</option>'
         for k, r in decode_run.TEMPLATES.items())
+    tpl_devices = _json.dumps({k: r.get("devices")
+                               for k, r in decode_run.TEMPLATES.items()})
     banner = ("" if is_lab else
               '<div class="rig-note" style="border:1px solid var(--border-3);'
               'border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:1rem">'
@@ -63,8 +66,9 @@ async def decode_page(request: Request):
     body = (_BODY.replace("{RECIPE_OPTIONS}", options)
                  .replace("{LAB_BANNER}", banner))
     return ui.render_page(request, "Decode Rig", styles=_STYLES, body=body,
-                          tail=_JS.replace("{IS_LAB}",
-                                           "true" if is_lab else "false"))
+                          tail=(_JS.replace("{IS_LAB}",
+                                            "true" if is_lab else "false")
+                                   .replace("{TPL_DEVICES}", tpl_devices)))
 
 
 @router.get("/decode/runs.json",
@@ -123,6 +127,14 @@ async def decode_run_start(request: Request, payload: dict):
     if bad or not devices:
         return JSONResponse({"error": f"bad device selection {devices!r}"},
                             status_code=400)
+    allowed = (decode_run.TEMPLATES.get(tpl_key) or {}).get("devices")
+    if allowed:
+        wrong = [d for d in devices if d not in allowed]
+        if wrong:
+            return JSONResponse(
+                {"error": f"this template only runs on: "
+                          + ", ".join(rig.RIG['devices'][d]['label']
+                                      for d in allowed)}, status_code=400)
     if mode == "screen" and len(devices) != 1:
         return JSONResponse({"error": "screen mode is exclusive — pick "
                                       "exactly one device"}, status_code=400)
@@ -400,7 +412,7 @@ _BODY = """
         marker head (5 s black·white·black in-clip)</label>
     </div>
     <div class="rig-runrow" style="margin-top:0.4rem">
-      <select id="recipe">{RECIPE_OPTIONS}</select>
+      <select id="recipe" onchange="tplChanged()">{RECIPE_OPTIONS}</select>
       <button class="rig-btn" id="btn-run" onclick="runRecipe()">Run</button>
     </div>
     <div class="rig-runrow" style="margin-top:0.4rem;font-size:0.8rem">
@@ -458,7 +470,23 @@ _BODY = """
 _JS = """
 <script>
 var IS_LAB = {IS_LAB};
+var TPL_DEVICES = {TPL_DEVICES};   // template → allowed device list (or null)
 var RIG_LAST = null;
+
+function tplChanged() {
+  var allowed = TPL_DEVICES[document.getElementById('recipe').value] || null;
+  ['pi5','pi400','gtv'].forEach(function(d){
+    var cb = document.getElementById('dev-' + d);
+    if (allowed) {
+      var ok = allowed.indexOf(d) >= 0;
+      cb.disabled = !ok;
+      cb.checked = ok && (cb.checked || allowed.length === 1);
+      if (!ok) cb.checked = false;
+    } else {
+      cb.disabled = false;
+    }
+  });
+}
 
 function dotClass(dev) {
   if (dev.state === 'ready' || dev.state === 'busy') return 'green';

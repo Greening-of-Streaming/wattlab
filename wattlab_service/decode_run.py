@@ -65,9 +65,10 @@ TEMPLATES: dict = {
         "label": "Pi 400 HW H.264 (v4l2m2m) — realtime 150 s · Pi 400 only",
         "clips": {"bbb_h264_hw_rt": "bbb_h264_6min.mp4"},
         # bcm2835-codec stateful decoder — the block the Pi 5 dropped; July
-        # measured +0.35 W vs +1.25 W software on the same board (3.6×).
-        # Pi 5 / GTV selections will honestly error (no such decoder path).
+        # measured +0.35 W vs +1.25 W software on the same board (3.6×);
+        # UI re-measured +0.22 W (2026-07-30, run 270ba366).
         "decoder": "h264_v4l2m2m",
+        "devices": ["pi400"],   # only board with a reachable H.264 block
         "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },

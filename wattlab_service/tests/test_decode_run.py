@@ -232,6 +232,14 @@ def test_run_upload_template_requires_existing_upload():
     assert "upload a clip first" in r.json()["error"]
 
 
+def test_template_device_restriction_enforced():
+    r = client.post("/decode/run", headers=_LAB, json={
+        "template": "bbb_h264_hw_rt", "devices": ["pi5", "pi400"],
+        "mode": "headless"})
+    assert r.status_code == 400
+    assert "only runs on: Pi 400" in r.json()["error"]
+
+
 def test_hw_decoder_template_names_v4l2m2m():
     p = decode_run._materialize("tj5", "bbb_h264_hw_rt", "pi400", "headless",
                                 False)
