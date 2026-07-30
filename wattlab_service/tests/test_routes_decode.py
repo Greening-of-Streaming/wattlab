@@ -28,15 +28,47 @@ def test_page_renders_for_lab():
     assert "rig-tile" in r.text
 
 
-def test_all_decode_routes_are_lab_only():
-    assert client.get("/decode", headers=_ANON).status_code == 403
-    assert client.get("/decode/status.json", headers=_ANON).status_code == 403
+def test_control_routes_are_lab_only_read_routes_public():
+    # Read surfaces open (guided-tour material)…
+    assert client.get("/decode", headers=_ANON).status_code == 200
+    assert client.get("/decode/status.json", headers=_ANON).status_code == 200
+    assert client.get("/decode/runs.json", headers=_ANON).status_code == 200
+    # …every switch/run/upload stays Lab.
     assert client.post("/decode/device/pi5/power", headers=_ANON,
                        json={"action": "on"}).status_code == 403
+    assert client.post("/decode/device/pi5/screen", headers=_ANON).status_code == 403
     assert client.post("/decode/monitor/power", headers=_ANON,
                        json={"on": True}).status_code == 403
     assert client.post("/decode/master/power", headers=_ANON,
                        json={"on": True}).status_code == 403
+
+
+def test_anon_page_is_read_only():
+    page = client.get("/decode", headers=_ANON).text
+    assert "Read-only view" in page
+    assert "var IS_LAB = false;" in page
+    lab = client.get("/decode", headers=_LAB).text
+    assert "Read-only view" not in lab
+    assert "var IS_LAB = true;" in lab
+
+
+def test_recent_runs_shape(monkeypatch, tmp_path):
+    import persist
+    d = tmp_path / "decode"
+    d.mkdir()
+    (d / "2026-07-30_abc123.json").write_text(json.dumps({
+        "job_id": "abc123", "saved_at": "2026-07-30T02:00:00",
+        "mode": "ui_screen", "template_label": "Smoke",
+        "protocol": {"protocol_version": 3},
+        "runs": [{"device": "pi400", "run": "x", "delta_w": 2.2,
+                  "confidence": {"flag": "🟢"}}]}))
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    r = client.get("/decode/runs.json", headers=_ANON)
+    assert r.status_code == 200
+    runs = r.json()["runs"]
+    assert runs[0]["job_id"] == "abc123"
+    assert runs[0]["protocol_version"] == 3
+    assert runs[0]["rows"][0]["delta_w"] == 2.2
 
 
 def test_status_shape():

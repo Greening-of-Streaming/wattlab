@@ -677,6 +677,55 @@ CR-031 (a container-runnable suite is a stated precondition) · CR-026 closed (t
 
 ---
 
+## CR-071 · LG C2 55" OLED as the decode rig's reference display
+
+**Status:** captured 2026-07-30 (owner request during the S59 rig build-out).
+**Triggered by:** owner — the shared PA329C is an LCD whose backlight mutes content response
+(measured white−black swing just 5.0 W on ~30 W); his 2022 LG C2 55" OLED would make the
+display the content-tracking instrument the device-side story needs.
+
+### Problem
+
+The Nov 2025 hackathon found device-side power dominated by **content luminance** — on OLED
+panels. The rig's current LCD barely expresses that (5 W swing); an OLED's pixel-level
+emission tracks luminance directly (tens of W expected on a 55" panel), turning every
+screen-mode row's marker head and content trace into a first-order measurement rather than a
+context reading. The C2 also does not auto-switch inputs like the PA329C — but that opens the
+door to something better than passive switching.
+
+### Agreed direction
+
+1. **Input arbitration goes positive via HDMI-CEC** (LG SIMPLINK, one-time enable): sources
+   *claim* the TV with One Touch Play / Active Source instead of the current darkening dance —
+   GTV does it natively on wake; Pis get `cec-ctl` (`apt install cec-utils`; Pi HDMI has CEC
+   silicon). `rig.claim_screen` gains a CEC path when the display is the C2; the DPMS
+   machinery stays for the PA329C.
+2. **webOS network control as the TV-side layer**: pair once (stored client key), then
+   websocket `ssap://` gives input select, power off / Wake-on-LAN power on, and — key for
+   methodology — **programmatic OLED backlight/pixel-brightness settings**, a first-order
+   energy variable the rig can then sweep as a recipe dimension.
+3. **Metering: Lab-C** (`192.168.1.35`, fw 1.3.1) becomes the C2's plug **after the Bouygues
+   router moves to a dumb socket** (hard precondition — see the standing hazard note). C2
+   standby, on/idle, and per-content draw all land in the monitor-context pipeline unchanged.
+4. **Methodology cautions to encode in the recipes**: OLED **ABL** makes full-white power
+   non-linear with bright-area (the white marker reads *panel policy*, not just luminance —
+   segmentation stays valid, interpretation notes required); keep static full-white segments
+   short (the 5 s marker head is already burn-in-kind); pixel-refresh cycles can add draw
+   after power-off (observe on Lab-C before trusting standby figures).
+5. **Placement**: C2 joins as the *measured* display; the PA329C stays as the owner's working
+   monitor (its Lab-E metering continues for LCD-vs-OLED comparison rows — a finding in
+   itself, and directly citable in the SMPTE device-side narrative).
+
+### Scope / effort
+
+`cec-utils` on both Pis + CEC probe (half a day incl. reliability testing) · webOS pairing +
+a small `webos.py` client (day) · rig config gains a display registry entry with
+arbitration kind (`cec+ssap` vs `dpms`) · recipes gain an optional brightness dimension ·
+LCD↔OLED comparison recipe. **Effort: ~2–3 lab days**, hardware-gated on the router socket
+move and the C2 physically joining the rig.
+
+---
+
 ## Unverified reports (compressed 2026-06-11; re-checked same day — the GosOne→OWL sweep item closed by S43's doc pass)
 
 The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, team meeting 2026-05-04, board meeting 2026-05-11) were compressed 2026-06-11: every item that was marked resolved, absorbed into a CR, or is a meeting note recorded elsewhere (JOURNAL.md / board notes / CR cross-refs) was deleted. The genuinely unresolved residue — **all three possibly mooted by the S42 routes refactor; verify with the named 5–15 min spike before deleting**:

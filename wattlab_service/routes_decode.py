@@ -19,13 +19,15 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
+import audience
 import decode_run
 import persist
 import queue_control
 import rig
 import ui
 import uploads
-from capabilities import requires, RIG_CONTROL
+from capabilities import (requires, can, LIVE_TELEMETRY, PUBLIC_PAGE,
+                          RESULTS_DOWNLOAD, RIG_CONTROL)
 from runtime import job_status as _job_status
 
 router = APIRouter()
@@ -42,15 +44,60 @@ def _refuse(e: rig.RigError) -> JSONResponse:
     return JSONResponse({"error": e.reason}, status_code=e.status)
 
 
+# Page + read surfaces are PUBLIC (guided-tour material — the rig, its live
+# state and past results are the story); every switch/run/upload endpoint
+# stays RIG_CONTROL (Lab). Same split as /prepare-rem's view-vs-act.
 @router.get("/decode", response_class=HTMLResponse,
-            dependencies=[Depends(requires(RIG_CONTROL))])
+            dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def decode_page(request: Request):
+    is_lab = can(audience.tier(request), RIG_CONTROL)
     options = "".join(
         f'<option value="{k}">{r["label"]}</option>'
         for k, r in decode_run.TEMPLATES.items())
-    return ui.render_page(request, "Decode Rig", styles=_STYLES,
-                          body=_BODY.replace("{RECIPE_OPTIONS}", options),
-                          tail=_JS)
+    banner = ("" if is_lab else
+              '<div class="rig-note" style="border:1px solid var(--border-3);'
+              'border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:1rem">'
+              '🔒 <b>Read-only view.</b> Switching devices and running '
+              'measurements needs <b>Lab mode</b> (LAN / SSH tunnel) — '
+              'browsing live state and past runs is open to everyone.</div>')
+    body = (_BODY.replace("{RECIPE_OPTIONS}", options)
+                 .replace("{LAB_BANNER}", banner))
+    return ui.render_page(request, "Decode Rig", styles=_STYLES, body=body,
+                          tail=_JS.replace("{IS_LAB}",
+                                           "true" if is_lab else "false"))
+
+
+@router.get("/decode/runs.json",
+            dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def decode_recent_runs(limit: int = 8):
+    """Compact recent-runs list for the page (and the guided tour): headline
+    ΔW per device row, mode, template — newest first."""
+    import json as _json
+    out = []
+    res_dir = persist.RESULTS_DIR / "decode"
+    if res_dir.exists():
+        files = sorted(res_dir.glob("*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        for f in files[:max(1, min(int(limit), 25))]:
+            try:
+                d = _json.loads(f.read_text())
+            except Exception:
+                continue
+            rows = [{"device": r.get("device"), "run": r.get("run"),
+                     "delta_w": r.get("delta_w"),
+                     "flag": (r.get("confidence") or {}).get("flag"),
+                     "screen_w": r.get("context_task_w")}
+                    for r in (d.get("runs") or [])
+                    if isinstance(r, dict) and "delta_w" in r]
+            out.append({"job_id": d.get("job_id"),
+                        "saved_at": d.get("saved_at"),
+                        "mode": d.get("mode"),
+                        "label": d.get("template_label") or d.get("recipe")
+                                 or d.get("mode"),
+                        "protocol_version":
+                            (d.get("protocol") or {}).get("protocol_version"),
+                        "rows": rows})
+    return {"runs": out}
 
 
 @router.post("/decode/run", dependencies=[Depends(requires(RIG_CONTROL))])
@@ -100,7 +147,7 @@ async def decode_run_start(request: Request, payload: dict):
 
 
 @router.get("/decode/job/{job_id}",
-            dependencies=[Depends(requires(RIG_CONTROL))])
+            dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def decode_job_status(job_id: str):
     s = _job_status(job_id)
     now = time.monotonic()
@@ -118,7 +165,7 @@ async def decode_job_status(job_id: str):
 
 
 @router.get("/decode/status.json",
-            dependencies=[Depends(requires(RIG_CONTROL))])
+            dependencies=[Depends(requires(LIVE_TELEMETRY))])
 async def decode_status():
     return rig.status_payload()
 
@@ -162,7 +209,7 @@ async def decode_upload(request: Request, file: UploadFile = File(...),
 
 
 @router.get("/decode/result/{job_id}/lem.csv",
-            dependencies=[Depends(requires(RIG_CONTROL))])
+            dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def decode_result_lem_csv(job_id: str):
     """Raw run data as a LEM-style combined CSV: timestamp,alias,power_w —
     the exact shape LEM writes (and REM ingests). Aliases are the rig device
@@ -305,6 +352,7 @@ body { font-family: monospace; background: var(--bg); color: var(--text);
 _BODY = """
 <div class="rig-wrap">
   <h2>Decode rig <span class="rig-badge">Lab</span></h2>
+  {LAB_BANNER}
   <div class="rig-agg" id="rig-agg">connecting…</div>
   <div class="rig-err" id="rig-err"></div>
 
@@ -372,6 +420,11 @@ _BODY = """
   </div>
 
   <div class="rig-run" style="margin-top:1rem">
+    <h3>Recent runs</h3>
+    <div id="recent-runs" class="rig-note" style="margin-top:0.2rem">loading…</div>
+  </div>
+
+  <div class="rig-run" style="margin-top:1rem">
     <h3>Open items <span class="rig-badge">2026-07-30 (overnight)</span></h3>
     <div class="rig-note" style="margin-top:0.2rem">
     <b>Landed overnight:</b> clip upload (shared retention rules) · decode
@@ -404,6 +457,7 @@ _BODY = """
 
 _JS = """
 <script>
+var IS_LAB = {IS_LAB};
 var RIG_LAST = null;
 
 function dotClass(dev) {
@@ -434,19 +488,21 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
   else
     h += '<div class="rig-detail">' + (dev.state + (dev.detail ? ' · ' + dev.detail : '')) + '</div>';
 
-  if (dev.state === 'off')
-    h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'on\\')">On</button>';
-  else if (dev.state === 'ready') {
-    h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Off</button>';
-    if (screenOwner !== name && !dev.busy)
-      h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
-         + '/screen\\', {})">Claim screen</button>';
+  if (IS_LAB) {
+    if (dev.state === 'off')
+      h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'on\\')">On</button>';
+    else if (dev.state === 'ready') {
+      h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Off</button>';
+      if (screenOwner !== name && !dev.busy)
+        h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
+           + '/screen\\', {})">Claim screen</button>';
+    }
+    else if (dev.state === 'stuck')
+      h += '<button class="rig-btn warn" onclick="devPower(\\'' + name + '\\',\\'cycle\\')">Power-cycle</button>'
+         + ' <button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Force off</button>';
+    else if (dev.state === 'booting' || dev.state === 'powering')
+      h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Cancel</button>';
   }
-  else if (dev.state === 'stuck')
-    h += '<button class="rig-btn warn" onclick="devPower(\\'' + name + '\\',\\'cycle\\')">Power-cycle</button>'
-       + ' <button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Force off</button>';
-  else if (dev.state === 'booting' || dev.state === 'powering')
-    h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Cancel</button>';
   h += '</div>';
   return h;
 }
@@ -465,7 +521,8 @@ function render(s) {
     tile.style.display = '';
     var dot = document.getElementById('dot-master');
     var btn = document.getElementById('btn-master');
-    document.getElementById('w-master').textContent = fmtW(m.apower_w);
+    document.getElementById('w-master').textContent =
+      (m.apower_w == null) ? '—' : m.apower_w.toFixed(1) + ' W';
     if (!m.switchable) {
       // Metering-only Shelly (Plug PM): strip total + a SOFTWARE master —
       // "All off" gracefully stops every powered box. A relay-equipped
@@ -563,10 +620,48 @@ async function tick() {
 tick();
 setInterval(tick, 2500);
 
+// Read-only (non-Lab): controls off, monitor/master buttons hidden.
+if (!IS_LAB) {
+  document.getElementById('btn-run').disabled = true;
+  document.getElementById('btn-run').textContent = 'Run (Lab only)';
+  document.getElementById('btn-upload').disabled = true;
+  document.getElementById('btn-monitor').style.display = 'none';
+  document.getElementById('btn-master').style.display = 'none';
+}
+
+// --- Recent runs ---
+function fmtDW(v) { return (v >= 0 ? '+' : '') + v + ' W'; }
+async function loadRecent() {
+  try {
+    var r = await fetch('/decode/runs.json');
+    if (!r.ok) return;
+    var j = await r.json();
+    var el = document.getElementById('recent-runs');
+    if (!j.runs.length) { el.textContent = 'no runs yet'; return; }
+    var h = '<table class="rig-rows">';
+    for (var i = 0; i < j.runs.length; i++) {
+      var run = j.runs[i];
+      var when = (run.saved_at || '').replace('T', ' ').slice(0, 16);
+      var rows = run.rows.map(function(x){
+        return (DEV_LABELS[x.device] || x.device || '') + ' ' + fmtDW(x.delta_w)
+             + ' ' + (x.flag || '');
+      }).join(' · ');
+      h += '<tr><td>' + when + '</td><td>' + (run.label || '') + '</td>'
+         + '<td><span class="rig-badge">' + (run.mode || '') + ' v'
+         + (run.protocol_version || '?') + '</span></td>'
+         + '<td>' + rows + '</td>'
+         + '<td><a href="/decode?job=' + run.job_id + '" style="color:var(--accent)">card</a>'
+         + ' <a href="/decode/result/' + run.job_id + '/lem.csv" style="color:var(--accent)">csv</a></td></tr>';
+    }
+    el.innerHTML = h + '</table>';
+  } catch (e) {}
+}
+loadRecent();
+
 // Re-attach to a job after reload/service restart: /decode?job=<id>
 // (queue-status ↩ Resume points here; results also recover from disk).
 var _qjob = new URLSearchParams(location.search).get('job');
-if (_qjob) { document.getElementById('btn-run').disabled = true; pollJob(_qjob); }
+if (_qjob) { if (IS_LAB) document.getElementById('btn-run').disabled = true; pollJob(_qjob); }
 
 // --- Runs (v2: mode + device fan-out) ---
 var PHASE_LABELS = {device:'Power device', staging:'Stage clips',
