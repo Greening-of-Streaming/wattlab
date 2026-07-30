@@ -240,6 +240,21 @@ def test_template_device_restriction_enforced():
     assert "only runs on: Pi 400" in r.json()["error"]
 
 
+def test_best_path_template_maps_decoder_per_device():
+    p400 = decode_run._materialize("tj6", "bbb_h264_best_rt", "pi400",
+                                   "headless", False)
+    p5 = decode_run._materialize("tj7", "bbb_h264_best_rt", "pi5",
+                                 "headless", False)
+    try:
+        c400 = json.loads(p400.read_text())
+        c5 = json.loads(p5.read_text())
+        assert "-c:v h264_v4l2m2m -i" in c400["runs"][0]["cmd"]   # HW
+        assert "v4l2m2m" not in c5["runs"][0]["cmd"]              # SW
+    finally:
+        p400.unlink()
+        p5.unlink()
+
+
 def test_hw_decoder_template_names_v4l2m2m():
     p = decode_run._materialize("tj5", "bbb_h264_hw_rt", "pi400", "headless",
                                 False)

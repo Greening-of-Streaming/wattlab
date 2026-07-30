@@ -72,6 +72,17 @@ TEMPLATES: dict = {
         "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
+    "bbb_h264_best_rt": {
+        "label": "BBB H.264 best-path — Pi 5 SW · Pi 400 HW · GTV HW, parallel",
+        "clips": {"bbb_h264_best": "bbb_h264_6min.mp4"},
+        # Each board on its best decode path: Pi 400 names its hardware block,
+        # Pi 5 has none (software IS its best path), the GTV's pipeline is
+        # always fixed-function. The cross-silicon table from the July report,
+        # as one parallel run.
+        "decoder_by_device": {"pi400": "h264_v4l2m2m"},
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
+                  "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+    },
     "bbb_codecs_rt": {
         "label": "BBB codec panel — H.264 / HEVC / AV1, realtime 150 s each",
         "clips": {"bbb_h264_rt": "bbb_h264_6min.mp4",
@@ -172,15 +183,17 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
     marked = mode == "screen" and calibrate
     runs = []
     for run_name, clip in tpl["clips"].items():
+        decoder = (tpl.get("decoder")
+                   or (tpl.get("decoder_by_device") or {}).get(dev_name))
         if marked:
             # Marker-headed variant: window extends over the 15 s head; the
             # skip shrinks so the head lands inside the sampled window.
             runs.append(_row_for(dev_cfg, run_name, marked_name(clip), mode,
                                  window_s=tpl["bench"]["window_s"] + MARKER_HEAD_S,
-                                 decoder=tpl.get("decoder")))
+                                 decoder=decoder))
         else:
             runs.append(_row_for(dev_cfg, run_name, clip, mode,
-                                 decoder=tpl.get("decoder")))
+                                 decoder=decoder))
     cfg = dict(tpl["bench"])
     proto = protocol_settings()
     cfg.update({k: proto[k] for k in
