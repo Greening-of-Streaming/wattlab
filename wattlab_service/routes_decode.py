@@ -450,12 +450,8 @@ _BODY = """
              onchange="modeChanged()"> on screen — exclusive</label>
     </div>
     <div class="rig-runrow" id="dev-picks" style="margin-top:0.4rem">
-      <label><input type="checkbox" id="dev-pi5" checked
-             onchange="devPicked(this)"> Pi 5</label>
-      <label><input type="checkbox" id="dev-pi400" checked
-             onchange="devPicked(this)"> Pi 400</label>
-      <label><input type="checkbox" id="dev-gtv"
-             onchange="devPicked(this)"> Google TV</label>
+      <!-- device checkboxes built dynamically from live status (buildDevPicks) -->
+      <span id="dev-checkboxes" class="rig-detail">loading devices…</span>
       <label id="cal-wrap" style="display:none">
         <input type="checkbox" id="calibrate" checked>
         marker head (5 s black·white·black in-clip)</label>
@@ -529,7 +525,7 @@ var RIG_LAST = null;
 
 function tplChanged() {
   var allowed = TPL_DEVICES[document.getElementById('recipe').value] || null;
-  ['pi5','pi400','gtv'].forEach(function(d){
+  DEVICE_NAMES.forEach(function(d){
     var cb = document.getElementById('dev-' + d);
     if (allowed) {
       var ok = allowed.indexOf(d) >= 0;
@@ -676,6 +672,8 @@ function render(s) {
   var mb = document.getElementById('btn-monitor');
   mb.textContent = mon.on ? 'Off' : 'On';
   mb.disabled = !mon.reachable;
+
+  buildDevPicks(s.devices);
 
   // Device cards + control rail
   var tiles = '', rail = '';
@@ -838,7 +836,24 @@ var PHASE_LABELS = {device:'Power device', staging:'Stage clips',
                     settle:'Settle', baseline:'Baseline',
                     starting:'Start playback', sampling:'Sampling',
                     finishing:'Confidence', done:'Done', error:'Error'};
-var DEV_LABELS = {pi5:'Pi 5', pi400:'Pi 400', gtv:'Google TV'};
+var DEV_LABELS = {pi5:'Pi 5', pi400:'Pi 400', gtv:'Google TV', bbox:'Bbox 4K'};
+// Device selection list — populated from live status so the run panel always
+// matches the real bench (buildDevPicks); no hardcoded device names.
+var DEVICE_NAMES = [];
+
+function buildDevPicks(devices) {
+  var names = Object.keys(devices);
+  if (names.join() === DEVICE_NAMES.join()) return;   // unchanged
+  DEVICE_NAMES = names;
+  var el = document.getElementById('dev-checkboxes');
+  if (!el) return;
+  el.innerHTML = names.map(function(d, i){
+    var lbl = devices[d].label || DEV_LABELS[d] || d;
+    return '<label style="margin-right:0.7rem"><input type="checkbox" id="dev-'
+      + d + '"' + (i < 2 ? ' checked' : '') + ' onchange="devPicked(this)"> '
+      + lbl + '</label>';
+  }).join('');
+}
 
 function screenMode() {
   return document.querySelector('input[name=mode]:checked').value === 'screen';
@@ -848,7 +863,7 @@ function modeChanged() {
   document.getElementById('cal-wrap').style.display = screenMode() ? '' : 'none';
   if (screenMode()) {  // collapse to a single selection
     var first = true;
-    ['pi5','pi400','gtv'].forEach(function(d){
+    DEVICE_NAMES.forEach(function(d){
       var cb = document.getElementById('dev-' + d);
       if (cb.checked && !first) cb.checked = false;
       if (cb.checked) first = false;
@@ -859,7 +874,7 @@ function modeChanged() {
 function devPicked(box) {
   // Screen mode is exclusive: checking one box unchecks the others.
   if (screenMode() && box.checked) {
-    ['pi5','pi400','gtv'].forEach(function(d){
+    DEVICE_NAMES.forEach(function(d){
       var cb = document.getElementById('dev-' + d);
       if (cb !== box) cb.checked = false;
     });
@@ -1023,7 +1038,7 @@ async function uploadClip() {
 
 async function runRecipe() {
   var mode = document.querySelector('input[name=mode]:checked').value;
-  var devices = ['pi5','pi400','gtv'].filter(function(d){
+  var devices = DEVICE_NAMES.filter(function(d){
     return document.getElementById('dev-' + d).checked; });
   if (!devices.length) { err('pick at least one device'); return; }
   if (mode === 'screen' && devices.length !== 1) {

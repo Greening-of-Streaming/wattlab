@@ -47,7 +47,7 @@ def test_status_carries_bench_metadata():
     assert body["devices"]["gtv"]["device_class"] == "stb"
     assert body["devices"]["bbox"]["device_class"] == "stb"   # operator CPE
     assert "OLED55C2" in body["monitor"]["panel"]             # C2 display
-    assert "pi400" not in body["devices"]                     # parked, hidden
+    assert "pi400" in body["devices"]                         # kept on bench
 
 
 def test_control_routes_are_lab_only_read_routes_public():

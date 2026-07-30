@@ -82,11 +82,7 @@ RIG: dict = {
             "expected_boot_s": 45, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
             "idle_w": 3.0,
-            # Physically disconnected 2026-07-30 (its bench slot / HDMI-3 goes
-            # to the incoming Fire TV Stick). Config + hw-decode templates kept
-            # for reference; `parked` hides it from the console until it
-            # returns. Unset this to bring it back.
-            "parked": True,
+            "hdmi_input": "HDMI_3",   # kept on the bench (owner) — spare port
         },
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
