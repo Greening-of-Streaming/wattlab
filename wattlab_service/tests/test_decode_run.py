@@ -162,6 +162,18 @@ def test_segment_marker_trace_on_reference_run():
     assert 30.0 <= seg["content_w"] <= 32.0
 
 
+def test_segment_marker_trace_fallback_missing_leading_black():
+    """GTV shape: window opens mid-head — white first, then black, content."""
+    trace = [33.0, 33.1, 32.9, 33.0, 28.1, 28.0, 27.9, 28.0, 28.1,
+             31.5, 31.0] + [31.2] * 40
+    seg = decode_run.segment_marker_trace(trace)
+    assert seg is not None
+    assert seg["black_w"] is None
+    assert 32.5 <= seg["white_w"] <= 33.5
+    assert 27.5 <= seg["black2_w"] <= 28.5
+    assert seg["note"].startswith("leading black")
+
+
 def test_segment_marker_trace_rejects_flat_and_short():
     assert decode_run.segment_marker_trace([30.0] * 40) is None
     assert decode_run.segment_marker_trace([1, 2, 3]) is None

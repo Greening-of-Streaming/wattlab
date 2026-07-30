@@ -288,13 +288,14 @@ def segment_marker_trace(w: list) -> dict | None:
             runs[-1][2] = i
         else:
             runs.append([st, i, i])
+    def _mean(lo_i, hi_i):
+        xs = w[lo_i:hi_i + 1]
+        return round(statistics.mean(xs), 2) if xs else None
+
     for j in range(len(runs) - 2):
         a, b, c = runs[j], runs[j + 1], runs[j + 2]
         if ((not a[0]) and b[0] and (not c[0])
                 and min(a[2] - a[1], b[2] - b[1], c[2] - c[1]) >= 2):
-            def _mean(lo_i, hi_i):
-                xs = w[lo_i:hi_i + 1]
-                return round(statistics.mean(xs), 2) if xs else None
             black = _mean(max(a[1] + 1, a[2] - 3), a[2])
             white = _mean(b[1] + 1, b[2])
             black2 = _mean(c[1] + 1, c[2])
@@ -305,6 +306,23 @@ def segment_marker_trace(w: list) -> dict | None:
                     "marker_swing_w": (round(white - min(black, black2), 2)
                                        if white and black and black2 else None),
                     "content_from_idx": c[2] + 2}
+    # Fallback: leading black consumed by the playback start-skip (GTV rows —
+    # no mode-set delay, so the window opens mid-head): accept white→black
+    # when the white run starts within the first ~4 samples.
+    for j in range(min(2, len(runs) - 1)):
+        b, c = runs[j], runs[j + 1]
+        if (b[0] and (not c[0]) and b[1] <= 4
+                and (b[2] - b[1]) >= 2 and (c[2] - c[1]) >= 2):
+            white = _mean(b[1] + 1, b[2])
+            black2 = _mean(c[1] + 1, c[2])
+            content = (round(statistics.mean(w[c[2] + 2:]), 2)
+                       if len(w) > c[2] + 2 else None)
+            return {"black_w": None, "white_w": white, "black2_w": black2,
+                    "content_w": content,
+                    "marker_swing_w": (round(white - black2, 2)
+                                       if white and black2 else None),
+                    "content_from_idx": c[2] + 2,
+                    "note": "leading black consumed by start-skip"}
     return None
 
 

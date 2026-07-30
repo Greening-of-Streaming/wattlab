@@ -366,8 +366,9 @@ body { font-family: monospace; background: var(--bg); color: var(--text);
 .rig-runrow .rig-btn { margin-top:0; }
 .rig-stage { display:flex; align-items:center; gap:0.55rem;
              font-size:0.82rem; margin-bottom:0.25rem; }
+.rig-rows { display:block; overflow-x:auto; max-width:100%; }
 .rig-rows td { padding:0.15rem 0.8rem 0.15rem 0; font-size:0.84rem;
-               color:var(--text-2); }
+               color:var(--text-2); white-space:nowrap; }
 """
 
 _BODY = """
@@ -693,7 +694,8 @@ async function loadRecent() {
          + (run.protocol_version || '?') + '</span></td>'
          + '<td>' + rows + '</td>'
          + '<td><a href="/decode?job=' + run.job_id + '" style="color:var(--accent)">card</a>'
-         + ' <a href="/decode/result/' + run.job_id + '/lem.csv" style="color:var(--accent)">csv</a></td></tr>';
+         + ' <a href="/decode/result/' + run.job_id + '/lem.csv" style="color:var(--accent)">csv</a>'
+         + ' <a href="/results/decode/' + run.job_id + '/download.json" style="color:var(--accent)">full json</a></td></tr>';
     }
     el.innerHTML = h + '</table>';
   } catch (e) {}
@@ -839,7 +841,10 @@ function renderJob(j) {
     h += stageRow('✓', 'var(--accent)', 'done — result saved',
       CUR_JOB ? ' <a href="/decode/result/' + CUR_JOB + '/lem.csv" '
               + 'style="color:var(--accent);font-size:0.78rem;margin-left:0.6rem">'
-              + '⬇ raw samples (LEM CSV)</a>' : '');
+              + '⬇ raw samples (LEM CSV)</a>'
+              + ' <a href="/results/decode/' + CUR_JOB + '/download.json" '
+              + 'style="color:var(--accent);font-size:0.78rem;margin-left:0.6rem">'
+              + '⬇ full result (JSON)</a>' : '');
     if (j.partial_errors)
       h += '<div class="rig-err">partial: ' + JSON.stringify(j.partial_errors) + '</div>';
     h += resultTable(j.result);
