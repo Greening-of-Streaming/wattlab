@@ -232,6 +232,16 @@ def test_run_upload_template_requires_existing_upload():
     assert "upload a clip first" in r.json()["error"]
 
 
+def test_hw_decoder_template_names_v4l2m2m():
+    p = decode_run._materialize("tj5", "bbb_h264_hw_rt", "pi400", "headless",
+                                False)
+    try:
+        cfg = json.loads(p.read_text())
+        assert "-c:v h264_v4l2m2m -i" in cfg["runs"][0]["cmd"]
+    finally:
+        p.unlink()
+
+
 def test_marked_name_is_subdir_safe():
     assert decode_run.marked_name("bbb.mp4") == "marked_bbb.mp4"
     assert decode_run.marked_name("_uploads/x.mp4") == "_uploads/marked_x.mp4"

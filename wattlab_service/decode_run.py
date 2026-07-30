@@ -61,6 +61,16 @@ TEMPLATES: dict = {
         "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
+    "bbb_h264_hw_rt": {
+        "label": "Pi 400 HW H.264 (v4l2m2m) — realtime 150 s · Pi 400 only",
+        "clips": {"bbb_h264_hw_rt": "bbb_h264_6min.mp4"},
+        # bcm2835-codec stateful decoder — the block the Pi 5 dropped; July
+        # measured +0.35 W vs +1.25 W software on the same board (3.6×).
+        # Pi 5 / GTV selections will honestly error (no such decoder path).
+        "decoder": "h264_v4l2m2m",
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
+                  "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+    },
     "bbb_codecs_rt": {
         "label": "BBB codec panel — H.264 / HEVC / AV1, realtime 150 s each",
         "clips": {"bbb_h264_rt": "bbb_h264_6min.mp4",
@@ -126,7 +136,7 @@ _SAMPLE_RE = re.compile(r"\] sample ([0-9.]+)W(?: ctx=([0-9.]+)W)?")
 # --- Materialisation ---------------------------------------------------------
 
 def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
-             window_s: int | None = None) -> dict:
+             window_s: int | None = None, decoder: str | None = None) -> dict:
     row: dict = {"name": name}
     if window_s:
         row["window_s"] = window_s
@@ -147,7 +157,8 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         row["stop_cmd"] = "pkill mpv"
     else:
         stem = Path(clip).stem
-        row["cmd"] = (f"ffmpeg -nostdin -re -i /dev/shm/decode/{shm} "
+        dec = f"-c:v {decoder} " if decoder else ""
+        row["cmd"] = (f"ffmpeg -nostdin -re {dec}-i /dev/shm/decode/{shm} "
                       f"-an -f null - ")
         row["stop_cmd"] = f"pkill -f 'ffmpeg.*{stem}'"
     return row
@@ -164,9 +175,11 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
             # Marker-headed variant: window extends over the 15 s head; the
             # skip shrinks so the head lands inside the sampled window.
             runs.append(_row_for(dev_cfg, run_name, marked_name(clip), mode,
-                                 window_s=tpl["bench"]["window_s"] + MARKER_HEAD_S))
+                                 window_s=tpl["bench"]["window_s"] + MARKER_HEAD_S,
+                                 decoder=tpl.get("decoder")))
         else:
-            runs.append(_row_for(dev_cfg, run_name, clip, mode))
+            runs.append(_row_for(dev_cfg, run_name, clip, mode,
+                                 decoder=tpl.get("decoder")))
     cfg = dict(tpl["bench"])
     proto = protocol_settings()
     cfg.update({k: proto[k] for k in
