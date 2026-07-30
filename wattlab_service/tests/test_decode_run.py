@@ -332,7 +332,8 @@ def test_marked_name_is_subdir_safe():
 def test_page_has_mode_and_device_controls():
     page = client.get("/decode", headers=_LAB).text
     for frag in ("headless — parallel", "on screen — exclusive",
-                 "dev-pi5", "dev-pi400", "dev-gtv", "calibrate"):
+                 # device checkboxes are built dynamically from live status
+                 "dev-checkboxes", "buildDevPicks", "DEVICE_NAMES", "calibrate"):
         assert frag in page, frag
     for key in decode_run.TEMPLATES:
         assert key in page
