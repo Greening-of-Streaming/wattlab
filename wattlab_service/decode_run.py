@@ -603,8 +603,13 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
             name = devices[0]
             await _wait_ready(name, job["devices"][name],
                               3 * rig.RIG["devices"][name]["expected_boot_s"] + 45)
-            job["devices"][name]["detail"] = "claiming screen"
-            await rig.claim_screen(name)
+            # The C2 IS the panel — no HDMI claim, and a service-side webOS
+            # call here races bench.py's own webOS connection (seen as a
+            # TimeoutError, 2026-07-31). The harness's prepare() sets its clean
+            # state; playback shows directly.
+            if rig.RIG["devices"][name]["kind"] != "webos":
+                job["devices"][name]["detail"] = "claiming screen"
+                await rig.claim_screen(name)
 
         outcomes = await asyncio.gather(
             *[_run_bench_for(job_id, tpl_key, tpl, name, mode, calibrate,
