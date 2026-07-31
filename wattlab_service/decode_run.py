@@ -552,8 +552,13 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                 f"bench.py exit {rc}: {' | '.join(lines[-3:])[:300]}")
         bench_out = json.loads(result_path.read_text())
         if mode == "screen" and calibrate:
+            # The marker head shows up on the SCREEN meter. For HDMI devices
+            # that's the separate monitor/context trace; for the C2 the panel
+            # IS the primary meter (Lab-E), so the head is in the task trace.
+            marker_key = ("raw_task_w" if dev_cfg["kind"] == "webos"
+                          else "raw_context_w")
             for row in bench_out.get("rows", []):
-                seg = segment_marker_trace(row.get("raw_context_w") or [])
+                seg = segment_marker_trace(row.get(marker_key) or [])
                 if seg:
                     row["screen_marker_segments"] = seg
         section = {
