@@ -101,10 +101,12 @@ RIG: dict = {
             "hdmi_input": "HDMI_3",
             "expected_boot_s": 40, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
-            # Measured 2026-07-31 at the home screen: ~1.2–2.1 W (Amazon's
-            # autoplay trailers spike it — like the Bbox live-TV UI). Floor set
-            # a touch high so the idle guard doesn't time out on a preview spike.
-            "idle_w": 1.5,
+            # Awake-home idle measured 2026-07-31: ~1.3–2.2 W (Amazon autoplay
+            # spikes it). Reference floor must sit ABOVE the spikes or the guard
+            # never settles (w ≤ idle_w+tol) and burns max_wait — 1.5 left the
+            # 2.2 spikes above the 2.0 threshold, causing the long settles Ben
+            # saw. 1.8 → settles ≤2.3, covers the spikes.
+            "idle_w": 1.8,
         },
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
@@ -816,6 +818,32 @@ async def claim_screen(name: str) -> None:
 
 async def monitor_power(on: bool) -> None:
     await plug_set(RIG["monitor"]["plug_ip"], on)
+
+
+async def recycle_c2_panel(name: str) -> None:
+    """Boot the C2's panel (Lab-E) to a fresh Home before a screen-mode native
+    run — a deterministic, screensaver-free baseline that's identical every
+    run. Needed because the panel's screensaver can't be disabled over the API
+    (max 30 min) and may already be running when the job starts; a power-cycle
+    guarantees a clean state (the C2's power-on is set to Home Screen). Only
+    called from the C2 run prep — the UI power buttons stay refused."""
+    dev_cfg = _dev_cfg(name)
+    if dev_cfg["kind"] != "webos":
+        raise RigError(400, "recycle_c2_panel is C2-only")
+    d = rig_cache["devices"][name]
+    await plug_set(dev_cfg["plug_ip"], False)
+    await asyncio.sleep(3)
+    await plug_set(dev_cfg["plug_ip"], True)
+    d.update({"state": "booting", "boot_started": time.monotonic(),
+              "detail": "panel rebooting"})
+    for _ in range(20):          # ~60 s budget for webOS to answer again
+        await asyncio.sleep(3)
+        if await asyncio.to_thread(probe_ready, dev_cfg):
+            await asyncio.to_thread(lg.go_home, dev_cfg["target"])
+            d.update({"state": "ready", "webos_probed": time.monotonic(),
+                      "boot_started": None, "detail": "webOS ok (fresh boot)"})
+            return
+    raise RigError(504, f"{dev_cfg['label']} panel did not return after cycle")
 
 
 async def master_power(on: bool) -> None:

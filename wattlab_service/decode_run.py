@@ -140,7 +140,10 @@ def protocol_settings() -> dict:
     if s.get("decode_idle_guard", True) in (True, "true", "on", "1", 1):
         guard = {"tolerance_w": float(s.get("decode_idle_tolerance_w", 0.5)),
                  "settle_polls": int(s.get("decode_idle_settle_polls", 4)),
-                 "max_wait_s": int(s.get("decode_idle_max_wait_s", 60))}
+                 # 30 s cap (was 60): with idle_w floors tuned to real awake
+                 # idle, settle is a few s; the cap just bounds a noisy panel
+                 # (C2) rather than being the common path (2026-07-31).
+                 "max_wait_s": int(s.get("decode_idle_max_wait_s", 30))}
     return {
         "cadence_s": float(s.get("decode_cadence_s", 1.0)),
         # Short post-prepare quiesce only — the idle guard owns "are we at
@@ -523,11 +526,28 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
 
         proc = await asyncio.create_subprocess_exec(
             "python3", str(BENCH), str(cfg_path), cwd=str(BENCH_DIR),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            # 8 MB line buffer: the default 64 KB overflowed on a 4K / 5-device
+            # run (a long bench line) with "Separator is not found, and chunk
+            # exceed the limit", killing the whole run (2026-07-31).
+            limit=8 * 1024 * 1024)
         lines = []
         row_i = 0
         while True:
-            raw = await proc.stdout.readline()
+            try:
+                raw = await proc.stdout.readline()
+            except (asyncio.LimitOverrunError, ValueError):
+                # Pathologically long line (>8 MB) — drain a bounded chunk and
+                # carry on rather than crash the run; bench.py still writes the
+                # row's own result file. (A plain re-read would hit the same
+                # limit; read(n) can't.)
+                try:
+                    chunk = await proc.stdout.read(1024 * 1024)
+                except Exception:
+                    chunk = b""
+                if not chunk:
+                    break
+                continue
             if not raw:
                 break
             line = raw.decode(errors="replace").rstrip()
@@ -606,13 +626,17 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
         if mode == "screen":
             # Exclusive: power/ready first, then hand it the monitor.
             name = devices[0]
-            await _wait_ready(name, job["devices"][name],
-                              3 * rig.RIG["devices"][name]["expected_boot_s"] + 45)
-            # The C2 IS the panel — no HDMI claim, and a service-side webOS
-            # call here races bench.py's own webOS connection (seen as a
-            # TimeoutError, 2026-07-31). The harness's prepare() sets its clean
-            # state; playback shows directly.
-            if rig.RIG["devices"][name]["kind"] != "webos":
+            if rig.RIG["devices"][name]["kind"] == "webos":
+                # Boot the panel to a fresh Home first: a screensaver-free,
+                # reproducible baseline (the screensaver can't be disabled via
+                # API, only pushed to 30 min, and may already be running).
+                # Also avoids racing bench.py's webOS connection — the C2 IS
+                # the panel, so there's no HDMI input to claim.
+                job["devices"][name]["detail"] = "power-cycling panel"
+                await rig.recycle_c2_panel(name)
+            else:
+                await _wait_ready(name, job["devices"][name],
+                                  3 * rig.RIG["devices"][name]["expected_boot_s"] + 45)
                 job["devices"][name]["detail"] = "claiming screen"
                 await rig.claim_screen(name)
 

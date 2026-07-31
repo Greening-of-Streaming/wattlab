@@ -319,6 +319,34 @@ def test_screen_owner_cleared_when_owner_powers_off(monkeypatch):
     assert rig.rig_cache["screen_owner"] is None
 
 
+def test_recycle_c2_panel_reboots_to_home(monkeypatch):
+    """C2 screen-run prep: power-cycle Lab-E, wait for webOS, go Home."""
+    sets = []
+
+    async def _set(ip, on, **kw):
+        sets.append((ip, on))
+    monkeypatch.setattr(rig, "plug_set", _set)
+    monkeypatch.setattr(rig, "probe_ready", lambda dev: True)
+    homes = []
+    monkeypatch.setattr(rig.lg, "go_home", lambda host: homes.append(host))
+
+    async def _nosleep(_s):
+        return None
+    monkeypatch.setattr(rig.asyncio, "sleep", _nosleep)
+
+    _run(rig.recycle_c2_panel("c2"))
+    ip = rig.RIG["devices"]["c2"]["plug_ip"]
+    assert (ip, False) in sets and (ip, True) in sets        # power-cycled
+    assert homes == [rig.RIG["devices"]["c2"]["target"]]     # booted to Home
+    assert rig.rig_cache["devices"]["c2"]["state"] == "ready"
+
+
+def test_recycle_c2_panel_rejects_non_webos():
+    with pytest.raises(rig.RigError) as e:
+        _run(rig.recycle_c2_panel("pi5"))
+    assert e.value.status == 400
+
+
 def test_status_payload_shape():
     p = rig.status_payload()
     assert set(p) == {"master", "monitor", "devices", "screen_owner",
