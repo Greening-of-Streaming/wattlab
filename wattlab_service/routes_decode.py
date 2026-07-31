@@ -147,6 +147,17 @@ async def decode_run_start(request: Request, payload: dict):
         if not 1.0 <= cadence_s <= 10.0:
             return JSONResponse({"error": "cadence must be 1–10 s"},
                                 status_code=400)
+    # Tester-set duration (loop recipes): the whole endpoint is RIG_CONTROL
+    # (Lab-only), so allow the full 30 s–1 h range.
+    window_s = p.get("window_s")
+    if window_s is not None:
+        try:
+            window_s = int(window_s)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "bad window_s"}, status_code=400)
+        if not 30 <= window_s <= 3600:
+            return JSONResponse({"error": "window_s must be 30–3600 s"},
+                                status_code=400)
     try:
         tpl = decode_run.resolve_template(tpl_key, upload_name)
     except Exception as e:
@@ -157,7 +168,8 @@ async def decode_run_start(request: Request, payload: dict):
 
     async def coro(job_id=job_id):
         await decode_run.run_decode_job(job_id, tpl_key, devices, mode,
-                                        calibrate, upload_name, cadence_s)
+                                        calibrate, upload_name, cadence_s,
+                                        window_s)
 
     position = queue_control.enqueue(job_id, "decode", label, coro,
                                      request=request, page="/decode")

@@ -71,6 +71,23 @@ def test_materialize_gtv_uses_urls():
         p.unlink()
 
 
+def test_loop_templates_and_window_override():
+    # 9 parametric loop templates (family × codec)
+    for fam in ("bbb", "meridian", "kranjska"):
+        for cod in ("h264", "h265", "av1"):
+            assert f"loop_{fam}_{cod}" in decode_run.TEMPLATES
+    # H.264 loops the 60-min clip (survives a 1 h window); H.265/AV1 the 20-min
+    assert "60min" in list(decode_run.TEMPLATES["loop_bbb_h264"]["clips"].values())[0]
+    assert "20min" in list(decode_run.TEMPLATES["loop_bbb_av1"]["clips"].values())[0]
+    # window_s override reaches the bench cfg
+    p = decode_run._materialize("wj", "loop_bbb_h264", "pi5", "headless",
+                                False, window_s=42)
+    try:
+        assert json.loads(p.read_text())["window_s"] == 42
+    finally:
+        p.unlink()
+
+
 def test_materialize_c2_webos_native():
     # C2 native decode: webOS device, clip URL (no player/ffmpeg cmd), and NO
     # context meter — its device plug IS the monitor plug (Lab-E).

@@ -118,6 +118,24 @@ TEMPLATES: dict = {
     },
 }
 
+# Parametric loop templates (2026-07-31): family × codec, tester-set duration
+# via the window_s override on /decode/run (30–3600 s). H.264 points at the
+# 60-min concatenated clips so even a ~1 h window never runs out; H.265/AV1 use
+# the 20-min clips (their runs stay short). No player-side looping needed — the
+# clip is always longer than the window and bench.py stops at window_s.
+LOOP_FAMILIES = ("bbb", "meridian", "kranjska")
+LOOP_CODECS = ("h264", "h265", "av1")
+for _fam in LOOP_FAMILIES:
+    for _cod in LOOP_CODECS:
+        _clip = (f"{_fam}_{_cod}_60min.mp4" if _cod == "h264"
+                 else f"{_fam}_{_cod}_20min.mp4")
+        TEMPLATES[f"loop_{_fam}_{_cod}"] = {
+            "label": f"Loop — {_fam.upper()} {_cod.upper()} (tester-set duration)",
+            "clips": {f"{_fam}_{_cod}_loop": _clip},
+            "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+                      "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+        }
+
 # Screen-mode marker head (2026-07-30, Ben's design): 5 s black · 5 s white ·
 # 5 s black prepended to the CONTENT clip as one contiguous video (content
 # stream-copied — re-encoding would change the decode workload; markers are
@@ -223,10 +241,12 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
 
 def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
                  calibrate: bool, upload_name: str | None = None,
-                 cadence_s: float | None = None) -> Path:
+                 cadence_s: float | None = None,
+                 window_s: int | None = None) -> Path:
     tpl = resolve_template(tpl_key, upload_name)
     dev_cfg = rig.RIG["devices"][dev_name]
     marked = mode == "screen" and calibrate
+    base_window = int(window_s) if window_s is not None else tpl["bench"]["window_s"]
     runs = []
     for run_name, clip in tpl["clips"].items():
         decoder = (tpl.get("decoder")
@@ -236,7 +256,7 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
             # Marker-headed variant: window extends over the 15 s head; the
             # skip shrinks so the head lands inside the sampled window.
             runs.append(_row_for(dev_cfg, run_name, marked_name(clip), mode,
-                                 window_s=tpl["bench"]["window_s"] + MARKER_HEAD_S,
+                                 window_s=base_window + MARKER_HEAD_S,
                                  decoder=decoder, delivery=delivery))
         else:
             runs.append(_row_for(dev_cfg, run_name, clip, mode,
@@ -248,6 +268,7 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
                  "protocol_version")})
     if cadence_s is not None:
         cfg["cadence_s"] = float(cadence_s)   # per-run slider override
+    cfg["window_s"] = base_window             # tester-set duration override
     if proto["idle_guard"]:
         # Reference mode when the device's settled idle is known (rig
         # config) — same asymmetric floor semantics as GoS1's CR-070 guard.
@@ -488,7 +509,8 @@ async def _wait_ready(name: str, sub: dict, timeout_s: float) -> None:
 async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                          mode: str, calibrate: bool, sub: dict,
                          upload_name: str | None = None,
-                         cadence_s: float | None = None) -> dict:
+                         cadence_s: float | None = None,
+                         window_s: int | None = None) -> dict:
     """Full per-device pipeline: ready → stage → bench.py → rows. Updates
     `sub` (the job's per-device progress dict) as it goes; returns the
     device section of the combined envelope. Raises on failure."""
@@ -512,7 +534,7 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                                     _needed_clips(tpl, mode, calibrate))
 
         cfg_path = _materialize(job_id, tpl_key, name, mode, calibrate,
-                                upload_name, cadence_s)
+                                upload_name, cadence_s, window_s)
         cfg = json.loads(cfg_path.read_text())
         result_path = BENCH_DIR / "results" / f"{cfg['name']}.json"
 
@@ -607,7 +629,8 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
 async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                          mode: str, calibrate: bool,
                          upload_name: str | None = None,
-                         cadence_s: float | None = None) -> None:
+                         cadence_s: float | None = None,
+                         window_s: int | None = None) -> None:
     tpl = resolve_template(tpl_key, upload_name)
     job = jobs[job_id]
     phases = template_phases(tpl)
@@ -642,7 +665,8 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
 
         outcomes = await asyncio.gather(
             *[_run_bench_for(job_id, tpl_key, tpl, name, mode, calibrate,
-                             job["devices"][name], upload_name, cadence_s)
+                             job["devices"][name], upload_name, cadence_s,
+                             window_s)
               for name in devices],
             return_exceptions=True)
 

@@ -34,15 +34,31 @@ def _key() -> str | None:
 
 async def _with_client(host: str, key: str, coro_fn):
     from aiowebostv import WebOsClient
-    client = WebOsClient(host, client_key=key)
-    try:
-        await asyncio.wait_for(client.connect(), 12)
-        return await coro_fn(client)
-    finally:
+    # Retry the connect: a single 12 s attempt intermittently times out under
+    # load (seen on the C2 in a 5-device parallel run, 2026-07-31), failing the
+    # whole decode row. 3 attempts turns a transient hiccup into a short delay.
+    last = None
+    for attempt in range(3):
+        client = WebOsClient(host, client_key=key)
         try:
-            await client.disconnect()
-        except Exception:
-            pass
+            await asyncio.wait_for(client.connect(), 12)
+        except Exception as e:
+            last = e
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            if attempt < 2:
+                await asyncio.sleep(2)
+            continue
+        try:
+            return await coro_fn(client)
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+    raise last
 
 
 def set_input(host: str, hdmi_input: str) -> None:
