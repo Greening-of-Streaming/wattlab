@@ -466,13 +466,18 @@ def _ensure_marked_clips_sync(clips: list) -> None:
 
 def _stage_clips_sync(dev_cfg: dict, clips: list) -> None:
     target = dev_cfg["target"]
+    # Purge first: /dev/shm is RAM-backed (8 GB on the Pi 5) and staged clips
+    # accumulate across runs. Without this the long campaign clips fill it and
+    # later/larger clips stage TRUNCATED and fail to decode — the Pi 5 kranjska
+    # 5.2 GB clip hit a 100%-full /dev/shm mid-campaign (2026-07-31). Each run
+    # now stages only its own clip(s) into a clean shm (largest single ≈5 GB).
     subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-                    target, "mkdir -p /dev/shm/decode"],
+                    target, "rm -f /dev/shm/decode/*; mkdir -p /dev/shm/decode"],
                    check=True, timeout=20)
     for clip in clips:
         subprocess.run(["scp", "-o", "BatchMode=yes",
                         str(STREAMS / clip), f"{target}:/dev/shm/decode/"],
-                       check=True, timeout=180)
+                       check=True, timeout=600)
 
 
 def _stage_clips_adb_sync(dev_cfg: dict, clips: list) -> None:
