@@ -135,7 +135,7 @@ def test_protocol_settings_defaults_v3(monkeypatch):
     p = decode_run.protocol_settings()
     assert p["cadence_s"] == 1.0
     assert p["idle_guard"] == {"tolerance_w": 0.5, "settle_polls": 4,
-                               "max_wait_s": 60}
+                               "max_wait_s": 30}
     assert p["protocol_version"] == 3
 
 
