@@ -47,7 +47,10 @@ def test_status_carries_bench_metadata():
     assert body["devices"]["gtv"]["device_class"] == "stb"
     assert body["devices"]["bbox"]["device_class"] == "stb"   # operator CPE
     assert "OLED55C2" in body["monitor"]["panel"]             # C2 display
-    assert "pi400" in body["devices"]                         # kept on bench
+    fs = body["devices"]["firestick"]                         # took Pi 400's slot
+    assert fs["device_class"] == "stb" and fs["conn"] == "adb"
+    assert "AV1" in fs["silicon"]
+    assert "pi400" not in body["devices"]                     # parked 2026-07-31
 
 
 def test_control_routes_are_lab_only_read_routes_public():

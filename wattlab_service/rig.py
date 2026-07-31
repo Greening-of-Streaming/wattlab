@@ -74,6 +74,10 @@ RIG: dict = {
             "idle_w": 3.4,
         },
         "pi400": {
+            # Parked 2026-07-31: physically swapped off the bench for the Fire
+            # TV Stick 4K (below), which inherits its Lab-B plug + HDMI_3. Config
+            # kept for an easy un-park if the SBC hw-H.264 data point is wanted.
+            "parked": True,
             "label": "Pi 400", "plug_name": "Lab-B",
             "plug_ip": "192.168.1.31",
             "kind": "ssh", "target": "nebul2@192.168.1.108",
@@ -83,6 +87,24 @@ RIG: dict = {
             "shutdown_wait_s": 22,
             "idle_w": 3.0,
             "hdmi_input": "HDMI_3",   # kept on the bench (owner) — spare port
+        },
+        "firestick": {
+            "label": "Fire TV 4K", "plug_name": "Lab-B",
+            "plug_ip": "192.168.1.31",
+            # Fire TV Stick 4K 2nd-gen (AFTKRT "karat"), Fire OS 8.1.8 /
+            # Android 11. Wi-Fi only (no Ethernet) — reserve .200 for MAC
+            # ec:31:5f:6d:7c:a7 on the router or the ADB target drifts (GTV
+            # lesson). Inherited Pi 400's Lab-B plug + HDMI_3 (2026-07-31).
+            "kind": "adb", "target": "192.168.1.200:5555",
+            "device_class": "stb",
+            "silicon": "MediaTek MT8696 · hw H.264/HEVC/VP9/AV1",
+            "hdmi_input": "HDMI_3",
+            "expected_boot_s": 40, "boot_threshold_w": 0.4,
+            "shutdown_wait_s": 15,
+            # Measured 2026-07-31 at the home screen: ~1.2–2.1 W (Amazon's
+            # autoplay trailers spike it — like the Bbox live-TV UI). Floor set
+            # a touch high so the idle guard doesn't time out on a preview spike.
+            "idle_w": 1.5,
         },
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
