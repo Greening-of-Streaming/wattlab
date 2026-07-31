@@ -486,8 +486,11 @@ async def video_page(request: Request):
     // definition for this page AND /demo's tour poll, so the lists can't
     // drift again (2026-07-17: /demo's local copy was missing the 'vmaf'
     // stage and showed "Baseline" through the whole scoring pass).
-    const STAGES = WL_VIDEO_PRESET_STAGES;
-    const STAGE_MAP = WL_VIDEO_PRESET_IDX;
+    // Resolved at CALL TIME inside renderProgress — never at top-level:
+    // the progress bundle (_PROGRESS_JS) loads AFTER this inline script, so
+    // a top-level `const STAGES = WL_VIDEO_PRESET_STAGES` threw a ReferenceError
+    // in its initializer, stranding STAGES in the TDZ and surfacing as
+    // "Cannot access 'STAGES' before initialization" on the first run.
 
     function selectPreset(key) {{
         selectedPreset = key;
@@ -503,8 +506,8 @@ async def video_page(request: Request):
     // dict so we can pluck the encode-progress fields. Old callers that
     // pass a literal stage string just don't populate the bar.
     function renderProgress(jobId, mode, serverStage, watts, data) {{
-        const stages = STAGES[mode];
-        const stageMap = STAGE_MAP[mode];
+        const stages = WL_VIDEO_PRESET_STAGES[mode];
+        const stageMap = WL_VIDEO_PRESET_IDX[mode];
         const currentStage = stageMap[serverStage] !== undefined ? stageMap[serverStage] : 0;
         // "VMAF · N of M scored" — shared helper in the progress bundle.
         let vmafLine = wlVmafLine(serverStage, data);
