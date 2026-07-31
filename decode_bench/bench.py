@@ -182,7 +182,39 @@ class SshDevice:
         self.proc = None
 
 
-DRIVERS = {"adb": AdbDevice, "ssh": SshDevice}
+class WebosDevice:
+    """LG webOS native decode (CR-071): the C2's own SoC decodes + displays the
+    clip via the built-in Chromium browser (a direct clip URL autoplays as a
+    media document). Metered on the monitor's own plug (Lab-E), so the number is
+    all-in — panel + SoC, NOT decode-isolated. Isolate decode with the
+    differential method: this native run minus a GTV-on-HDMI run of the same
+    clip cancels the ~80 W panel. (webOS 22 exposes no ssap screen-off, so the
+    cleaner blank-panel isolation isn't available — verified 2026-07-31.)"""
+
+    def __init__(self, cfg):
+        import lg
+        self.lg = lg
+        self.host = cfg["host"]
+
+    def prepare(self, run):
+        # Clean idle = Home (browser closed) so the pre-baseline floor is the
+        # app-shell, not a leftover decoding clip.
+        self.lg.go_home(self.host)
+
+    def start(self, run):
+        self.lg.launch_url(self.host, run["url"])
+
+    def provenance(self, run, results_dir):
+        return {"url": run["url"], "current_app": self.lg.current_app(self.host)}
+
+    def still_running(self, run):
+        return (self.lg.current_app(self.host) or "").endswith("browser")
+
+    def stop(self, run):
+        self.lg.go_home(self.host)
+
+
+DRIVERS = {"adb": AdbDevice, "ssh": SshDevice, "webos": WebosDevice}
 
 
 def wait_for_stable_idle(meters, ig, cadence):
