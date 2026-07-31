@@ -111,9 +111,12 @@ RIG: dict = {
             "device_class": "stb",
             "silicon": "operator CPE · Android 11",
             "hdmi_input": "HDMI_1",
-            "expected_boot_s": 45, "boot_threshold_w": 3.0,
+            "expected_boot_s": 45, "boot_threshold_w": 4.0,
             "shutdown_wait_s": 15,
-            "idle_w": 3.0,
+            # Measured 2026-07-31: operator box idles ~6.3 W (its live-TV UI
+            # runs in the background) — much higher than an SBC. The guessed
+            # 3.0 made the idle guard time out every run.
+            "idle_w": 6.6,
         },
     },
     "monitor": {
