@@ -836,8 +836,11 @@ def status_payload() -> dict:
         saving = (f"rig fully off — saving ~"
                   f"{n_plugs * RIG['tapo_standby_w']:.1f} W of Tapo standby")
     claimed_at = rig_cache.get("screen_claimed_at")
+    # Blink the receiving tile's 📺 badge until the switch has visibly settled.
+    # 8 s on the LG C2 (webOS input-select reclaims ~4 s faster than the old
+    # PA329C auto-switch; owner, 2026-07-31); was 12 s for the PA329C.
     settling = bool(rig_cache["screen_owner"] and claimed_at
-                    and time.monotonic() - claimed_at < 12)
+                    and time.monotonic() - claimed_at < 8)
     return {"master": master, "monitor": monitor, "devices": devices,
             "screen_owner": rig_cache["screen_owner"],
             "screen_settling": settling,
