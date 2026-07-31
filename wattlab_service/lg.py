@@ -71,6 +71,42 @@ def power(host: str, on: bool) -> None:
     asyncio.run(_with_client(host, key, _do))
 
 
+# Built-in webOS browser (Chromium). Launching it with a `target` URL is our
+# native-decode path: the C2's own α9 SoC decodes a clip served fullscreen by
+# the origin, metered on Lab-E — the all-in "smart-TV app" figure (panel + SoC,
+# NOT decode-isolated; the OLED brightness swing dwarfs the decode delta).
+_BROWSER_APP = "com.webos.app.browser"
+_HOME_APP = "com.webos.app.home"
+
+
+def launch_url(host: str, url: str) -> None:
+    """Open `url` fullscreen in the webOS browser (native playback). Raises on
+    failure — the caller must not claim a play that didn't happen."""
+    key = _key()
+    if not key:
+        raise RuntimeError("LG client key missing — TV not paired")
+
+    async def _do(c):
+        await c.launch_app_with_params(_BROWSER_APP, {"target": url})
+    asyncio.run(_with_client(host, key, _do))
+
+
+def go_home(host: str) -> None:
+    """Return the panel to Home — the TV-native 'idle' (closes the browser
+    playback so the baseline is the app-shell, not a decoding clip)."""
+    key = _key()
+    if not key:
+        raise RuntimeError("LG client key missing")
+
+    async def _do(c):
+        try:
+            await c.close_app(_BROWSER_APP)
+        except Exception:
+            pass
+        await c.launch_app(_HOME_APP)
+    asyncio.run(_with_client(host, key, _do))
+
+
 def set_brightness(host: str, pct: int) -> None:
     """OLED backlight 0–100 (luna picture setting). A recipe dimension."""
     key = _key()
