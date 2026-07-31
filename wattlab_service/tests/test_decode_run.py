@@ -71,6 +71,23 @@ def test_materialize_gtv_uses_urls():
         p.unlink()
 
 
+def test_materialize_c2_webos_native():
+    # C2 native decode: webOS device, clip URL (no player/ffmpeg cmd), and NO
+    # context meter — its device plug IS the monitor plug (Lab-E).
+    p = decode_run._materialize("tj-c2", "bbb_h264_rt", "c2", "screen", True)
+    try:
+        cfg = json.loads(p.read_text())
+        assert cfg["device"] == {"type": "webos",
+                                 "host": rig.RIG["devices"]["c2"]["target"]}
+        assert "monitor_meter_ip" not in cfg
+        assert cfg["meter_ip"] == rig.RIG["monitor"]["plug_ip"]
+        for r in cfg["runs"]:
+            assert r["url"].startswith(decode_run.STREAM_BASE_URL)
+            assert "cmd" not in r
+    finally:
+        p.unlink()
+
+
 def test_phase_patterns_match_bench_output():
     lines = {
         "[12:00:01] x: settle 15s": "settle",

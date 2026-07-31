@@ -140,6 +140,26 @@ RIG: dict = {
             # 3.0 made the idle guard time out every run.
             "idle_w": 6.6,
         },
+        "c2": {
+            # The C2 as a native decoder (CR-071): its own α9 SoC decodes+
+            # displays the clip in the built-in webOS browser. It IS the shared
+            # screen, so it shares the monitor's Lab-E plug and has NO
+            # independent power/boot and NO hdmi_input. kind "webos" is
+            # special-cased throughout: ready whenever webOS answers; power/boot/
+            # cycle refused (that plug is the shared panel). Metered on Lab-E →
+            # all-in figure; isolate decode by the differential (native minus a
+            # GTV-on-HDMI run of the same clip). No idle_w → the pre-job guard
+            # runs in self-stability mode (the ~40-85 W panel is content-driven,
+            # so a fixed reference floor is meaningless; the marker head + the
+            # differential carry the measurement).
+            "label": "LG C2 (native)", "plug_name": "Lab-E",
+            "plug_ip": "192.168.1.71",
+            "kind": "webos", "target": "192.168.1.25",
+            "device_class": "tv",
+            "silicon": "LG α9 Gen5 · hw H.264/HEVC/VP9/AV1",
+            "expected_boot_s": 15, "boot_threshold_w": 5.0,
+            "shutdown_wait_s": 0,
+        },
     },
     "monitor": {
         "label": "Shared screen", "plug_name": "Lab-E",
@@ -403,6 +423,8 @@ def probe_ready(dev: dict) -> bool:
     """True when the device is ready for work: SSH answers (Pis) or Android
     reports boot completed (GTV). Runs in a thread; must stay cheap."""
     try:
+        if dev["kind"] == "webos":
+            return lg.status(dev["target"]).get("reachable", False)
         if dev["kind"] == "ssh":
             return _run(["ssh"] + _SSH_OPTS + [dev["target"], "true"]).returncode == 0
         serial = dev["target"]
@@ -565,6 +587,20 @@ async def _step_device(name: str, master_off: bool) -> None:
             rig_cache["screen_owner"] = None
         return
 
+    if dev_cfg["kind"] == "webos":
+        # No relay boot cycle — webOS is up whenever the panel plug is on, so
+        # readiness is just "does it answer". Shares Lab-E, so d["watts"] here
+        # is the panel draw (content-driven), not a decode figure. Probe
+        # SPARINGLY: a webOS connect is costly and would otherwise fire every
+        # poll — re-check ~every 30 s and assume ready between.
+        if d["state"] != "ready" or now - d.get("webos_probed", 0) > 30:
+            ready = await asyncio.to_thread(probe_ready, dev_cfg)
+            d.update({"state": "ready" if ready else "booting",
+                      "probe_fails": 0, "boot_started": None, "elapsed_s": None,
+                      "webos_probed": now,
+                      "detail": "webOS ok" if ready else "waiting on webOS"})
+        return
+
     # Relay is on.
     if d["state"] in ("off", "unpowered", "unreachable"):
         # Powered from outside this UI (Tapo app, etc.) — adopt it.
@@ -652,8 +688,11 @@ async def rig_poller():
             await poll_once()
         except Exception:
             log.debug("rig_poller sweep failed", exc_info=True)
+        # Exclude the webOS C2: it's "ready" whenever the panel is on, which
+        # would otherwise pin the rig at 3 s forever (and re-poll every plug).
         active = any(d["state"] not in ("off", "unpowered", "unreachable")
-                     for d in rig_cache["devices"].values())
+                     for n, d in rig_cache["devices"].items()
+                     if RIG["devices"][n].get("kind") != "webos")
         await asyncio.sleep(3 if active else 10)
 
 
@@ -681,6 +720,9 @@ async def device_off(name: str) -> None:
     async with _op_lock(name):
         if d["busy"]:
             raise RigError(409, f"{dev_cfg['label']} is running a job")
+        if dev_cfg["kind"] == "webos":
+            raise RigError(409, f"{dev_cfg['label']} shares the screen — "
+                                "use the Screen control, not a device power-off")
         d.update({"state": "stopping", "detail": "graceful shutdown",
                   "boot_started": None, "elapsed_s": None})
 
@@ -706,6 +748,9 @@ async def device_cycle(name: str) -> None:
     async with _op_lock(name):
         if d["busy"]:
             raise RigError(409, f"{dev_cfg['label']} is running a job")
+        if dev_cfg["kind"] == "webos":
+            raise RigError(409, f"{dev_cfg['label']} shares the screen — "
+                                "no independent power to cycle")
         await plug_set(dev_cfg["plug_ip"], False)
         await asyncio.sleep(3)
         await plug_set(dev_cfg["plug_ip"], True)
@@ -732,6 +777,13 @@ async def claim_screen(name: str) -> None:
 
     lg_host = RIG["monitor"].get("lg_host")
     if lg_host:
+        if dev_cfg["kind"] == "webos":
+            # The C2 is the panel itself — "claiming" just shows its own UI
+            # (Home); there is no HDMI input to select.
+            await asyncio.to_thread(lg.go_home, lg_host)
+            rig_cache["screen_owner"] = name
+            rig_cache["screen_claimed_at"] = time.monotonic()
+            return
         hdmi = dev_cfg.get("hdmi_input")
         if not hdmi:
             raise RigError(409, f"{dev_cfg['label']} has no HDMI port mapped")

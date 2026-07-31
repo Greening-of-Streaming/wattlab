@@ -180,6 +180,11 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
     row: dict = {"name": name}
     if window_s:
         row["window_s"] = window_s
+    if dev_cfg["kind"] == "webos":
+        # C2 native decode: the harness WebosDevice launches this URL in the
+        # built-in browser; its own SoC decodes+displays (no cmd/player).
+        row["url"] = f"{STREAM_BASE_URL}/{clip}"
+        return row
     if dev_cfg["kind"] == "adb":
         if delivery == "local":
             # July delivery-decomposition arm — clip staged by adb push.
@@ -252,11 +257,15 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
         cfg["startup_skip_s"] = proto["screen_startup_skip_s"]
     cfg["name"] = f"ui-{tpl_key}-{job_id}-{dev_name}"
     cfg["meter_ip"] = dev_cfg["plug_ip"]
-    if mode == "screen":
+    # The C2's device plug IS the monitor plug (Lab-E) — no separate screen
+    # meter, so skip the context meter (it would just duplicate meter_ip).
+    if mode == "screen" and dev_cfg["kind"] != "webos":
         cfg["monitor_meter_ip"] = rig.RIG["monitor"]["plug_ip"]
     if dev_cfg["kind"] == "adb":
         cfg["device"] = {"type": "adb", "serial": dev_cfg["target"],
                          "player": "com.brouken.player"}
+    elif dev_cfg["kind"] == "webos":
+        cfg["device"] = {"type": "webos", "host": dev_cfg["target"]}
     else:
         user, host = dev_cfg["target"].split("@", 1)
         cfg["device"] = {"type": "ssh", "host": host, "user": user}
