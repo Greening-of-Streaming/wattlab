@@ -897,11 +897,15 @@ function deviceProgress(name, sub, j) {
   var names = ['device', 'staging'].concat((j.phases || []).map(function(p){ return p[0]; }));
   var cur = names.indexOf(sub.stage);
   if (sub.stage === 'done') cur = names.length;
-  if (sub.live_w != null)
-    h += '<div class="rig-w">⚡ ' + fmtW(sub.live_w)
-       + (sub.monitor_w != null
-          ? ' <span class="rig-detail">· screen ' + fmtW(sub.monitor_w) + '</span>'
-          : '') + '</div>';
+  if (sub.live_w != null || sub.monitor_w != null) {
+    h += '<div class="rig-w">';
+    if (sub.live_w != null)
+      h += '<span title="device / box">⚡ ' + fmtW(sub.live_w) + '</span>';
+    if (sub.monitor_w != null)
+      h += '<span style="margin-left:0.9rem" title="TV / screen">📺 '
+         + fmtW(sub.monitor_w) + '</span>';
+    h += '</div>';
+  }
   if (sub.row && j.row_n > 1)
     h += '<div class="rig-detail">row ' + sub.row + ' / ' + j.row_n + '</div>';
   for (var i = 0; i < names.length; i++) {
