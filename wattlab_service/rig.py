@@ -103,10 +103,11 @@ RIG: dict = {
             # Lab-F re-plugged 2026-07-30 (new unit on fw 1.3.1 for 1 s mW
             # polling; old .22 was fw 1.4.0). New DHCP lease → .155.
             "plug_ip": "192.168.1.155",
-            # Operator CPE (Bouygtel4K, Android 11) — the first operator box
-            # on the bench. Wi-Fi TEMP; → Ethernet (~.10) when the cable
-            # arrives 2026-07-31 (re-verify IP then; see decode-bench README).
-            "kind": "adb", "target": "192.168.1.173:5555",
+            # Operator CPE (Bouygtel4K, Android 11) — the first operator box on
+            # the bench. On Ethernet at .10 (re-onboarded after a factory reset
+            # 2026-07-31: complete setup wizard → dev options → USB debugging →
+            # re-auth; never power-cycle it mid-boot).
+            "kind": "adb", "target": "192.168.1.10:5555",
             "device_class": "stb",
             "silicon": "operator CPE · Android 11",
             "hdmi_input": "HDMI_1",
