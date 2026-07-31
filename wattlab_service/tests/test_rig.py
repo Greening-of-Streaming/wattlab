@@ -328,7 +328,7 @@ def test_status_payload_shape():
                           "conn", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s"}
         assert d["device_class"] in ("sbc", "stb", "tv")
-        assert d["conn"] in ("ssh", "adb")
+        assert d["conn"] in ("ssh", "adb", "webos")
     assert p["monitor"]["panel"]          # bench schematic display identity
     assert p["monitor"]["plug_name"] == "Lab-E"
 
