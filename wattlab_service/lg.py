@@ -107,6 +107,44 @@ def go_home(host: str) -> None:
     asyncio.run(_with_client(host, key, _do))
 
 
+def current_app(host: str) -> str | None:
+    """Foreground app id (e.g. 'com.webos.app.browser'), or None. Never raises —
+    used by the decode harness's still_running() check."""
+    key = _key()
+    if not key:
+        return None
+    try:
+        async def _do(c):
+            return await c.get_current_app()
+        return asyncio.run(_with_client(host, key, _do))
+    except Exception:
+        return None
+
+
+# Screen-off decode (Ben's isolation idea): blank the OLED while the SoC keeps
+# decoding, so Lab-E ≈ board+decode with the ~80 W panel removed — IF webOS
+# keeps the video pipeline alive with the screen off (to be verified live; it
+# may suspend rendering). ssap tvpower endpoints, not the settings service.
+def screen_off(host: str) -> None:
+    key = _key()
+    if not key:
+        raise RuntimeError("LG client key missing")
+
+    async def _do(c):
+        await c.request("ssap://com.webos.service.tvpower/power/turnOffScreen")
+    asyncio.run(_with_client(host, key, _do))
+
+
+def screen_on(host: str) -> None:
+    key = _key()
+    if not key:
+        raise RuntimeError("LG client key missing")
+
+    async def _do(c):
+        await c.request("ssap://com.webos.service.tvpower/power/turnOnScreen")
+    asyncio.run(_with_client(host, key, _do))
+
+
 def set_brightness(host: str, pct: int) -> None:
     """OLED backlight 0–100 (luna picture setting). A recipe dimension."""
     key = _key()
