@@ -174,12 +174,15 @@ def protocol_settings() -> dict:
     }
 
 
-def template_phases(tpl: dict) -> list:
+def template_phases(tpl: dict, window_s: int | None = None,
+                    cadence_s: float | None = None) -> list:
     b = tpl["bench"]
+    cad = cadence_s if cadence_s is not None else b["cadence_s"]
+    win = int(window_s) if window_s is not None else b["window_s"]
     return [("settle", b["settle_s"]),
-            ("baseline", round(b["baseline_samples"] * b["cadence_s"])),
+            ("baseline", round(b["baseline_samples"] * cad)),
             ("starting", b["startup_skip_s"]),
-            ("sampling", b["window_s"]),
+            ("sampling", win),        # honour the tester-set duration override
             ("finishing", 5)]
 
 
@@ -638,7 +641,7 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                          window_s: int | None = None) -> None:
     tpl = resolve_template(tpl_key, upload_name)
     job = jobs[job_id]
-    phases = template_phases(tpl)
+    phases = template_phases(tpl, window_s, cadence_s)
     n_rows = len(tpl["clips"])
     job.update({"status": "running", "stage": "running",
                 "template": tpl_key, "mode": mode, "calibrate": calibrate,
