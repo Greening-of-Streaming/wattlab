@@ -472,6 +472,17 @@ _BODY = """
                     value="1" style="width:7rem"
                     oninput="document.getElementById('cadence-v').textContent=this.value+' s'">
         <span id="cadence-v" class="rig-detail">1 s</span></label>
+      <label id="dur-wrap" style="display:none;align-items:center;gap:0.4rem">
+        duration <select id="duration">
+          <option value="30">30 s</option>
+          <option value="60">1 min</option>
+          <option value="150">2.5 min</option>
+          <option value="300" selected>5 min</option>
+          <option value="600">10 min</option>
+          <option value="1200">20 min</option>
+          <option value="1800">30 min</option>
+          <option value="3540">~60 min</option>
+        </select></label>
     </div>
     <div class="rig-runrow" style="margin-top:0.4rem">
       <select id="recipe" onchange="tplChanged()">{RECIPE_OPTIONS}</select>
@@ -536,6 +547,11 @@ var TPL_DEVICES = {TPL_DEVICES};   // template → allowed device list (or null)
 var RIG_LAST = null;
 
 function tplChanged() {
+  var tpl = document.getElementById('recipe').value;
+  // Loop recipes carry a tester-set duration; other templates have a fixed
+  // window baked in, so the picker only shows for loop_* recipes.
+  document.getElementById('dur-wrap').style.display =
+    tpl.indexOf('loop_') === 0 ? 'flex' : 'none';
   var allowed = TPL_DEVICES[document.getElementById('recipe').value] || null;
   DEVICE_NAMES.forEach(function(d){
     var cb = document.getElementById('dev-' + d);
@@ -1068,6 +1084,8 @@ async function runRecipe() {
               upload_name: tpl === 'upload' ? UPLOADED : undefined,
               cadence_s: cad,
               calibrate: document.getElementById('calibrate').checked};
+  if (tpl.indexOf('loop_') === 0)
+    body.window_s = parseInt(document.getElementById('duration').value, 10);
   document.getElementById('btn-run').disabled = true;
   try {
     var r = await fetch('/decode/run', {method:'POST',
