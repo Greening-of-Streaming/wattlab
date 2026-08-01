@@ -590,17 +590,21 @@ async def _step_device(name: str, master_off: bool) -> None:
         return
 
     if dev_cfg["kind"] == "webos":
-        # No relay boot cycle — webOS is up whenever the panel plug is on, so
-        # readiness is just "does it answer". Shares Lab-E, so d["watts"] here
-        # is the panel draw (content-driven), not a decode figure. Probe
-        # SPARINGLY: a webOS connect is costly and would otherwise fire every
-        # poll — re-check ~every 30 s and assume ready between.
+        # No relay boot cycle — webOS answers whenever the PANEL IS AWAKE.
+        # In Always-Ready standby the TV answers the SSAP port but rejects
+        # every connection with WS close 1008 (2026-08-01: read as a broken
+        # TV for half a day; a mains cold boot doesn't help because AC-restore
+        # boots back to standby). So probe-fail here usually means ASLEEP,
+        # not broken — runs/claims wake it via raw WoL (lg.wake). Do NOT
+        # auto-wake from the poller: this is the household's TV. Probe
+        # SPARINGLY: a webOS connect is costly — ~every 30 s.
         if d["state"] != "ready" or now - d.get("webos_probed", 0) > 30:
             ready = await asyncio.to_thread(probe_ready, dev_cfg)
             d.update({"state": "ready" if ready else "booting",
                       "probe_fails": 0, "boot_started": None, "elapsed_s": None,
                       "webos_probed": now,
-                      "detail": "webOS ok" if ready else "waiting on webOS"})
+                      "detail": ("webOS ok" if ready else
+                                 "asleep (Always-Ready) — a run or claim wakes it")})
         return
 
     # Relay is on.
@@ -781,8 +785,14 @@ async def claim_screen(name: str) -> None:
     if lg_host:
         if dev_cfg["kind"] == "webos":
             # The C2 is the panel itself — "claiming" just shows its own UI
-            # (Home); there is no HDMI input to select.
-            await asyncio.to_thread(lg.go_home, lg_host)
+            # (Home); there is no HDMI input to select. In Always-Ready
+            # standby the first go_home is REJECTED (SSAP 1008 until the
+            # panel wakes) — raw WoL, then retry.
+            try:
+                await asyncio.to_thread(lg.go_home, lg_host)
+            except Exception:
+                await _wake_and_wait(dev_cfg)
+                await asyncio.to_thread(lg.go_home, lg_host)
             rig_cache["screen_owner"] = name
             rig_cache["screen_claimed_at"] = time.monotonic()
             return
@@ -792,7 +802,15 @@ async def claim_screen(name: str) -> None:
         try:
             await asyncio.to_thread(lg.set_input, lg_host, hdmi)
         except Exception as e:
-            raise RigError(502, f"input switch failed: {e}")
+            # Same standby mode as above: the panel rejects input-select while
+            # asleep. Wake it and retry once before declaring failure.
+            try:
+                await _wake_and_wait(dev_cfg={"kind": "webos",
+                                              "label": RIG["monitor"]["label"],
+                                              "target": lg_host})
+                await asyncio.to_thread(lg.set_input, lg_host, hdmi)
+            except Exception:
+                raise RigError(502, f"input switch failed: {e}")
         rig_cache["screen_owner"] = name
         rig_cache["screen_claimed_at"] = time.monotonic()
         return
@@ -816,6 +834,19 @@ async def claim_screen(name: str) -> None:
     rig_cache["screen_claimed_at"] = time.monotonic()
 
 
+async def _wake_and_wait(dev_cfg: dict, budget_s: int = 40) -> None:
+    """Wake the C2 from Always-Ready standby (raw WoL — the only lever that
+    works while SSAP rejects connections) and wait until webOS accepts."""
+    deadline = time.monotonic() + budget_s
+    while time.monotonic() < deadline:
+        await asyncio.to_thread(lg.wake)
+        await asyncio.sleep(4)
+        if await asyncio.to_thread(probe_ready, dev_cfg):
+            return
+    raise RigError(504, f"{dev_cfg.get('label', 'C2')} did not wake "
+                        f"(WoL sent for {budget_s}s)")
+
+
 async def monitor_power(on: bool) -> None:
     await plug_set(RIG["monitor"]["plug_ip"], on)
 
@@ -837,6 +868,9 @@ async def recycle_c2_panel(name: str) -> None:
     d.update({"state": "booting", "boot_started": time.monotonic(),
               "detail": "panel rebooting"})
     for _ in range(20):          # ~60 s budget for webOS to answer again
+        # AC-restore boots the C2 into Always-Ready STANDBY (SSAP rejecting),
+        # not screen-on — keep nudging it awake with WoL while we wait.
+        await asyncio.to_thread(lg.wake)
         await asyncio.sleep(3)
         if await asyncio.to_thread(probe_ready, dev_cfg):
             await asyncio.to_thread(lg.go_home, dev_cfg["target"])

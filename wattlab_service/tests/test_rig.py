@@ -29,6 +29,9 @@ def _fresh_rig(monkeypatch):
     monkeypatch.setattr(rig, "probe_ready", lambda dev: False)
     monkeypatch.setattr(rig, "send_shutdown", lambda dev: None)
     monkeypatch.setattr(rig, "set_signal", lambda dev, on: None)
+    # Never broadcast real WoL from a test run — pytest runs ON the lab LAN
+    # and a magic packet would wake the household's C2 every suite run.
+    monkeypatch.setattr(rig.lg, "wake", lambda *a, **k: None)
 
     async def _no_plug(ip, **kw):
         raise RuntimeError("plug IO not stubbed in this test")

@@ -18,11 +18,37 @@ not an error. Monkeypatchable for tests via the module-level functions.
 """
 import asyncio
 import logging
+import socket
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 CLIENT_KEY_PATH = Path("/srv/data/owl/lg/client_key")
+
+# The C2's MAC (same for its Ethernet .25 and Wi-Fi .109 answers). Needed for
+# raw Wake-on-LAN: in Always-Ready STANDBY the TV answers the SSAP port but
+# REJECTS every connection with WS close 1008 until the panel is awake
+# (established 2026-08-01 — looked exactly like a broken TV; survived a mains
+# cold boot because AC-restore boots back to standby). A magic packet needs no
+# SSAP at all, so it is the one wake lever that works from standby;
+# connect-then-power_on (the old lg.power(True) path) cannot.
+C2_MAC = "ac:5a:f0:2f:b8:dc"
+
+
+def wake(mac: str = C2_MAC) -> None:
+    """Raw WoL magic packet (broadcast, ports 9+7). Fire-and-forget; pair with
+    a probe/retry loop — the C2 takes ~10-20 s from standby to accepting SSAP."""
+    pkt = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
+    for port in (9, 7):
+        for dst in ("255.255.255.255", "192.168.1.255"):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                s.sendto(pkt, (dst, port))
+                s.close()
+            except Exception:
+                pass
 
 
 def _key() -> str | None:
@@ -79,11 +105,29 @@ def power(host: str, on: bool) -> None:
     if not key:
         raise RuntimeError("LG client key missing")
 
+    if on:
+        # Raw WoL FIRST — the old connect-then-power_on path deadlocked in
+        # Always-Ready standby (SSAP rejects the connect with 1008 until the
+        # panel is awake, so the wake command could never be delivered).
+        # Wake, then poll until SSAP accepts (proof it is actually on).
+        for _ in range(3):
+            wake()
+            time.sleep(2)
+
+        async def _check(c):
+            return await c.get_power_state()
+        last = None
+        for _ in range(10):
+            try:
+                asyncio.run(_with_client(host, key, _check))
+                return
+            except Exception as e:
+                last = e
+                time.sleep(3)
+        raise RuntimeError(f"C2 did not wake after WoL: {last}")
+
     async def _do(c):
-        if on:
-            await c.power_on()          # Wake-on-LAN
-        else:
-            await c.power_off()
+        await c.power_off()
     asyncio.run(_with_client(host, key, _do))
 
 

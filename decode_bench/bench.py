@@ -198,8 +198,22 @@ class WebosDevice:
 
     def prepare(self, run):
         # Clean idle = Home (browser closed) so the pre-baseline floor is the
-        # app-shell, not a leftover decoding clip.
-        self.lg.go_home(self.host)
+        # app-shell, not a leftover decoding clip. In Always-Ready standby the
+        # first call is rejected (SSAP 1008 until the panel wakes) — raw WoL,
+        # then retry (2026-08-01).
+        try:
+            self.lg.go_home(self.host)
+        except Exception:
+            deadline = time.time() + 40
+            while True:
+                self.lg.wake()
+                time.sleep(4)
+                try:
+                    self.lg.go_home(self.host)
+                    break
+                except Exception:
+                    if time.time() > deadline:
+                        raise
 
     def start(self, run):
         self.lg.launch_url(self.host, run["url"])
