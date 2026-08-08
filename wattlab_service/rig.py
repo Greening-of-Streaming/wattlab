@@ -74,10 +74,9 @@ RIG: dict = {
             "idle_w": 3.4,
         },
         "pi400": {
-            # Parked 2026-07-31: physically swapped off the bench for the Fire
-            # TV Stick 4K (below), which inherits its Lab-B plug + HDMI_3. Config
-            # kept for an easy un-park if the SBC hw-H.264 data point is wanted.
-            "parked": True,
+            # Un-parked 2026-08-08 for the R6 hw-vs-sw reconciliation — back on
+            # Lab-B, displacing the Fire TV Stick (parked below). To switch the
+            # bench back: move "parked": True from firestick to here.
             "label": "Pi 400", "plug_name": "Lab-B",
             "plug_ip": "192.168.1.31",
             "kind": "ssh", "target": "nebul2@192.168.1.108",
@@ -89,6 +88,10 @@ RIG: dict = {
             "hdmi_input": "HDMI_3",   # kept on the bench (owner) — spare port
         },
         "firestick": {
+            # Parked 2026-08-08: Pi 400 back on Lab-B for the R6 hw-vs-sw
+            # reconciliation (standalone bench.py owns the .31 KLAP session;
+            # the poller must not contend). Un-park + re-bench after R6.
+            "parked": True,
             "label": "Fire TV 4K", "plug_name": "Lab-B",
             "plug_ip": "192.168.1.31",
             # Fire TV Stick 4K 2nd-gen (AFTKRT "karat"), Fire OS 8.1.8 /

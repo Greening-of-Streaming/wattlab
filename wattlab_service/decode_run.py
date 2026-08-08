@@ -85,6 +85,27 @@ TEMPLATES: dict = {
         "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
+    "bbb_h264_hw_sat": {
+        "label": "Pi 400 HW H.264 saturated (race-to-idle) — 150 s · Pi 400 only",
+        "clips": {"bbb_h264_hw_sat": "bbb_h264_6min.mp4"},
+        # Saturated regime pair for bbb_h264_hw_rt (R6 reconciliation,
+        # 2026-08-08): -stream_loop -1 instead of -re, decoder runs flat out.
+        # Sustained ΔW, comparable to July's pi_unpaced/pi_sw_matrix rows —
+        # never compare a saturated row to a realtime one.
+        "decoder": "h264_v4l2m2m",
+        "pacing": "saturated",
+        "devices": ["pi400"],
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
+                  "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+    },
+    "bbb_h264_sw_sat": {
+        "label": "SW H.264 saturated (race-to-idle) — 150 s · Pi boards only",
+        "clips": {"bbb_h264_sw_sat": "bbb_h264_6min.mp4"},
+        "pacing": "saturated",
+        "devices": ["pi400", "pi5"],   # ffmpeg-over-ssh path only
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
+                  "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+    },
     "bbb_h264_gtv_local": {
         "label": "GTV local-file H.264 — delivery share removed · GTV only",
         "clips": {"bbb_h264_local": "bbb_h264_6min.mp4"},
@@ -200,10 +221,14 @@ _SAMPLE_RE = re.compile(r"\] sample ([0-9.]+)W(?: ctx=([0-9.]+)W)?")
 
 def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
              window_s: int | None = None, decoder: str | None = None,
-             delivery: str = "http") -> dict:
+             delivery: str = "http", pacing: str = "realtime") -> dict:
     row: dict = {"name": name}
     if window_s:
         row["window_s"] = window_s
+    if pacing == "saturated" and (mode == "screen" or dev_cfg["kind"] != "ssh"):
+        # Real players pace themselves — a saturated row only exists on the
+        # headless ffmpeg-over-ssh path. Refuse rather than silently pace.
+        raise ValueError("saturated pacing is headless ssh only")
     if dev_cfg["kind"] == "webos":
         # C2 native decode: the harness WebosDevice launches this URL in the
         # built-in browser; its own SoC decodes+displays (no cmd/player).
@@ -236,7 +261,8 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
     else:
         stem = Path(clip).stem
         dec = f"-c:v {decoder} " if decoder else ""
-        row["cmd"] = (f"ffmpeg -nostdin -re {dec}-i /dev/shm/decode/{shm} "
+        pace = "-re " if pacing == "realtime" else "-stream_loop -1 "
+        row["cmd"] = (f"ffmpeg -nostdin {pace}{dec}-i /dev/shm/decode/{shm} "
                       f"-an -f null - ")
         row["stop_cmd"] = f"pkill -f 'ffmpeg.*{stem}'"
     return row
@@ -255,15 +281,18 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
         decoder = (tpl.get("decoder")
                    or (tpl.get("decoder_by_device") or {}).get(dev_name))
         delivery = tpl.get("delivery", "http")
+        pacing = tpl.get("pacing", "realtime")
         if marked:
             # Marker-headed variant: window extends over the 15 s head; the
             # skip shrinks so the head lands inside the sampled window.
             runs.append(_row_for(dev_cfg, run_name, marked_name(clip), mode,
                                  window_s=base_window + MARKER_HEAD_S,
-                                 decoder=decoder, delivery=delivery))
+                                 decoder=decoder, delivery=delivery,
+                                 pacing=pacing))
         else:
             runs.append(_row_for(dev_cfg, run_name, clip, mode,
-                                 decoder=decoder, delivery=delivery))
+                                 decoder=decoder, delivery=delivery,
+                                 pacing=pacing))
     cfg = dict(tpl["bench"])
     proto = protocol_settings()
     cfg.update({k: proto[k] for k in
@@ -700,6 +729,7 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
             "protocol": {"harness": "decode-bench bench.py",
                          "launched_from": "/decode", "parallel": mode == "headless",
                          "window_s": tpl["bench"]["window_s"],
+                         "pacing": tpl.get("pacing", "realtime"),
                          **({"marker_head": {"pattern": _MARKER_PATTERN,
                                              "seconds": MARKER_HEAD_S,
                                              "note": "in-window; segment via "

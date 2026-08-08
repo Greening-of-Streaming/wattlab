@@ -47,10 +47,24 @@ def test_status_carries_bench_metadata():
     assert body["devices"]["gtv"]["device_class"] == "stb"
     assert body["devices"]["bbox"]["device_class"] == "stb"   # operator CPE
     assert "OLED55C2" in body["monitor"]["panel"]             # C2 display
-    fs = body["devices"]["firestick"]                         # took Pi 400's slot
-    assert fs["device_class"] == "stb" and fs["conn"] == "adb"
-    assert "AV1" in fs["silicon"]
-    assert "pi400" not in body["devices"]                     # parked 2026-07-31
+    # The Lab-B slot is a physical either/or (firestick vs pi400 share the
+    # plug); derive the expectation from the rig's park flags so a deliberate
+    # bench swap doesn't need a test edit — but exactly one must be visible.
+    parked = {k for k, v in rig.RIG["devices"].items() if v.get("parked")}
+    visible = {"firestick", "pi400"} - parked
+    assert len(visible) == 1, "exactly one Lab-B occupant on the bench"
+    occupant = visible.pop()
+    assert occupant in body["devices"]
+    assert parked & {"firestick", "pi400"} == {"firestick", "pi400"} - {occupant}
+    assert not any(p in body["devices"] for p in parked)
+    if occupant == "firestick":
+        fs = body["devices"]["firestick"]
+        assert fs["device_class"] == "stb" and fs["conn"] == "adb"
+        assert "AV1" in fs["silicon"]
+    else:
+        p4 = body["devices"]["pi400"]
+        assert p4["device_class"] == "sbc" and p4["conn"] == "ssh"
+        assert "hw H.264" in p4["silicon"]
 
 
 def test_control_routes_are_lab_only_read_routes_public():
