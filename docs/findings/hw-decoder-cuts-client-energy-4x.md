@@ -2,20 +2,25 @@
 slug: hw-decoder-cuts-client-energy-4x
 version: 1
 first_measured: 2026-07-29
-last_refined: 2026-07-29
-headline: "A hardware decoder cuts client decode power ~3.6× — and having the silicon isn't enough: stock software must be able to reach it"
-claim_short: "Pi 400, same board, same 1080p60 file — H.264 hw +0.35 W vs sw +1.25 W playing (3.6×); +0.64 vs +2.62 W saturated (4.1×). Pi 5 (block dropped): +1.57 W."
+last_refined: 2026-08-09
+headline: "A hardware decoder cuts client decode power ~3.7× — and having the silicon isn't enough: stock software must be able to reach it"
+claim_short: "Pi 400, same board, same 1080p60 file — H.264 hw +0.41 W vs sw +1.50 W playing (3.7×, n=6/3); +0.59 vs +2.72 W saturated (4.6×, n=3). Pi 5 (block dropped): +1.57 W."
 confidence: green
 scope: "Client device layer only (Raspberry Pi 400 / Pi 5, headless pure decode; Google TV as playback context). Network, CDN, display excluded on the Pis."
 methodology_ref: docs/wattlab_traffic_light_confidence.md
 source_result_ids:
   - decode/dec0de04
   - decode/dec0de05
+  - decode/c22219b7
+  - decode/37374ca2
+  - decode/bffab9f5
+  - decode/596c3ee6
 related_findings: [codec-decode-energy-depends-on-silicon-and-regime]
 supersedes: null
-tags: [decode, client-device, hw-vs-sw, raspberry-pi, owl-rem-lem, draft]
+tags: [decode, client-device, hw-vs-sw, raspberry-pi, owl-rem-lem, protocol-v3]
 caveats:
-  - "DRAFT pending lab review. Realtime rows are BBB 1080p60 only; single board pair; one rung."
+  - "Realtime rows are BBB 1080p60 only; single board pair; one rung."
+  - "Ratio reconciled 2026-08-09 (R6): n≥3 interleaved under protocol v3 gives 3.7× realtime / 4.6× saturated, replicating July v2 within noise; a 07-30 single-pair read of ~7× rested on one baseline-suspect hw row (+0.221 W, below the n=6 range 0.33–0.51). The hw arm's own rep spread (CV ~18% of ~0.4 W) is why single-pair ratios ranged 3.6–7×."
   - "Pi rows are headless pure decode (ffmpeg -f null, audio disabled) — no display path. A real player adds display/compositor energy on top."
   - "Both Pis' HEVC hardware blocks exist but are unreachable from stock Bookworm userspace (stateless V4L2; GStreamer <1.24, no V4L2-request ffmpeg/mpv, VLC built without the hw paths) — so 'hw vs sw' could only be measured for H.264, on the Pi 400."
   - "Cross-board Pi 400 vs Pi 5 software comparison is n=1 per board with uncontrolled DRAM/clock differences; the same-board hw-vs-sw pair is the clean single-variable read."
@@ -23,7 +28,7 @@ caveats:
 
 # The result, in one sentence
 
-On the same Raspberry Pi 400, decoding the same 1080p60 H.264 file, the hardware decode path (`bcm2835-codec` v4l2m2m) drew **+0.35 W** where software drew **+1.25 W** while playing at 1× — **3.6× less** — and the Raspberry Pi 5, which shipped without that hardware block, pays **+1.57 W** in software for the same stream.
+On the same Raspberry Pi 400, decoding the same 1080p60 H.264 file, the hardware decode path (`bcm2835-codec` v4l2m2m) drew **+0.41 W** (n=6) where software drew **+1.50 W** (n=3) while playing at 1× — **3.7× less** — and the Raspberry Pi 5, which shipped without that hardware block, pays **+1.57 W** in software for the same stream.
 
 # Why this matters
 

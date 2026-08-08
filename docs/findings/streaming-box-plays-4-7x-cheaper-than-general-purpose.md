@@ -2,7 +2,7 @@
 slug: streaming-box-plays-4-7x-cheaper-than-general-purpose
 version: 1
 first_measured: 2026-07-30
-last_refined: 2026-07-30
+last_refined: 2026-08-09
 headline: "Playing the same video, display attached: a fixed-function streaming box draws 4–7× less than a general-purpose board — even against the board's own hardware decoder"
 claim_short: "BBB 1080p60 H.264, local file, screen on, marker-verified: Google TV +0.30 W · Pi 400 hw +1.32 W (4.4×) · Pi 400 sw +1.96 W (6.5×) · Pi 5 sw +2.03 W (6.8×). All 🟢."
 confidence: green
@@ -15,9 +15,9 @@ source_result_ids:
   - decode/ea55f33b
 related_findings: [hw-decoder-cuts-client-energy-4x, codec-decode-energy-depends-on-silicon-and-regime]
 supersedes: null
-tags: [decode, playback, client-device, cross-silicon, fixed-function, owl-rem-lem, protocol-v3, draft]
+tags: [decode, playback, client-device, cross-silicon, fixed-function, owl-rem-lem, protocol-v3]
 caveats:
-  - "DRAFT pending lab review. Single content (BBB 1080p60), single rung (~matched-VMAF 1080p), one device per silicon class."
+  - "Single content (BBB 1080p60), single rung (~matched-VMAF 1080p), one device per silicon class."
   - "The GTV row is full playback on Android (player app + compositor inherent to the platform); the Pi rows are mpv on a desktop compositor. That asymmetry IS the finding's frame — each device on the playback stack a real product would use — not a lab artefact, but don't read the ratios as decoder-silicon ratios alone."
   - "Pi 400 hardware path is v4l2m2m via mpv --hwdec=v4l2m2m-copy (the zero-copy path composites incorrectly on this stack — copy adds some CPU cost, so +1.32 W is an upper bound on the board's hw-decode playback)."
   - "Display energy is metered separately (shared LCD, ~31 W while showing content) and excluded from the device figures."

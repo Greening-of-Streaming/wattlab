@@ -2,7 +2,7 @@
 slug: codec-decode-energy-depends-on-silicon-and-regime
 version: 1
 first_measured: 2026-07-29
-last_refined: 2026-07-29
+last_refined: 2026-08-09
 headline: "Which codec is cheapest to decode has no silicon-independent answer: a wash on hardware, up to ~60% spread in software — and the measurement regime can flip the ranking"
 claim_short: "Hw (Google TV): codec spread ≤0.08 W. Sw at 1× (both Pis): h264 +1.57 < av1 +1.83 < hevc +2.56 W. Sw saturated: ranking inverts (av1 +4.15 < h264 +5.13 W)."
 confidence: yellow
@@ -14,9 +14,10 @@ source_result_ids:
   - decode/dec0de04
 related_findings: [hw-decoder-cuts-client-energy-4x]
 supersedes: null
-tags: [decode, codecs, client-device, hevc, av1, methodology, draft]
+tags: [decode, codecs, client-device, hevc, av1, methodology]
 caveats:
-  - "DRAFT pending lab review. Yellow because the software realtime panels are BBB 1080p60 only (n=1–3 per cell) and the Google TV rows are full playback (display + audio) vs the Pis' headless pure decode — the cross-device comparison is indicative, not strict."
+  - "Yellow because the software realtime panels here are BBB 1080p60 only (n=1–3 per cell) and the Google TV rows are full playback (display + audio) vs the Pis' headless pure decode — the cross-device comparison is indicative, not strict."
+  - "Corroborated at scale 2026-08-01 (54-cell suite, 3 content families): the software ordering h264 < av1 < hevc held on the Pi 5 across every family and both run modes (HEVC ~1.9× H.264), and fixed-function marginals stayed ≤ ~0.5 W — see the campaign store /srv/data/owl/campaign_2026-07-31/."
   - "Matched-VMAF encodes, so bitrate co-varies with codec (BBB: 8.0/6.6/4.0 Mb/s for h264/hevc/av1) — the honest iso-quality framing, not equal-bitrate."
   - "Why AV1 draws less than its CPU share suggests (85.5% busy yet lowest saturated power) is conjecture — instruction-mix/power-density hypothesis, needs PMU counters."
   - "Which regime a real player occupies depends on its buffering strategy (July's Google TV burst-vs-sustained finding shows +0.42 W between modes); no Pi player's buffering has been characterised."
