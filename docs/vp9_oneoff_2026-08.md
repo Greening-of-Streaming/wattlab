@@ -13,9 +13,13 @@ production excluded. Energy, not CO₂e.
 
 ## 1. The structural facts (no measurement needed)
 
-- **NVENC has never shipped a VP9 encoder** — confirmed on the RTX 5080 (h264/hevc/av1
-  NVENC only). On OWL's bench, VP9 encode is **CPU-only**; the trio's hardware encode
-  path (2.5–4.4× cheaper than CPU, S53) simply does not exist for VP9.
+- **VP9 hardware encode exists, but is vendor-scattered, not ubiquitous.** NVIDIA has
+  never shipped a VP9 NVENC (confirmed on the RTX 5080: h264/hevc/av1 only) and AMD's
+  VCN has none either; Intel Quick Sync has had VP9 encode since Kaby Lake (2016), and
+  Google encodes VP9 on custom ASICs (Argos VCU) for YouTube. On OWL's bench — and on
+  any NVIDIA/AMD-GPU transcode pipeline — VP9 encode is **CPU-only**; the trio's
+  hardware encode path (2.5–4.4× cheaper than CPU, S53) is unavailable to VP9 there.
+  The structural gap vs H.264/HEVC is *ubiquity* of the hardware path, not existence.
 - **Client hw decode:** TV-class silicon has hw VP9 (proven below on the MediaTek Google
   TV; LG α9 and Fire TV silicon list it too); neither Raspberry Pi has it (Pi 400:
   hw H.264 only; Pi 5: no hw video decode at all).
@@ -43,8 +47,10 @@ compare directly against the stored S53 dataset. Artifact:
 **First indication:** at a like-for-like speed point, VP9 software encode cost
 **~3× libx265 and ~5–6× libx264/SVT-AV1** per minute of video on the same 24-core CPU —
 the most energy-expensive encoder of the four — and **~15× the NVENC hardware path**
-the trio actually uses in production-style pipelines. There is no hardware path to
-close that gap for VP9 on this class of encoder hardware.
+the trio actually uses in production-style pipelines. On this class of encoder
+hardware (NVIDIA/AMD GPUs) no VP9 hardware path exists to close that gap — closing it
+means different silicon (Intel Quick Sync, or YouTube-style custom ASICs), which this
+one-off did not measure.
 
 Compression efficiency at this speed point (same scorer, VMAF-NEG, same 1080p60 source,
 from the decode-clip prep sweep): VP9 needed **4048 kb/s** to hit the NEG≈93 rung that
@@ -108,11 +114,14 @@ power on a ~1.2 W idle box; n small throughout — first indication, not a findi
 > HEVC→VP9 move looks energy-neutral on TV silicon and mildly favourable where decoding
 > falls back to software.
 >
-> Encode is the other way round. Most encode silicon (including our server GPU) has no
-> VP9 hardware encoder, so VP9 encoding runs in software: at a matched production speed
-> point and matched bitrates it drew roughly 3× the energy of software HEVC per minute
-> of video, and ~15× the hardware-encode path the other codecs get. Encode happens once
-> per title; decode happens millions of times — but it's a real asymmetry worth naming.
+> Encode is the other way round — and it hinges on your silicon. NVIDIA and AMD GPUs
+> (ours included) have never shipped a VP9 hardware encoder; Intel Quick Sync has had
+> one since 2016, and YouTube runs VP9 on custom ASICs. On our NVIDIA-based bench that
+> meant VP9 fell back to software: at a matched production speed point and matched
+> bitrates it drew roughly 3× the energy of software HEVC per minute of video, and ~15×
+> the hardware-encode path the other codecs get here. Encode happens once per title;
+> decode happens millions of times — but "does my silicon have a hardware path for this
+> codec" turns out to be the bigger energy question than the codec itself.
 >
 > One surprise en route: VP9 in an MP4 container stalled the TV box's playback three
 > times running; the same stream in WebM played flawlessly. Packaging details can matter
