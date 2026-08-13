@@ -1,8 +1,8 @@
 ---
 slug: gpu-boost-overclocks-fixed-function-nvenc
-version: 1
+version: 2
 first_measured: 2026-06-20
-last_refined: 2026-06-20
+last_refined: 2026-08-13
 headline: "NVIDIA GPU Boost over-clocks the NVENC transcode pipeline into a wasteful zone: ~9-12% more energy for identical encode time and VMAF. Pinning the SM clock removes it — and makes GPU energy reproducible across reboots and ambient temperature."
 claim_short: "h264_nvenc 1080p, Meridian 120s: full boost (SM 2872 MHz) = 0.280 Wh in 12.1 s. Pinned at the knee (SM 2572 MHz) = 0.255 Wh in 12.5 s — 9% less energy, same VMAF, +0.4 s."
 confidence: green
@@ -16,6 +16,7 @@ related_findings:
 supersedes: null
 tags: [video, gpu, nvenc, gpu-boost, energy, clocks, datacenter, reproducibility]
 caveats:
+  - "The mechanism (GPU Boost driving SM clocks for a fixed-function encoder that doesn't need them) is documented in prior academic and community sources — see 'Where this sits in prior work'. What is specific to this finding is the measured energy-vs-clock curve, the knee/starvation-floor bracketing, and the pin recommendation for a measurement instrument."
   - "Measured on one clip (Meridian, low complexity SI~13/TI~2), one codec (h264_nvenc), one resolution (1080p), n=2 measured encodes per clock after a discarded warm-up. The shape (energy U-curve vs SM clock) is a property of the fixed-function pipeline and is expected to generalise across NVENC codecs; the exact knee clock and percentage will shift with content, resolution, and driver."
   - "Two sweep rows (1380, 1080 MHz targets) returned transient failures — at starved core clocks the unpinned GDDR7 memory clock can drop to a low pstate that briefly cannot sustain the CUDA decode+scale stage. The pipeline recovered at 780 MHz, so this is a transient, not a hard floor. It is a reason to pin near the knee (well above the starvation zone), not deep in the basin."
   - "Wh/min FALLS monotonically as the clock drops and is the WRONG metric for a fixed encode job — lower clock means lower power but more wall-minutes for the same work. The honest metric is Wh per clip (energy), which is U-shaped. This finding reports Wh per clip."
@@ -37,7 +38,17 @@ NVENC is a **fixed-function** encoder: a dedicated silicon block that runs at it
 
 So the encoder is not the consumer. The power lives in the **CUDA decode+scale stage**, which GPU Boost runs near the card's maximum (SM ~2880 MHz, GDDR7 14801 of 15001 MHz). Because that stage finishes its work and then waits on the fixed-rate encoder, clocking it higher buys **no throughput** — it just spends watts spinning the cores faster while they idle-wait. Faster clock, same finish time, more energy.
 
-This is why a longstanding assumption fails here. The usual "race to idle" intuition — run faster, finish sooner, save energy — only holds when the thing you are speeding up is the bottleneck. Here it isn't, so higher clocks are pure waste.
+This is a specific, measured instance of a pattern the HPC/DVFS literature has long established (the "racing vs pacing to idle" work): the usual "race to idle" intuition — run faster, finish sooner, save energy — only holds when the thing you are speeding up is the bottleneck. Here it isn't, so higher clocks are pure waste. This finding does not claim the principle; it locates the knee for this workload on this card and puts a number on it.
+
+# Where this sits in prior work
+
+The core observation — that the SM/boost power state, not the fixed-function encoder block, dominates NVENC transcode power — is not new to this finding:
+
+- **Academic:** "Evolution of NVENC Efficiency: A Longitudinal Analysis of HQ and UHQ Tuning Efficiency, Latency and Energy Trade-offs" ([arXiv:2605.01187](https://arxiv.org/abs/2605.01187), May 2026) analyses NVENC energy behaviour across tuning modes on the same silicon generations, including UHQ modes that offload work to the CUDA cores at up to +40% board power. A second paper on repurposing legacy NVENC hardware for vehicular-edge encoding ([arXiv:2605.16738](https://arxiv.org/abs/2605.16738)) leans on the same fixed-function-vs-power-state separation.
+- **Community:** streamer forums (e.g. OBS) have long observed that "NVENC" encodes draw substantial GPU power, with informal recognition that GPU Boost holds the SM cores at high frequency to feed an encoder that doesn't need them.
+- **Principle:** "race to idle isn't always optimal" is well-established in the HPC/DVFS literature.
+
+What this finding contributes is narrower and concrete: a clean, single-variable energy-vs-clock curve for a production transcode path (the U-shape below, measured at six clock points on one card), the location of the knee (**~9% saving at negligible time cost**) and of the memory-clock starvation floor below it, a one-line deployable fix (`nvidia-smi -lgc` via systemd), and the reproducibility/cooling consequences for anyone using GPU energy as a *measurement*, not just a cost.
 
 # The energy curve
 
@@ -56,7 +67,7 @@ Drop the wasteful boost and energy falls; drop too far and the decode+scale stag
 
 This investigation started because the same all-codecs benchmark drew ~8 W more on GPU paths after GoS1 was rebooted and moved to a cooler basement on 2026-06-19 — identical encode time, identical VMAF, +15-18% energy. GPU Boost is **headroom-driven**: a cooler, less power-constrained GPU sustains **higher** clocks for the same workload. So the cooler room simultaneously lowered idle power (-1.7 W) and raised load power (+8 W) — the same cause, opposite signs — by letting the boost algorithm reach further into the wasteful zone.
 
-That connects to a known data-centre tension, with a sharper twist. The established trade-off is that **over-cooling wastes facility energy** and operators are generally advised to run *warmer*: raising inlet temperature saves chiller energy, and although it raises IT power via server fans and silicon leakage (which rises roughly exponentially with temperature, ~0.35-0.5 %/degC of server power in the ASHRAE band), the net usually favours the warmer setpoint. The twist this finding adds: for **clock-insensitive accelerator workloads** (fixed-function transcode, and plausibly other boost-pinned-but-bottlenecked jobs), colder silicon also pushes GPU Boost to over-clock for no throughput gain — so aggressive cooling can waste energy on *two* fronts at once (cooling overhead **and** wasted compute), while the conventional fan/leakage argument already points toward warmer. The clean fix is not thermal at all: **pin the clock**, and the workload draws the same energy regardless of how cold the room is.
+That connects to a known data-centre tension, with a sharper twist. The established trade-off is that **over-cooling wastes facility energy** and operators are generally advised to run *warmer*: raising inlet temperature saves chiller energy, and although it raises IT power via server fans and silicon leakage (which rises roughly exponentially with temperature, ~0.35-0.5 %/degC of server power in the ASHRAE band), the net usually favours the warmer setpoint. The twist this finding adds: for **clock-insensitive accelerator workloads** (fixed-function transcode, and plausibly other boost-pinned-but-bottlenecked jobs), colder silicon also pushes GPU Boost to over-clock for no throughput gain — so aggressive cooling can waste energy on *two* fronts at once (cooling overhead **and** wasted compute), while the conventional fan/leakage argument already points toward warmer. The clean fix is not thermal at all: **pin the clock**, and the workload draws the same energy regardless of how cold the room is. (Unlike the mechanism section above, we have not found this two-front argument made elsewhere — it appears to be this finding's contribution, with the usual caveat that absence of a citation is not proof of novelty.)
 
 # What we changed (recommended)
 
