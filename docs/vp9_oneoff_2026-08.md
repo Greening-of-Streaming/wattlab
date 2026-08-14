@@ -103,8 +103,9 @@ power on a ~1.2 W idle box; n small throughout — first indication, not a findi
 
 > With VP9 back in the news (Disney+ reportedly moving away from HEVC over royalties),
 > a fair question from the energy side: what would that switch actually *cost*?
-> VP9 isn't one of the three codecs OWL measures continuously, so we ran a quick
-> one-off on the bench — one server, three client devices, device layer only.
+> OWL — Greening of Streaming's open, watt-metered bench for measuring the energy of
+> streaming workloads — tracks H.264, HEVC and AV1 continuously; VP9 isn't on that
+> list, so we ran a quick one-off — one server, three client devices, device layer only.
 >
 > Decode first, because clients dominate fleet energy: on a retail Google TV box, all
 > four codecs (H.264, HEVC, AV1, VP9) decoded in hardware at essentially the same power —
