@@ -474,6 +474,17 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <p>All formulas use wall-power from the P110 (system-level), not component-level readings. The GPU&rsquo;s self-reported power (its vendor sensor &mdash; <code>amdgpu</code> PPT or <code>nvidia-smi</code> power draw) is captured for reference but is not used in the primary energy calculation &mdash; it covers only the GPU die/board, not the full system delta (CPU, RAM, drives, fans, PSU losses).</p>
 
+  <h3 style="margin-top:1.25rem">Marginal vs attributional energy &mdash; two lenses, one measurement</h3>
+  <p>The headline &Delta;E above is <strong>marginal</strong> accounting: it answers &ldquo;how much <em>extra</em> energy did this task cause, on a machine that was running anyway?&rdquo; The idle floor is subtracted, so the task is never charged for occupying the machine. That is the honest lens for a shared, always-on box &mdash; and it is deliberately conservative for comparisons, because it cannot be inflated by a high idle floor.</p>
+  <p>There is a second, equally honest lens. If the machine exists <em>to run these tasks</em> &mdash; a dedicated encode fleet is the canonical case &mdash; then the full bill per task includes the idle power the machine burns while the task holds it open:</p>
+
+  <div class="formula">
+    <span class="label">Attributional energy (machine-occupancy accounting)</span>
+    <span class="var">E<sub>attr</sub></span> = (<span class="var">W<sub>base</sub></span> + <span class="var">&Delta;W</span>) &times; (<span class="var">&Delta;t</span> / 3600) &nbsp; [Wh]
+  </div>
+
+  <p>Both figures come from the <em>same</em> samples &mdash; the attributional one is derived, not separately measured. The choice between them is a <strong>scoping decision, stated openly</strong>, not a correction: marginal for &ldquo;what did this task add?&rdquo;, attributional for &ldquo;what does a task cost on hardware dedicated to it?&rdquo;. The distinction only matters when the compared tasks take different amounts of time. Real-time playback is immune (every codec occupies the device for exactly the video&rsquo;s duration); faster-than-real-time work &mdash; VoD encoding above all &mdash; is where it bites: a slow software encode holds a whole machine open for minutes that a hardware encoder releases in seconds, so attribution adds far more idle energy to the slow row and widens the absolute gap between them (the &ldquo;race to idle&rdquo; effect). On this bench it roughly doubles CPU-encode figures while adding only a fraction to the seconds-long hardware encodes. Encode-parity rows now carry the attributional figure alongside the marginal one (<code>wh_per_min_video_attributional</code>), plus their per-row idle baseline. Earlier stored results can be recomputed under this lens: standard result envelopes persist their idle baseline and task duration; older parity artifacts, which stored only the delta, are recomputed against the documented idle floor of their hardware era and labelled as such.</p>
+
   <h3 style="margin-top:1.25rem">Isolating the encoder &mdash; transcode vs encode</h3>
   <p>Every video figure above is the energy of a <strong>full transcode</strong> &mdash; ffmpeg decodes the source, converts colour space, scales, <em>then</em> encodes &mdash; not the encoder in isolation. For most comparisons that is the honest number (you cannot encode without first decoding), and when the input is held constant the decode cost is a near-constant offset that cancels out of the comparison. Where the encoder&rsquo;s <em>own</em> share is wanted &mdash; currently in the REM file-prep flow (<code>/prepare-rem</code>) &mdash; OWL runs a second, <strong>decode-only</strong> pass under the identical protocol (the same source decoded and discarded to a null sink, no encode) and subtracts it:</p>
 
@@ -694,7 +705,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <div class="footer-note">
     OWL is built and maintained by <a href="{GOS_URL}" style="color:var(--accent);text-decoration:none;">Greening of Streaming</a>, a French NGO (loi 1901).<br>
-    Methodology version 0.6 &middot; last updated 2026-07-29 &middot; Feedback: bs@ctoic.net<br>
+    Methodology version 0.7 &middot; last updated 2026-08-15 &middot; Feedback: bs@ctoic.net<br>
     Source: <a href="{GITHUB_REPO_URL}" style="color:var(--accent);text-decoration:none;">github.com/greeningofstreaming/wattlab</a>
   </div>
 

@@ -379,6 +379,11 @@ async def _measure_recipe(ref: Path, job_id: str, codec: str, profile: str,
 
     content_s = clip_dur_s * n_enc
     wh_per_min = round(delta_e_wh / (content_s / 60), 4) if content_s else None
+    # Attributional companion figure: charges the row for occupying the machine
+    # ((W_base + ΔW) × Δt) rather than only the marginal ΔW above idle. Derived
+    # from the same samples, not separately measured — see /methodology#energy.
+    attr_wh = energy.energy_wh(w_base + delta_w, delta_t)
+    wh_per_min_attr = round(attr_wh / (content_s / 60), 4) if content_s else None
     out_size_mb = round(out_path.stat().st_size / 1024 / 1024, 2) \
         if out_path.exists() and out_path.stat().st_size > 0 else None
     stream = video.probe_output_stream(out_path)
@@ -394,8 +399,11 @@ async def _measure_recipe(ref: Path, job_id: str, codec: str, profile: str,
         "ffmpeg_cmd": (last_tx or {}).get("ffmpeg_cmd"),
         "transcode_ok": (last_tx or {}).get("success"),
         "n_encodes": n_enc, "content_s": round(content_s, 1),
+        "w_base": round(w_base, 2),
         "delta_w": delta_w, "delta_e_wh_total": delta_e_wh, "delta_t_s": delta_t,
-        "wh_per_min_video": wh_per_min, "poll_count": len(readings),
+        "wh_per_min_video": wh_per_min,
+        "wh_per_min_video_attributional": wh_per_min_attr,
+        "poll_count": len(readings),
         "achieved_bitrate_bps": (stream or {}).get("bit_rate_bps"),
         "output_size_mb": out_size_mb,
         "confidence_flag": (conf or {}).get("flag"),
