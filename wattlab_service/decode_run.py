@@ -647,6 +647,10 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                       "fw": "1.3.1", "cadence_s": cfg["cadence_s"]},
             "rows": bench_out.get("rows", []),
         }
+        # Keep the bench's phase log tail (samples excluded) when any row
+        # errored — the only place the failure sequence survives (2026-08-15).
+        if any("error" in r for r in section["rows"]):
+            section["log_tail"] = lines[-40:]
         if dev_cfg["kind"] == "adb" and mode == "headless":
             section["display_caveat"] = (
                 "Android renders regardless of the shared monitor; headless "

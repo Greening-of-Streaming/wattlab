@@ -216,7 +216,16 @@ class WebosDevice:
                         raise
 
     def start(self, run):
-        self.lg.launch_url(self.host, run["url"])
+        # The C2's SSAP connect intermittently fails under a multi-device
+        # start (lg._with_client already retries the connect 3×; a whole
+        # launch still failed 2026-08-15 with a bare TimeoutError). One more
+        # full attempt after a pause before the row is declared lost.
+        try:
+            self.lg.launch_url(self.host, run["url"])
+        except Exception as e:
+            log(f"{run['name']}: webOS launch failed ({e!r}) — retrying once")
+            time.sleep(5)
+            self.lg.launch_url(self.host, run["url"])
 
     def provenance(self, run, results_dir):
         return {"url": run["url"], "current_app": self.lg.current_app(self.host)}
@@ -363,12 +372,20 @@ def main():
         try:
             rows.append(one_run(dev, meters, run, cfg, results_dir))
         except Exception as e:
+            import traceback
             log(f"{run['name']}: EXCEPTION {e!r}")
+            # Persist WHERE it failed: a bare TimeoutError() from a webOS
+            # connect vs a meter read vs a player launch are different faults
+            # (2026-08-15 C2 row was undiagnosable from `TimeoutError()` alone).
+            tb = traceback.extract_tb(e.__traceback__)
+            where = [f"{f.name}:{f.lineno}" for f in tb[-4:]]
             try:
                 dev.stop(run)
             except Exception:
                 pass
-            rows.append({"run": run["name"], "error": repr(e)})
+            rows.append({"run": run["name"], "error": repr(e),
+                         "error_where": where,
+                         "error_at": time.strftime("%Y-%m-%d %H:%M:%S")})
         out.write_text(json.dumps({
             "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
             "protocol": {k: cfg.get(k) for k in
