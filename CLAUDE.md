@@ -1,6 +1,16 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-07-29 (Session 58 — client decode goes first-class: portable decode-bench rig
+# Last updated: 2026-08-15 (Session 60 — rig hygiene: idle auto-off (rig_idle_off_* in /settings →
+#   Decode rig, default 4 h, bench.py hold file keeps CLI campaigns alive; ALSO fixed: the whole
+#   Decode-rig settings section never persisted — keys weren't in settings.DEFAULTS) · unauthorised-ADB
+#   diagnosis + "Repair ADB (on-site)" (claim screen + ONE reconnect + fingerprint; stuck tiles self-heal,
+#   Claim screen on stuck) · Fire TV Stick back on Lab-A/HDMI_4, Pi 5 PARKED (return headless on a spare
+#   P110), per-device `network` attr + Wi-Fi-only disclosure on /decode + /methodology · C2 SIMPLINK/CEC
+#   turned OFF by owner (auto-switch was hopping inputs into the C2's own baseline; C2 launch retries once;
+#   error rows carry error_where + log tail) · first 5-device promo-clip runs: hw-STB decode of 1080p is
+#   ~0.1–0.3 W = below a 34 s window's noise (🔴 is honest; use long loop windows). Tests 1007.
+#   ⚠ Journal gap 07-31→08-14 (C2/CR-071, Bbox, Fire TV, CR-072, SMPTE couplings, VP9) — see git log.)
+# Previous: 2026-07-29 (Session 58 — client decode goes first-class: portable decode-bench rig
 #   (/srv/data/owl/decode-bench/ — Google TV + Raspberry Pi 5 + Pi 400, adb/ssh drivers, July-protocol)
 #   → new `decode` result type (mode decode_panel; envelopes results/decode/2026-07-29_dec0de{04,05,06}.json
 #   via bin/import-decode-bench-results, idempotent) + two DRAFT findings on /findings
@@ -32,7 +42,7 @@
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
 #   - CHANGE_REQUESTS.md — 17 active CRs (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (896 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - TESTING.md — pytest suite (1007 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - OWL_AUDIT.md — 2026-07-05 nine-dimension re-audit → CR-066–069 + CR-031/008 updates; disposition in AUDIT_RESPONSE.md
@@ -182,6 +192,9 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S56 (07-20): CR-070 pre-job idle guard (meeting's "baseline bug" — real, was only intra-job-fixed by CR-062) — rolling floor power.LAST_W_BASE, queue-worker wait before every job, "Run job anyway" skip after 5 s (Lab, /job/{id}/cooldown-skip), consume-once pre_job_cooldown persist stamp, baseline_elevated provenance · verified live (job 02dc670c, 22.7 s settle) · 1bf87d6. →884.
 - S57 (07-20): FR sandwich live on /enhance-run — v1 anchors for the 10 ladder fixtures (bin/make-enhance-fr-anchors → fr_anchors_v1.json; ceilings BBB 89.40/Meridian 91.49), pixop.probe_fr_sandwich terminal slot both runners, fr result block + sandwich on result cards; same-model guard; bbb_hd_clean naive 93.09 > ceiling (ordering caveat is real) · non-4K fixture runs stamp fr.skipped + note · fair FLOOR added (naive upscale through the matched encode via the compare ffmpeg arm; ordered lines are same-path only, source-as-displayed = context) — bbb_sd_dirty enhanced 31.57 vs floor 32.69. →895.
 - S58 (07-28/29): client decode first-class — decode-bench rig (GTV smoke replicates July 1.91 vs 1.887 W; Pi 5 sw-only + Pi 400 hw-vs-sw panels, 21 rows 🟢, contaminated rows discarded+documented) → `decode` result type + 2 DRAFT findings (hw-decoder ~4×; codec ranking depends on silicon+regime) · /methodology v0.6 (REM/LEM named, mW-API fix, redundancy pruned) · report docs/pi_decode_energy_2026-07.md. →896.
+- S59 (07-29/30): `/decode` Lab console (rig.py state machine, claim-screen, poller) + recipe runs (headless parallel fan-out, screen mode) + protocol v3 marker head + shared idle guard (idle_wait.py) + LEM csv export; rig on Ethernet + reservations. →964.
+- [07-31→08-14 un-journaled: LG C2 native + CR-071 webOS control, Bbox operator CPE, Fire TV first bench, CR-072 origin, SMPTE couplings, VP9 one-off, marginal-vs-attributional lens.]
+- S60 (08-15): rig hygiene — idle auto-off (4 h, hold file for CLI) + Decode-rig settings persistence bug fixed · unauthorised-ADB diagnosis + Repair ADB (on-site only) · Fire TV back on Lab-A/HDMI_4, Pi 5 parked, Wi-Fi-only disclosure · C2 CEC off (input-hop confound) · 5-device promo runs (hw STB decode below 34 s noise). →1007.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -192,7 +205,8 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
   VMAF checkbox defaulting from `vmaf_enabled` (video.py:229).
 - **Guided Tour Findings step** — redesign to aggregate across all stored results, not echo the session run.
 - **Power-user/visitor UX watch** — revisit if a visible density toggle becomes needed.
-- **2026-07 audit doc-debt** (OWL_AUDIT.md §3.7, residue after the CR-066–069 triage): JOURNAL entry for the
+- **2026-07 audit doc-debt** (OWL_AUDIT.md §3.7, residue after the CR-066–069 triage): JOURNAL back-fill for
+  07-31→08-14 (C2/CR-071, Bbox, Fire TV, CR-072, SMPTE couplings, VP9 — see git log) · JOURNAL entry for the
   un-journaled prepare-REM arc (06-20→30: `/prepare-rem`, `uploads.py`, GPU clock pin, budget 3-clip campaign) ·
   `ARCHITECTURE.md` map refresh (17 routers, real line counts) · VERSION/tag reconciliation (v0.8.7 "rollback
   anchor" is 111+ commits stale, v1.x tags coexist) · back-fill the 28 closed-CR entries missing closing-commit hashes.

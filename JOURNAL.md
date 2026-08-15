@@ -7,6 +7,64 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 60 — 2026-08-15
+
+**Rig hygiene day: idle auto-off, ADB-authorisation repair, Fire TV back (Pi 5 parked), CEC off**
+
+> Journal gap: sessions between S59 (07-30) and here (07-31 → 08-14: LG C2 native + CR-071 webOS
+> control, Bbox operator CPE on the bench, Fire TV first bench, CR-072 origin, SMPTE overnight
+> couplings, VP9 one-off, marginal-vs-attributional lens) are un-journaled — the commit log and
+> memory notes carry them. Back-fill is on the doc-debt list.
+
+- **Idle auto-off** (`c65fb38`; owner came home after a week to find every rig box powered): the
+  rig poller tracks activity (Lab control op, Lab `/decode` visit, decode job queued/busy/finished,
+  a box powered from outside the UI, or a fresh `/tmp/owl-rig-hold` that `bench.py` touches per
+  row so CLI campaigns are never cut — stale after 30 min) and after `rig_idle_off_hours`
+  (default **4 h**) gracefully stops every powered box, then the master if one is switchable.
+  `rig_idle_off_monitor` (default OFF — the C2 is the household TV) also cuts Lab-E. Countdown on
+  `/decode`; knobs in /settings → Decode rig. Service start counts as activity (no instant cut on
+  restart). **Bug found en route:** none of the Decode-rig settings (`decode_*`, `rig_master_tapo_ip`,
+  `rig_shelly_ip`) were in `settings.DEFAULTS`, so `save()` dropped them — that section had never
+  persisted anything since it shipped. Registered with the code-effective defaults, test-guarded.
+- **Unauthorised-ADB diagnosis + repair** (`0cfcc17`): after a cold power-up the GTV and Bbox sat
+  in `stuck` for hours — both had dropped GoS1's (unchanged) adb key and were showing an invisible
+  "Allow USB debugging?" prompt on a TV asleep on another input; power-cycling can't fix that.
+  Now: `adb_auth_state()` names the condition on the tile, stuck boxes re-probe every ~12 s and
+  self-heal, **Claim screen** is offered on stuck tiles, and **Repair ADB (on-site)** claims the
+  screen + sends exactly ONE reconnect (each connect while unauthorised queues another prompt —
+  Ben accepted 4× per box after repeated manual reconnects) + returns the host-key fingerprint
+  (`C8:18:1D:67:CB:1E:A1:2C:88:51:42:90:80:73:3C:4F`). Confirm + alert make explicit that the
+  accept step needs a person AT the rig with the box's remote — no remote-over-network way.
+- **Bench swap** (`20fe6a9`, owner): the C2 has 4 HDMI and the rig 5 usable plugs → **Pi 5
+  parked**, **Fire TV Stick 4K back on Lab-A / HDMI_4** (Wi-Fi only, `.200`, reservation kept;
+  first connect needed the on-site accept — the new path caught it in 27 s). Pi 5 can return
+  headless on any spare P110 (pure-decode rows need no HDMI). Per-device `network` attribute →
+  tile badge "📶 Wi-Fi only", `/decode` Connectivity note, `/methodology` disclosure: link quality
+  is not the confound (Wi-Fi 7 AP metres away), the stick powering its own radio is — a share the
+  Ethernet boxes don't carry and this rig can't separate; a stated caveat, not a correction.
+- **First 5-device headless run on the promo clip** (`938a5fd0`, then `38b6e2da`): C2 row died
+  with a bare `TimeoutError()` — the only bare-TimeoutError source in a C2 row is `lg._with_client`'s
+  SSAP connect (3×12 s), most plausibly `launch_url`; its error-handler `go_home` is what cut the
+  Fire Stick's picture on the shared screen mid-clip. Root cause of the input hopping the owner
+  saw (HDMI_4 → HDMI_2): the C2's **HDMI-CEC/SIMPLINK auto-switch** following each Android box's
+  wake — a real confound for the C2's own row (Lab-E is its meter; input switches land in its
+  baseline). **Owner turned SIMPLINK off** on the C2; our arbitration is explicit `set_input`,
+  nothing depended on CEC. Second run: all five rows landed, C2 baseline stable at 51 W.
+  Hardening (`f9052ba`): error rows carry `error_where`/`error_at`, errored device sections keep
+  the bench log tail, `WebosDevice.start` retries the launch once. Bench fixes (`5d51108`):
+  per-device mid-window screenshot names (three adb boxes were overwriting one file), MediaTek
+  "OSAL Init" junk stripped before the PNG header (Bbox screencaps were unreadable).
+- **Data points (34 s window, uploaded 50 s promo, headless):** Pi 400 *software* ffmpeg ΔW
+  0.95→1.16 W 🟢 (2.8× the Bbox's hw decode but 34% less device-total — idle floor dominates;
+  it's sw-vs-hw and decode-only-vs-decode+render, state both); Fire TV 0.26/0.39 W 🟢 (higher
+  than the GTV on the same clip — first Fire-vs-Google datum, Wi-Fi caveat); GTV 0.19 🟢 then
+  0.00 🔴 and Bbox 0.35 borderline then −0.05 🔴 — logcat/screenshots prove both decoded; hw STB
+  decode of 1080p is ~0.1–0.3 W, below a 34 s window's noise (long loop windows needed, as July);
+  C2 native −2 W ± 5 = content-driven panel, all-in figure meaningless without the differential.
+- Suite: **1007 passing**. Commits `c65fb38` `0cfcc17` `20fe6a9` `f9052ba` `5d51108` (unpushed).
+
+---
+
 ## Session 59 — 2026-07-29/30 (all day + overnight)
 
 **The decode rig becomes a product: `/decode` Lab console, protocol v3, and the OWL↔LEM convergence**
