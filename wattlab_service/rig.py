@@ -596,6 +596,55 @@ def probe_ready(dev: dict) -> bool:
         return False
 
 
+def adb_auth_state(dev: dict) -> str | None:
+    """Transport state of an adb device as `adb devices` reports it:
+    "device" (authorised), "unauthorized" (the box is showing its "Allow USB
+    debugging?" prompt and waiting for a remote-control OK), "offline", or
+    None (not in the list / not an adb device). Runs in a thread.
+
+    2026-08-15: both adb boxes came back from a cold power-up unauthorised
+    and sat in `stuck` for hours — the probe can't distinguish "not booted"
+    from "booted but rejecting our key", and the prompt was invisible because
+    the TV was asleep on another input. This is what tells the tile apart."""
+    if dev.get("kind") != "adb":
+        return None
+    try:
+        out = _run([ADB_BIN, "devices"], timeout=10).stdout
+    except Exception:
+        return None
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == dev["target"]:
+            return parts[1]
+    return None
+
+
+def adb_host_fingerprint() -> str | None:
+    """MD5 fingerprint of GoS1's adb host key, formatted the way Android
+    shows it in the "Allow USB debugging?" dialog — so the operator can
+    match the prompt to this machine before accepting."""
+    import base64
+    import hashlib
+    from pathlib import Path as _P
+    try:
+        pub = _P.home() / ".android" / "adbkey.pub"
+        b64 = pub.read_text().split()[0]
+        return ":".join(f"{x:02X}" for x in
+                        hashlib.md5(base64.b64decode(b64)).digest())
+    except Exception:
+        return None
+
+
+def adb_reconnect(dev: dict) -> None:
+    """ONE disconnect + connect. Each connect while unauthorised queues one
+    more prompt on the box (Ben had to accept 4× per box on 2026-08-15 after
+    repeated manual reconnects) — the repair path sends exactly one."""
+    serial = dev["target"]
+    _run([ADB_BIN, "disconnect", serial], timeout=10)
+    time.sleep(1)
+    _run([ADB_BIN, "connect", serial], timeout=15)
+
+
 _WL_ENV = "WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000"
 
 
@@ -694,7 +743,8 @@ class RigError(Exception):
 
 def _blank_dev() -> dict:
     return {"state": "off", "watts": None, "detail": "", "busy": False,
-            "boot_started": None, "elapsed_s": None, "probe_fails": 0}
+            "boot_started": None, "elapsed_s": None, "probe_fails": 0,
+            "adb_auth": None}
 
 
 rig_cache: dict = {
@@ -783,11 +833,26 @@ async def _step_device(name: str, master_off: bool) -> None:
     if d["state"] == "powering" and ps["watts"] >= dev_cfg["boot_threshold_w"]:
         d["state"] = "booting"
 
-    if d["state"] in ("powering", "booting"):
+    if d["state"] in ("powering", "booting", "stuck"):
+        if d["state"] == "stuck" and int(now) % 12 >= 3:
+            return    # stuck: keep re-probing, but only every ~4 sweeps
         ready = await asyncio.to_thread(probe_ready, dev_cfg)
         if ready:
-            d.update({"state": "ready", "probe_fails": 0,
+            d.update({"state": "ready", "probe_fails": 0, "adb_auth": None,
                       "detail": "ssh ok" if dev_cfg["kind"] == "ssh" else "adb ok"})
+            return
+        # An adb box that answers but rejects our key is a distinct
+        # condition: it will NEVER become ready until someone accepts the
+        # on-screen prompt — surface it instead of a generic "stuck".
+        auth = (await asyncio.to_thread(adb_auth_state, dev_cfg)
+                if dev_cfg["kind"] == "adb" else None)
+        d["adb_auth"] = auth
+        if auth == "unauthorized":
+            d.update({"state": "stuck",
+                      "detail": "ADB not authorised — needs an on-site OK on the "
+                                "box's remote (Repair ADB)"})
+            return
+        if d["state"] == "stuck":
             return
         limit = 3 * dev_cfg["expected_boot_s"]
         if d["elapsed_s"] is not None and d["elapsed_s"] > limit:
@@ -933,6 +998,32 @@ async def device_cycle(name: str) -> None:
         await plug_set(dev_cfg["plug_ip"], True)
         d.update({"state": "powering", "boot_started": time.monotonic(),
                   "elapsed_s": 0.0, "probe_fails": 0, "detail": "power-cycled"})
+
+
+async def adb_repair(name: str) -> dict:
+    """Guided fix for an unauthorised adb box: put the box on the shared
+    screen (wakes the TV, selects its HDMI input), then send exactly ONE
+    reconnect so its "Allow USB debugging?" prompt is on screen. Returns the
+    host fingerprint to match against the dialog and the transport state a
+    few seconds later ("device" ⇒ the operator already accepted)."""
+    dev_cfg = _dev_cfg(name)
+    if dev_cfg["kind"] != "adb":
+        raise RigError(400, f"{dev_cfg['label']} is not an adb device")
+    d = rig_cache["devices"][name]
+    if d["state"] in _STOPPED_STATES or d["state"] == "stopping":
+        raise RigError(409, f"{dev_cfg['label']} is not powered")
+    touch_activity(f"adb repair {dev_cfg['label']}")
+    screen_err = None
+    try:
+        await claim_screen(name)
+    except RigError as e:
+        screen_err = e.reason        # still worth reconnecting; report it
+    await asyncio.to_thread(adb_reconnect, dev_cfg)
+    await asyncio.sleep(3)
+    auth = await asyncio.to_thread(adb_auth_state, dev_cfg)
+    d["adb_auth"] = auth
+    return {"fingerprint": adb_host_fingerprint(), "adb_auth": auth,
+            "screen_owner": rig_cache["screen_owner"], "screen_error": screen_err}
 
 
 async def claim_screen(name: str) -> None:
@@ -1109,6 +1200,7 @@ def status_payload() -> dict:
             "state": d["state"], "watts": d["watts"], "busy": d["busy"],
             "detail": d["detail"], "elapsed_s": d["elapsed_s"],
             "expected_s": cfg_d["expected_boot_s"],
+            "adb_auth": d.get("adb_auth"),
         }
     master = rig_cache["master"]
     monitor = {**rig_cache["monitor"],

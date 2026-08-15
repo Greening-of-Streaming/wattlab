@@ -295,6 +295,19 @@ async def decode_claim_screen(name: str):
     return {"ok": True}
 
 
+@router.post("/decode/device/{name}/adb-repair",
+             dependencies=[Depends(requires(RIG_CONTROL))])
+async def decode_adb_repair(name: str):
+    """Unauthorised adb box: claim the screen + ONE reconnect so the "Allow
+    USB debugging?" prompt is visible; returns the host fingerprint to match."""
+    try:
+        return {"ok": True, **(await rig.adb_repair(name))}
+    except rig.RigError as e:
+        return _refuse(e)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
 @router.post("/decode/monitor/power",
              dependencies=[Depends(requires(RIG_CONTROL))])
 async def decode_monitor_power(payload: dict):
@@ -633,9 +646,19 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
         h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
            + '/screen\\', {})">Claim screen</button>';
     }
-    else if (dev.state === 'stuck')
+    else if (dev.state === 'stuck') {
       h += '<button class="rig-btn warn" onclick="devPower(\\'' + name + '\\',\\'cycle\\')">Power-cycle</button>'
          + ' <button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Force off</button>';
+      // A stuck box is powered but its probe fails — often an on-screen prompt
+      // (adb "Allow USB debugging?", 2026-08-15) that only the TV can show.
+      if (dev.conn !== 'webos' && screenOwner !== name)
+        h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
+           + '/screen\\', {})">Claim screen</button>';
+      if (dev.adb_auth === 'unauthorized')
+        h += ' <button class="rig-btn warn" title="Needs someone AT the rig with this box\\'s remote — '
+           + 'the accept step cannot be done remotely" onclick="adbRepair(\\'' + name
+           + '\\')">Repair ADB (on-site)</button>';
+    }
     else if (dev.state === 'booting' || dev.state === 'powering')
       h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Cancel</button>';
   }
@@ -789,6 +812,25 @@ async function post(url, body) {
     if (!r.ok) err(j.error || ('HTTP ' + r.status));
   } catch (e) { err(String(e)); }
   tick();
+}
+
+async function adbRepair(name) {
+  if (!confirm('Repair ADB needs a person AT the rig holding this box\\'s remote control: '
+             + 'the box will show an "Allow USB debugging?" prompt on the shared TV that can only '
+             + 'be accepted with the remote — there is no remote-over-network way to do it.\\n\\n'
+             + 'Are you (or someone you can talk to) physically at the rig now?')) return;
+  var r = await fetch('/decode/device/' + name + '/adb-repair', {method:'POST',
+              headers:{'Content-Type':'application/json'}, body:'{}'});
+  var j = await r.json();
+  if (!r.ok || j.error) { alert('Repair failed: ' + (j.error || r.status)); return; }
+  if (j.adb_auth === 'device') { alert('Authorised — the box will show ready on the next poll.'); return; }
+  alert('The TV is now on this box\\'s input and its "Allow USB debugging?" prompt has been '
+      + 'sent ONCE. Whoever is at the rig, on the box\\'s remote: tick "Always allow from this '
+      + 'computer", then OK. (Do NOT click Repair again while waiting — each click queues another '
+      + 'prompt to accept.)\\n\\n'
+      + 'Fingerprint to expect: ' + (j.fingerprint || '(unknown)')
+      + (j.screen_error ? '\\n\\n(screen claim failed: ' + j.screen_error + ')' : '')
+      + '\\n\\nNo prompt? On the box: Developer options → toggle USB debugging off/on, then Repair again.');
 }
 
 function devPower(name, action) {

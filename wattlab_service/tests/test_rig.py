@@ -28,6 +28,8 @@ def _fresh_rig(monkeypatch):
     monkeypatch.setattr(rig, "master_tapo_ip", lambda: None)
     monkeypatch.setattr(rig, "probe_ready", lambda dev: False)
     monkeypatch.setattr(rig, "send_shutdown", lambda dev: None)
+    monkeypatch.setattr(rig, "adb_auth_state", lambda dev: None)
+    monkeypatch.setattr(rig, "adb_reconnect", lambda dev: None)
     monkeypatch.setattr(rig, "set_signal", lambda dev, on: None)
     # Never broadcast real WoL from a test run — pytest runs ON the lab LAN
     # and a magic packet would wake the household's C2 every suite run.
@@ -358,7 +360,7 @@ def test_status_payload_shape():
     for name, d in p["devices"].items():
         assert set(d) == {"label", "plug_name", "device_class", "silicon",
                           "conn", "state", "watts", "busy",
-                          "detail", "elapsed_s", "expected_s"}
+                          "detail", "elapsed_s", "expected_s", "adb_auth"}
         assert d["device_class"] in ("sbc", "stb", "tv")
         assert d["conn"] in ("ssh", "adb", "webos")
     assert p["monitor"]["panel"]          # bench schematic display identity
@@ -536,3 +538,56 @@ def test_status_payload_carries_idle_off(monkeypatch, tmp_path):
     p = rig.status_payload()
     assert set(p["idle_off"]) >= {"enabled", "hours", "idle_s", "armed",
                                   "off_in_s", "hold_active", "last"}
+
+
+# --- adb authorisation (2026-08-15: both adb boxes stuck-unauthorised) -------
+
+def test_unauthorized_adb_box_is_named_not_generic_stuck(monkeypatch):
+    _stub_plugs(monkeypatch, on=True, watts=1.2)
+    monkeypatch.setattr(rig, "adb_auth_state",
+                        lambda dev: "unauthorized" if dev["kind"] == "adb" else None)
+    _run(rig.poll_once())
+    g = rig.rig_cache["devices"]["gtv"]
+    assert g["state"] == "stuck" and g["adb_auth"] == "unauthorized"
+    assert "not authorised" in g["detail"]
+    assert rig.status_payload()["devices"]["gtv"]["adb_auth"] == "unauthorized"
+    # ssh boxes are untouched by the adb check
+    assert rig.rig_cache["devices"]["pi5"]["state"] in ("powering", "booting")
+
+
+def test_stuck_box_self_heals_when_probe_recovers(monkeypatch):
+    _stub_plugs(monkeypatch, on=True, watts=4.0)
+    d = rig.rig_cache["devices"]["gtv"]
+    d.update({"state": "stuck", "boot_started": time.monotonic(),
+              "detail": "not ready"})
+    monkeypatch.setattr(rig, "probe_ready", lambda dev: True)
+    monkeypatch.setattr(rig.time, "monotonic", lambda: 12.0)   # inside the re-probe window
+    _run(rig.poll_once())
+    assert d["state"] == "ready" and d["adb_auth"] is None
+
+
+def test_adb_repair_claims_screen_and_reconnects_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(rig, "adb_reconnect", lambda dev: calls.append(dev["label"]))
+    monkeypatch.setattr(rig, "adb_auth_state", lambda dev: "unauthorized")
+    monkeypatch.setattr(rig, "adb_host_fingerprint", lambda: "AA:BB")
+    monkeypatch.setattr(rig.lg, "set_input", lambda host, inp: None)
+    monkeypatch.setattr(rig.asyncio, "sleep", _fake_sleep)
+    rig.rig_cache["devices"]["gtv"]["state"] = "stuck"
+    out = _run(rig.adb_repair("gtv"))
+    assert calls == ["Google TV"]
+    assert out["fingerprint"] == "AA:BB" and out["adb_auth"] == "unauthorized"
+    assert rig.rig_cache["screen_owner"] == "gtv"
+
+
+def test_adb_repair_refused_for_ssh_and_unpowered():
+    with pytest.raises(rig.RigError) as e:
+        _run(rig.adb_repair("pi5"))
+    assert e.value.status == 400
+    with pytest.raises(rig.RigError) as e:
+        _run(rig.adb_repair("gtv"))       # state off
+    assert e.value.status == 409
+
+
+async def _fake_sleep(s):
+    return None
