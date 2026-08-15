@@ -58,22 +58,22 @@ def test_relay_off_is_off(monkeypatch):
 def test_powering_then_booting_then_ready(monkeypatch):
     _stub_plugs(monkeypatch, on=True, watts=0.1)
     _run(rig.poll_once())
-    assert rig.rig_cache["devices"]["pi5"]["state"] == "powering"
+    assert rig.rig_cache["devices"]["pi400"]["state"] == "powering"
 
     _stub_plugs(monkeypatch, on=True, watts=4.0)   # draw above threshold
     _run(rig.poll_once())
-    assert rig.rig_cache["devices"]["pi5"]["state"] == "booting"
+    assert rig.rig_cache["devices"]["pi400"]["state"] == "booting"
 
     monkeypatch.setattr(rig, "probe_ready", lambda dev: True)
     _run(rig.poll_once())
-    assert rig.rig_cache["devices"]["pi5"]["state"] == "ready"
+    assert rig.rig_cache["devices"]["pi400"]["state"] == "ready"
 
 
 def test_stuck_after_three_times_expected(monkeypatch):
     _stub_plugs(monkeypatch, on=True, watts=4.0)
     _run(rig.poll_once())
-    d = rig.rig_cache["devices"]["pi5"]
-    limit = 3 * rig.RIG["devices"]["pi5"]["expected_boot_s"]
+    d = rig.rig_cache["devices"]["pi400"]
+    limit = 3 * rig.RIG["devices"]["pi400"]["expected_boot_s"]
     d["boot_started"] = time.monotonic() - limit - 5
     _run(rig.poll_once())
     assert d["state"] == "stuck"
@@ -114,10 +114,10 @@ def test_paused_plug_is_skipped(monkeypatch):
         called.append(ip)
         return {"on": False, "watts": 0.0, "ip": "x"}
     monkeypatch.setattr(rig, "plug_status", _status)
-    rig.PAUSED_PLUGS.add(rig.RIG["devices"]["pi5"]["plug_ip"])
+    rig.PAUSED_PLUGS.add(rig.RIG["devices"]["pi400"]["plug_ip"])
     _run(rig.poll_once())
-    assert rig.RIG["devices"]["pi5"]["plug_ip"] not in called
-    assert "paused" in rig.rig_cache["devices"]["pi5"]["detail"]
+    assert rig.RIG["devices"]["pi400"]["plug_ip"] not in called
+    assert "paused" in rig.rig_cache["devices"]["pi400"]["detail"]
 
 
 def test_device_off_graceful_then_relay(monkeypatch):
@@ -127,25 +127,25 @@ def test_device_off_graceful_then_relay(monkeypatch):
     async def _set(ip, on, **kw):
         events.append(("relay", on))
     monkeypatch.setattr(rig, "plug_set", _set)
-    monkeypatch.setitem(rig.RIG["devices"]["pi5"], "shutdown_wait_s", 0)
+    monkeypatch.setitem(rig.RIG["devices"]["pi400"], "shutdown_wait_s", 0)
 
     async def scenario():
-        rig.rig_cache["devices"]["pi5"]["state"] = "ready"
-        await rig.device_off("pi5")
-        assert rig.rig_cache["devices"]["pi5"]["state"] == "stopping"
+        rig.rig_cache["devices"]["pi400"]["state"] = "ready"
+        await rig.device_off("pi400")
+        assert rig.rig_cache["devices"]["pi400"]["state"] == "stopping"
         await asyncio.sleep(0.2)   # let the background _stop task run
     _run(scenario())
     assert events == ["shutdown", ("relay", False)]
-    assert rig.rig_cache["devices"]["pi5"]["state"] == "off"
+    assert rig.rig_cache["devices"]["pi400"]["state"] == "off"
 
 
 def test_relay_master_off_refused_while_device_alive(monkeypatch):
     rig.rig_cache["master"]["switchable"] = True
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     with pytest.raises(rig.RigError) as e:
         _run(rig.master_power(False))
     assert e.value.status == 409
-    assert "Pi 5" in e.value.reason
+    assert "Pi 400" in e.value.reason
 
 
 def test_software_master_on_refused():
@@ -163,15 +163,15 @@ def test_software_master_off_cascades_graceful_stops(monkeypatch):
         stopped.append(name)
         rig.rig_cache["devices"][name]["state"] = "stopping"
     monkeypatch.setattr(rig, "device_off", _fake_off)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["devices"]["gtv"]["state"] = "booting"
     _run(rig.master_power(False))
-    assert sorted(stopped) == ["gtv", "pi5"]
+    assert sorted(stopped) == ["gtv", "pi400"]
 
 
 def test_software_master_off_refused_while_busy():
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
-    rig.rig_cache["devices"]["pi5"]["busy"] = True
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["busy"] = True
     with pytest.raises(rig.RigError) as e:
         _run(rig.master_power(False))
     assert e.value.status == 409
@@ -216,7 +216,7 @@ def test_tapo_master_power_uses_plug_set(monkeypatch):
     _run(rig.master_power(True))
     assert calls == [("10.0.0.5", True)]
     # off refused while a device is up (same rule as the relay Shelly)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     with pytest.raises(rig.RigError):
         _run(rig.master_power(False))
 
@@ -254,11 +254,11 @@ def test_claim_screen_webos_sets_input(monkeypatch):
     monkeypatch.setitem(rig.RIG["monitor"], "lg_host", "10.0.0.9")
     monkeypatch.setattr(rig.lg, "set_input",
                         lambda host, hdmi: calls.append((host, hdmi)))
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["devices"]["gtv"]["state"] = "ready"
-    _run(rig.claim_screen("pi5"))
-    assert calls == [("10.0.0.9", "HDMI_4")]     # pi5's mapped port
-    assert rig.rig_cache["screen_owner"] == "pi5"
+    _run(rig.claim_screen("pi400"))
+    assert calls == [("10.0.0.9", rig.RIG["devices"]["pi400"]["hdmi_input"])]
+    assert rig.rig_cache["screen_owner"] == "pi400"
 
 
 def test_claim_screen_webos_refuses_unmapped_device(monkeypatch):
@@ -278,25 +278,25 @@ def test_claim_screen_legacy_darkens_others(monkeypatch):
     calls = []
     monkeypatch.setattr(rig, "set_signal",
                         lambda dev, on: calls.append((dev["label"], on)))
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["devices"]["gtv"]["state"] = "ready"
-    _run(rig.claim_screen("pi5"))
+    _run(rig.claim_screen("pi400"))
     assert ("Google TV", False) in calls
-    assert ("Pi 5", True) in calls
-    assert rig.rig_cache["screen_owner"] == "pi5"
+    assert ("Pi 400", True) in calls
+    assert rig.rig_cache["screen_owner"] == "pi400"
 
 
 def test_claim_screen_refused_for_unpowered_target():
     with pytest.raises(rig.RigError) as e:
-        _run(rig.claim_screen("pi5"))   # state off
+        _run(rig.claim_screen("pi400"))   # state off
     assert e.value.status == 409
 
 
 def test_claim_screen_refused_while_any_job_runs():
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["devices"]["gtv"]["busy"] = True
     with pytest.raises(rig.RigError) as e:
-        _run(rig.claim_screen("pi5"))
+        _run(rig.claim_screen("pi400"))
     assert e.value.status == 409
 
 
@@ -307,7 +307,7 @@ def test_claim_screen_failure_is_reported_not_swallowed(monkeypatch):
     def _boom(dev, on):
         raise RuntimeError(f"{dev['label']}: output control failed")
     monkeypatch.setattr(rig, "set_signal", _boom)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["devices"]["gtv"]["state"] = "ready"
     with pytest.raises(rig.RigError) as e:
         _run(rig.claim_screen("gtv"))
@@ -317,8 +317,8 @@ def test_claim_screen_failure_is_reported_not_swallowed(monkeypatch):
 
 
 def test_screen_owner_cleared_when_owner_powers_off(monkeypatch):
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
-    rig.rig_cache["screen_owner"] = "pi5"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
+    rig.rig_cache["screen_owner"] = "pi400"
     _stub_plugs(monkeypatch, on=False, watts=0.0)
     _run(rig.poll_once())
     assert rig.rig_cache["screen_owner"] is None
@@ -348,7 +348,7 @@ def test_recycle_c2_panel_reboots_to_home(monkeypatch):
 
 def test_recycle_c2_panel_rejects_non_webos():
     with pytest.raises(rig.RigError) as e:
-        _run(rig.recycle_c2_panel("pi5"))
+        _run(rig.recycle_c2_panel("pi400"))
     assert e.value.status == 400
 
 
@@ -360,9 +360,13 @@ def test_status_payload_shape():
     for name, d in p["devices"].items():
         assert set(d) == {"label", "plug_name", "device_class", "silicon",
                           "conn", "state", "watts", "busy",
-                          "detail", "elapsed_s", "expected_s", "adb_auth"}
+                          "detail", "elapsed_s", "expected_s", "adb_auth",
+                          "network"}
         assert d["device_class"] in ("sbc", "stb", "tv")
         assert d["conn"] in ("ssh", "adb", "webos")
+        assert d["network"] in ("ethernet", "wifi")
+    # Transparency: the Fire TV Stick is the ONLY Wi-Fi device on the rig.
+    assert [n for n, d in p["devices"].items() if d["network"] == "wifi"] == ["firestick"]
     assert p["monitor"]["panel"]          # bench schematic display identity
     assert p["monitor"]["plug_name"] == "Lab-E"
 
@@ -396,14 +400,14 @@ def test_idle_off_fires_after_window_and_stops_every_powered_box(monkeypatch, tm
         stopped.append(name)
         rig.rig_cache["devices"][name]["state"] = "stopping"
     monkeypatch.setattr(rig, "device_off", _fake_off)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["devices"]["gtv"]["state"] = "stuck"
     rig.rig_cache["devices"]["c2"]["state"] = "ready"   # webOS: never a target
     rig.rig_cache["last_activity"] = time.time() - 4.5 * 3600
     assert _run(rig._maybe_idle_off()) is True
-    assert sorted(stopped) == ["gtv", "pi5"]
+    assert sorted(stopped) == ["gtv", "pi400"]
     last = rig.rig_cache["idle_off_last"]
-    assert last["idle_h"] >= 4.4 and sorted(last["stopped"]) == ["gtv", "pi5"]
+    assert last["idle_h"] >= 4.4 and sorted(last["stopped"]) == ["gtv", "pi400"]
     # Clock reset — a second sweep right after does not fire again.
     assert _run(rig._maybe_idle_off()) is False
 
@@ -411,7 +415,7 @@ def test_idle_off_fires_after_window_and_stops_every_powered_box(monkeypatch, tm
 def test_idle_off_waits_for_the_window(monkeypatch, tmp_path):
     _idle_settings(monkeypatch); _no_hold(monkeypatch, tmp_path)
     monkeypatch.setattr(rig, "device_off", None)   # would explode if called
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["last_activity"] = time.time() - 3.9 * 3600
     assert _run(rig._maybe_idle_off()) is False
     st = rig.idle_off_state()
@@ -423,11 +427,11 @@ def test_idle_off_disabled_or_nothing_powered_is_a_noop(monkeypatch, tmp_path):
     monkeypatch.setattr(rig, "device_off", None)
     rig.rig_cache["last_activity"] = time.time() - 40 * 3600
     _idle_settings(monkeypatch, enabled=False)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     assert _run(rig._maybe_idle_off()) is False
     assert rig.idle_off_state()["armed"] is False
     _idle_settings(monkeypatch, enabled=True)
-    rig.rig_cache["devices"]["pi5"]["state"] = "off"
+    rig.rig_cache["devices"]["pi400"]["state"] = "off"
     assert _run(rig._maybe_idle_off()) is False
     assert rig.idle_off_state()["off_in_s"] is None
 
@@ -435,8 +439,8 @@ def test_idle_off_disabled_or_nothing_powered_is_a_noop(monkeypatch, tmp_path):
 def test_idle_off_never_cuts_a_running_job(monkeypatch, tmp_path):
     _idle_settings(monkeypatch); _no_hold(monkeypatch, tmp_path)
     monkeypatch.setattr(rig, "device_off", None)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
-    rig.rig_cache["devices"]["pi5"]["busy"] = True
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["busy"] = True
     rig.rig_cache["last_activity"] = time.time() - 40 * 3600
     assert _run(rig._maybe_idle_off()) is False
     # A busy poll counts as activity — the window restarts once the job ends.
@@ -450,7 +454,7 @@ def test_idle_off_honours_a_fresh_bench_hold_file(monkeypatch, tmp_path):
     hold = tmp_path / "hold"
     monkeypatch.setattr(rig, "RIG_HOLD_FILE", hold)
     monkeypatch.setattr(rig, "device_off", None)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["last_activity"] = time.time() - 40 * 3600
     hold.touch()
     assert _run(rig._maybe_idle_off()) is False
@@ -464,7 +468,7 @@ def test_idle_off_honours_a_fresh_bench_hold_file(monkeypatch, tmp_path):
         stopped.append(name)
     monkeypatch.setattr(rig, "device_off", _fake_off)
     assert _run(rig._maybe_idle_off()) is True
-    assert stopped == ["pi5"]
+    assert stopped == ["pi400"]
 
 
 def test_idle_off_monitor_opt_in(monkeypatch, tmp_path):
@@ -478,17 +482,17 @@ def test_idle_off_monitor_opt_in(monkeypatch, tmp_path):
         calls.append(("monitor", on))
     monkeypatch.setattr(rig, "device_off", _fake_off)
     monkeypatch.setattr(rig, "monitor_power", _mon)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["last_activity"] = time.time() - 40 * 3600
     _idle_settings(monkeypatch, monitor=False)
     _run(rig._maybe_idle_off())
-    assert calls == ["pi5"]
+    assert calls == ["pi400"]
     calls.clear()
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["last_activity"] = time.time() - 40 * 3600
     _idle_settings(monkeypatch, monitor=True)
     _run(rig._maybe_idle_off())
-    assert calls == ["pi5", ("monitor", False)]
+    assert calls == ["pi400", ("monitor", False)]
 
 
 def test_idle_off_then_switchable_master_cut(monkeypatch, tmp_path):
@@ -505,14 +509,14 @@ def test_idle_off_then_switchable_master_cut(monkeypatch, tmp_path):
         calls.append(("master", on))
     monkeypatch.setattr(rig, "device_off", _fake_off)
     monkeypatch.setattr(rig, "master_power", _master)
-    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
     rig.rig_cache["last_activity"] = time.time() - 40 * 3600
 
     async def _go():
         assert await rig._maybe_idle_off() is True
         await asyncio.sleep(0.05)   # let the follow-up task run
     _run(_go())
-    assert calls == ["pi5", ("master", False)]
+    assert calls == ["pi400", ("master", False)]
     assert rig.rig_cache["idle_off_last"]["master"] == "off"
 
 
@@ -522,7 +526,7 @@ def test_control_ops_and_external_power_count_as_activity(monkeypatch):
     async def _set(ip, on, **kw):
         pass
     monkeypatch.setattr(rig, "plug_set", _set)
-    _run(rig.device_on("pi5"))
+    _run(rig.device_on("pi400"))
     assert time.time() - rig.rig_cache["last_activity"] < 5
     # Box powered from the Tapo app: the poller adopts it AND restarts the clock.
     rig.rig_cache["devices"]["gtv"]["state"] = "off"
@@ -552,7 +556,7 @@ def test_unauthorized_adb_box_is_named_not_generic_stuck(monkeypatch):
     assert "not authorised" in g["detail"]
     assert rig.status_payload()["devices"]["gtv"]["adb_auth"] == "unauthorized"
     # ssh boxes are untouched by the adb check
-    assert rig.rig_cache["devices"]["pi5"]["state"] in ("powering", "booting")
+    assert rig.rig_cache["devices"]["pi400"]["state"] in ("powering", "booting")
 
 
 def test_stuck_box_self_heals_when_probe_recovers(monkeypatch):
@@ -582,7 +586,7 @@ def test_adb_repair_claims_screen_and_reconnects_once(monkeypatch):
 
 def test_adb_repair_refused_for_ssh_and_unpowered():
     with pytest.raises(rig.RigError) as e:
-        _run(rig.adb_repair("pi5"))
+        _run(rig.adb_repair("pi400"))
     assert e.value.status == 400
     with pytest.raises(rig.RigError) as e:
         _run(rig.adb_repair("gtv"))       # state off

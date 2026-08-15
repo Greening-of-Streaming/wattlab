@@ -553,6 +553,15 @@ _BODY = """
     wall socket — cutting the strip never darkens the screen. Boot
     expectations: Pi 5 ≈ 29 s; Pi 400 and Google TV get measured on first use.
   </div>
+  <div class="rig-note">
+    <b>Connectivity (transparency).</b> Every device is on Ethernet via the bench
+    switch except the <b>Fire TV Stick, which is Wi-Fi only</b> (no Ethernet port).
+    Link quality is not the concern — the Bbox Wi-Fi 7 access point sits a few metres
+    away, likely better than the bench Ethernet — but the stick powers its own radio,
+    so its device-total W includes a Wi-Fi share the Ethernet boxes don't carry. That
+    share is not separately measurable on this rig; treat it as a stated caveat on any
+    cross-device comparison, not a correction we apply.
+  </div>
 </div>
 """
 
@@ -628,7 +637,12 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
         + '<span class="rig-devshape">' + (SHAPES[dev.device_class] || SHAPES.stb) + '</span>'
         + '<h3><span class="rig-dot ' + dotClass(dev) + '"></span>'
         + dev.label + busy + stuck + screen + '</h3>'
-        + '<div class="rig-silicon">' + (dev.silicon || '') + '</div>'
+        + '<div class="rig-silicon">' + (dev.silicon || '')
+        + (dev.network === 'wifi'
+           ? ' · <span title="The only Wi-Fi-only device on the rig (no Ethernet port). '
+             + 'Its device-total W includes powering its own radio — the Ethernet boxes '
+             + 'carry no such share. State this next to any cross-device comparison.">📶 Wi-Fi only</span>'
+           : '') + '</div>'
         + '<div class="rig-w">⚡ ' + fmtW(dev.watts)
         + ' <span class="rig-badge">🔌 ' + dev.plug_name + '</span></div>';
   if (pct !== null)

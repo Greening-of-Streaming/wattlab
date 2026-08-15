@@ -40,31 +40,33 @@ def test_bench_schematic_scaffolding_present():
 
 def test_status_carries_bench_metadata():
     body = client.get("/decode/status.json", headers=_LAB).json()
-    d = body["devices"]["pi5"]
-    assert d["device_class"] == "sbc"
-    assert "BCM2712" in d["silicon"]
-    assert d["conn"] == "ssh"
-    assert body["devices"]["gtv"]["device_class"] == "stb"
-    assert body["devices"]["bbox"]["device_class"] == "stb"   # operator CPE
-    assert "OLED55C2" in body["monitor"]["panel"]             # C2 display
-    # The Lab-B slot is a physical either/or (firestick vs pi400 share the
-    # plug); derive the expectation from the rig's park flags so a deliberate
-    # bench swap doesn't need a test edit — but exactly one must be visible.
+    # Physical either/or slots: Lab-B was firestick-vs-pi400 (2026-07/08);
+    # since 2026-08-15 Lab-A/HDMI_4 is firestick-vs-pi5. Derive expectations
+    # from the rig's park flags so a deliberate bench swap needs no test
+    # edit — but parked boxes must never be visible.
     parked = {k for k, v in rig.RIG["devices"].items() if v.get("parked")}
-    visible = {"firestick", "pi400"} - parked
-    assert len(visible) == 1, "exactly one Lab-B occupant on the bench"
-    occupant = visible.pop()
-    assert occupant in body["devices"]
-    assert parked & {"firestick", "pi400"} == {"firestick", "pi400"} - {occupant}
     assert not any(p in body["devices"] for p in parked)
-    if occupant == "firestick":
+    for name in ("pi5", "pi400"):
+        if name in body["devices"]:
+            d = body["devices"][name]
+            assert d["device_class"] == "sbc" and d["conn"] == "ssh"
+            assert d["network"] == "ethernet"
+    if "pi5" in body["devices"]:
+        assert "BCM2712" in body["devices"]["pi5"]["silicon"]
+    if "pi400" in body["devices"]:
+        assert "hw H.264" in body["devices"]["pi400"]["silicon"]
+    if "firestick" in body["devices"]:
         fs = body["devices"]["firestick"]
         assert fs["device_class"] == "stb" and fs["conn"] == "adb"
         assert "AV1" in fs["silicon"]
-    else:
-        p4 = body["devices"]["pi400"]
-        assert p4["device_class"] == "sbc" and p4["conn"] == "ssh"
-        assert "hw H.264" in p4["silicon"]
+        assert fs["network"] == "wifi"           # the rig's only Wi-Fi box
+    assert body["devices"]["gtv"]["device_class"] == "stb"
+    assert body["devices"]["bbox"]["device_class"] == "stb"   # operator CPE
+    assert "OLED55C2" in body["monitor"]["panel"]             # C2 display
+    # Every plug slot is single-occupant on the visible bench.
+    plugs = [d["plug_name"] for d in body["devices"].values()
+             if d["conn"] != "webos"]              # C2 shares the screen plug
+    assert len(plugs) == len(set(plugs)), plugs
 
 
 def test_control_routes_are_lab_only_read_routes_public():

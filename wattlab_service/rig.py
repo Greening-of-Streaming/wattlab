@@ -68,6 +68,13 @@ ADB_BIN = "/srv/data/owl/decode-bench/tools/platform-tools/adb"
 RIG: dict = {
     "devices": {
         "pi5": {
+            # Parked 2026-08-15: the C2 has 4 HDMI and the rig 5 usable
+            # plugs — the Fire TV Stick took Lab-A + HDMI_4. Pi 5's story
+            # (sw-only, no hw H.264, ~4.5× vs Pi 400 hw) is captured in the
+            # findings + docs/pi_decode_energy_2026-07.md; the Pi 400 is the
+            # more interesting board (same-silicon hw-vs-sw). Pi 5 can come
+            # back HEADLESS on any spare P110 (pure-decode rows need no HDMI).
+            "parked": True,
             "label": "Pi 5", "plug_name": "Lab-A",
             "plug_ip": "192.168.1.146",
             "kind": "ssh", "target": "admin@192.168.1.102",
@@ -76,6 +83,7 @@ RIG: dict = {
             "hdmi_input": "HDMI_4",   # C2 port map (owner, 2026-07-30)
             "expected_boot_s": 29, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
+            "network": "ethernet",
             # Known settled idle (W) — the decode guard's reference floor
             # (stability alone settles on post-boot plateaus; see the
             # 2026-07-30 negative-ΔW row that motivated this).
@@ -93,23 +101,29 @@ RIG: dict = {
             "expected_boot_s": 45, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
             "idle_w": 3.0,
+            "network": "ethernet",
             "hdmi_input": "HDMI_3",   # kept on the bench (owner) — spare port
         },
         "firestick": {
-            # Parked 2026-08-08: Pi 400 back on Lab-B for the R6 hw-vs-sw
-            # reconciliation (standalone bench.py owns the .31 KLAP session;
-            # the poller must not contend). Un-park + re-bench after R6.
-            "parked": True,
-            "label": "Fire TV 4K", "plug_name": "Lab-B",
-            "plug_ip": "192.168.1.31",
+            # Back on the bench 2026-08-15 on Lab-A + HDMI_4 (Pi 5 parked
+            # above). Was parked 2026-08-08 (Pi 400 needed Lab-B for R6);
+            # first bench 2026-07-31 on Lab-B/HDMI_3.
+            "label": "Fire TV 4K", "plug_name": "Lab-A",
+            "plug_ip": "192.168.1.146",
             # Fire TV Stick 4K 2nd-gen (AFTKRT "karat"), Fire OS 8.1.8 /
-            # Android 11. Wi-Fi only (no Ethernet) — reserve .200 for MAC
-            # ec:31:5f:6d:7c:a7 on the router or the ADB target drifts (GTV
-            # lesson). Inherited Pi 400's Lab-B plug + HDMI_3 (2026-07-31).
+            # Android 11. Wi-Fi ONLY (no Ethernet port) — reserve .200 for
+            # MAC ec:31:5f:6d:7c:a7 on the router or the ADB target drifts
+            # (GTV lesson). Methodology/transparency: the only Wi-Fi device
+            # on the rig. Link quality is not the concern (the Bbox Wi-Fi 7
+            # AP is a few metres away — likely better than the bench Ethernet)
+            # — the energy caveat is that the stick powers its own radio,
+            # so its device-total W includes a Wi-Fi share the Ethernet boxes
+            # don't carry. State it next to any cross-device comparison.
             "kind": "adb", "target": "192.168.1.200:5555",
             "device_class": "stb",
             "silicon": "MediaTek MT8696 · hw H.264/HEVC/VP9/AV1",
-            "hdmi_input": "HDMI_3",
+            "network": "wifi",
+            "hdmi_input": "HDMI_4",
             "expected_boot_s": 40, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
             # Awake-home idle measured 2026-07-31: ~1.3–2.2 W (Amazon autoplay
@@ -131,6 +145,7 @@ RIG: dict = {
             "hdmi_input": "HDMI_2",
             "expected_boot_s": 90, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
+            "network": "ethernet",
             "idle_w": 1.0,
         },
         "bbox": {
@@ -152,6 +167,7 @@ RIG: dict = {
             # runs in the background) — much higher than an SBC. The guessed
             # 3.0 made the idle guard time out every run.
             "idle_w": 6.6,
+            "network": "ethernet",
         },
         "c2": {
             # The C2 as a native decoder (CR-071): its own α9 SoC decodes+
@@ -170,6 +186,7 @@ RIG: dict = {
             "kind": "webos", "target": "192.168.1.25",
             "device_class": "tv",
             "silicon": "LG α9 Gen5 · hw H.264/HEVC/VP9/AV1",
+            "network": "ethernet",   # (also on Wi-Fi .109 — we use Ethernet)
             "expected_boot_s": 15, "boot_threshold_w": 5.0,
             "shutdown_wait_s": 0,
         },
@@ -1196,6 +1213,7 @@ def status_payload() -> dict:
             "label": cfg_d["label"], "plug_name": cfg_d["plug_name"],
             "device_class": cfg_d.get("device_class", "stb"),
             "silicon": cfg_d.get("silicon", ""),
+            "network": cfg_d.get("network", "ethernet"),
             "conn": cfg_d["kind"],
             "state": d["state"], "watts": d["watts"], "busy": d["busy"],
             "detail": d["detail"], "elapsed_s": d["elapsed_s"],
