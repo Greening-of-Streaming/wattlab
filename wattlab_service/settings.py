@@ -193,6 +193,30 @@ DEFAULTS = {
     "rem_timer_mezzanine_path": "",
     # Generated 10-min REM files live here (large — hundreds of MB to GB; NOT /tmp).
     "rem_output_dir": "/srv/data/owl/rem_out",
+    # --- Decode rig (/decode console + decode_run protocol) ---------------
+    # ⚠ Every key the /settings "Decode rig" section edits MUST be listed here:
+    # save() only persists keys present in DEFAULTS (found 2026-08-15 — the
+    # section had been a silent no-op since it shipped, values fell back to the
+    # code defaults). Defaults below = the values decode_run.py/rig.py used.
+    "decode_cadence_s": 1.0,           # meter sampling cadence for decode rows
+    "decode_settle_s": 5,              # post-prepare quiesce before the idle guard
+    "decode_baseline_samples": 20,
+    "decode_idle_guard": True,         # ON ⇒ protocol v3 (settle loop before baseline)
+    "decode_idle_tolerance_w": 0.5,
+    "decode_idle_settle_polls": 4,
+    "decode_idle_max_wait_s": 30,
+    "decode_screen_startup_skip_s": 5,
+    "rig_master_tapo_ip": "",          # P110 at the wall switching the strip; "" = none
+    "rig_shelly_ip": "",               # override for rig.RIG["shelly_ip"]; "" = code default
+    # Idle auto-off (rig.py): the rig is OFF by default — after this many
+    # hours with no Lab control op / decode job / bench.py row / Lab visit
+    # to /decode, every powered box is gracefully stopped (then the master
+    # if one is switchable). rig_idle_off_monitor also cuts the shared
+    # screen's plug (Lab-E) — OFF by default because that panel is the
+    # household TV / a Mac extension, not only the bench monitor.
+    "rig_idle_off_enabled": True,
+    "rig_idle_off_hours": 4.0,
+    "rig_idle_off_monitor": False,
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",
     # CR-015 — auto-lower the maintenance flag after this many minutes of

@@ -576,6 +576,7 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
         result_path = BENCH_DIR / "results" / f"{cfg['name']}.json"
 
         d["busy"] = True
+        rig.touch_activity(f"decode job {job_id} on {name}")
         paused = {cfg["meter_ip"]}
         if cfg.get("monitor_meter_ip"):
             paused.add(cfg["monitor_meter_ip"])
@@ -658,6 +659,7 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
         raise
     finally:
         d["busy"] = False
+        rig.touch_activity(f"decode job {job_id} on {name} finished")
         rig.PAUSED_PLUGS -= paused
         if cfg_path:
             cfg_path.unlink(missing_ok=True)

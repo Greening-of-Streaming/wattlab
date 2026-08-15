@@ -115,7 +115,8 @@ def test_status_shape():
     assert r.status_code == 200
     body = r.json()
     assert set(body) == {"master", "monitor", "devices", "screen_owner",
-                         "screen_settling", "total_w", "saving_note", "age_s"}
+                         "screen_settling", "total_w", "saving_note", "age_s",
+                         "idle_off"}
     expected = {n for n, c in rig.RIG["devices"].items() if not c.get("parked")}
     assert set(body["devices"]) == expected
 

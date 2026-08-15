@@ -52,6 +52,8 @@ def _refuse(e: rig.RigError) -> JSONResponse:
 async def decode_page(request: Request):
     import json as _json
     is_lab = can(audience.tier(request), RIG_CONTROL)
+    if is_lab:
+        rig.touch_activity("/decode visit")   # idle auto-off: operator is here
     options = "".join(
         f'<option value="{k}">{r["label"]}</option>'
         for k, r in decode_run.TEMPLATES.items())
@@ -171,6 +173,7 @@ async def decode_run_start(request: Request, payload: dict):
                                         calibrate, upload_name, cadence_s,
                                         window_s)
 
+    rig.touch_activity(f"decode job {job_id} queued")
     position = queue_control.enqueue(job_id, "decode", label, coro,
                                      request=request, page="/decode")
     if position is None:
@@ -640,11 +643,24 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
   return h;
 }
 
+function fmtDur(sec) {
+  if (sec === null || sec === undefined) return '—';
+  var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? (h + ' h ' + (m < 10 ? '0' : '') + m + ' m') : (m + ' m');
+}
+
 function render(s) {
   RIG_LAST = s;
   var agg = 'total ' + fmtW(s.total_w);
   if (s.saving_note) agg = s.saving_note;
   if (s.age_s !== null && s.age_s > 30) agg += ' · ⚠ data ' + Math.round(s.age_s) + 's old';
+  var io = s.idle_off;
+  if (io) {
+    if (!io.enabled) agg += ' · idle auto-off disabled';
+    else if (io.armed) agg += ' · auto-off in ' + fmtDur(io.off_in_s)
+                              + (io.hold_active ? ' (bench.py hold active)' : '');
+    else agg += ' · idle auto-off ' + io.hours + ' h';
+  }
   document.getElementById('rig-agg').textContent = agg;
 
   // Strip bar (replaces the old master tile) — plugs list + Shelly meter +

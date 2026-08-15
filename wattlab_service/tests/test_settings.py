@@ -119,3 +119,19 @@ def test_save_with_empty_patch_is_a_noop():
     cfg.save({})
     after = cfg.load()
     assert before == after
+
+
+def test_decode_rig_settings_are_persistable():
+    """Every key the /settings 'Decode rig' section edits must be in DEFAULTS —
+    save() drops unknown keys, so the section was a silent no-op until
+    2026-08-15 (found while adding the idle auto-off keys)."""
+    for k in ("decode_cadence_s", "decode_settle_s", "decode_baseline_samples",
+              "decode_idle_guard", "decode_idle_tolerance_w",
+              "decode_idle_settle_polls", "decode_idle_max_wait_s",
+              "decode_screen_startup_skip_s", "rig_master_tapo_ip",
+              "rig_shelly_ip", "rig_idle_off_enabled", "rig_idle_off_hours",
+              "rig_idle_off_monitor"):
+        assert k in cfg.DEFAULTS, k
+    assert cfg.DEFAULTS["rig_idle_off_enabled"] is True
+    assert cfg.DEFAULTS["rig_idle_off_hours"] == 4.0
+    assert cfg.DEFAULTS["rig_idle_off_monitor"] is False

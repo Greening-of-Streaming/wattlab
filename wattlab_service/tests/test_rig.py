@@ -353,7 +353,8 @@ def test_recycle_c2_panel_rejects_non_webos():
 def test_status_payload_shape():
     p = rig.status_payload()
     assert set(p) == {"master", "monitor", "devices", "screen_owner",
-                      "screen_settling", "total_w", "saving_note", "age_s"}
+                      "screen_settling", "total_w", "saving_note", "age_s",
+                      "idle_off"}
     for name, d in p["devices"].items():
         assert set(d) == {"label", "plug_name", "device_class", "silicon",
                           "conn", "state", "watts", "busy",
@@ -371,3 +372,167 @@ def test_lab_c_router_plug_never_in_config_or_payload():
     import json
     assert "192.168.1.35" not in json.dumps(rig.RIG)
     assert "192.168.1.35" not in json.dumps(rig.status_payload())
+
+
+# --- Idle auto-off (2026-08-15: rig found fully powered after a week away) ---
+
+def _idle_settings(monkeypatch, enabled=True, hours=4.0, monitor=False):
+    monkeypatch.setattr(rig, "idle_off_settings",
+                        lambda: {"enabled": enabled, "hours": hours,
+                                 "monitor": monitor})
+
+
+def _no_hold(monkeypatch, tmp_path):
+    monkeypatch.setattr(rig, "RIG_HOLD_FILE", tmp_path / "hold")
+
+
+def test_idle_off_fires_after_window_and_stops_every_powered_box(monkeypatch, tmp_path):
+    _idle_settings(monkeypatch); _no_hold(monkeypatch, tmp_path)
+    stopped = []
+
+    async def _fake_off(name):
+        stopped.append(name)
+        rig.rig_cache["devices"][name]["state"] = "stopping"
+    monkeypatch.setattr(rig, "device_off", _fake_off)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["gtv"]["state"] = "stuck"
+    rig.rig_cache["devices"]["c2"]["state"] = "ready"   # webOS: never a target
+    rig.rig_cache["last_activity"] = time.time() - 4.5 * 3600
+    assert _run(rig._maybe_idle_off()) is True
+    assert sorted(stopped) == ["gtv", "pi5"]
+    last = rig.rig_cache["idle_off_last"]
+    assert last["idle_h"] >= 4.4 and sorted(last["stopped"]) == ["gtv", "pi5"]
+    # Clock reset — a second sweep right after does not fire again.
+    assert _run(rig._maybe_idle_off()) is False
+
+
+def test_idle_off_waits_for_the_window(monkeypatch, tmp_path):
+    _idle_settings(monkeypatch); _no_hold(monkeypatch, tmp_path)
+    monkeypatch.setattr(rig, "device_off", None)   # would explode if called
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["last_activity"] = time.time() - 3.9 * 3600
+    assert _run(rig._maybe_idle_off()) is False
+    st = rig.idle_off_state()
+    assert st["armed"] and 0 < st["off_in_s"] <= 0.1 * 3600 + 5
+
+
+def test_idle_off_disabled_or_nothing_powered_is_a_noop(monkeypatch, tmp_path):
+    _no_hold(monkeypatch, tmp_path)
+    monkeypatch.setattr(rig, "device_off", None)
+    rig.rig_cache["last_activity"] = time.time() - 40 * 3600
+    _idle_settings(monkeypatch, enabled=False)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    assert _run(rig._maybe_idle_off()) is False
+    assert rig.idle_off_state()["armed"] is False
+    _idle_settings(monkeypatch, enabled=True)
+    rig.rig_cache["devices"]["pi5"]["state"] = "off"
+    assert _run(rig._maybe_idle_off()) is False
+    assert rig.idle_off_state()["off_in_s"] is None
+
+
+def test_idle_off_never_cuts_a_running_job(monkeypatch, tmp_path):
+    _idle_settings(monkeypatch); _no_hold(monkeypatch, tmp_path)
+    monkeypatch.setattr(rig, "device_off", None)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["devices"]["pi5"]["busy"] = True
+    rig.rig_cache["last_activity"] = time.time() - 40 * 3600
+    assert _run(rig._maybe_idle_off()) is False
+    # A busy poll counts as activity — the window restarts once the job ends.
+    assert time.time() - rig.rig_cache["last_activity"] < 5
+
+
+def test_idle_off_honours_a_fresh_bench_hold_file(monkeypatch, tmp_path):
+    """Standalone bench.py campaigns touch RIG_HOLD_FILE per row — a fresh
+    touch is activity; a stale one (crashed campaign) is not."""
+    _idle_settings(monkeypatch)
+    hold = tmp_path / "hold"
+    monkeypatch.setattr(rig, "RIG_HOLD_FILE", hold)
+    monkeypatch.setattr(rig, "device_off", None)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["last_activity"] = time.time() - 40 * 3600
+    hold.touch()
+    assert _run(rig._maybe_idle_off()) is False
+    assert rig.idle_off_state()["hold_active"] is True
+    import os
+    stale = time.time() - rig.HOLD_STALE_S - 60
+    os.utime(hold, (stale, stale))
+    stopped = []
+
+    async def _fake_off(name):
+        stopped.append(name)
+    monkeypatch.setattr(rig, "device_off", _fake_off)
+    assert _run(rig._maybe_idle_off()) is True
+    assert stopped == ["pi5"]
+
+
+def test_idle_off_monitor_opt_in(monkeypatch, tmp_path):
+    _no_hold(monkeypatch, tmp_path)
+    calls = []
+
+    async def _fake_off(name):
+        calls.append(name)
+
+    async def _mon(on):
+        calls.append(("monitor", on))
+    monkeypatch.setattr(rig, "device_off", _fake_off)
+    monkeypatch.setattr(rig, "monitor_power", _mon)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["last_activity"] = time.time() - 40 * 3600
+    _idle_settings(monkeypatch, monitor=False)
+    _run(rig._maybe_idle_off())
+    assert calls == ["pi5"]
+    calls.clear()
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["last_activity"] = time.time() - 40 * 3600
+    _idle_settings(monkeypatch, monitor=True)
+    _run(rig._maybe_idle_off())
+    assert calls == ["pi5", ("monitor", False)]
+
+
+def test_idle_off_then_switchable_master_cut(monkeypatch, tmp_path):
+    _idle_settings(monkeypatch); _no_hold(monkeypatch, tmp_path)
+    rig.rig_cache["master"]["switchable"] = True
+    rig.rig_cache["master"]["configured"] = True
+    calls = []
+
+    async def _fake_off(name):
+        rig.rig_cache["devices"][name]["state"] = "off"
+        calls.append(name)
+
+    async def _master(on):
+        calls.append(("master", on))
+    monkeypatch.setattr(rig, "device_off", _fake_off)
+    monkeypatch.setattr(rig, "master_power", _master)
+    rig.rig_cache["devices"]["pi5"]["state"] = "ready"
+    rig.rig_cache["last_activity"] = time.time() - 40 * 3600
+
+    async def _go():
+        assert await rig._maybe_idle_off() is True
+        await asyncio.sleep(0.05)   # let the follow-up task run
+    _run(_go())
+    assert calls == ["pi5", ("master", False)]
+    assert rig.rig_cache["idle_off_last"]["master"] == "off"
+
+
+def test_control_ops_and_external_power_count_as_activity(monkeypatch):
+    rig.rig_cache["last_activity"] = time.time() - 40 * 3600
+
+    async def _set(ip, on, **kw):
+        pass
+    monkeypatch.setattr(rig, "plug_set", _set)
+    _run(rig.device_on("pi5"))
+    assert time.time() - rig.rig_cache["last_activity"] < 5
+    # Box powered from the Tapo app: the poller adopts it AND restarts the clock.
+    rig.rig_cache["devices"]["gtv"]["state"] = "off"
+    rig.rig_cache["last_activity"] = time.time() - 40 * 3600
+    _stub_plugs(monkeypatch, on=True, watts=0.1)
+    _run(rig._step_device("gtv", master_off=False))
+    assert rig.rig_cache["devices"]["gtv"]["state"] == "powering"
+    assert time.time() - rig.rig_cache["last_activity"] < 5
+
+
+def test_status_payload_carries_idle_off(monkeypatch, tmp_path):
+    _idle_settings(monkeypatch); _no_hold(monkeypatch, tmp_path)
+    p = rig.status_payload()
+    assert set(p["idle_off"]) >= {"enabled", "hours", "idle_s", "armed",
+                                  "off_in_s", "hold_active", "last"}

@@ -16,6 +16,13 @@ This module owns:
   shelly_status()/shelly_set()  — master switch; Gen1/Gen2+ auto-detected.
   rig_cache + rig_poller()      — background state machine driving the tiles.
   device_on()/device_off()/device_cycle(), monitor_power(), master_power().
+  touch_activity() + idle_off_state()/_maybe_idle_off() — the idle auto-off:
+                                  the rig is OFF by default; after N hours
+                                  (settings rig_idle_off_hours) with no
+                                  operator/job activity every powered box is
+                                  gracefully stopped (then the master, if one
+                                  is switchable). CLI bench.py campaigns keep
+                                  the rig alive by touching RIG_HOLD_FILE.
 
 State machine per device (tile colour in parentheses):
   off (red) → powering (orange: relay on, draw < boot threshold)
@@ -41,6 +48,7 @@ import logging
 import subprocess
 import time
 import urllib.request
+from pathlib import Path
 from dotenv import dotenv_values
 
 import lg
@@ -189,6 +197,153 @@ RIG: dict = {
 }
 
 _STOPPED_STATES = ("off", "unpowered", "unreachable")
+
+# --- Idle auto-off ---------------------------------------------------------
+#
+# Origin: 2026-08 — Ben came back after a week away to find every rig device
+# powered. The rig is OFF by default; anything that turns a box on must also
+# have a way to turn it off again without a human remembering. Activity =
+# any Lab control op, a Lab visit to /decode, an OWL decode job (start/end +
+# every poll while busy), a device powered from outside the UI (adopted by
+# the poller), or a fresh RIG_HOLD_FILE (touched per row by bench.py so a
+# standalone CLI campaign — overnight_queue.sh — is never cut mid-run).
+RIG_HOLD_FILE = Path("/tmp/owl-rig-hold")
+# Ignore hold files older than this (a stale touch from a crashed campaign
+# must not pin the rig on forever) — generous vs bench.py's per-row cadence.
+HOLD_STALE_S = 30 * 60
+
+
+def touch_activity(reason: str = "") -> None:
+    """Record rig activity now (wall clock — the idle window is hours)."""
+    rig_cache["last_activity"] = time.time()
+    rig_cache["last_activity_reason"] = reason
+
+
+def idle_off_settings() -> dict:
+    """{"enabled", "hours", "monitor"} from /settings (defaults if unavailable)."""
+    try:
+        import settings as _cfg
+        s = _cfg.load()
+    except Exception:
+        s = {}
+    try:
+        hours = float(s.get("rig_idle_off_hours", 4.0))
+    except (TypeError, ValueError):
+        hours = 4.0
+    return {"enabled": s.get("rig_idle_off_enabled", True)
+                       in (True, "true", "on", "1", 1),
+            "hours": max(0.25, hours),
+            "monitor": s.get("rig_idle_off_monitor", False)
+                       in (True, "true", "on", "1", 1)}
+
+
+def _hold_file_mtime() -> float | None:
+    try:
+        return RIG_HOLD_FILE.stat().st_mtime
+    except OSError:
+        return None
+
+
+def last_activity() -> float:
+    """Wall-clock time of the most recent activity — the later of the
+    in-process record and a non-stale hold-file touch."""
+    t = rig_cache.get("last_activity") or 0.0
+    hm = _hold_file_mtime()
+    if hm is not None and time.time() - hm <= HOLD_STALE_S:
+        t = max(t, hm)
+    return t
+
+
+def _powered_devices() -> list:
+    """Device names the idle timer would stop: relay on (any non-stopped,
+    non-stopping state), excluding the webOS C2 (it IS the shared screen;
+    the monitor plug is handled by rig_idle_off_monitor)."""
+    return [n for n, d in rig_cache["devices"].items()
+            if RIG["devices"][n].get("kind") != "webos"
+            and not RIG["devices"][n].get("parked")
+            and d["state"] not in _STOPPED_STATES and d["state"] != "stopping"]
+
+
+def idle_off_state() -> dict:
+    """Idle-timer readout for the console: {"enabled", "hours", "idle_s",
+    "armed" (something is powered so the timer is counting), "off_in_s",
+    "last": the last auto-off event or None}."""
+    st = idle_off_settings()
+    hold_touched = _hold_file_mtime()
+    idle_s = max(0.0, time.time() - last_activity())
+    armed = bool(st["enabled"] and _powered_devices())
+    limit = st["hours"] * 3600
+    return {"enabled": st["enabled"], "hours": st["hours"],
+            "monitor": st["monitor"], "idle_s": round(idle_s),
+            "armed": armed,
+            "off_in_s": (max(0, round(limit - idle_s)) if armed else None),
+            "hold_active": bool(hold_touched is not None
+                                and time.time() - hold_touched <= HOLD_STALE_S),
+            "last": rig_cache.get("idle_off_last")}
+
+
+async def _maybe_idle_off() -> bool:
+    """Called once per poll sweep. Fires the auto-off when the timer has
+    elapsed; returns True when it fired. Never raises."""
+    st = idle_off_settings()
+    if not st["enabled"]:
+        return False
+    if any(d["busy"] for d in rig_cache["devices"].values()):
+        touch_activity("job running")
+        return False
+    powered = _powered_devices()
+    if not powered:
+        return False
+    idle_s = time.time() - last_activity()
+    if idle_s < st["hours"] * 3600:
+        return False
+    log.warning("rig idle auto-off: %.1f h without activity — stopping %s",
+                idle_s / 3600, ", ".join(powered))
+    stopped, errors = [], []
+    for name in powered:
+        try:
+            await device_off(name)
+            stopped.append(name)
+        except Exception as e:
+            errors.append(f"{RIG['devices'][name]['label']}: {e}")
+    if st["monitor"]:
+        try:
+            await monitor_power(False)
+            stopped.append("monitor")
+        except Exception as e:
+            errors.append(f"monitor: {e}")
+    rig_cache["idle_off_last"] = {
+        "at": time.time(), "idle_h": round(idle_s / 3600, 2),
+        "stopped": stopped, "errors": errors, "master": None}
+    # Reset the clock so a stop that fails to complete isn't re-fired every
+    # sweep; the next elapsed window will try again.
+    touch_activity("idle auto-off")
+    if rig_cache["master"].get("switchable"):
+        asyncio.create_task(_idle_off_master())
+    return True
+
+
+async def _idle_off_master(budget_s: int = 180) -> None:
+    """After an idle auto-off, wait for the graceful stops to land, then cut
+    the switchable master too (saves the plugs' Tapo standby — the "whole
+    rig" off Ben asked for). Gives up quietly if a box never reaches off."""
+    deadline = time.monotonic() + budget_s
+    while time.monotonic() < deadline:
+        if not any(d["state"] not in _STOPPED_STATES
+                   for n, d in rig_cache["devices"].items()
+                   if RIG["devices"][n].get("kind") != "webos"
+                   and not RIG["devices"][n].get("parked")):
+            try:
+                await master_power(False)
+                if rig_cache.get("idle_off_last"):
+                    rig_cache["idle_off_last"]["master"] = "off"
+            except Exception as e:
+                if rig_cache.get("idle_off_last"):
+                    rig_cache["idle_off_last"]["master"] = f"failed: {e}"
+            return
+        await asyncio.sleep(5)
+    if rig_cache.get("idle_off_last"):
+        rig_cache["idle_off_last"]["master"] = "skipped: a device never reached off"
 
 
 def shelly_ip() -> str | None:
@@ -550,6 +705,11 @@ rig_cache: dict = {
                "apower_w": None, "gen": None, "switchable": False},
     "screen_owner": None,
     "updated_monotonic": None,
+    # Idle auto-off bookkeeping. Startup counts as activity so a service
+    # restart with boxes left on grants a full idle window, never an instant cut.
+    "last_activity": time.time(),
+    "last_activity_reason": "service start",
+    "idle_off_last": None,
 }
 
 _OP_LOCKS: dict = {}   # device name → asyncio.Lock for control ops
@@ -615,6 +775,7 @@ async def _step_device(name: str, master_off: bool) -> None:
         # Powered from outside this UI (Tapo app, etc.) — adopt it.
         d["state"] = "powering"
         d["boot_started"] = now
+        touch_activity(f"{dev_cfg['label']} powered externally")
 
     if d["boot_started"] is not None:
         d["elapsed_s"] = round(now - d["boot_started"], 1)
@@ -686,6 +847,10 @@ async def poll_once() -> None:
             log.debug("rig poll: %s step failed", name, exc_info=True)
 
     rig_cache["updated_monotonic"] = time.monotonic()
+    try:
+        await _maybe_idle_off()
+    except Exception:
+        log.debug("rig idle-off check failed", exc_info=True)
 
 
 async def rig_poller():
@@ -710,6 +875,7 @@ async def rig_poller():
 async def device_on(name: str) -> None:
     dev_cfg = _dev_cfg(name)
     d = rig_cache["devices"][name]
+    touch_activity(f"{dev_cfg['label']} on")
     async with _op_lock(name):
         if d["busy"]:
             raise RigError(409, f"{dev_cfg['label']} is running a job")
@@ -726,6 +892,7 @@ async def device_off(name: str) -> None:
     task; the tile shows `stopping` while it is in flight."""
     dev_cfg = _dev_cfg(name)
     d = rig_cache["devices"][name]
+    touch_activity(f"{dev_cfg['label']} off")
     async with _op_lock(name):
         if d["busy"]:
             raise RigError(409, f"{dev_cfg['label']} is running a job")
@@ -754,6 +921,7 @@ async def device_cycle(name: str) -> None:
     """Hard power-cycle for a stuck device (relay off → 3 s → on)."""
     dev_cfg = _dev_cfg(name)
     d = rig_cache["devices"][name]
+    touch_activity(f"{dev_cfg['label']} power-cycle")
     async with _op_lock(name):
         if d["busy"]:
             raise RigError(409, f"{dev_cfg['label']} is running a job")
@@ -776,6 +944,7 @@ async def claim_screen(name: str) -> None:
     powered device's signal and raising the target's."""
     dev_cfg = _dev_cfg(name)
     d = rig_cache["devices"][name]
+    touch_activity(f"screen → {dev_cfg['label']}")
     if d["state"] in _STOPPED_STATES or d["state"] == "stopping":
         raise RigError(409, f"{dev_cfg['label']} is not powered")
     busy = [RIG["devices"][n]["label"]
@@ -851,6 +1020,7 @@ async def _wake_and_wait(dev_cfg: dict, budget_s: int = 40) -> None:
 
 
 async def monitor_power(on: bool) -> None:
+    touch_activity(f"screen {'on' if on else 'off'}")
     await plug_set(RIG["monitor"]["plug_ip"], on)
 
 
@@ -890,6 +1060,7 @@ async def master_power(on: bool) -> None:
     SOFTWARE master: 'off' gracefully stops every powered box; 'on' is
     refused — boxes are powered individually so the monitor's auto-switch
     stays deterministic."""
+    touch_activity(f"master {'on' if on else 'off'}")
     switchable = rig_cache["master"].get("switchable")
     if switchable:
         if not on:
@@ -962,5 +1133,6 @@ def status_payload() -> dict:
             "screen_owner": rig_cache["screen_owner"],
             "screen_settling": settling,
             "total_w": round(total, 2), "saving_note": saving,
+            "idle_off": idle_off_state(),
             "age_s": (None if rig_cache["updated_monotonic"] is None else
                       round(time.monotonic() - rig_cache["updated_monotonic"], 1))}

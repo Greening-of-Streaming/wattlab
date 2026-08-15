@@ -328,6 +328,20 @@ def one_run(dev, meters, run, cfg, results_dir):
     return row
 
 
+# OWL's /decode idle auto-off (rig.py) stops every powered box after N hours
+# without activity. A standalone CLI campaign is invisible to the service, so
+# each row touches this hold file — rig.py treats a fresh mtime as activity
+# (stale after 30 min, so a crashed campaign can't pin the rig on).
+RIG_HOLD_FILE = Path("/tmp/owl-rig-hold")
+
+
+def _touch_rig_hold():
+    try:
+        RIG_HOLD_FILE.touch()
+    except OSError:
+        pass
+
+
 def main():
     cfg = json.loads(Path(sys.argv[1]).read_text())
     results_dir = HERE / "results"
@@ -345,6 +359,7 @@ def main():
         if run["name"] in done and "error" not in done[run["name"]]:
             continue
         rows = [r for r in rows if r["run"] != run["name"]]
+        _touch_rig_hold()   # tell OWL's idle auto-off a campaign is live
         try:
             rows.append(one_run(dev, meters, run, cfg, results_dir))
         except Exception as e:
@@ -362,6 +377,7 @@ def main():
                           "protocol_version")},
             "config": cfg["name"], "rows": rows}, indent=1))
         time.sleep(cfg.get("gap_s", 10))
+    _touch_rig_hold()   # the campaign's own end is the last activity
     log("ALL DONE")
 
 

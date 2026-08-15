@@ -431,7 +431,7 @@ async def settings_page(request: Request):
 
     <div class="section" id="s-decode">Decode rig</div>
     {field("decode_cadence_s", s.get('decode_cadence_s', 1.0), 0.5, 5, "s", "meter sampling cadence for decode rows (device and screen meters)", step=0.5)}
-    {field("decode_settle_s", s.get('decode_settle_s', 15), 0, 120, "s", "fixed settle after device prepare, before idle guard / baseline")}
+    {field("decode_settle_s", s.get('decode_settle_s', 5), 0, 120, "s", "fixed settle after device prepare, before idle guard / baseline")}
     {field("decode_baseline_samples", s.get('decode_baseline_samples', 20), 5, 60, "samples", "baseline samples per row (× cadence = baseline window)")}
     {toggle_field("decode_idle_guard", s.get('decode_idle_guard', True),
                   "ON: wait for the device's draw to stabilise before each baseline — the same settle "
@@ -439,7 +439,7 @@ async def settings_page(request: Request):
                   "protocol v3. OFF: fixed settle only (July/v2 protocol).")}
     {field("decode_idle_tolerance_w", s.get('decode_idle_tolerance_w', 0.5), 0.1, 5, "W", "idle guard: the last N readings must span ≤ this", step=0.1)}
     {field("decode_idle_settle_polls", s.get('decode_idle_settle_polls', 4), 2, 10, "polls", "idle guard: N consecutive readings that must agree")}
-    {field("decode_idle_max_wait_s", s.get('decode_idle_max_wait_s', 60), 10, 300, "s", "idle guard: cap before proceeding unsettled (recorded in the row)")}
+    {field("decode_idle_max_wait_s", s.get('decode_idle_max_wait_s', 30), 10, 300, "s", "idle guard: cap before proceeding unsettled (recorded in the row)")}
     {field("decode_screen_startup_skip_s", s.get('decode_screen_startup_skip_s', 5), 0, 30, "s", "screen rows: skip after playback start (absorbs the 1080p mode re-sync)")}
     <div class="row"><label for="rig_master_tapo_ip">rig_master_tapo_ip</label>
       <input type="text" id="rig_master_tapo_ip" value="{s.get('rig_master_tapo_ip', '')}"
@@ -447,6 +447,19 @@ async def settings_page(request: Request):
       <span class="hint">Tapo P110 acting as the strip's master SWITCH (wall → this plug →
       Shelly meter → strip). Empty = no switchable master (installed Shelly is metering-only).
       The /decode Rig on/off button appears automatically when set.</span></div>
+    <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin:0.75rem 0 0.25rem">
+      <strong>Idle auto-off.</strong> The rig is off by default. Activity = a Lab control op or
+      /decode visit, an OWL decode job, a bench.py row (CLI campaigns touch <code>/tmp/owl-rig-hold</code>),
+      or a box powered from outside the UI. After the idle window every powered box is gracefully
+      stopped, then the master if one is switchable. Countdown shows on /decode.
+    </div>
+    {toggle_field("rig_idle_off_enabled", s.get('rig_idle_off_enabled', True),
+                  "ON: auto power-off the rig after the idle window below. OFF: boxes stay on until "
+                  "someone turns them off (how Ben found the whole rig powered after a week away, 2026-08).")}
+    {field("rig_idle_off_hours", s.get('rig_idle_off_hours', 4.0), 0.25, 48, "h", "idle window before the rig auto-powers off", step=0.25)}
+    {toggle_field("rig_idle_off_monitor", s.get('rig_idle_off_monitor', False),
+                  "ON: the idle auto-off also cuts the shared screen's plug (Lab-E). OFF by default — "
+                  "that panel doubles as the household TV / Mac extension, not just the bench monitor.")}
 
     <div class="section" id="s-staging">Staging</div>
     {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
@@ -589,6 +602,7 @@ async def settings_page(request: Request):
                             'decode_cadence_s','decode_settle_s','decode_baseline_samples',
                             'decode_idle_tolerance_w','decode_idle_settle_polls',
                             'decode_idle_max_wait_s','decode_screen_startup_skip_s',
+                            'rig_idle_off_hours',
                             'h264_bitrate_kbps','h265_bitrate_kbps','av1_bitrate_kbps','target_vmaf',
                             'variance_pct','variance_green_x','variance_yellow_x',
                             'conf_positive_green','conf_positive_yellow',
@@ -600,7 +614,7 @@ async def settings_page(request: Request):
                             'enhance_upload_ttl_h',
                             'bench_video_reps'];
         const bool_fields = ['cooldown_wait_for_idle','cooldown_show_wait_detail',
-                             'decode_idle_guard'];
+                             'decode_idle_guard','rig_idle_off_enabled','rig_idle_off_monitor'];
         const str_fields = ['members','rig_master_tapo_ip'];
         const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};
