@@ -131,10 +131,18 @@ class AdbDevice:
                              text=True, timeout=25).stdout
         codecs = sorted({l.split("allocate(")[1].split(")")[0] for l in out.splitlines()
                          if "CCodec" in l and "allocate(c2." in l})
-        shot = results_dir / f"{run['name']}_midwindow.png"
+        # Per-device filename: three adb boxes in one parallel run used to
+        # overwrite each other's `<run>_midwindow.png` (2026-08-15).
+        tag = self.adb[-1].replace(":", "_").replace(".", "-")
+        shot = results_dir / f"{run['name']}_{tag}_midwindow.png"
         try:
             png = subprocess.run(self.adb + ["exec-out", "screencap", "-p"],
                                  capture_output=True, timeout=25).stdout
+            # The Bbox (MediaTek) prepends "<<<<< OSAL Init / MV_Time_Init OK."
+            # text before the PNG header — strip to the real image.
+            i = png.find(b"\x89PNG")
+            if i > 0:
+                png = png[i:]
             shot.write_bytes(png)
         except Exception:
             shot = None
