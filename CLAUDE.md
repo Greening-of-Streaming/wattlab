@@ -1,6 +1,10 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-08-15 (Session 60 — rig hygiene: idle auto-off (rig_idle_off_* in /settings →
+# Last updated: 2026-08-16 (Session 61 — overnight long-window review: STB playback dies mid-window
+#   (GTV ~20 min, Fire TV ~5 min, GTV HEVC never renders; AV1 fine) → negative 1 h ΔWs are artefacts;
+#   valid: Bbox H.264 1 h +0.22 🟢, AV1 rows 🟢; C2 differential −7 W = picture-mode confound; logcat/C2-wake
+#   fixes 7a01def. On-site GTV 20-min diagnosis pending. See JOURNAL S61.)
+# Previous: 2026-08-15 (Session 60 — rig hygiene: idle auto-off (rig_idle_off_* in /settings →
 #   Decode rig, default 4 h, bench.py hold file keeps CLI campaigns alive; ALSO fixed: the whole
 #   Decode-rig settings section never persisted — keys weren't in settings.DEFAULTS) · unauthorised-ADB
 #   diagnosis + "Repair ADB (on-site)" (claim screen + ONE reconnect + fingerprint; stuck tiles self-heal,
@@ -195,6 +199,7 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S59 (07-29/30): `/decode` Lab console (rig.py state machine, claim-screen, poller) + recipe runs (headless parallel fan-out, screen mode) + protocol v3 marker head + shared idle guard (idle_wait.py) + LEM csv export; rig on Ethernet + reservations. →964.
 - [07-31→08-14 un-journaled: LG C2 native + CR-071 webOS control, Bbox operator CPE, Fire TV first bench, CR-072 origin, SMPTE couplings, VP9 one-off, marginal-vs-attributional lens.]
 - S60 (08-15): rig hygiene — idle auto-off (4 h, hold file for CLI) + Decode-rig settings persistence bug fixed · unauthorised-ADB diagnosis + Repair ADB (on-site only) · Fire TV back on Lab-A/HDMI_4, Pi 5 parked, Wi-Fi-only disclosure · C2 CEC off (input-hop confound) · 5-device promo runs (hw STB decode below 34 s noise). →1007.
+- S61 (08-16): overnight long-window review — mechanics + auto-off worked; **STB playback dies mid-window** (GTV H.264 stops at ~20 min — standing since 07-31; Fire TV ~5 min; GTV HEVC never renders; AV1 fine everywhere) → negative hour-long ΔWs are artefacts; valid: Bbox H.264 1 h +0.22 🟢, AV1 GTV +0.12 / Fire +0.16 / Bbox +1.35 (sw?) 🟢; C2 differential −7 W is a picture-mode confound. Fixes: logcat non-UTF-8, wake C2 in _wait_ready (7a01def). On-site GTV 20-min diagnosis pending.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

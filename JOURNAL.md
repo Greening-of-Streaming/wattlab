@@ -7,6 +7,42 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 61 — 2026-08-16 (overnight review)
+
+**Long-window loop night: mechanics good, playback dies mid-window on the STBs — the negative rows are artefacts**
+
+- **Queue** (five jobs, 17:35 → 21:02, then idle auto-off powered the rig down 4 h later, no errors):
+  `7ca7b8d5` BBB H.264 3600 s headless on GTV/Bbox/Fire TV/C2 · `1e741975` same clip GTV **screen**
+  mode 3600 s (C2 differential) · `3c8dd791` HEVC 1100 s ×4 (+Pi 400 sw) · `540b771d` AV1 1100 s ×4 ·
+  `f53d591d` H.264 repeat. Envelopes `results/decode/2026-08-15_<job>.json`.
+- **Playback stops mid-window on the Android boxes** — mid-window screenshots pure black, traces drop
+  BELOW the home-screen baseline (so ΔW goes negative with tight CIs — an artefact, not cheap decode):
+  GTV H.264 plays ~20 min (1.4→1.8 W) then flat 1.00 W — identical in both repeats **and in the
+  07-31 3540 s kranjska loop** (standing bug, predates CEC-off; July's 1200 s window just fit under it);
+  GTV HEVC 1.0 W from minute one (never rendered despite `c2.mtk.hevc.decoder` allocated); Fire TV
+  H.264 stops at ~5 min (both repeats), HEVC ~15 min; Bbox H.264 held 6.5 W the full hour, HEVC sagged
+  ~15 min; **AV1 played the full 1100 s on every box.** Origin is threaded + Range-correct and shipped
+  only 16.5 GB (fully-played night ≈ 38 GB) — clients stopped fetching, server didn't choke.
+- **Valid long-window rows**: Bbox H.264 3600 s **+0.22 W 🟢** [0.02, 0.43] (first 🟢 hw-STB H.264
+  decode); AV1 1100 s GTV **+0.12 🟢** · Fire TV **+0.16 🟢** (Wi-Fi caveat) · Bbox **+1.35 🟢** (~6× its
+  H.264, no MTK AV1 decoder listed → looks like software AV1) · Pi 400 sw HEVC +2.76 / AV1 +1.89 🟢
+  (July ordering av1 < hevc in sw holds); C2 native H.264 3600 s +21.7 W 🟢 all-in; GTV screen-mode
+  row GTV +0.41 W 🟢 with panel Δ +27.5 W → **C2 differential: native 67.7 W total vs panel-showing-GTV
+  74.8 W = −7 W native**, but HDMI-input picture processing ≠ internal-app processing — a picture-mode
+  confound until checked; do not quote as a decode number.
+- **Harness fixes** (`7a01def`): logcat provenance read tolerates non-UTF-8 bytes (a finished 1 h Bbox row
+  was lost to UnicodeDecodeError); `_wait_ready` wakes the C2 (raw WoL) for jobs that include it — it
+  drops into Always-Ready standby between queued jobs and the poller never auto-wakes it by design
+  (the C2 repeat row was lost to "not ready after 90s"). Restarted, live.
+- **Open (on-site):** diagnose the GTV ~20 min stop and Fire TV ~5 min stop — logcat + screenshot at
+  19–22 min / 4–6 min while a 60-min H.264 loop plays; a local-file arm splits network from player;
+  check whether the box drops to screensaver/doze because Just Player stops holding its wake-lock or
+  the player ends/errors. Same investigation for GTV HEVC-black. Until then: **long-window STB rows
+  need `alive_at_window_end` + a mid-window screenshot that is not black before they count** — the
+  harness records both; the reader must look.
+
+---
+
 ## Session 60 — 2026-08-15
 
 **Rig hygiene day: idle auto-off, ADB-authorisation repair, Fire TV back (Pi 5 parked), CEC off**
