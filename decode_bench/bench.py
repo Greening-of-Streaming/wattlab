@@ -103,7 +103,67 @@ class AdbDevice:
 
     def sh(self, *args, timeout=25):
         return subprocess.run(self.adb + ["shell"] + list(args), capture_output=True,
-                              text=True, timeout=timeout).stdout
+                              text=True, errors="replace", timeout=timeout).stdout
+
+    # --- keep-awake + play-verify (2026-08-16, the "playback dies mid-window"
+    # forensics; JOURNAL S61/S62). Three independent killers were found:
+    #   · Android TV inattentive SLEEP timer (secure sleep_timeout; GTV default
+    #     1 200 000 ms = the 20-min death) — fires even while the player holds
+    #     keep-screen-on;
+    #   · screensaver (system screen_off_timeout; Fire TV default 300 000 ms =
+    #     the 5-min death) — held off only while the player is actually PLAYING;
+    #   · GTV CEC "active source lost" → standby_now (box sleeps 30 s after the
+    #     TV/another source asserts Active Source; caught live: PowerManager
+    #     "Going to sleep due to hdmi").
+    # And Just Player launched by VIEW intent can come up PAUSED at a remembered
+    # position (seen on both boxes) — the old still_running() only checked the
+    # session existed, so a paused player counted as "alive".
+    KEEP_AWAKE = (("secure", "sleep_timeout", "-1"),
+                  ("system", "screen_off_timeout", "2147460000"))
+
+    def ensure_keep_awake(self):
+        """Idempotent: pin the box's sleep/screensaver timers to never and
+        (where the shell command exists) stop CEC active-source-lost standby.
+        Returns what was applied — recorded in provenance so a factory reset
+        or firmware update that reverts it is visible in the row."""
+        applied = {}
+        for ns, key, val in self.KEEP_AWAKE:
+            cur = self.sh("settings", "get", ns, key).strip()
+            if cur != val:
+                self.sh("settings", "put", ns, key, val)
+                cur = self.sh("settings", "get", ns, key).strip()
+            applied[f"{ns}.{key}"] = cur
+        out = self.sh("cmd", "hdmi_control", "cec_setting", "get",
+                      "power_state_change_on_active_source_lost")
+        if "=" in out:
+            if "none" not in out:
+                self.sh("cmd", "hdmi_control", "cec_setting", "set",
+                        "power_state_change_on_active_source_lost", "none")
+                out = self.sh("cmd", "hdmi_control", "cec_setting", "get",
+                              "power_state_change_on_active_source_lost")
+            applied["cec.power_state_change_on_active_source_lost"] = out.split("=")[-1].strip()
+        return applied
+
+    def playback_state(self):
+        """Just Player's media-session state: 'PLAYING' | 'PAUSED' | 'BUFFERING'
+        | 'STOPPED' | 'ERROR' | 'NONE' | None (no session). Handles both dumpsys
+        formats: Android 14 'state=PLAYING(3)' and Android 11 'state=3'."""
+        out = self.sh("dumpsys", "media_session")
+        names = {"0": "NONE", "1": "STOPPED", "2": "PAUSED", "3": "PLAYING",
+                 "6": "BUFFERING", "7": "ERROR"}
+        best = None
+        block = False
+        for line in out.splitlines():
+            if "package=" in line:
+                block = self.player in line
+            if block and "state=PlaybackState" in line and "{state=" in line:
+                tok = line.split("{state=")[1].split(",")[0].strip()
+                num = tok.split("(")[-1].rstrip(")") if "(" in tok else tok
+                st = names.get(num, tok)
+                if st == "PLAYING":
+                    return "PLAYING"
+                best = best or st
+        return best
 
     def prepare(self, run):
         # wake first — an Asleep box takes the intent but stays in ~0.6 W standby
@@ -114,6 +174,7 @@ class AdbDevice:
                 break
         else:
             raise RuntimeError("box did not wake (mWakefulness != Awake)")
+        self.keep_awake = self.ensure_keep_awake()
         # grants only — no pm clear (avoids the July first-run overlay confound)
         for p in ("READ_EXTERNAL_STORAGE", "READ_MEDIA_AUDIO",
                   "READ_MEDIA_IMAGES", "READ_MEDIA_VIDEO"):
@@ -123,8 +184,36 @@ class AdbDevice:
 
     def start(self, run):
         subprocess.run(self.adb + ["logcat", "-c"], capture_output=True, timeout=20)
+        # --ei position 0: Just Player honours a `position` extra (ms) — defeats
+        # its remembered-position resume so every row starts at the head.
         self.sh("am", "start", "-a", "android.intent.action.VIEW", "-d", run["url"],
-                "-t", "video/mp4", f"{self.player}/.PlayerActivity")
+                "-t", "video/mp4", "--ei", "position", "0",
+                f"{self.player}/.PlayerActivity")
+        # Verify it is actually PLAYING; a paused launch gets one play press
+        # (MEDIA_PLAY is play-not-toggle: harmless if it did start).
+        self.play_presses = 0
+        # 30 s budget: the Bbox sits in BUFFERING for >12 s on a cold HTTP
+        # start (a 12 s budget killed a healthy row on 2026-08-16 — the raise
+        # message itself then read PLAYING). BUFFERING is progress, not paused.
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            st = self.playback_state()
+            if st == "PLAYING":
+                return
+            if st in ("PAUSED", "NONE", "STOPPED") and self.play_presses < 2:
+                self.sh("input", "keyevent",
+                        "KEYCODE_MEDIA_PLAY" if self.play_presses == 0
+                        else "KEYCODE_DPAD_CENTER")
+                self.play_presses += 1
+                log(f"{run['name']}: player {st} after launch — pressed play "
+                    f"({self.play_presses})")
+                time.sleep(3)
+                continue
+            time.sleep(1)
+        st = self.playback_state()          # one last look before failing the row
+        if st == "PLAYING":
+            return
+        raise RuntimeError(f"player not PLAYING after launch (state={st})")
 
     def provenance(self, run, results_dir):
         # errors="replace": the Bbox emitted a non-UTF-8 byte in logcat and the
@@ -149,11 +238,15 @@ class AdbDevice:
         except Exception:
             shot = None
         return {"decoders_allocated": codecs,
-                "screenshot": shot.name if shot else None}
+                "screenshot": shot.name if shot else None,
+                "playback_state_midwindow": self.playback_state(),
+                "play_presses_after_launch": getattr(self, "play_presses", None),
+                "keep_awake": getattr(self, "keep_awake", None)}
 
     def still_running(self, run):
-        out = self.sh("dumpsys", "media_session")
-        return self.player in out
+        # PLAYING only — a paused/errored player with a live session used to
+        # count as alive (alive_at_window_end lied on the 2026-08-15 rows).
+        return self.playback_state() == "PLAYING"
 
     def stop(self, run):
         self.sh("am", "force-stop", self.player)
