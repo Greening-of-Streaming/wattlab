@@ -65,6 +65,57 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 62 — 2026-08-16/17 (evening + overnight)
+
+**The STB "mid-window death" solved live: three sleep mechanisms + a paused player. GTV/Fire TV decode = ~+0.6 W sustained, 🟢. Earlier long-window GTV/Fire TV rows are INVALID.**
+
+- **Method**: instrumented death-watch on both boxes while playing the 60-min H.264 loop exactly as
+  bench.py does (poll every 20 s: plug W, `mWakefulness`, media-session state, focused window,
+  screenshot brightness; dump logcat at the first non-playing sample) + a web-research pass on the
+  Streamer / Fire OS / Just Player / media3 (AOSP TV-standby doc, Amazon Fire TV app requirements,
+  media3 #2765, brouken/Player source).
+- **Findings (definitive, from the boxes' own state):**
+  1. **GTV inattentive SLEEP timer** — `settings get secure sleep_timeout` = **1 200 000 ms = 20 min**,
+     the exact overnight death point (and the 07-31 one). AOSP: fires even while the player holds
+     keep-screen-on; user activity = keys/CEC, not video.
+  2. **GTV HDMI-CEC** — `cmd hdmi_control cec_setting get power_state_change_on_active_source_lost` =
+     `standby_now`; caught live: `HdmiCecActiveSourceLostActivity` then `PowerManagerService: Going
+     to sleep due to hdmi` 30 s later (box asleep, 1.0 W flat = the level of every dead row).
+  3. **Fire TV screensaver** — `system screen_off_timeout` = **300 000 ms = 5 min**, held off only
+     while the player is actually PLAYING.
+  4. **Just Player launched via ADB VIEW intent can come up PAUSED** at a remembered position (both
+     boxes tonight; GTV at 00:02, Fire TV at 19:31) — and `still_running()` only checked that a media
+     session existed, so **`alive_at_window_end` lied** on paused/errored rows.
+  5. GTV HEVC black = known media3 #2765 (`c2.mtk.hevc.decoder` allocates, no frames, no error).
+- **Fixes**: device settings on both boxes (`sleep_timeout -1`, `screen_off_timeout` max, GTV CEC
+  active-source-lost `none`) — pinned idempotently by `AdbDevice.ensure_keep_awake()` in prepare and
+  recorded in provenance (`keep_awake`) so a reset/firmware revert is visible in the row; `start()`
+  launches with `--ei position 0`, waits ≤30 s for PLAYING (BUFFERING counts — a 12 s budget killed a
+  healthy Bbox row), presses MEDIA_PLAY/DPAD_CENTER on a paused launch, fails the row loudly
+  otherwise; `still_running()` == PLAYING; provenance carries `playback_state_midwindow`,
+  `play_presses_after_launch`. Commit `fec0065`. Live proof before the run: GTV played 30+ min (past
+  the 20-min death), Fire TV 38+ min (past 5 min).
+- **Result (job `2c793c73`, BBB H.264 3600 s headless, new harness):** **GTV base 1.41 → 2.06 W,
+  ΔW +0.65 W 🟢 [0.57, 0.73]; Fire TV 1.44 → 2.02 W, ΔW +0.59 W 🟢 [0.46, 0.72]**; both flat across
+  six 10-min bins, PLAYING at mid-window, n = 3600, one play press each. ≈ **0.6 Wh per hour of
+  hardware decode-and-play** on a modern STB. (`alive_at_window_end=False` = the 60:01 clip ending a
+  few seconds before window+skip; cap the H.264 loop window at 3540 s.) Bbox re-run alone (`a7f8f366`)
+  after the play-verify race.
+- **⚠ ERRATA — rows now known INVALID (box asleep / player paused, not decode):** the S61 overnight
+  GTV H.264 3600 s rows (`7ca7b8d5`, `f53d591d`: −0.18/−0.21 W), GTV HEVC (`3c8dd791`: −0.44 W, never
+  rendered), Fire TV H.264 3600 s (−0.61/−0.41 W) and Fire TV HEVC (+0.23 W but died at ~15 min);
+  the 07-31 GTV kranjska H.264 3540 s row (`2011f22f`: −0.25 W) and the 08-01 1200 s row (`2e367611`,
+  dying at the end). Rule for reading any pre-`fec0065` STB row longer than ~5 min (Fire TV) / ~20 min
+  (GTV): trust it only if the trace is flat to the end AND the mid-window screenshot is not black.
+  Short rows (≤150 s: July panels, the promo runs) are unaffected by the timers but their tiny ΔW is
+  inside the noise — they were never wrong, just uninformative. S61's "valid" AV1 1100 s rows stand
+  (traces flat, screenshots show content); the S61 C2 differential caveat stands.
+- **Methodology disclosure to add**: pinning sleep/screensaver/CEC-standby is a *bench* configuration
+  — a living-room box would have slept at 20 min; the rows measure "the box while playing", which is
+  the decode quantity, but the pinned settings must be stated (they are, per row, in `keep_awake`).
+
+---
+
 ## Session 61 — 2026-08-16 (overnight review)
 
 **Long-window loop night: mechanics good, playback dies mid-window on the STBs — the negative rows are artefacts**
@@ -81,7 +132,8 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
   H.264 stops at ~5 min (both repeats), HEVC ~15 min; Bbox H.264 held 6.5 W the full hour, HEVC sagged
   ~15 min; **AV1 played the full 1100 s on every box.** Origin is threaded + Range-correct and shipped
   only 16.5 GB (fully-played night ≈ 38 GB) — clients stopped fetching, server didn't choke.
-- **Valid long-window rows**: Bbox H.264 3600 s **+0.22 W 🟢** [0.02, 0.43] (first 🟢 hw-STB H.264
+- **Valid long-window rows** *(S62 errata: the GTV/Fire TV H.264 + HEVC rows of this night are INVALID — boxes
+  asleep / player paused, see S62; the rows below still stand)*: Bbox H.264 3600 s **+0.22 W 🟢** [0.02, 0.43] (first 🟢 hw-STB H.264
   decode); AV1 1100 s GTV **+0.12 🟢** · Fire TV **+0.16 🟢** (Wi-Fi caveat) · Bbox **+1.35 🟢** (~6× its
   H.264, no MTK AV1 decoder listed → looks like software AV1) · Pi 400 sw HEVC +2.76 / AV1 +1.89 🟢
   (July ordering av1 < hevc in sw holds); C2 native H.264 3600 s +21.7 W 🟢 all-in; GTV screen-mode
