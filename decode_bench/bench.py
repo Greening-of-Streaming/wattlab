@@ -127,8 +127,10 @@ class AdbDevice:
                 "-t", "video/mp4", f"{self.player}/.PlayerActivity")
 
     def provenance(self, run, results_dir):
+        # errors="replace": the Bbox emitted a non-UTF-8 byte in logcat and the
+        # default strict decode killed a finished 1 h row (2026-08-15).
         out = subprocess.run(self.adb + ["logcat", "-d"], capture_output=True,
-                             text=True, timeout=25).stdout
+                             text=True, errors="replace", timeout=25).stdout
         codecs = sorted({l.split("allocate(")[1].split(")")[0] for l in out.splitlines()
                          if "CCodec" in l and "allocate(c2." in l})
         # Per-device filename: three adb boxes in one parallel run used to

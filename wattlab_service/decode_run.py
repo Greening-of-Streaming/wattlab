@@ -532,10 +532,19 @@ async def _wait_ready(name: str, sub: dict, timeout_s: float) -> None:
     dev = rig.rig_cache["devices"][name]
     if dev["state"] == "off":
         await rig.device_on(name)
+    is_webos = rig.RIG["devices"][name].get("kind") == "webos"
     t0 = time.monotonic()
+    last_wake = 0.0
     while time.monotonic() - t0 < timeout_s:
         if dev["state"] == "ready":
             return
+        if is_webos and time.monotonic() - last_wake > 8:
+            # The C2 drops into Always-Ready standby between queued jobs and
+            # then rejects SSAP — the poller (rightly) never auto-wakes the
+            # household TV, so a job that WANTS the C2 must wake it itself.
+            # A 1 h C2 row was lost to "not ready after 90s" (2026-08-15).
+            await asyncio.to_thread(rig.lg.wake)
+            last_wake = time.monotonic()
         if dev["state"] in ("stuck", "unreachable", "unpowered"):
             raise RuntimeError(f"device is {dev['state']}")
         sub["detail"] = f"device {dev['state']}"
