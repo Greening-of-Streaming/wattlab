@@ -1,6 +1,7 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-08-16 (Session 61 — overnight long-window review: STB playback dies mid-window
+# Last updated: 2026-08-16 (Session 62 — marginal vs attributional lens, /methodology v0.7, Jan Ozer thread; see JOURNAL S62)
+# Previous: 2026-08-16 (Session 61 — overnight long-window review: STB playback dies mid-window
 #   (GTV ~20 min, Fire TV ~5 min, GTV HEVC never renders; AV1 fine) → negative 1 h ΔWs are artefacts;
 #   valid: Bbox H.264 1 h +0.22 🟢, AV1 rows 🟢; C2 differential −7 W = picture-mode confound; logcat/C2-wake
 #   fixes 7a01def. On-site GTV 20-min diagnosis pending. See JOURNAL S61.)
@@ -200,6 +201,7 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - [07-31→08-14 un-journaled: LG C2 native + CR-071 webOS control, Bbox operator CPE, Fire TV first bench, CR-072 origin, SMPTE couplings, VP9 one-off, marginal-vs-attributional lens.]
 - S60 (08-15): rig hygiene — idle auto-off (4 h, hold file for CLI) + Decode-rig settings persistence bug fixed · unauthorised-ADB diagnosis + Repair ADB (on-site only) · Fire TV back on Lab-A/HDMI_4, Pi 5 parked, Wi-Fi-only disclosure · C2 CEC off (input-hop confound) · 5-device promo runs (hw STB decode below 34 s noise). →1007.
 - S61 (08-16): overnight long-window review — mechanics + auto-off worked; **STB playback dies mid-window** (GTV H.264 stops at ~20 min — standing since 07-31; Fire TV ~5 min; GTV HEVC never renders; AV1 fine everywhere) → negative hour-long ΔWs are artefacts; valid: Bbox H.264 1 h +0.22 🟢, AV1 GTV +0.12 / Fire +0.16 / Bbox +1.35 (sw?) 🟢; C2 differential −7 W is a picture-mode confound. Fixes: logcat non-UTF-8, wake C2 in _wait_ready (7a01def). On-site GTV 20-min diagnosis pending.
+- S62 (08-16 pm): marginal vs attributional energy — time was already in ΔE/Wh-per-min; the gap was idle attribution → additive second lens (W_base+ΔW)×Δt: parity rows persist `w_base` + `wh_per_min_video_attributional`, /methodology v0.7 subsection, off-repo retro over S53+VP9 (CPU rows ×2.1–2.7, NVENC-vs-VP9 gap 1.97→4.22 Wh/min, ratios hold; decode immune) `79045ab` · VP9 post: Jan Ozer's slow-preset ladder (x265 8.5×/SVT 8.6×/VP9 9.5× vs x264) reconciles with OWL's default-preset rows once the operating point is named; sw-vs-hw 15× headline conceded; joint article (Thierry+Jan) in play. →993.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

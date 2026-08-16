@@ -7,6 +7,64 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 62 — 2026-08-16 (afternoon)
+
+**Marginal vs attributional energy — a second accounting lens (methodology v0.7), and the VP9 post draws Jan Ozer**
+
+- **The question** (Ben, after the Thierry "speed dial" exchange on the VP9 LinkedIn post): OWL
+  subtracts idle and reports only the job's energy; a faster encode that draws more but finishes
+  30 s sooner might save more than it costs — should the VoD methodology be revisited?
+- **Code review says time is already in the metric.** `energy.energy_wh` is ΔW × Δt (an energy
+  integral) and parity normalises to `wh_per_min_video` = ΔE per minute of *content*, so a fast
+  encoder accrues fewer Δt seconds and wins automatically — exactly why S53 read NVENC's 2.5–4.4×
+  as "speed, not draw". No revisit on that axis.
+- **The genuine gap is idle attribution.** ΔW-only is *marginal* accounting: a job is never charged
+  for the W_base × Δt the machine burns while occupied (~79 W on GoS1). Correct for a shared box
+  that would be on anyway; on a dedicated encode fleet (race-to-idle) the *attributional* view
+  (W_base + ΔW) × Δt is the honest one. It only separates tasks that take **different time** —
+  VoD encode / batch jobs; realtime playback and the decode rig are immune (every codec occupies
+  the device for the same window). A scoping choice derived from the same samples, not a
+  correction and not a re-measurement.
+- **Shipped** (`79045ab`, additive, protocol unchanged): `parity._measure_recipe` now persists
+  per-row `w_base` (older parity artifacts never stored it — found en route) and
+  `wh_per_min_video_attributional`; `/methodology` → **v0.7** with a "Marginal vs attributional
+  energy — two lenses, one measurement" subsection (formula, when each applies, decode immune,
+  "roughly doubles CPU-encode figures while adding only a fraction to seconds-long hardware
+  encodes"). 993 tests, restarted, verified live.
+- **Retro-computation** over the stored S53 (207 rows) + VP9 (4 rows) datasets, off-repo
+  (`/srv/data/owl/campaign_2026-08-09_vp9/attributional_retrofit.py` → `.json`, nominal 79 W
+  post-swap floor, labelled NOMINAL since pre-08-15 rows lack `w_base`): attribution ×2.1–2.7 on
+  CPU rows, ×2.2–2.4 on 8 s NVENC rows; occupancy s per minute of video NVENC ~8 · x265 31–41 ·
+  VP9 90–130; VP9(cpu) vs NVENC h265: **ratio 16.3× → 14.7× but absolute gap 1.97 → 4.22 Wh/min**
+  (Meridian 2500k) — ratios hold, the fast-vs-slow gap widens. Team paragraph for Monday drafted.
+- **LinkedIn thread on the VP9 post** (context for the follow-ups; the report is
+  `docs/vp9_oneoff_2026-08.md`):
+  - *Thierry Fautier*: ChatGPT-sourced iso-VMAF compute ratios (HEVC ~4×, AV1 ~5×, VP9 ~20×),
+    "include the distribution budget", proposes a joint blog → Ben's reply: both right, software
+    encoders have a **speed dial**; OWL ran the production-VOD point (`cpu-used 2`) where VP9
+    compressed x264-class; joint article on energy-vs-quality curves, VoD vs linear.
+  - *Jan Ozer*: (1) most VOD (and much live) is software, so VP9-sw vs trio-hw "doesn't reflect the
+    market" — **fair hit on the 15× headline** (it describes NVIDIA/AMD lacking a VP9 path, not
+    the codec); (2) his 14-source 1080p convex-hull ladder timings on an i9-14900: x264 1× · x265
+    8.5× · SVT-AV1 8.6× · libvpx 9.5× at x264/x265 **slow**, SVT-AV1 **preset 3**, VP9 cpu-used 2,
+    two-pass. **Reconciles with ours once the dial is named:** OWL's S53 CPU rows are x264/x265
+    *medium* defaults and SVT-AV1 at ffmpeg's default (fast) preset, VP9 cpu-used 2 → VP9 3× x265,
+    5–6× x264/SVT-AV1; at everything-slow VP9 is only ~1.1× the others. Same curve, different
+    point. His data is time not watts (tracks on a saturated CPU per S53).
+  - *Thierry* → "x265 not speed-optimised; commercial HEVC ~2× x264 CPU for 30–50% saving"; Jan
+    asks for a source; Thierry cites the AWS 2022 MediaConvert settings post — checked: it compares
+    **price per transcode** (AVC $0.23 / HEVC $3.26 / AV1 $13.39 = AWS tiering) and file size, no
+    CPU or energy — doesn't support the claim. *Murat Pisat*: "Apple lacks VP9 decode" — stale
+    (M/A-series hw VP9, tvOS 14+), but the underlying point is the report's decode finding.
+  - Reply to Jan drafted in Ben's voice: concede the headline, show the two ladders agree once the
+    operating point is stated, offer the watt-metered + attributional lens as an independent check
+    on his timings, invite him onto the joint article (four software encoders × speed-dial sweep at
+    matched target quality, energy per minute of output; "your sources and methodology, our meter").
+- **Standing wording rule** (from the VP9 arc): never "no VP9 hardware encode exists" — Intel QSV
+  since Kaby Lake and Google Argos do; say "no hardware path on NVIDIA/AMD".
+
+---
+
 ## Session 61 — 2026-08-16 (overnight review)
 
 **Long-window loop night: mechanics good, playback dies mid-window on the STBs — the negative rows are artefacts**
