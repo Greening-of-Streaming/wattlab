@@ -151,11 +151,17 @@ larger ratios come from slower settings that buy compression at more energy. Com
 ratios and watt-metered energy are related but not the same figure. Distribution energy
 is outside this document's scope (device layer only) and is not asserted either way.
 
-Thierry also pointed to the AWS MediaConvert settings post (July 2022) whose closing table
-lists transcode durations: HEVC ~10–25 % longer than AVC (25:41 / 29:20 vs 23:25 / 23:02
-wall-clock), AV1 in ~11 min. Two readings: (a) a commercial HEVC encoder is nowhere near
-x265's slow-preset cost relative to x264 — the reference implementation and the product
-are different things, and comparisons must name which one they measured; (b) those are
+Thierry also pointed to the AWS MediaConvert settings post (July 2022), which lists
+transcode durations in several tables — and the HEVC-vs-AVC gap depends on which one you
+read: **CBR 10 Mbps** multi-pass HQ 22:34 vs 37:22 (HEVC ~66 % longer, the figure Thierry
+quotes); **QVBR** multi-pass HQ 22:41 vs 25:22 (~12 %); the closing bit-depth table (QVBR
+L8) 23:25 vs 25:41 at 8-bit (~10 %) and 23:02 vs 29:20 at 10-bit (~27 %); AV1 ~11–13 min
+throughout. Rate-control mode alone moves the HEVC penalty from ~12 % to ~66 % (under CBR
+both encoders must spend the fixed bits and HEVC's extra tools do more work; under QVBR
+each picks its own bitrate for the quality target) — one more dial that has to be stated.
+Two further readings: (a) even at 66 % a commercial HEVC encoder is nowhere near x265's
+slow-preset cost relative to x264 — the reference implementation and the product are
+different things, and comparisons must name which one they measured; (b) those are
 wall-clock times on a managed service (the AV1 rows finishing in half AVC's time point to
 a different backend), and at the same QVBR level the HEVC/AV1 files came out *larger* than
 AVC, so the rows are neither CPU-time nor matched-quality — they are not an energy datum.
