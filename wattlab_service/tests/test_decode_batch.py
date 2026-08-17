@@ -201,36 +201,89 @@ def test_lem_csv_reads_runs_single_store(_batch_on_disk):
     assert r.status_code == 200 and ",gtv,1.0" in r.text and ",firestick,1.0" in r.text
 
 
-# --- backfill script -------------------------------------------------------
+# --- stamp_batch (shared by the script and the UI) + list_batches -----------
+
+def test_stamp_batch_idempotent_refusing_and_labels(tmp_path, monkeypatch):
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    d = tmp_path / "decode"; d.mkdir()
+    (d / "2026-08-17_j1.json").write_text(json.dumps({"job_id": "j1", "saved_at": "1"}))
+    (d / "2026-08-17_j2.json").write_text(json.dumps({"job_id": "j2", "batch_id": "other1",
+                                                       "saved_at": "2"}))
+    # dry-run writes nothing
+    r = persist.stamp_batch("decode", "abc123", ["j1"], apply=False)
+    assert r["stamped"] == ["j1"] and "batch_id" not in json.loads((d / "2026-08-17_j1.json").read_text())
+    # apply + label; second apply skips but refreshes label
+    r = persist.stamp_batch("decode", "abc123", ["j1"], label="Night one")
+    assert r["stamped"] == ["j1"]
+    f = json.loads((d / "2026-08-17_j1.json").read_text())
+    assert f["batch_id"] == "abc123" and f["batch_label"] == "Night one"
+    r = persist.stamp_batch("decode", "abc123", ["j1"], label="Night ONE")
+    assert r["skipped"] == ["j1"] and r["stamped"] == []
+    assert json.loads((d / "2026-08-17_j1.json").read_text())["batch_label"] == "Night ONE"
+    # refuse: different batch / unknown id → nothing written at all
+    r = persist.stamp_batch("decode", "abc123", ["j1", "j2"])
+    assert r["refused"] == {"j2": "already in batch other1"} and r["stamped"] == []
+    r = persist.stamp_batch("decode", "abc123", ["nope"])
+    assert "nope" in r["refused"]
+    # inventory
+    inv = persist.list_batches("decode")
+    assert [b["batch_id"] for b in inv] == ["other1", "abc123"]      # newest last-activity first
+    a = [b for b in inv if b["batch_id"] == "abc123"][0]
+    assert a["label"] == "Night ONE" and a["n_jobs"] == 1 and a["job_ids"] == ["j1"]
+
+
+def test_stamp_script_delegates_to_persist(tmp_path, monkeypatch):
+    """bin/stamp-decode-batch is a thin CLI over persist.stamp_batch."""
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    d = tmp_path / "decode"; d.mkdir()
+    (d / "2026-08-17_j1.json").write_text(json.dumps({"job_id": "j1"}))
+    src = _SCRIPT.read_text()
+    assert "persist.stamp_batch" in src and "--label" in src
+    r = subprocess.run([sys.executable, str(_SCRIPT), "XYZ", "j1"], capture_output=True, text=True)
+    assert r.returncode == 2                                        # bad id, before any IO
+
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "bin" / "stamp-decode-batch"
 
 
-def _run_script(tmp_results, *args):
-    env = {"PYTHONPATH": str(Path(__file__).resolve().parents[1])}
-    src = _SCRIPT.read_text().replace(
-        'RESULTS_DIR = Path("/home/gos/wattlab/results") / "decode"',
-        f'RESULTS_DIR = Path("{tmp_results}") / "decode"')
-    tmp = tmp_results / "stamp.py"; tmp.write_text(src)
-    return subprocess.run([sys.executable, str(tmp), *args], capture_output=True,
-                          text=True, env=env)
+# --- list page + stamp route -----------------------------------------------
+
+def test_batches_list_page_and_json_public(_batch_on_disk):
+    bid = _batch_on_disk
+    for hdrs in (_LAB, _ANON):
+        r = client.get("/decode/batches", headers=hdrs)
+        assert r.status_code == 200 and bid in r.text and "Decode campaigns" in r.text
+    j = client.get("/decode/batches.json", headers=_ANON).json()
+    assert j["batches"][0]["batch_id"] == bid and j["batches"][0]["n_jobs"] == 2
+    assert j["batches"][0]["devices"] == ["firestick", "gtv"]
 
 
-def test_stamp_decode_batch_idempotent_and_refusing(tmp_path):
-    d = tmp_path / "decode"; d.mkdir()
-    (d / "2026-08-17_j1.json").write_text(json.dumps({"job_id": "j1"}))
-    (d / "2026-08-17_j2.json").write_text(json.dumps({"job_id": "j2", "batch_id": "other1"}))
-    # dry-run writes nothing
-    r = _run_script(tmp_path, "abc123", "j1")
-    assert r.returncode == 0 and "dry-run" in r.stdout
-    assert "batch_id" not in json.loads((d / "2026-08-17_j1.json").read_text())
-    # apply stamps; second apply skips
-    assert _run_script(tmp_path, "abc123", "j1", "--apply").returncode == 0
-    assert json.loads((d / "2026-08-17_j1.json").read_text())["batch_id"] == "abc123"
-    r = _run_script(tmp_path, "abc123", "j1", "--apply")
-    assert r.returncode == 0 and "skip" in r.stdout
-    # refuse a different existing batch, refuse unknown ids, refuse bad id
-    assert _run_script(tmp_path, "abc123", "j2", "--apply").returncode == 1
-    assert json.loads((d / "2026-08-17_j2.json").read_text())["batch_id"] == "other1"
-    assert _run_script(tmp_path, "abc123", "nope", "--apply").returncode == 1
-    assert _run_script(tmp_path, "XYZ", "j1", "--apply").returncode == 2
+def test_stamp_route_lab_only_labels_and_refuses(_batch_on_disk, tmp_path):
+    bid = _batch_on_disk
+    d = tmp_path / "decode"
+    (d / "2026-08-17_solo.json").write_text(json.dumps(_env("solo", "loop_bbb_h265",
+                                                             [_row("gtv", 0.3)], batch_id=None)))
+    (d / "2026-08-17_elsewhere.json").write_text(json.dumps(_env("elsewhere", "loop_bbb_h265",
+                                                                  [_row("gtv", 0.3)], batch_id="ffffff")))
+    # Anonymous cannot stamp
+    assert client.post(f"/decode/batch/{bid}/stamp", json={"job_ids": ["solo"]},
+                       headers=_ANON).status_code == 403
+    # add + label
+    r = client.post(f"/decode/batch/{bid}/stamp", json={"job_ids": ["solo"], "label": "Test night"},
+                    headers=_LAB)
+    assert r.status_code == 200 and r.json()["stamped"] == ["solo"]
+    m = client.get(f"/decode/batch/{bid}.json", headers=_ANON).json()
+    assert m["label"] == "Test night" and len(m["jobs"]) == 3
+    assert "Test night" in client.get(f"/decode/batch/{bid}", headers=_ANON).text
+    # label-only relabels every file in the batch
+    r = client.post(f"/decode/batch/{bid}/stamp", json={"label": "Renamed"}, headers=_LAB)
+    assert r.status_code == 200
+    assert client.get(f"/decode/batch/{bid}.json", headers=_ANON).json()["label"] == "Renamed"
+    # refuse cross-batch move; nothing changes
+    r = client.post(f"/decode/batch/{bid}/stamp", json={"job_ids": ["elsewhere"]}, headers=_LAB)
+    assert r.status_code == 409 and "elsewhere" in r.json()["refused"]
+    assert json.loads((d / "2026-08-17_elsewhere.json").read_text())["batch_id"] == "ffffff"
+    # bad / empty
+    assert client.post("/decode/batch/ZZ/stamp", json={"job_ids": ["solo"]}, headers=_LAB).status_code == 400
+    assert client.post(f"/decode/batch/{bid}/stamp", json={}, headers=_LAB).status_code == 400
+    assert client.post("/decode/batch/abcdef012345/stamp", json={"label": "x"}, headers=_LAB).status_code == 404

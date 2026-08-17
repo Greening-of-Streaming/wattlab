@@ -93,8 +93,15 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
   The invalid 08-15 night deliberately NOT collated (errata). Docs: CR-073 (shipped), CR-031 §1
   pre-work marked DONE + "first consumer of any future index = `list_batch`", `docs/result_envelope.md`
   (v0→v1, `batch_id`, `ui_*` decode shape documented at last), `bin/README.md`.
-- **Not in scope (named):** DB migration; findings-embed of a batch table; `/benchmark` unification;
-  campaign scheduler; REM/OWL merge.
+- **Self-service follow-up (same afternoon; owner: no UI list, and creating a batch needed me):**
+  `/decode/batches` inventory (+`.json`, public), Lab **Add to campaign** on Recent runs (tick runs →
+  new/existing campaign, optional label) via `POST /decode/batch/{id}/stamp`, labels stored on the
+  envelopes (`batch_label`, no sidecar) and shown in the page title/list; `persist.list_batches` +
+  `persist.stamp_batch` shared by route and CLI (`--label`). Last night's batch labelled through the
+  route. **VP9 on one page = cross-type collection (video encodes + decode rows) — not built, not a
+  finding yet (owner: still in discussion); written into CR-073 as out of scope.** Tests **1024**.
+- **Not in scope (named):** DB migration; findings-embed of a batch table; cross-type collections;
+  `/benchmark` unification; campaign scheduler; REM/OWL merge.
 
 ---
 

@@ -357,6 +357,93 @@ def list_batch(job_type: str, batch_id: str) -> list:
     return out
 
 
+def list_batches(job_type: str) -> list:
+    """Inventory of every batch in a type dir (CR-073 self-service): one
+    entry per distinct batch_id — {batch_id, label, n_jobs, first, last,
+    devices[], templates[], job_ids[]}, newest last-activity first. Label =
+    the most recent non-empty `batch_label` among its files (labels are
+    stored ON the envelopes; no sidecar store)."""
+    out_dir = RESULTS_DIR / job_type
+    acc: dict = {}
+    if not out_dir.exists():
+        return []
+    for p in out_dir.glob("*.json"):
+        try:
+            d = json.loads(p.read_text())
+        except Exception:
+            continue
+        bid = d.get("batch_id")
+        if not bid:
+            continue
+        b = acc.setdefault(bid, {"batch_id": bid, "label": None, "_label_at": "",
+                                 "n_jobs": 0, "first": None, "last": None,
+                                 "devices": set(), "templates": set(), "job_ids": []})
+        b["n_jobs"] += 1
+        b["job_ids"].append(d.get("job_id"))
+        sa = d.get("saved_at") or ""
+        b["first"] = min(b["first"] or sa, sa) if sa else b["first"]
+        b["last"] = max(b["last"] or sa, sa) if sa else b["last"]
+        if d.get("batch_label") and sa >= b["_label_at"]:
+            b["label"], b["_label_at"] = d["batch_label"], sa
+        for r in d.get("runs") or []:
+            if r.get("device"):
+                b["devices"].add(r["device"])
+        if d.get("template"):
+            b["templates"].add(d["template"])
+    rows = []
+    for b in acc.values():
+        b.pop("_label_at")
+        b["devices"] = sorted(b["devices"])
+        b["templates"] = sorted(b["templates"])
+        rows.append(b)
+    rows.sort(key=lambda b: b["last"] or "", reverse=True)
+    return rows
+
+
+def stamp_batch(job_type: str, batch_id: str, job_ids: list,
+                label: str | None = None, apply: bool = True) -> dict:
+    """Give existing results a batch_id (and optionally a batch_label) —
+    the one implementation behind bin/stamp-decode-batch and the /decode
+    "Add to batch" UI. Idempotent and refusing: same batch → skip (label
+    still refreshed if given); a file already in a DIFFERENT batch → refused,
+    nothing written; any unknown/ambiguous job id → refused before writing.
+    Returns {"stamped": [...], "skipped": [...], "refused": {job_id: why}}."""
+    out_dir = RESULTS_DIR / job_type
+    plan, refused = [], {}
+    for jid in job_ids:
+        matches = sorted(out_dir.glob(f"*_{jid}.json")) if out_dir.exists() else []
+        if len(matches) != 1:
+            refused[jid] = "no result file" if not matches else "ambiguous id"
+            continue
+        try:
+            d = json.loads(matches[0].read_text())
+        except Exception:
+            refused[jid] = "unreadable"
+            continue
+        cur = d.get("batch_id")
+        if cur and cur != batch_id:
+            refused[jid] = f"already in batch {cur}"
+            continue
+        plan.append((jid, matches[0], d, "skip" if cur == batch_id else "stamp"))
+    if refused:
+        return {"stamped": [], "skipped": [], "refused": refused}
+    stamped, skipped = [], []
+    for jid, path, d, action in plan:
+        changed = False
+        if action == "stamp":
+            d["batch_id"] = batch_id
+            changed = True
+            stamped.append(jid)
+        else:
+            skipped.append(jid)
+        if label is not None and d.get("batch_label") != label:
+            d["batch_label"] = label
+            changed = True
+        if apply and changed:
+            path.write_text(json.dumps(d, indent=2))
+    return {"stamped": stamped, "skipped": skipped, "refused": {}}
+
+
 def rem_batch_csv(batch_id: str) -> str:
     """Combined energy CSV for every stored rem result sharing `batch_id`, one
     row per file (sorted by saved_at). 'Live': returns only completed rows if

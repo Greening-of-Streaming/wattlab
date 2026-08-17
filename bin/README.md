@@ -247,7 +247,11 @@ CR-015. One-shot script, designed to be invoked by `systemd/owl-maintenance-watc
 ```bash
 ~/wattlab/bin/stamp-decode-batch <batch_id> <job_id> [<job_id> …]          # dry-run
 ~/wattlab/bin/stamp-decode-batch <batch_id> <job_id> [<job_id> …] --apply
+~/wattlab/bin/stamp-decode-batch <batch_id> <job_id> … --label "Overnight 5×3×3, 2026-08-17" --apply
 ```
+
+Same logic as the /decode "Add to campaign" tools (`persist.stamp_batch`); the CLI is for
+shells and feeders. Inventory of all campaigns: `/decode/batches`.
 
 Writes `batch_id` into the named `results/decode/*.json` so they collate on
 `/decode/batch/<batch_id>` (page · `.json` · `.csv`). Idempotent (same id → skip); refuses a

@@ -274,6 +274,69 @@ def _batch_or_404(batch_id: str):
     return decode_batch.matrix(envs, batch_id), None
 
 
+@router.get("/decode/batches", response_class=HTMLResponse,
+            dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def decode_batches_page(request: Request):
+    """Every decode campaign on disk (CR-073 self-service list): label, jobs,
+    date range, devices, links. Public — same tier as the batch pages."""
+    from html import escape as _e
+    rows = persist.list_batches("decode")
+    dfmt = lambda d: (d or "")[:16].replace("T", " ")
+    trs = "".join(
+        f'<tr><td><a href="/decode/batch/{_e(b["batch_id"])}" style="color:var(--accent)">'
+        f'{_e(b["label"] or b["batch_id"])}</a>'
+        + (f'<div class="rig-detail">{_e(b["batch_id"])}</div>' if b["label"] else "")
+        + f'</td><td>{b["n_jobs"]}</td><td>{dfmt(b["first"])} → {dfmt(b["last"])}</td>'
+        f'<td>{_e(", ".join(b["devices"]))}</td>'
+        f'<td class="rig-detail">{_e(", ".join(t.replace("loop_", "") for t in b["templates"]))}</td>'
+        f'<td><a href="/decode/batch/{_e(b["batch_id"])}.csv" style="color:var(--accent)">csv</a> '
+        f'<a href="/decode/batch/{_e(b["batch_id"])}.json" style="color:var(--accent)">json</a></td></tr>'
+        for b in rows)
+    body = ('<div class="rig-wrap"><h1>Decode campaigns</h1>'
+            '<div class="rig-note" style="margin-top:0">One row per batch of decode jobs '
+            '(the /decode <b>campaign</b> toggle, or jobs added to a batch afterwards). '
+            'Each opens a device × content × codec matrix with CSV/JSON. '
+            '<a href="/decode">← rig</a></div>'
+            + ('<table class="rig-rows"><tr><th>campaign</th><th>jobs</th><th>when</th>'
+               '<th>devices</th><th>recipes</th><th></th></tr>' + trs + '</table>'
+               if rows else '<div class="rig-note">no batches yet</div>')
+            + '</div>')
+    return ui.render_page(request, "Decode campaigns", styles=_STYLES, body=body)
+
+
+@router.get("/decode/batches.json",
+            dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def decode_batches_json():
+    return {"batches": persist.list_batches("decode")}
+
+
+@router.post("/decode/batch/{batch_id}/stamp",
+             dependencies=[Depends(requires(RIG_CONTROL))])
+async def decode_batch_stamp(batch_id: str, payload: dict):
+    """Lab: add existing decode results to a batch (new or existing id) and/or
+    set its label — the UI face of bin/stamp-decode-batch. Refuses (409) if
+    any job is already in a different batch; nothing is written then."""
+    if not _BATCH_ID_RE.match(batch_id or ""):
+        return JSONResponse({"error": "bad batch id"}, status_code=400)
+    p = payload or {}
+    # job ids are 8-hex from the queue, but imported panels use e.g. dec0de04 —
+    # accept the safe filename charset; persist.stamp_batch globs *_{id}.json
+    job_ids = [str(j) for j in (p.get("job_ids") or []) if re.fullmatch(r"[A-Za-z0-9_-]{3,40}", str(j))]
+    label = p.get("label")
+    if label is not None:
+        label = str(label).strip()[:80] or None
+    if not job_ids and label is None:
+        return JSONResponse({"error": "nothing to do"}, status_code=400)
+    if not job_ids:                       # label-only: apply to the existing batch
+        job_ids = [e.get("job_id") for e in persist.list_batch("decode", batch_id)]
+        if not job_ids:
+            return JSONResponse({"error": "unknown batch"}, status_code=404)
+    res = persist.stamp_batch("decode", batch_id, job_ids, label=label, apply=True)
+    if res["refused"]:
+        return JSONResponse({"error": "refused", "refused": res["refused"]}, status_code=409)
+    return {"ok": True, "batch_id": batch_id, **res}
+
+
 @router.get("/decode/batch/{batch_id}.json",
             dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def decode_batch_json(batch_id: str):
@@ -306,7 +369,7 @@ async def decode_batch_page(request: Request, batch_id: str):
     if err:
         return HTMLResponse(f"<h1>{err.body.decode()}</h1>", status_code=err.status_code)
     body = _batch_html(m)
-    return ui.render_page(request, f"Decode campaign {batch_id[:8]}",
+    return ui.render_page(request, f"Decode campaign {m.get('label') or batch_id[:8]}",
                           styles=_STYLES + _BATCH_STYLES, body=body)
 
 
@@ -320,14 +383,18 @@ def _batch_html(m: dict) -> str:
     date0, date1 = (m.get("date_range") or [None, None])
     dfmt = lambda d: (d or "")[:16].replace("T", " ")
     shas = sorted({j.get("owl_version") for j in m["jobs"] if j.get("owl_version")})
-    head = (f'<h1>Decode campaign <code>{_e(m["batch_id"])}</code></h1>'
-            f'<div class="rig-note" style="margin-top:0">'
+    title = _e(m.get("label") or "") or f'<code>{_e(m["batch_id"])}</code>'
+    head = (f'<h1>Decode campaign {title}</h1>'
+            + (f'<div class="rig-detail">batch <code>{_e(m["batch_id"])}</code></div>'
+               if m.get("label") else "")
+            + f'<div class="rig-note" style="margin-top:0">'
             f'{len(m["jobs"])} jobs · {m["n_cells"]} cells · {dfmt(date0)} → {dfmt(date1)}'
             + (f' · OWL {", ".join(_e(x) for x in shas)}' if shas else "")
             + (f' · protocol v{"/".join(m["protocol"].get("protocol_version", []))}'
                if m["protocol"].get("protocol_version") else "")
             + f' · <a href="/decode/batch/{_e(m["batch_id"])}.csv">CSV</a>'
               f' · <a href="/decode/batch/{_e(m["batch_id"])}.json">JSON</a>'
+              f' · <a href="/decode/batches">all campaigns</a>'
               f' · <a href="/decode">← rig</a></div>')
     # header rows: content group, then codec (+ mode when screen)
     ths_content, ths_codec, last = [], [], None
@@ -698,7 +765,14 @@ _BODY = """
   </div>
 
   <div class="rig-run" style="margin-top:1rem">
-    <h3>Recent runs</h3>
+    <h3>Recent runs <a href="/decode/batches" class="rig-badge" style="color:var(--accent);text-decoration:none;font-weight:400">⊞ all campaigns</a></h3>
+    <div id="batch-tools" class="rig-note" style="display:none;margin:0 0 0.4rem 0">
+      Tick runs, then
+      <select id="batch-target"><option value="__new__">new campaign</option></select>
+      label <input type="text" id="batch-label" placeholder="e.g. Overnight 5×3×3, 2026-08-17" style="width:16rem">
+      <button class="rig-btn" onclick="addToBatch()">Add to campaign</button>
+      <span id="batch-msg" class="rig-detail"></span>
+    </div>
     <div id="recent-runs" class="rig-note" style="margin-top:0.2rem">loading…</div>
   </div>
 
@@ -1115,7 +1189,11 @@ async function loadRecent() {
         ? ' <a href="/decode/batch/' + run.batch_id + '" class="rig-badge" title="campaign '
           + run.batch_id + '" style="color:var(--accent);text-decoration:none">⊞ ' + run.batch_id.slice(0, 6) + '</a>'
         : '';
-      h += '<tr><td>' + when + '</td><td>' + (run.label || '') + batch + '</td>'
+      var tick = IS_LAB
+        ? '<input type="checkbox" class="batch-pick" value="' + run.job_id + '" '
+          + (run.batch_id ? 'data-batch="' + run.batch_id + '" ' : '') + 'style="margin-right:0.3rem">'
+        : '';
+      h += '<tr><td>' + tick + when + '</td><td>' + (run.label || '') + batch + '</td>'
          + '<td><span class="rig-badge">' + (run.mode || '') + ' v'
          + (run.protocol_version || '?') + '</span></td>'
          + '<td>' + rows + '</td>'
@@ -1126,9 +1204,53 @@ async function loadRecent() {
     // 400s — decode isn't in that route's allow-list; JSON is per batch or via a
     // finding's source carve-out)
     el.innerHTML = h + '</table>';
+    if (IS_LAB) {
+      document.getElementById('batch-tools').style.display = '';
+      // existing campaigns as targets (label or id)
+      try {
+        var b = await (await fetch('/decode/batches.json')).json();
+        var sel = document.getElementById('batch-target');
+        sel.innerHTML = '<option value="__new__">new campaign</option>';
+        (b.batches || []).forEach(function(x) {
+          var o = document.createElement('option'); o.value = x.batch_id;
+          o.textContent = (x.label || x.batch_id) + ' (' + x.n_jobs + ')';
+          sel.appendChild(o);
+        });
+      } catch (e2) {}
+    }
   } catch (e) {}
 }
 loadRecent();
+
+// CR-073 self-service: stamp ticked runs into a (new or existing) campaign,
+// optionally labelling it. Server refuses if a run is already in another
+// batch — a result belongs to one campaign.
+async function addToBatch() {
+  var picks = Array.prototype.slice.call(document.querySelectorAll('.batch-pick:checked'))
+                .map(function(c){ return c.value; });
+  var target = document.getElementById('batch-target').value;
+  var label = document.getElementById('batch-label').value.trim();
+  var msg = document.getElementById('batch-msg');
+  if (!picks.length && !label) { msg.textContent = 'tick at least one run (or set a label)'; return; }
+  var bid = target === '__new__' ? campaignId() : target;
+  if (target === '__new__' && !picks.length) { msg.textContent = 'a new campaign needs runs'; return; }
+  var body = {job_ids: picks};
+  if (label) body.label = label;
+  try {
+    var r = await fetch('/decode/batch/' + bid + '/stamp', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    var j = await r.json();
+    if (!r.ok) {
+      msg.textContent = 'refused: ' + (j.refused ? JSON.stringify(j.refused) : (j.error || r.status));
+      return;
+    }
+    msg.innerHTML = 'ok — ' + (j.stamped || []).length + ' added'
+      + (j.skipped && j.skipped.length ? ', ' + j.skipped.length + ' already in' : '')
+      + ' → <a href="/decode/batch/' + bid + '" style="color:var(--accent)">/decode/batch/' + bid + '</a>';
+    if (target === '__new__') CAMPAIGN_ID = null;
+    loadRecent();
+  } catch (e) { msg.textContent = String(e); }
+}
 
 // Re-attach to a job after reload/service restart: /decode?job=<id>
 // (queue-status ↩ Resume points here; results also recover from disk).

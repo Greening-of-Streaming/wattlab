@@ -873,6 +873,15 @@ files, no time-series/joins/concurrency need). Do the cheap gating pre-work (`en
   hour `2c793c73`). The invalid 08-15 night is deliberately NOT collated (errata, JOURNAL S62).
 - Tests +14 (`tests/test_decode_batch.py`): collator shapes (errored rows, failed sections, screen
   column, repeats), list_batch/rem csv, envelope_version, routes incl. Anonymous probe, backfill script.
+- **Self-service (same day, owner: "no UI list, and I have to ask you to create one"):**
+  `GET /decode/batches` (+`.json`) — inventory of every campaign (label, jobs, dates, devices,
+  recipes; public); `POST /decode/batch/{id}/stamp` (Lab) — add ticked Recent-runs to a new or
+  existing campaign and/or set a **label** (`batch_label`, stored ON the envelopes — no sidecar);
+  `persist.list_batches` + `persist.stamp_batch` (the one implementation behind the route and
+  `bin/stamp-decode-batch --label`). Batch page/title show the label. Tests 1024 (+3).
+- **Cross-type collections (VP9 = video encodes + decode rows on one page) are NOT this CR** — a
+  per-type renderer + a type-spanning collection is findings-embed / CR-004 territory; VP9 stays out
+  of /findings while the discussion is open (owner, 2026-08-17). Noted, not built.
 
 ### Not in scope (named to stop creep)
 

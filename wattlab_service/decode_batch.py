@@ -145,7 +145,9 @@ def matrix(envelopes: list[dict], batch_id: str | None = None) -> dict:
     n_err = sum(1 for c in cs if c.get("error"))
     if n_err:
         notes.append(f"{n_err} cell(s) errored (✗) — shown, not hidden.")
-    return {"batch_id": batch_id, "jobs": jobs, "devices": devices,
+    labels = [e.get("batch_label") for e in envelopes if e.get("batch_label")]
+    return {"batch_id": batch_id, "label": (labels[-1] if labels else None),
+            "jobs": jobs, "devices": devices,
             "columns": [{"content": c, "codec": k, "mode": m or "headless"}
                         for c, k, m in columns],
             "cells": cellmap,

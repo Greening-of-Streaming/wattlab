@@ -4,58 +4,49 @@ stamp-decode-batch — give existing decode results a batch_id (CR-073).
 
 Campaigns queued before the /decode "campaign" toggle existed (or by an ad-hoc
 feeder) have no batch_id, so they can't collate on /decode/batch/<id>. This
-writes `batch_id` into the named results/decode/*.json files in place.
+writes `batch_id` (and, with --label, `batch_label`) into the named
+results/decode/*.json files in place — same logic as the /decode "Add to
+batch" UI (persist.stamp_batch).
 
 Idempotent and refusing by design:
-  · a file already carrying the SAME batch_id is skipped;
+  · a file already carrying the SAME batch_id is skipped (label still updated);
   · a file carrying a DIFFERENT batch_id is refused (a result belongs to one
     campaign — re-batching is an editorial decision, do it by hand);
   · unknown job ids abort before anything is written.
 Dry-run by default; pass --apply to write. Nothing else in the file changes.
 
 Usage:
-    bin/stamp-decode-batch <batch_id> <job_id> [<job_id> ...] [--apply]
+    bin/stamp-decode-batch <batch_id> <job_id> [<job_id> ...] [--label "text"] [--apply]
 """
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
 
-RESULTS_DIR = Path("/home/gos/wattlab/results") / "decode"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "wattlab_service"))
+import persist  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("batch_id")
     ap.add_argument("job_ids", nargs="+")
+    ap.add_argument("--label", default=None)
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args()
     if not re.fullmatch(r"[0-9a-f]{6,32}", a.batch_id):
         print("batch_id must be 6–32 hex chars", file=sys.stderr)
         return 2
-    plan = []
-    for jid in a.job_ids:
-        matches = sorted(RESULTS_DIR.glob(f"*_{jid}.json"))
-        if len(matches) != 1:
-            print(f"{jid}: {'no' if not matches else 'ambiguous'} result file — aborting",
-                  file=sys.stderr)
-            return 1
-        d = json.loads(matches[0].read_text())
-        cur = d.get("batch_id")
-        if cur == a.batch_id:
-            plan.append((matches[0], "skip (already stamped)"))
-        elif cur:
-            print(f"{jid}: already in batch {cur} — refusing", file=sys.stderr)
-            return 1
-        else:
-            plan.append((matches[0], "stamp"))
-    for path, action in plan:
-        print(f"{action:24s} {path.name}")
-        if a.apply and action == "stamp":
-            d = json.loads(path.read_text())
-            d["batch_id"] = a.batch_id
-            path.write_text(json.dumps(d, indent=2))
+    res = persist.stamp_batch("decode", a.batch_id, a.job_ids, label=a.label,
+                              apply=a.apply)
+    for jid, why in res["refused"].items():
+        print(f"{jid}: {why} — refusing, nothing written", file=sys.stderr)
+    if res["refused"]:
+        return 1
+    for jid in res["stamped"]:
+        print(f"{'stamp':24s} {jid}")
+    for jid in res["skipped"]:
+        print(f"{'skip (already stamped)':24s} {jid}")
     if not a.apply:
         print("dry-run — pass --apply to write")
     return 0
