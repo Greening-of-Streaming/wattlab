@@ -326,9 +326,20 @@ class WebosDevice:
         try:
             self.lg.launch_url(self.host, run["url"])
         except Exception as e:
-            log(f"{run['name']}: webOS launch failed ({e!r}) — retrying once")
-            time.sleep(5)
-            self.lg.launch_url(self.host, run["url"])
+            # SSAP 1008 / timeout here = the panel dropped into Always-Ready
+            # standby between prepare and start (lost meridian_h264 C2 row,
+            # 2026-08-17). Wake it (raw WoL) and retry for up to 40 s.
+            log(f"{run['name']}: webOS launch failed ({e!r}) — waking + retrying")
+            deadline = time.time() + 40
+            while True:
+                self.lg.wake()
+                time.sleep(4)
+                try:
+                    self.lg.launch_url(self.host, run["url"])
+                    break
+                except Exception:
+                    if time.time() > deadline:
+                        raise
 
     def provenance(self, run, results_dir):
         return {"url": run["url"], "current_app": self.lg.current_app(self.host)}

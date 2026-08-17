@@ -144,6 +144,10 @@ TEMPLATES: dict = {
 # 60-min concatenated clips so even a ~1 h window never runs out; H.265/AV1 use
 # the 20-min clips (their runs stay short). No player-side looping needed — the
 # clip is always longer than the window and bench.py stops at window_s.
+# ⚠ Clip lengths are 60:01 / 20:01 and the window starts after startup_skip_s
+# (8 s): a 3600 s / 1100 s window ends AFTER the clip → alive_at_window_end
+# False on an otherwise perfect row (2026-08-17). Caps below clamp the
+# override so the window always ends inside the clip.
 LOOP_FAMILIES = ("bbb", "meridian", "kranjska")
 LOOP_CODECS = ("h264", "h265", "av1")
 for _fam in LOOP_FAMILIES:
@@ -153,6 +157,7 @@ for _fam in LOOP_FAMILIES:
         TEMPLATES[f"loop_{_fam}_{_cod}"] = {
             "label": f"Loop — {_fam.upper()} {_cod.upper()} (tester-set duration)",
             "clips": {f"{_fam}_{_cod}_loop": _clip},
+            "max_window_s": 3540 if _cod == "h264" else 1080,
             "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
                       "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
         }
@@ -276,6 +281,8 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
     dev_cfg = rig.RIG["devices"][dev_name]
     marked = mode == "screen" and calibrate
     base_window = int(window_s) if window_s is not None else tpl["bench"]["window_s"]
+    if tpl.get("max_window_s"):
+        base_window = min(base_window, int(tpl["max_window_s"]))
     runs = []
     for run_name, clip in tpl["clips"].items():
         decoder = (tpl.get("decoder")
