@@ -60,6 +60,7 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
     operating point is stated, offer the watt-metered + attributional lens as an independent check
     on his timings, invite him onto the joint article (four software encoders × speed-dial sweep at
     matched target quality, energy per minute of output; "your sources and methodology, our meter").
+- **Report revised for outside readers** (08-17, Faultline asked for the write-up): `docs/vp9_oneoff_2026-08.md` now opens with a status + read-this-first block, §2 states every encoder's operating point and leads software-vs-software (the 15× NVENC ratio demoted to "hardware context"), §4 = what the discussion added (Thierry speed dial + AWS table read properly: HEVC 10–25 % longer wall-clock, not an energy datum; Jan's everything-at-slow reconciliation; attributional lens; Murat). LinkedIn draft dropped. Shared via the public GitHub URL, deliberately not /findings (n=1, under discussion).
 - **Standing wording rule** (from the VP9 arc): never "no VP9 hardware encode exists" — Intel QSV
   since Kaby Lake and Google Argos do; say "no hardware path on NVIDIA/AMD".
 

@@ -1,4 +1,4 @@
-# VP9 one-off — first high-level indication vs the OWL trio (2026-08-09)
+# VP9 one-off — first high-level indication vs the OWL trio (2026-08-09, revised 2026-08-17)
 
 One-off bench run prompted by the Disney+/HEVC royalty story: where does VP9 sit against
 the three codecs OWL measures (H.264, HEVC, AV1), on encode (GoS1 server) and client
@@ -8,6 +8,24 @@ the decode side. Nothing here joins OWL's standing codec set.
 
 Scope: device layer only (GoS1 server / named client devices). Network, CDN and
 production excluded. Energy, not CO₂e.
+
+**Status (2026-08-17):** working document, still under discussion — it lives in the repo
+rather than on the OWL findings page for that reason. The LinkedIn post that summarised
+the 08-09 run drew substantive comments (Thierry Fautier, Jan Ozer, Murat Pisat); §4
+records what that discussion added and what it corrects, in particular that the
+software-vs-hardware encode ratio in the original headline is a statement about NVIDIA/AMD
+silicon, not a fair codec-versus-codec comparison for software VOD. Read §4 alongside §2.
+
+**Read this first — the caveats:**
+- Encode rows are n=1, ONE operating point per encoder (stated explicitly in §2), one
+  server, one-pass ABR. Encoder speed settings dominate the result; move the dial and the
+  multiplier moves.
+- Decode rows are the realtime playback regime only, one content family, small n.
+- The software-vs-software comparison is the market-relevant one for VOD; the NVENC row is
+  context for GPU transcode pipelines.
+- Two accounting lenses now exist (see §4.3): the numbers below are *marginal* (idle
+  subtracted); an *attributional* view charges for machine occupancy and roughly doubles
+  the CPU-encode figures.
 
 ---
 
@@ -34,7 +52,22 @@ near single-thread). Bitrates = two interior rungs of the S53 h265 CPU ladder so
 compare directly against the stored S53 dataset. Artifact:
 `results/diagnostics/encode_parity_nvenc_24c_2026-08-09.json`.
 
-**Energy per minute of 1080p output (Wh/min), CPU encoders, matched target bitrates:**
+**Operating points — state them, they are the result** (all one-pass ABR, 24-core Ryzen 9
+7900, ffmpeg N-124403):
+
+| encoder | speed setting used | where that sits on its dial |
+|---|---|---|
+| libx264 (S53) | `medium` (default) | middle |
+| libx265 (S53) | `medium` (default) | middle |
+| libsvtav1 (S53) | library default (preset 10) | fast end |
+| libvpx-vp9 (this run) | `-cpu-used 2`, good deadline | slow-ish middle |
+| NVENC h264/hevc/av1 (S53) | baseline bundle | hardware, seconds per clip |
+
+So this is VP9 at a moderately slow point against x264/x265 at their middle and SVT-AV1 at
+a fast one — not "everything at slow". Jan Ozer's everything-at-slow ladder (§4.2) gives a
+very different multiplier from the same encoders, and both are right for their point.
+
+**Energy per minute of 1080p output (Wh/min), software encoders, matched target bitrates:**
 
 | encoder | Meridian 2500k | Meridian 5000k | BBB 2500k | BBB 5000k |
 |---|---|---|---|---|
@@ -42,15 +75,19 @@ compare directly against the stored S53 dataset. Artifact:
 | libx265 (S53) | 0.67 | 0.78 | 0.62 | 0.70 |
 | libx264 (S53, nearest rungs) | 0.33–0.39 | — | 0.30–0.33 | — |
 | libsvtav1 (S53, nearest rungs) | 0.35–0.38 | — | 0.39–0.46 | — |
-| *NVENC any codec (S53, context)* | *0.11–0.14* | | *0.09–0.15* | |
+| *NVENC any codec (S53, GPU-pipeline context only)* | *0.11–0.14* | | *0.09–0.15* | |
 
-**First indication:** at a like-for-like speed point, VP9 software encode cost
-**~3× libx265 and ~5–6× libx264/SVT-AV1** per minute of video on the same 24-core CPU —
-the most energy-expensive encoder of the four — and **~15× the NVENC hardware path**
-the trio actually uses in production-style pipelines. On this class of encoder
-hardware (NVIDIA/AMD GPUs) no VP9 hardware path exists to close that gap — closing it
-means different silicon (Intel Quick Sync, or YouTube-style custom ASICs), which this
-one-off did not measure.
+**First indication (software vs software):** at the operating points above, VP9 software
+encode cost **~3× libx265 and ~5–6× libx264/SVT-AV1** per minute of video on the same
+24-core CPU. That multiplier is a property of the operating points as much as of the
+codecs: with x265 and SVT-AV1 pushed to their slow settings the gap collapses to roughly
+parity in wall-clock terms (§4.2).
+
+**Hardware context, not a codec comparison:** the trio's NVENC path on this box is ~15×
+cheaper than the VP9 software rows. That ratio describes NVIDIA/AMD GPUs having no VP9
+encoder (Intel Quick Sync and YouTube-style ASICs do), so it applies to GPU transcode
+pipelines and *not* to cloud VOD, which is largely software for every codec. The original
+LinkedIn headline led with this number; it should have led with the table above.
 
 Compression efficiency at this speed point (same scorer, VMAF-NEG, same 1080p60 source,
 from the decode-clip prep sweep): VP9 needed **4048 kb/s** to hit the NEG≈93 rung that
@@ -99,37 +136,66 @@ Caveats: one content family (BBB 1080p60); realtime regime only; Pi rows are ffm
 software decode (headless — no display/compositor); GTV number is device-total wall
 power on a ~1.2 W idle box; n small throughout — first indication, not a finding.
 
-## 4. LinkedIn draft
+## 4. What the discussion added (2026-08-15 → 17)
 
-> With VP9 back in the news (Disney+ reportedly moving away from HEVC over royalties),
-> a fair question from the energy side: what would that switch actually *cost*?
-> OWL — Greening of Streaming's open, watt-metered bench for measuring the energy of
-> streaming workloads — tracks H.264, HEVC and AV1 continuously; VP9 isn't on that
-> list, so we ran a quick one-off — one server, three client devices, device layer only.
->
-> Decode first, because clients dominate fleet energy: on a retail Google TV box, all
-> four codecs (H.264, HEVC, AV1, VP9) decoded in hardware at essentially the same power —
-> within ~0.06 W of each other. Where hardware decode doesn't exist and the CPU does the
-> work (we used Raspberry Pis as a proxy), VP9 was actually the *cheapest* codec to
-> decode — and software HEVC cost ~2–2.5× software VP9. On the decode side, an
-> HEVC→VP9 move looks energy-neutral on TV silicon and mildly favourable where decoding
-> falls back to software.
->
-> Encode is the other way round — and it hinges on your silicon. NVIDIA and AMD GPUs
-> (ours included) have never shipped a VP9 hardware encoder; Intel Quick Sync has had
-> one since 2016, and YouTube runs VP9 on custom ASICs. On our NVIDIA-based bench that
-> meant VP9 fell back to software: at a matched production speed point and matched
-> bitrates it drew roughly 3× the energy of software HEVC per minute of video, and ~15×
-> the hardware-encode path the other codecs get here. Encode happens once per title;
-> decode happens millions of times — but "does my silicon have a hardware path for this
-> codec" turns out to be the bigger energy question than the codec itself.
->
-> One surprise en route: VP9 in an MP4 container stalled the TV box's playback three
-> times running; the same stream in WebM played flawlessly. Packaging details can matter
-> as much as codec choice.
->
-> Quick test, small n, realtime playback regime, energy not CO₂e — a first indication,
-> not a lab-reviewed finding. Methodology: wattlab.greeningofstreaming.org/methodology
+The LinkedIn post summarising this run (mid-August 2026) drew comments that sharpen it.
+Recorded here so the document, not the thread, is the reference.
+
+### 4.1 The speed dial (Thierry Fautier)
+
+Thierry quoted iso-VMAF compute ratios of the order HEVC ~4×, AV1 ~5×, VP9 ~20× relative
+to H.264, and asked that the distribution budget (bits saved downstream) be included.
+Reconciliation: software encoders have a speed dial; OWL ran libvpx at a production-VOD
+point (`cpu-used 2`) where it compressed x264-class and its premium bought nothing; the
+larger ratios come from slower settings that buy compression at more energy. Compute-time
+ratios and watt-metered energy are related but not the same figure. Distribution energy
+is outside this document's scope (device layer only) and is not asserted either way.
+
+Thierry also pointed to the AWS MediaConvert settings post (July 2022) whose closing table
+lists transcode durations: HEVC ~10–25 % longer than AVC (25:41 / 29:20 vs 23:25 / 23:02
+wall-clock), AV1 in ~11 min. Two readings: (a) a commercial HEVC encoder is nowhere near
+x265's slow-preset cost relative to x264 — the reference implementation and the product
+are different things, and comparisons must name which one they measured; (b) those are
+wall-clock times on a managed service (the AV1 rows finishing in half AVC's time point to
+a different backend), and at the same QVBR level the HEVC/AV1 files came out *larger* than
+AVC, so the rows are neither CPU-time nor matched-quality — they are not an energy datum.
+
+### 4.2 Everything-at-slow (Jan Ozer)
+
+Jan's objection: most VOD (and much live) is software, so comparing software VP9 with
+hardware H.264/HEVC/AV1 doesn't reflect the market. Accepted — see §2, "hardware context".
+
+His data: total per-title convex-hull ladder encode time across 14 1080p sources on an
+i9-14900, x264 slow / x265 slow / SVT-AV1 preset 3 / libvpx cpu-used 2, two-pass 200 %
+constrained VBR, top rung ~VMAF 93: **x264 1.0× · x265 8.5× · SVT-AV1 8.6× · libvpx 9.5×**.
+
+Reconciliation with §2: at everything-slow, VP9 is only ~1.1× x265 and SVT-AV1; at OWL's
+default-preset points it is 3× and 5–6×. Same curve, different point — the operating point
+matters more than the codec name. His figures are wall-clock time not energy (on a
+saturated CPU the two track closely — S53's "speed, not draw" result), and per-ladder
+rather than per-minute-of-output. The natural next step (agreed in principle with both
+commenters) is a joint piece: four software encoders each swept across their speed dial at
+matched target quality, energy per minute of output on both accounting lenses (§4.3).
+
+### 4.3 Marginal vs attributional energy (methodology v0.7)
+
+Prompted by the speed-dial exchange, `/methodology` v0.7 (2026-08-15, commit `79045ab`) now
+documents a second accounting lens. OWL's headline figures are *marginal*: idle subtracted,
+the job charged only for ΔW × Δt. An *attributional* view, (W_base + ΔW) × Δt, charges the
+job for occupying the machine — the honest lens for a dedicated encode fleet. Same
+samples, no re-measurement; parity rows now persist both. Recomputed over the S53 + VP9
+rows (nominal 79 W GoS1 idle floor): attribution ×2.1–2.7 on CPU rows; occupancy per
+minute of video NVENC ~8 s · x265 31–41 s · VP9 90–130 s; VP9-vs-NVENC-h265 ratio
+16.3× → 14.7× while the absolute gap widens 1.97 → 4.22 Wh/min (Meridian 2500k). Realtime
+decode is immune (every codec occupies the device for the same window). Ratios hold under
+either lens; slow encoders look worse in absolute terms once idle is charged.
+
+### 4.4 Client decode availability (Murat Pisat)
+
+"Apple lacks a VP9 decoder; not every smart TV has one." Apple silicon has had hardware
+VP9 decode since 2020 (YouTube 4K on tvOS 14+), narrower than its HEVC path; across the
+wider TV fleet hardware VP9 is patchy. That is §3's finding restated from the field: with a
+hardware path codec choice is an energy rounding error, without one the CPU pays ~3×.
 
 ---
 *Sources: `results/diagnostics/encode_parity_nvenc_24c_2026-08-09.json` (VP9 encode rows,
