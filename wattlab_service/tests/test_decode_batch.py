@@ -51,6 +51,7 @@ def test_parse_template_shapes():
     assert decode_batch.parse_template("upload", "uploaded clip — promo.mp4") == \
         ("upload/promo.mp4", "?")
     assert decode_batch.parse_template("weird_thing") == ("weird_thing", "?")
+    assert decode_batch.parse_template("loop_bbbiso_vp9") == ("BBB (iso-bitrate)", "VP9")
 
 
 def test_matrix_builds_device_by_content_codec():

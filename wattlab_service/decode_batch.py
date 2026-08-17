@@ -26,7 +26,9 @@ import re
 
 _TEMPLATE_RE = re.compile(r"^(?:loop_)?(?P<family>[a-z0-9]+)_(?P<codec>h264|h265|hevc|av1|vp9)(?:_|$)")
 _CODEC_LABEL = {"h264": "H.264", "h265": "HEVC", "hevc": "HEVC", "av1": "AV1", "vp9": "VP9"}
-_FAMILY_LABEL = {"bbb": "BBB", "meridian": "Meridian", "kranjska": "Kranjska"}
+_FAMILY_LABEL = {"bbb": "BBB", "meridian": "Meridian", "kranjska": "Kranjska",
+                 "bbbiso": "BBB (iso-bitrate)", "meridianiso": "Meridian (iso-bitrate)",
+                 "kranjskaiso": "Kranjska (iso-bitrate)"}
 
 
 def parse_template(template: str | None, template_label: str | None = None,

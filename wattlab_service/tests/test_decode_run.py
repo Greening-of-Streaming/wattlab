@@ -79,6 +79,13 @@ def test_loop_templates_and_window_override():
     # H.264 loops the 60-min clip (survives a 1 h window); H.265/AV1 the 20-min
     assert "60min" in list(decode_run.TEMPLATES["loop_bbb_h264"]["clips"].values())[0]
     assert "20min" in list(decode_run.TEMPLATES["loop_bbb_av1"]["clips"].values())[0]
+    # iso-bitrate family: four codecs, VP9 as WebM (MP4/vp09 stalls the GTV), 20-min clamp
+    for fam in decode_run.ISO_FAMILIES:
+        for cod in decode_run.ISO_CODECS:
+            t = decode_run.TEMPLATES[f"loop_{fam}_{cod}"]
+            assert t["max_window_s"] == 1080
+            clip = list(t["clips"].values())[0]
+            assert clip.endswith(".webm" if cod == "vp9" else ".mp4") and "20min" in clip
     # window_s override reaches the bench cfg
     p = decode_run._materialize("wj", "loop_bbb_h264", "pi5", "headless",
                                 False, window_s=42)

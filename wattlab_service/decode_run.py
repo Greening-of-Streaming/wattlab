@@ -162,6 +162,25 @@ for _fam in LOOP_FAMILIES:
                       "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
         }
 
+# Iso-BITRATE loop family (2026-08-17, VP9 re-run): per content ONE bitrate for
+# all four codecs, SOFTWARE encoders at production points, two-pass ABR, 20-min
+# loops built by concat — see /srv/data/owl/campaign_2026-08-17_vp9b/
+# iso_family_manifest.json for bitrates, VMAF at that bitrate and encoder points.
+# VP9 ships as WebM: MP4/vp09 stalls the Google TV player (2026-08-09, 3/3).
+ISO_FAMILIES = ("bbbiso", "kranjskaiso", "meridianiso")
+ISO_CODECS = ("h264", "h265", "av1", "vp9")
+for _fam in ISO_FAMILIES:
+    for _cod in ISO_CODECS:
+        _ext = "webm" if _cod == "vp9" else "mp4"
+        TEMPLATES[f"loop_{_fam}_{_cod}"] = {
+            "label": (f"Loop — {_fam[:-3].upper()} iso-bitrate {_cod.upper()} "
+                      f"(software encode, tester-set duration)"),
+            "clips": {f"{_fam}_{_cod}_loop": f"{_fam}_{_cod}_20min.{_ext}"},
+            "max_window_s": 1080,
+            "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+                      "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+        }
+
 # Screen-mode marker head (2026-07-30, Ben's design): 5 s black · 5 s white ·
 # 5 s black prepended to the CONTENT clip as one contiguous video (content
 # stream-copied — re-encoding would change the decode workload; markers are
