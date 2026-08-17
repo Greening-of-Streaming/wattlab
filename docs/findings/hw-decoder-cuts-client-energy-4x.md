@@ -15,7 +15,7 @@ source_result_ids:
   - decode/37374ca2
   - decode/bffab9f5
   - decode/596c3ee6
-related_findings: [codec-decode-energy-depends-on-silicon-and-regime]
+related_findings: [codec-decode-energy-depends-on-silicon-and-regime, stb-decode-and-play-content-over-codec]
 supersedes: null
 tags: [decode, client-device, hw-vs-sw, raspberry-pi, owl-rem-lem, protocol-v3]
 caveats:

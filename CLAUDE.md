@@ -203,6 +203,7 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S61 (08-16): overnight long-window review — mechanics + auto-off worked; **STB playback dies mid-window** (GTV H.264 stops at ~20 min — standing since 07-31; Fire TV ~5 min; GTV HEVC never renders; AV1 fine everywhere) → negative hour-long ΔWs are artefacts; valid: Bbox H.264 1 h +0.22 🟢, AV1 GTV +0.12 / Fire +0.16 / Bbox +1.35 (sw?) 🟢; C2 differential −7 W is a picture-mode confound. Fixes: logcat non-UTF-8, wake C2 in _wait_ready (7a01def). On-site GTV 20-min diagnosis pending.
 - S62 (08-16/17): STB death SOLVED live — GTV `sleep_timeout` 20 min + CEC active-source-lost `standby_now`, Fire TV `screen_off_timeout` 5 min, Just Player launches PAUSED via ADB (alive_at_window_end lied) → bench.py ensure_keep_awake + play-verify + PLAYING liveness (fec0065). 1 h H.264: GTV +0.65 W 🟢, Fire TV +0.59 W 🟢 (≈0.6 Wh/h). ERRATA: pre-fec0065 long GTV/Fire TV rows invalid. Overnight 5-device × 3 content × 3 codec campaign queued.
 - S62 (08-16 pm): marginal vs attributional energy — time was already in ΔE/Wh-per-min; the gap was idle attribution → additive second lens (W_base+ΔW)×Δt: parity rows persist `w_base` + `wh_per_min_video_attributional`, /methodology v0.7 subsection, off-repo retro over S53+VP9 (CPU rows ×2.1–2.7, NVENC-vs-VP9 gap 1.97→4.22 Wh/min, ratios hold; decode immune) `79045ab` · VP9 post: Jan Ozer's slow-preset ladder (x265 8.5×/SVT 8.6×/VP9 9.5× vs x264) reconciles with OWL's default-preset rows once the operating point is named; sw-vs-hw 15× headline conceded; joint article (Thierry+Jan) in play. →993.
+- S63 (08-17): first clean 5×3×3 decode campaign (55 rows, harness held, all screenshots show content; S62 HEVC-black claim withdrawn) — GTV/Fire TV decode-and-play 0.25–0.65 W 🟢, content > codec (≤0.1 W codec spread); Bbox H.264/HEVC inside its own idle noise, AV1 +1.2–1.4 W = software; C2 native-vs-HDMI differential is a picture-path term (parked); finding `stb-decode-and-play-content-over-codec` (DRAFT); C2 wake-on-launch-fail + loop-window clamps (bd5d7f7).
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -224,7 +225,8 @@ Canonical store is **`/findings`** (one markdown per finding under `docs/finding
 stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs:
 `abr-all-codecs-meridian-120s` · `av1-hw-sw-vmaf-tradeoff` ⭐ · `input-master-sensitivity` ·
 `llm-cold-inference-mwh-per-token` 🟡 · `rag-faithfulness-rem-question` 🟡 · `sd-turbo-cpu-image-first-run` ·
-`hw-decoder-cuts-client-energy-4x` (DRAFT) · `codec-decode-energy-depends-on-silicon-and-regime` 🟡 (DRAFT).
+`hw-decoder-cuts-client-energy-4x` (DRAFT) · `codec-decode-energy-depends-on-silicon-and-regime` 🟡 (DRAFT) ·
+`stb-decode-and-play-content-over-codec` 🟢 (DRAFT).
 Not catalogued (live on `/methodology`): French grid evolution (Eco2mix lifecycle series); CR-016 insight —
 Eco2mix `taux_co2` is combustion-only, never compare it to lifecycle means.
 

@@ -65,6 +65,49 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 63 — 2026-08-17 (morning review)
+
+**First clean 5-device × 3-content × 3-codec decode campaign: STB decode-and-play is 0.25–0.65 W and content matters more than codec; Bbox AV1 looks software; the C2 differential cannot isolate TV decode**
+
+- **Campaign** (fixed harness `fec0065`; 13 jobs 00:52 → 07:24, 55 rows; envelopes
+  `results/decode/2026-08-17_*.json`): H.264 3540 s headless on GTV / Fire TV / Bbox / C2-native for
+  BBB, Meridian, Kranjska (`64383dd8` `5b1def60` `d9710c6f`); HEVC and AV1 1100 s on all five (Pi 400
+  = software; kranjska_h265 without Pi 400) (`d507b5ad` `06ee3d06` `545c99c1` `5e2c4daa` `b6b496f7`
+  `d1be6ebe`); GTV **screen-mode** H.264 1800 s × 3 contents with the C2 panel metered (`1e56bbb9`
+  `90d7d82a` `f21e8dd8`); Bbox-only H.264 hour (`a7f8f366`).
+- **Harness held**: every adb row `playback_state_midwindow=PLAYING`, every mid-window screenshot shows
+  content (incl. GTV HEVC — the S61 "HEVC never renders / media3 #2765" claim is WITHDRAWN: that was the
+  sleeping box), traces flat across the window. Losses: C2 meridian_h264 (SSAP 1008 — panel dropped to
+  Always-Ready between prepare and start; `start()` now wakes+retries 40 s, `bd5d7f7`); Fire TV
+  `alive_at_window_end=False` on 1100 s rows = the 20:01 clip ending ~20 s before window+skip, power
+  flat to the last bin (loop windows now clamped to 3540/1080 s, same commit).
+- **GTV / Fire TV ΔW (all 🟢, n = 1100–3540):**
+
+  | ΔW (W) | BBB h264/hevc/av1 | Meridian | Kranjska |
+  |---|---|---|---|
+  | GTV | 0.60 / 0.64 / 0.60 | 0.38 / 0.26 / 0.32 | 0.25 / 0.36 / 0.34 |
+  | Fire TV | 0.59 / 0.44 / 0.52 | (−0.19 ✗) / 0.31 / 0.28 | 0.40 / 0.44 / 0.46 |
+
+  BBB (bright, high-motion animation) ≈ 0.6 W; live-action 0.25–0.45 W. Codec spread within a content
+  ≤ 0.1 W on both boxes — July's "codec is nearly free on decode silicon", now on long windows with
+  tight CIs. GTV BBB H.264 replicated 3× (0.65 / 0.60 / 0.52 screen-mode). Fire TV meridian_h264 is a
+  bad baseline (1.56 W incl. an autoplay burst) — repeat, don't use.
+- **Bbox (operator CPE)**: baseline drifts 6.3–6.8 W (live-TV UI in the background) → its H.264/HEVC
+  ΔW is −0.6…+0.2 depending on where the baseline caught it — **inside its own idle noise even over an
+  hour**; the honest Bbox statement is device-total while playing (~6.5 W vs GTV ~2.0 W). But **AV1 is a
+  robust +1.2–1.4 W on all three contents** (no MTK AV1 decoder in logcat, ~6× its H.264 delta) → strong
+  evidence the Bbox decodes AV1 in software.
+- **C2 native vs panel-showing-GTV (same content)**: BBB 66.3 W native vs 74.7 W HDMI (−8.4); Kranjska
+  51.0 vs 54.0 (−3.0); Meridian panel 30.3 W (native row lost). The panel draws LESS running its own
+  browser than showing the same clip over HDMI, and content moves it by 45 W → the differential is a
+  picture-path term, not decode. **TV decode cannot be isolated this way**; report native playback as
+  all-in, content-stated. Parked (would need identical picture path on both arms).
+- **Pi 400 software** replicated at 1100 s: HEVC 2.5–2.9 W > AV1 1.75–1.9 W (July ordering).
+- **Idle auto-off** did not fire by 10:17 (last job 07:24 → due ~11:20) — as designed.
+- Finding drafted: `stb-decode-and-play-content-over-codec` (see /findings). Tests 1007.
+
+---
+
 ## Session 62 — 2026-08-16/17 (evening + overnight)
 
 **The STB "mid-window death" solved live: three sleep mechanisms + a paused player. GTV/Fire TV decode = ~+0.6 W sustained, 🟢. Earlier long-window GTV/Fire TV rows are INVALID.**
@@ -86,7 +129,8 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
   4. **Just Player launched via ADB VIEW intent can come up PAUSED** at a remembered position (both
      boxes tonight; GTV at 00:02, Fire TV at 19:31) — and `still_running()` only checked that a media
      session existed, so **`alive_at_window_end` lied** on paused/errored rows.
-  5. GTV HEVC black = known media3 #2765 (`c2.mtk.hevc.decoder` allocates, no frames, no error).
+  5. ~~GTV HEVC black = known media3 #2765~~ — WITHDRAWN in S63: GTV HEVC rendered fine once the
+     box stayed awake (0.64 W, screenshot shows content); the S61 black HEVC was the sleeping box.
 - **Fixes**: device settings on both boxes (`sleep_timeout -1`, `screen_off_timeout` max, GTV CEC
   active-source-lost `none`) — pinned idempotently by `AdbDevice.ensure_keep_awake()` in prepare and
   recorded in provenance (`keep_awake`) so a reset/firmware revert is visible in the row; `start()`
