@@ -105,6 +105,13 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 - **Pi 400 software** replicated at 1100 s: HEVC 2.5–2.9 W > AV1 1.75–1.9 W (July ordering).
 - **Idle auto-off** did not fire by 10:17 (last job 07:24 → due ~11:20) — as designed.
 - Finding drafted: `stb-decode-and-play-content-over-codec` (see /findings). Tests 1007.
+- **Later same day**: WattLab-team email drafted (TL;DR + marginal/attributional + the STB debacle/fix
+  + campaign result and caveats). Public pointers for the campaign: `/decode?job=<id>` result cards
+  (ids above; `/decode` Recent-runs table lists the night) · raw JSON via the finding-source carve-out
+  `/findings/source/decode/<id>/download.json` · LEM csv `/decode/result/<id>/lem.csv` — all Anonymous-
+  tier. Memory note `overnight_campaign_2026-08-17` rewritten to the reviewed outcome.
+- **Open**: repeat Fire TV meridian_h264 (bad baseline); decide whether "Bbox decodes AV1 in software"
+  becomes an operator-CPE finding; lab review of the DRAFT finding.
 
 ---
 
