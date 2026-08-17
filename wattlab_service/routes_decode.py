@@ -77,21 +77,50 @@ async def decode_page(request: Request):
 
 @router.get("/decode/runs.json",
             dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def decode_recent_runs(limit: int = 25):
+async def decode_recent_runs(limit: int = 25, offset: int = 0, q: str = ""):
     """Compact recent-runs list for the page (and the guided tour): headline
-    ΔW per device row, mode, template, batch_id — newest first. Default 25
-    (was 8: a 13-job campaign scrolled straight off, 2026-08-17)."""
+    ΔW per device row, mode, template, batch_id/label — newest first. Default
+    25 per page (was 8: a 13-job campaign scrolled straight off, 2026-08-17);
+    `offset` pages older; `q` filters (case-insensitive substring over
+    template, label, batch label, job id, device names, upload name) BEFORE
+    paging so "vp9" finds the Aug-09 rows on page 1. Returns total + paging."""
     import json as _json
     out = []
+    limit = max(1, min(int(limit), 25))
+    offset = max(0, int(offset or 0))
+    needle = (q or "").strip().lower()
     res_dir = persist.RESULTS_DIR / "decode"
+    total = 0
     if res_dir.exists():
         files = sorted(res_dir.glob("*.json"),
                        key=lambda p: p.stat().st_mtime, reverse=True)
-        for f in files[:max(1, min(int(limit), 25))]:
+        matched = []
+        for f in files:
+            if not needle:
+                matched.append((f, None))
+                continue
             try:
                 d = _json.loads(f.read_text())
             except Exception:
                 continue
+            runs = [r for r in (d.get("runs") or []) if isinstance(r, dict)]
+            hay = " ".join(str(x) for x in (
+                d.get("template"), d.get("template_label"), d.get("batch_label"),
+                d.get("batch_id"), d.get("job_id"), d.get("mode"),
+                # device may be a name (ui runs) or a dict (imported panels)
+                " ".join(str(r.get("device") or "") for r in runs),
+                " ".join(str(r.get("url_or_cmd") or r.get("name") or "") for r in runs[:3]),
+                str(d.get("device") or ""),          # decode_panel: top-level device{}
+            ) if x).lower()
+            if needle in hay:
+                matched.append((f, d))
+        total = len(matched)
+        for f, d in matched[offset:offset + limit]:
+            if d is None:
+                try:
+                    d = _json.loads(f.read_text())
+                except Exception:
+                    continue
             rows = [{"device": r.get("device"), "run": r.get("run"),
                      "delta_w": r.get("delta_w"),
                      "flag": (r.get("confidence") or {}).get("flag"),
@@ -101,13 +130,14 @@ async def decode_recent_runs(limit: int = 25):
             out.append({"job_id": d.get("job_id"),
                         "saved_at": d.get("saved_at"),
                         "batch_id": d.get("batch_id"),
+                        "batch_label": d.get("batch_label"),
                         "mode": d.get("mode"),
                         "label": d.get("template_label") or d.get("recipe")
                                  or d.get("mode"),
                         "protocol_version":
                             (d.get("protocol") or {}).get("protocol_version"),
                         "rows": rows})
-    return {"runs": out}
+    return {"runs": out, "total": total, "offset": offset, "limit": limit, "q": needle}
 
 
 @router.post("/decode/run", dependencies=[Depends(requires(RIG_CONTROL))])
@@ -321,7 +351,7 @@ async def decode_batch_stamp(batch_id: str, payload: dict):
     p = payload or {}
     # job ids are 8-hex from the queue, but imported panels use e.g. dec0de04 —
     # accept the safe filename charset; persist.stamp_batch globs *_{id}.json
-    job_ids = [str(j) for j in (p.get("job_ids") or []) if re.fullmatch(r"[A-Za-z0-9_-]{3,40}", str(j))]
+    job_ids = [str(j) for j in (p.get("job_ids") or []) if re.fullmatch(r"[A-Za-z0-9_-]{2,40}", str(j))]
     label = p.get("label")
     if label is not None:
         label = str(label).strip()[:80] or None
@@ -332,6 +362,24 @@ async def decode_batch_stamp(batch_id: str, payload: dict):
         if not job_ids:
             return JSONResponse({"error": "unknown batch"}, status_code=404)
     res = persist.stamp_batch("decode", batch_id, job_ids, label=label, apply=True)
+    if res["refused"]:
+        return JSONResponse({"error": "refused", "refused": res["refused"]}, status_code=409)
+    return {"ok": True, "batch_id": batch_id, **res}
+
+
+@router.post("/decode/batch/{batch_id}/unstamp",
+             dependencies=[Depends(requires(RIG_CONTROL))])
+async def decode_batch_unstamp(batch_id: str, payload: dict):
+    """Lab: remove results from THIS batch (clears batch_id + label on those
+    files). Refuses (409) if any id is elsewhere; nothing written then.
+    Removing the last job dissolves the batch — there is no separate object."""
+    if not _BATCH_ID_RE.match(batch_id or ""):
+        return JSONResponse({"error": "bad batch id"}, status_code=400)
+    job_ids = [str(j) for j in ((payload or {}).get("job_ids") or [])
+               if re.fullmatch(r"[A-Za-z0-9_-]{2,40}", str(j))]
+    if not job_ids:
+        return JSONResponse({"error": "no job ids"}, status_code=400)
+    res = persist.unstamp_batch("decode", batch_id, job_ids)
     if res["refused"]:
         return JSONResponse({"error": "refused", "refused": res["refused"]}, status_code=409)
     return {"ok": True, "batch_id": batch_id, **res}
@@ -368,16 +416,18 @@ async def decode_batch_page(request: Request, batch_id: str):
     m, err = _batch_or_404(batch_id)
     if err:
         return HTMLResponse(f"<h1>{err.body.decode()}</h1>", status_code=err.status_code)
-    body = _batch_html(m)
+    is_lab = can(audience.tier(request), RIG_CONTROL)
+    body = _batch_html(m, is_lab=is_lab)
     return ui.render_page(request, f"Decode campaign {m.get('label') or batch_id[:8]}",
-                          styles=_STYLES + _BATCH_STYLES, body=body)
+                          styles=_STYLES + _BATCH_STYLES, body=body,
+                          tail=(_BATCH_JS if is_lab else ""))
 
 
 def _fmt_w(v):
     return "—" if v is None else f"{v:+.2f}"
 
 
-def _batch_html(m: dict) -> str:
+def _batch_html(m: dict, is_lab: bool = False) -> str:
     from html import escape as _e
     cols = m["columns"]
     date0, date1 = (m.get("date_range") or [None, None])
@@ -453,15 +503,45 @@ def _batch_html(m: dict) -> str:
               '📷 mid-window screenshot stored). Hover for CI, n, baseline, window, job. '
               'Click a cell for the full result card.</div>')
     notes = "".join(f'<div class="rig-note">⚠ {_e(n)}</div>' for n in m.get("notes") or [])
-    jobs = ('<details><summary class="rig-note">Jobs in this batch</summary><ul class="bt-jobs">'
+    rm = (lambda jid: (f' <button class="rig-btn warn bt-rm" data-job="{_e(jid)}" '
+                       f'title="remove this run from the campaign (the result itself is kept)">'
+                       f'remove</button>') if is_lab else "")
+    jobs = ('<details' + (' open' if is_lab else '') + '><summary class="rig-note">Jobs in this batch'
+            + (' — <span class="rig-detail">Lab: remove a run from the campaign; removing the last one '
+               'dissolves it</span>' if is_lab else '') + '</summary>'
+            + f'<ul class="bt-jobs" data-batch="{_e(m["batch_id"])}">'
             + "".join(f'<li><a href="/decode?job={_e(j["job_id"])}">{_e(j["job_id"])}</a> · '
                       f'{_e(j.get("template_label") or j.get("template") or "")} · '
                       f'{_e((j.get("mode") or "").replace("ui_", ""))} · '
                       f'{j.get("window_s") or "?"} s · {dfmt(j.get("saved_at"))} · '
-                      f'<a href="/decode/result/{_e(j["job_id"])}/lem.csv">LEM csv</a></li>'
-                      for j in m["jobs"]) + '</ul></details>')
+                      f'<a href="/decode/result/{_e(j["job_id"])}/lem.csv">LEM csv</a>'
+                      f'{rm(j["job_id"])}</li>'
+                      for j in m["jobs"]) + '</ul></details>'
+            + ('<div id="bt-rm-msg" class="rig-detail"></div>' if is_lab else ""))
     return f'<div class="rig-wrap">{head}{table}{legend}{notes}{jobs}</div>'
 
+
+_BATCH_JS = """
+<script>
+// CR-073 curation: remove one run from this campaign (Lab). Server refuses
+// anything not in THIS batch; the page reloads to reflect the new matrix.
+document.querySelectorAll('.bt-rm').forEach(function(b) {
+  b.addEventListener('click', async function() {
+    var bid = document.querySelector('.bt-jobs').getAttribute('data-batch');
+    var jid = b.getAttribute('data-job');
+    if (!confirm('Remove run ' + jid + ' from this campaign? (the result file stays; only the campaign link is cleared)')) return;
+    var msg = document.getElementById('bt-rm-msg');
+    try {
+      var r = await fetch('/decode/batch/' + bid + '/unstamp', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({job_ids:[jid]})});
+      var j = await r.json();
+      if (!r.ok) { msg.textContent = 'refused: ' + (j.refused ? JSON.stringify(j.refused) : (j.error || r.status)); return; }
+      location.reload();
+    } catch (e) { msg.textContent = String(e); }
+  });
+});
+</script>
+"""
 
 _BATCH_STYLES = """
 .bt { border-collapse: collapse; font-size: 0.82rem; margin: 0.6rem 0; }
@@ -772,6 +852,11 @@ _BODY = """
       label <input type="text" id="batch-label" placeholder="e.g. Overnight 5×3×3, 2026-08-17" style="width:16rem">
       <button class="rig-btn" onclick="addToBatch()">Add to campaign</button>
       <span id="batch-msg" class="rig-detail"></span>
+    </div>
+    <div class="rig-note" style="margin:0 0 0.3rem 0;display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
+      <input type="search" id="runs-q" placeholder="filter — e.g. vp9, kranjska, firestick, a batch label"
+             style="width:22rem" oninput="runsFilterChanged()">
+      <span id="runs-pager" class="rig-detail"></span>
     </div>
     <div id="recent-runs" class="rig-note" style="margin-top:0.2rem">loading…</div>
   </div>
@@ -1170,13 +1255,30 @@ function campaignChanged() {
   } else { el.textContent = ''; CAMPAIGN_ID = null; }
 }
 
+var RUNS_OFFSET = 0, RUNS_Q = '', RUNS_T = null;
+function runsFilterChanged() {
+  clearTimeout(RUNS_T);
+  RUNS_T = setTimeout(function() {
+    RUNS_Q = document.getElementById('runs-q').value.trim();
+    RUNS_OFFSET = 0; loadRecent();
+  }, 250);
+}
+function runsPage(delta) { RUNS_OFFSET = Math.max(0, RUNS_OFFSET + delta); loadRecent(); }
+
 async function loadRecent() {
   try {
-    var r = await fetch('/decode/runs.json');
+    var r = await fetch('/decode/runs.json?limit=25&offset=' + RUNS_OFFSET
+                        + '&q=' + encodeURIComponent(RUNS_Q));
     if (!r.ok) return;
     var j = await r.json();
     var el = document.getElementById('recent-runs');
-    if (!j.runs.length) { el.textContent = 'no runs yet'; return; }
+    var pager = document.getElementById('runs-pager');
+    var from = j.total ? j.offset + 1 : 0, to = Math.min(j.offset + j.limit, j.total);
+    pager.innerHTML = (j.total ? from + '–' + to + ' of ' + j.total : '0')
+      + (RUNS_Q ? ' matching “' + RUNS_Q.replace(/</g, '&lt;') + '”' : '')
+      + (j.offset > 0 ? ' · <a href="#" onclick="runsPage(-25);return false" style="color:var(--accent)">← newer</a>' : '')
+      + (to < j.total ? ' · <a href="#" onclick="runsPage(25);return false" style="color:var(--accent)">older →</a>' : '');
+    if (!j.runs.length) { el.textContent = RUNS_Q ? 'no runs match' : 'no runs yet'; return; }
     var h = '<table class="rig-rows">';
     for (var i = 0; i < j.runs.length; i++) {
       var run = j.runs[i];
@@ -1185,9 +1287,13 @@ async function loadRecent() {
         return (DEV_LABELS[x.device] || x.device || '') + ' ' + fmtDW(x.delta_w)
              + ' ' + (x.flag || '');
       }).join(' · ');
+      var bl = run.batch_label || '';
       var batch = run.batch_id
         ? ' <a href="/decode/batch/' + run.batch_id + '" class="rig-badge" title="campaign '
-          + run.batch_id + '" style="color:var(--accent);text-decoration:none">⊞ ' + run.batch_id.slice(0, 6) + '</a>'
+          + (bl ? bl.replace(/"/g, '&quot;') + ' · ' : '') + run.batch_id
+          + '" style="color:var(--accent);text-decoration:none">⊞ '
+          + (bl ? (bl.length > 26 ? bl.slice(0, 24) + '…' : bl).replace(/</g, '&lt;')
+                : run.batch_id.slice(0, 6)) + '</a>'
         : '';
       var tick = IS_LAB
         ? '<input type="checkbox" class="batch-pick" value="' + run.job_id + '" '

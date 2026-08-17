@@ -287,3 +287,66 @@ def test_stamp_route_lab_only_labels_and_refuses(_batch_on_disk, tmp_path):
     assert client.post("/decode/batch/ZZ/stamp", json={"job_ids": ["solo"]}, headers=_LAB).status_code == 400
     assert client.post(f"/decode/batch/{bid}/stamp", json={}, headers=_LAB).status_code == 400
     assert client.post("/decode/batch/abcdef012345/stamp", json={"label": "x"}, headers=_LAB).status_code == 404
+
+
+# --- paging / filter / label badge / remove ------------------------------
+
+@pytest.fixture
+def _many_on_disk(tmp_path, monkeypatch):
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    d = tmp_path / "decode"; d.mkdir()
+    import os, time
+    for i in range(30):
+        tpl = "upload" if i < 3 else "loop_bbb_h264"
+        e = _env(f"j{i:02d}", tpl, [_row("gtv", 0.1 * i)],
+                 batch_id=("abc123def456" if i % 2 == 0 else None),
+                 saved_at=f"2026-08-{1 + i // 10:02d}T{i % 24:02d}:00:00")
+        if tpl == "upload":
+            e["template_label"] = "uploaded clip — vp9_bbb_120s.webm"
+        if i % 2 == 0:
+            e["batch_label"] = "Big night"
+        p = d / f"2026-08-{1 + i // 10:02d}_j{i:02d}.json"
+        p.write_text(json.dumps(e))
+        os.utime(p, (1_700_000_000 + i, 1_700_000_000 + i))     # mtime order = i
+    return d
+
+
+def test_runs_json_pages_and_filters(_many_on_disk):
+    j = client.get("/decode/runs.json", headers=_LAB).json()
+    assert j["total"] == 30 and len(j["runs"]) == 25 and j["offset"] == 0
+    assert j["runs"][0]["job_id"] == "j29"                       # newest first
+    assert j["runs"][0]["batch_label"] is None and j["runs"][1]["batch_label"] == "Big night"
+    j2 = client.get("/decode/runs.json?offset=25", headers=_LAB).json()
+    assert [r["job_id"] for r in j2["runs"]] == ["j04", "j03", "j02", "j01", "j00"]
+    q = client.get("/decode/runs.json?q=VP9", headers=_LAB).json()   # case-insensitive
+    assert q["total"] == 3 and {r["job_id"] for r in q["runs"]} == {"j00", "j01", "j02"}
+    q2 = client.get("/decode/runs.json?q=big%20night", headers=_LAB).json()
+    assert q2["total"] == 15
+    assert client.get("/decode/runs.json?limit=999", headers=_LAB).json()["limit"] == 25
+
+
+def test_unstamp_removes_only_from_this_batch(_batch_on_disk, tmp_path):
+    bid = _batch_on_disk
+    d = tmp_path / "decode"
+    (d / "2026-08-17_other.json").write_text(json.dumps(_env("other", "loop_bbb_h265",
+                                                              [_row("gtv", 0.3)], batch_id="ffffff")))
+    assert client.post(f"/decode/batch/{bid}/unstamp", json={"job_ids": ["j1"]},
+                       headers=_ANON).status_code == 403
+    r = client.post(f"/decode/batch/{bid}/unstamp", json={"job_ids": ["j1", "other"]}, headers=_LAB)
+    assert r.status_code == 409 and r.json()["refused"] == {"other": "in batch ffffff"}
+    assert json.loads((d / "2026-08-17_j1.json").read_text())["batch_id"] == bid   # nothing written
+    r = client.post(f"/decode/batch/{bid}/unstamp", json={"job_ids": ["j1"]}, headers=_LAB)
+    assert r.status_code == 200 and r.json()["removed"] == ["j1"]
+    f = json.loads((d / "2026-08-17_j1.json").read_text())
+    assert "batch_id" not in f and "batch_label" not in f
+    assert len(client.get(f"/decode/batch/{bid}.json", headers=_ANON).json()["jobs"]) == 1
+    # removing the last job dissolves the batch
+    assert client.post(f"/decode/batch/{bid}/unstamp", json={"job_ids": ["j2"]}, headers=_LAB).status_code == 200
+    assert client.get(f"/decode/batch/{bid}", headers=_ANON).status_code == 404
+    assert client.post(f"/decode/batch/{bid}/unstamp", json={}, headers=_LAB).status_code == 400
+
+
+def test_batch_page_remove_buttons_lab_only(_batch_on_disk):
+    bid = _batch_on_disk
+    assert 'bt-rm' in client.get(f"/decode/batch/{bid}", headers=_LAB).text
+    assert 'bt-rm' not in client.get(f"/decode/batch/{bid}", headers=_ANON).text

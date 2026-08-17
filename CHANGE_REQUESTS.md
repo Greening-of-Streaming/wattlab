@@ -879,6 +879,13 @@ files, no time-series/joins/concurrency need). Do the cheap gating pre-work (`en
   existing campaign and/or set a **label** (`batch_label`, stored ON the envelopes — no sidecar);
   `persist.list_batches` + `persist.stamp_batch` (the one implementation behind the route and
   `bin/stamp-decode-batch --label`). Batch page/title show the label. Tests 1024 (+3).
+- **Curation follow-up (same evening):** Recent runs gained a server-side **filter** (`?q=`, substring
+  over template/label/batch label/job id/devices/upload name — "vp9" finds the Aug-09 rows on page 1)
+  and **older/newer paging** (`?offset=`, 25 per page, total shown) instead of a longer list; the batch
+  badge shows the **label** (clipped, full on hover); **remove from campaign** on the batch page (Lab,
+  `POST /decode/batch/{id}/unstamp`, `persist.unstamp_batch`) clears batch_id+label on those files only
+  if they are in THIS batch (409 otherwise, nothing written); removing the last job dissolves the batch.
+  Tests 1027 (+3).
 - **Cross-type collections (VP9 = video encodes + decode rows on one page) are NOT this CR** — a
   per-type renderer + a type-spanning collection is findings-embed / CR-004 territory; VP9 stays out
   of /findings while the discussion is open (owner, 2026-08-17). Noted, not built.

@@ -444,6 +444,37 @@ def stamp_batch(job_type: str, batch_id: str, job_ids: list,
     return {"stamped": stamped, "skipped": skipped, "refused": {}}
 
 
+def unstamp_batch(job_type: str, batch_id: str, job_ids: list) -> dict:
+    """Remove results FROM this batch (CR-073 curation): clears batch_id +
+    batch_label on each named file that is currently in `batch_id`. Refuses
+    (nothing written) if any id is unknown or belongs to a different batch —
+    you can only remove from the batch you are looking at."""
+    out_dir = RESULTS_DIR / job_type
+    plan, refused = [], {}
+    for jid in job_ids:
+        matches = sorted(out_dir.glob(f"*_{jid}.json")) if out_dir.exists() else []
+        if len(matches) != 1:
+            refused[jid] = "no result file" if not matches else "ambiguous id"
+            continue
+        try:
+            d = json.loads(matches[0].read_text())
+        except Exception:
+            refused[jid] = "unreadable"
+            continue
+        if d.get("batch_id") != batch_id:
+            refused[jid] = (f"in batch {d.get('batch_id')}" if d.get("batch_id")
+                            else "not in any batch")
+            continue
+        plan.append((jid, matches[0], d))
+    if refused:
+        return {"removed": [], "refused": refused}
+    for jid, path, d in plan:
+        d.pop("batch_id", None)
+        d.pop("batch_label", None)
+        path.write_text(json.dumps(d, indent=2))
+    return {"removed": [jid for jid, _, _ in plan], "refused": {}}
+
+
 def rem_batch_csv(batch_id: str) -> str:
     """Combined energy CSV for every stored rem result sharing `batch_id`, one
     row per file (sorted by saved_at). 'Live': returns only completed rows if

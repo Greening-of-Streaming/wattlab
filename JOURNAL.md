@@ -100,6 +100,10 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
   `persist.stamp_batch` shared by route and CLI (`--label`). Last night's batch labelled through the
   route. **VP9 on one page = cross-type collection (video encodes + decode rows) — not built, not a
   finding yet (owner: still in discussion); written into CR-073 as out of scope.** Tests **1024**.
+- **Curation pass (evening, owner):** Recent-runs filter (`?q=`) + older/newer paging (`?offset=`, 25/page)
+  rather than a longer list; label in the batch badge; **remove from campaign** on the batch page (Lab;
+  refuses anything not in this batch; last removal dissolves it). `vp9` filter → the 11 Aug-09/10 VP9
+  decode runs on page 1 for the owner to batch from the UI. Tests **1027**.
 - **Not in scope (named):** DB migration; findings-embed of a batch table; cross-type collections;
   `/benchmark` unification; campaign scheduler; REM/OWL merge.
 
