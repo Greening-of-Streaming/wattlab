@@ -242,6 +242,19 @@ CR-015. One-shot script, designed to be invoked by `systemd/owl-maintenance-watc
 - **The watchdog only writes when it actually fires.** The journal stays quiet during normal operation; expect a single line per stage-off event.
 - **Disable temporarily.** `sudo systemctl stop owl-maintenance-watchdog.timer` — useful if the timer fires mid-test and you want to debug without the rug pulled.
 
+## stamp-decode-batch — give existing decode results a campaign id (CR-073)
+
+```bash
+~/wattlab/bin/stamp-decode-batch <batch_id> <job_id> [<job_id> …]          # dry-run
+~/wattlab/bin/stamp-decode-batch <batch_id> <job_id> [<job_id> …] --apply
+```
+
+Writes `batch_id` into the named `results/decode/*.json` so they collate on
+`/decode/batch/<batch_id>` (page · `.json` · `.csv`). Idempotent (same id → skip); refuses a
+file already in a *different* batch and aborts on unknown ids before writing anything. New
+campaigns don't need this — tick **campaign** on `/decode` (or pass `batch_id` to
+`POST /decode/run`). Used once for the 2026-08-16/17 campaign → `aae11481804e`.
+
 ## import-decode-bench-results — client decode panels → OWL envelopes
 
 Convert the decode-bench rig's raw row JSON (Google TV / Raspberry Pi 5 / Pi 400,

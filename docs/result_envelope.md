@@ -22,6 +22,8 @@ Every result JSON under `results/{type}/{date}_{job_id}.json` carries:
 | field | source | notes |
 |---|---|---|
 | `job_id`, `saved_at` | `persist.save_result` | |
+| `envelope_version` | `persist.save_result` | **1** since 2026-08-17 (CR-031 §1 pre-work / CR-073); absent on disk = 0. Bump on any shape change and note it here. v1 = decode raw samples single-stored in `runs[]`; `batch_id` field. |
+| `batch_id` | the runner (`rem`, `decode`) | optional group id — several jobs queued as one campaign; collate via `persist.list_batch` (`/prepare-rem/csv/batch/{id}`, `/decode/batch/{id}`). None/absent = solo. |
 | `mode` | the runner | dispatch key — see inventory below |
 | `version`, `build` | `persist` ← `version.py` | build stamp |
 | `gpu_hardware` | `persist` ← `gpu.BACKEND` | CR-060 |
@@ -102,11 +104,17 @@ the inline `renderResultHtml`/`renderCompareHtml`; `wl-result.js` also maps
 `enhance → wlRenderEnhanceCard` in the `wlExpandPrevRow` registry for
 cross-page embeds (findings, /demo's pinned Video-Enhancement step).
 
-### `decode` (writer: `bin/import-decode-bench-results` — external import, NOT the job queue)
+### `decode` (writers: `decode_run.run_decode_job` via the queue — `ui_headless`/`ui_screen`; `bin/import-decode-bench-results` — external import `decode_panel`)
 
 | mode | shape | summariser | JS renderer |
 |---|---|---|---|
+| `ui_headless` / `ui_screen` | `template, template_label, calibrate, batch_id?, devices{name: {label, kind, meter{}, rows[scalars only since v1], display_caveat?, log_tail?}}, runs[{...row, device}], protocol{harness, launched_from, parallel, window_s (actually run), pacing, marker_head?, protocol_version, cadence_s, …}` — each `runs[]` row: `w_base, w_task, delta_w, window_s, n_base, n_task, confidence{}, provenance{decoders_allocated, screenshot, playback_state_midwindow, play_presses_after_launch, keep_awake}, alive_at_window_end, context_* (screen mode), raw_baseline_w/t[], raw_task_w/t[], raw_context_*[], idle_guard, error?/error_where?` | `_sum_decode_panel` (fallback) | `/decode` inline `renderJob`; `wlRenderDecodeCard` (findings) |
 | `decode_panel` | `device{}, power_hardware{}, protocol{}, runs[{name, codec, decode_path: sw\|hw, regime: realtime\|full_speed, content, player, energy{}}], discarded[]?, measured_on, report` | `_sum_decode_panel` | `wlRenderDecodeCard` |
+
+**v0 → v1 (2026-08-17):** pre-v1 `ui_*` files carry the raw sample arrays twice (`devices[].rows`
+AND `runs[]`); v1 stores them once in `runs[]`. Readers (`lem.csv`, `decode_batch`) read `runs[]`
+first and fall back to `devices[].rows`. Pre-v1 `protocol.window_s` is the template default (150) —
+read `runs[].window_s` for the window actually run. Campaign collation: `decode_batch.matrix`.
 
 Client-device decode-energy panels from the decode-bench rig (Google TV `dec0de06`,
 Raspberry Pi 5 `dec0de05`, Pi 400 `dec0de04` — 2026-07-28/29; harness

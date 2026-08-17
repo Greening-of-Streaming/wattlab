@@ -65,6 +65,37 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 64 — 2026-08-17 (afternoon)
+
+**CR-073 · Decode campaigns = batches — one public URL per campaign, no new store; DB stays a CR-031 §1 decision**
+
+- **Question (owner):** the 13-job campaign had no reader-facing collation (chat only), `/decode` listed
+  8 runs, and "is it time for a real DB?" — with an explicit brake on scope creep. **Engineering answer:**
+  the pain is presentation, not querying (326 MB, glob+parse ≈ 0.1 s over all 252 decode files, no
+  time-series/joins/concurrency need); OWL already had a "group of jobs" concept twice (REM `batch_id`
+  + scan, `/benchmark` manifests) → **reuse `batch_id`**, public-by-link, do CR-031 §1's cheap gating
+  pre-work (`envelope_version`) now, keep the DB decision open on its own criterion. Options A (one-off,
+  the abandoned `campaign_summary.py` pattern) and C (DB now) written down and rejected in the CR.
+- **Shipped:** `decode_batch.py` (pure collator: device × content×codec[, screen] matrix, ΔW/CI/flag/n,
+  liveness proofs ▶📷, repeats stacked n>1, errors ✗ never dropped, disclosure notes) ·
+  `GET /decode/batch/{id}` + `.json` + `.csv` (Anonymous tier — Lab-measured group published by id) ·
+  `POST /decode/run` `batch_id` + `/decode` **campaign** toggle (mints one id per session, shows the
+  link) · Recent runs default 25 with batch badge, dead `/results/decode/…/download.json` link removed
+  (decode not in that allow-list) · `persist.list_batch` (REM csv now uses it) · **`envelope_version: 1`**
+  stamped by `save_result` (absent = 0) · decode envelopes single-store raw samples in `runs[]` (files
+  were 2×; readers tolerate both eras) · `protocol.window_s` = window actually run · `bin/stamp-decode-batch`
+  (idempotent, refusing backfill). Tests **1021** (+14, `tests/test_decode_batch.py`).
+- **Backfilled last night:** `/decode/batch/aae11481804e` — 14 jobs (campaign + reference hour
+  `2c793c73`), 48 cells, 2 ✗ (C2 meridian_h264 SSAP; the Bbox play-verify race, both explained in
+  S62/S63); GTV BBB H.264 shows n=2 (+0.65 / +0.60). Matrix text-dump matches the S63 table exactly.
+  The invalid 08-15 night deliberately NOT collated (errata). Docs: CR-073 (shipped), CR-031 §1
+  pre-work marked DONE + "first consumer of any future index = `list_batch`", `docs/result_envelope.md`
+  (v0→v1, `batch_id`, `ui_*` decode shape documented at last), `bin/README.md`.
+- **Not in scope (named):** DB migration; findings-embed of a batch table; `/benchmark` unification;
+  campaign scheduler; REM/OWL merge.
+
+---
+
 ## Session 63 — 2026-08-17 (morning review)
 
 **First clean 5-device × 3-content × 3-codec decode campaign: STB decode-and-play is 0.25–0.65 W and content matters more than codec; Bbox AV1 looks software; the C2 differential cannot isolate TV decode**

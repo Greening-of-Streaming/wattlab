@@ -12,6 +12,7 @@ tiles stack single-column on a phone. All rig state/IO lives in rig.py —
 this module is routes + HTML only.
 """
 import datetime
+import re
 import time
 import uuid
 from pathlib import Path
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 import audience
+import decode_batch
 import decode_run
 import persist
 import queue_control
@@ -75,9 +77,10 @@ async def decode_page(request: Request):
 
 @router.get("/decode/runs.json",
             dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
-async def decode_recent_runs(limit: int = 8):
+async def decode_recent_runs(limit: int = 25):
     """Compact recent-runs list for the page (and the guided tour): headline
-    ΔW per device row, mode, template — newest first."""
+    ΔW per device row, mode, template, batch_id — newest first. Default 25
+    (was 8: a 13-job campaign scrolled straight off, 2026-08-17)."""
     import json as _json
     out = []
     res_dir = persist.RESULTS_DIR / "decode"
@@ -97,6 +100,7 @@ async def decode_recent_runs(limit: int = 8):
                     if isinstance(r, dict) and "delta_w" in r]
             out.append({"job_id": d.get("job_id"),
                         "saved_at": d.get("saved_at"),
+                        "batch_id": d.get("batch_id"),
                         "mode": d.get("mode"),
                         "label": d.get("template_label") or d.get("recipe")
                                  or d.get("mode"),
@@ -160,6 +164,12 @@ async def decode_run_start(request: Request, payload: dict):
         if not 30 <= window_s <= 3600:
             return JSONResponse({"error": "window_s must be 30–3600 s"},
                                 status_code=400)
+    # CR-073 — optional campaign id: several queued jobs sharing one batch_id
+    # collate on /decode/batch/{id}. Same shape rule as REM's batch ids.
+    batch_id = p.get("batch_id") or None
+    if batch_id is not None and not re.fullmatch(r"[0-9a-f]{6,32}", str(batch_id)):
+        return JSONResponse({"error": "batch_id must be 6–32 hex chars"},
+                            status_code=400)
     try:
         tpl = decode_run.resolve_template(tpl_key, upload_name)
     except Exception as e:
@@ -171,7 +181,7 @@ async def decode_run_start(request: Request, payload: dict):
     async def coro(job_id=job_id):
         await decode_run.run_decode_job(job_id, tpl_key, devices, mode,
                                         calibrate, upload_name, cadence_s,
-                                        window_s)
+                                        window_s, batch_id)
 
     rig.touch_activity(f"decode job {job_id} queued")
     position = queue_control.enqueue(job_id, "decode", label, coro,
@@ -179,7 +189,7 @@ async def decode_run_start(request: Request, payload: dict):
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."},
                             status_code=429)
-    return {"job_id": job_id, "queue_position": position}
+    return {"job_id": job_id, "queue_position": position, "batch_id": batch_id}
 
 
 @router.get("/decode/job/{job_id}",
@@ -244,6 +254,164 @@ async def decode_upload(request: Request, file: UploadFile = File(...),
             "retention": saved["retention"]}
 
 
+# --- CR-073 · campaign = batch --------------------------------------------
+#
+# Every decode job queued with the same batch_id (the /decode Campaign toggle,
+# or a CLI feeder) collates here: device × (content × codec) matrix, plus JSON
+# and CSV. Anonymous-tier by design — a batch is a Lab-measured group
+# published by its id (same reasoning as the findings-source carve-out), so
+# it loads with visitor_key=None via persist.list_batch.
+
+_BATCH_ID_RE = re.compile(r"^[0-9a-f]{6,32}$")
+
+
+def _batch_or_404(batch_id: str):
+    if not _BATCH_ID_RE.match(batch_id or ""):
+        return None, JSONResponse({"error": "bad batch id"}, status_code=400)
+    envs = persist.list_batch("decode", batch_id)
+    if not envs:
+        return None, JSONResponse({"error": "unknown batch"}, status_code=404)
+    return decode_batch.matrix(envs, batch_id), None
+
+
+@router.get("/decode/batch/{batch_id}.json",
+            dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def decode_batch_json(batch_id: str):
+    m, err = _batch_or_404(batch_id)
+    return err or m
+
+
+@router.get("/decode/batch/{batch_id}.csv",
+            dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def decode_batch_csv(batch_id: str):
+    import csv as _csv
+    import io as _io
+    m, err = _batch_or_404(batch_id)
+    if err:
+        return err
+    buf = _io.StringIO()
+    w = _csv.DictWriter(buf, fieldnames=decode_batch.CSV_FIELDS, extrasaction="ignore")
+    w.writeheader()
+    w.writerows(decode_batch.to_csv_rows(m))
+    buf.write("# OWL decode batch export — delta_w/w_* are direct measurements "
+              "(Tapo P110 mW, per-row baseline); see /methodology.\n")
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="decode_batch_{batch_id}.csv"'})
+
+
+@router.get("/decode/batch/{batch_id}", response_class=HTMLResponse,
+            dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def decode_batch_page(request: Request, batch_id: str):
+    m, err = _batch_or_404(batch_id)
+    if err:
+        return HTMLResponse(f"<h1>{err.body.decode()}</h1>", status_code=err.status_code)
+    body = _batch_html(m)
+    return ui.render_page(request, f"Decode campaign {batch_id[:8]}",
+                          styles=_STYLES + _BATCH_STYLES, body=body)
+
+
+def _fmt_w(v):
+    return "—" if v is None else f"{v:+.2f}"
+
+
+def _batch_html(m: dict) -> str:
+    from html import escape as _e
+    cols = m["columns"]
+    date0, date1 = (m.get("date_range") or [None, None])
+    dfmt = lambda d: (d or "")[:16].replace("T", " ")
+    shas = sorted({j.get("owl_version") for j in m["jobs"] if j.get("owl_version")})
+    head = (f'<h1>Decode campaign <code>{_e(m["batch_id"])}</code></h1>'
+            f'<div class="rig-note" style="margin-top:0">'
+            f'{len(m["jobs"])} jobs · {m["n_cells"]} cells · {dfmt(date0)} → {dfmt(date1)}'
+            + (f' · OWL {", ".join(_e(x) for x in shas)}' if shas else "")
+            + (f' · protocol v{"/".join(m["protocol"].get("protocol_version", []))}'
+               if m["protocol"].get("protocol_version") else "")
+            + f' · <a href="/decode/batch/{_e(m["batch_id"])}.csv">CSV</a>'
+              f' · <a href="/decode/batch/{_e(m["batch_id"])}.json">JSON</a>'
+              f' · <a href="/decode">← rig</a></div>')
+    # header rows: content group, then codec (+ mode when screen)
+    ths_content, ths_codec, last = [], [], None
+    for c in cols:
+        ths_codec.append(f'<th>{_e(c["codec"])}'
+                         + (f'<br><span class="bt-mode">{_e(c["mode"])}</span>'
+                            if c["mode"] != "headless" else "") + '</th>')
+    i = 0
+    while i < len(cols):
+        j = i
+        while j < len(cols) and cols[j]["content"] == cols[i]["content"]:
+            j += 1
+        ths_content.append(f'<th colspan="{j - i}">{_e(cols[i]["content"])}</th>')
+        i = j
+    rows_html = []
+    for dev in m["devices"]:
+        tds = []
+        for c in cols:
+            key = "|".join([dev, c["content"], c["codec"],
+                            c["mode"] if c["mode"] == "screen" else ""])
+            lst = m["cells"].get(key) or []
+            if not lst:
+                tds.append('<td class="bt-empty">·</td>')
+                continue
+            parts = []
+            for x in lst:
+                if x.get("error"):
+                    parts.append(f'<span class="bt-err" title="{_e(str(x["error"])[:200])}">✗</span>')
+                    continue
+                ci = x.get("ci") or [None, None]
+                tip = (f'ΔW {x["delta_w"]} W · CI [{ci[0]}, {ci[1]}] · n={x["n_task"]} '
+                       f'· base {x["w_base"]} W · window {x["window_s"]} s'
+                       + (f' · mid-window {x["mid_state"]}' if x.get("mid_state") else "")
+                       + (f' · panel Δ {x["context_delta_w"]:+.1f} W'
+                          if x.get("context_delta_w") is not None else "")
+                       + f' · job {x["job_id"]}')
+                proof = ""
+                if x.get("mid_state") is not None:
+                    proof += ("▶" if x["mid_state"] == "PLAYING" else "⏸")
+                if x.get("screenshot"):
+                    proof += "📷"
+                parts.append(
+                    f'<a class="bt-cell" href="/decode?job={_e(x["job_id"])}" title="{_e(tip)}">'
+                    f'{_fmt_w(x["delta_w"])} <span>{x.get("flag") or ""}</span>'
+                    f'<span class="bt-proof">{proof}</span></a>')
+            n = len(lst)
+            tds.append('<td>' + '<br>'.join(parts)
+                       + (f'<div class="bt-n">n={n}</div>' if n > 1 else "") + '</td>')
+        rows_html.append(f'<tr><th class="bt-dev">{_e(dev)}</th>{"".join(tds)}</tr>')
+    table = ('<div style="overflow-x:auto"><table class="bt">'
+             f'<thead><tr><th></th>{"".join(ths_content)}</tr>'
+             f'<tr><th></th>{"".join(ths_codec)}</tr></thead>'
+             f'<tbody>{"".join(rows_html)}</tbody></table></div>')
+    legend = ('<div class="rig-note">Cell = ΔW over the device\'s own idle baseline (W), '
+              'traffic-light confidence, and liveness proof (▶ player PLAYING at mid-window, '
+              '📷 mid-window screenshot stored). Hover for CI, n, baseline, window, job. '
+              'Click a cell for the full result card.</div>')
+    notes = "".join(f'<div class="rig-note">⚠ {_e(n)}</div>' for n in m.get("notes") or [])
+    jobs = ('<details><summary class="rig-note">Jobs in this batch</summary><ul class="bt-jobs">'
+            + "".join(f'<li><a href="/decode?job={_e(j["job_id"])}">{_e(j["job_id"])}</a> · '
+                      f'{_e(j.get("template_label") or j.get("template") or "")} · '
+                      f'{_e((j.get("mode") or "").replace("ui_", ""))} · '
+                      f'{j.get("window_s") or "?"} s · {dfmt(j.get("saved_at"))} · '
+                      f'<a href="/decode/result/{_e(j["job_id"])}/lem.csv">LEM csv</a></li>'
+                      for j in m["jobs"]) + '</ul></details>')
+    return f'<div class="rig-wrap">{head}{table}{legend}{notes}{jobs}</div>'
+
+
+_BATCH_STYLES = """
+.bt { border-collapse: collapse; font-size: 0.82rem; margin: 0.6rem 0; }
+.bt th, .bt td { border: 1px solid var(--border-3); padding: 0.3rem 0.5rem; text-align: center; white-space: nowrap; }
+.bt thead th { color: var(--text-3); font-weight: 600; }
+.bt .bt-dev { text-align: left; color: var(--text-2); }
+.bt .bt-mode { color: var(--text-4); font-size: 0.7rem; font-weight: 400; }
+.bt .bt-cell { color: var(--text); text-decoration: none; }
+.bt .bt-cell:hover { color: var(--accent); }
+.bt .bt-proof { color: var(--text-4); font-size: 0.7rem; margin-left: 0.2rem; }
+.bt .bt-n { color: var(--text-4); font-size: 0.65rem; }
+.bt .bt-empty { color: var(--text-4); }
+.bt .bt-err { color: var(--err); font-weight: 700; }
+.bt-jobs { font-size: 0.8rem; color: var(--text-3); line-height: 1.6; }
+"""
+
+
 @router.get("/decode/result/{job_id}/lem.csv",
             dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
 async def decode_result_lem_csv(job_id: str):
@@ -265,13 +433,19 @@ async def decode_result_lem_csv(job_id: str):
         for t, w in zip(ts or [], ws or []):
             lines.append((t, f"{_iso(t)},{alias},{w}"))
 
-    for name, section in (data.get("devices") or {}).items():
-        for row in section.get("rows", []):
-            _emit(name, row.get("raw_baseline_t"), row.get("raw_baseline_w"))
-            _emit(name, row.get("raw_task_t"), row.get("raw_task_w"))
-            _emit("monitor", row.get("raw_context_baseline_t"),
-                  row.get("raw_context_baseline_w"))
-            _emit("monitor", row.get("raw_context_t"), row.get("raw_context_w"))
+    # runs[] is the single store of raw samples (envelope_version 1); older
+    # files also carry them under devices[].rows — fall back to those when a
+    # file has no runs[] (imported panels / fixtures).
+    rows = [(r.get("device") or "device", r) for r in (data.get("runs") or [])]
+    if not rows:
+        rows = [(name, row) for name, sec in (data.get("devices") or {}).items()
+                for row in sec.get("rows", [])]
+    for name, row in rows:
+        _emit(name, row.get("raw_baseline_t"), row.get("raw_baseline_w"))
+        _emit(name, row.get("raw_task_t"), row.get("raw_task_w"))
+        _emit("monitor", row.get("raw_context_baseline_t"),
+              row.get("raw_context_baseline_w"))
+        _emit("monitor", row.get("raw_context_t"), row.get("raw_context_w"))
     if not lines:
         return PlainTextResponse(
             "this run has no per-sample timestamps (pre-2026-07-30 protocol) "
@@ -483,6 +657,9 @@ _BODY = """
       <label id="cal-wrap" style="display:none">
         <input type="checkbox" id="calibrate" checked>
         marker head (5 s black·white·black in-clip)</label>
+      <label title="Every job you queue while this is ticked shares one batch id and collates on a single /decode/batch page (CR-073)">
+        <input type="checkbox" id="campaign" onchange="campaignChanged()">
+        campaign <span id="campaign-link" class="rig-detail"></span></label>
       <label style="display:flex;align-items:center;gap:0.4rem">
         poll <input type="range" id="cadence" min="1" max="10" step="1"
                     value="1" style="width:7rem"
@@ -898,6 +1075,27 @@ if (!IS_LAB) {
 
 // --- Recent runs ---
 function fmtDW(v) { return (v >= 0 ? '+' : '') + v + ' W'; }
+// CR-073 — campaign = batch. One 12-hex id per ticked session; every job
+// queued while ticked carries it and collates on /decode/batch/<id>.
+var CAMPAIGN_ID = null;
+function campaignId() {
+  if (!CAMPAIGN_ID) {
+    var u = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+          : (Date.now().toString(16) + Math.random().toString(16).slice(2));
+    CAMPAIGN_ID = u.replace(/-/g, '').slice(0, 12);
+  }
+  return CAMPAIGN_ID;
+}
+function campaignChanged() {
+  var on = document.getElementById('campaign').checked;
+  var el = document.getElementById('campaign-link');
+  if (on) {
+    var id = campaignId();
+    el.innerHTML = '→ <a href="/decode/batch/' + id + '" style="color:var(--accent)">/decode/batch/'
+                 + id + '</a>';
+  } else { el.textContent = ''; CAMPAIGN_ID = null; }
+}
+
 async function loadRecent() {
   try {
     var r = await fetch('/decode/runs.json');
@@ -913,14 +1111,20 @@ async function loadRecent() {
         return (DEV_LABELS[x.device] || x.device || '') + ' ' + fmtDW(x.delta_w)
              + ' ' + (x.flag || '');
       }).join(' · ');
-      h += '<tr><td>' + when + '</td><td>' + (run.label || '') + '</td>'
+      var batch = run.batch_id
+        ? ' <a href="/decode/batch/' + run.batch_id + '" class="rig-badge" title="campaign '
+          + run.batch_id + '" style="color:var(--accent);text-decoration:none">⊞ ' + run.batch_id.slice(0, 6) + '</a>'
+        : '';
+      h += '<tr><td>' + when + '</td><td>' + (run.label || '') + batch + '</td>'
          + '<td><span class="rig-badge">' + (run.mode || '') + ' v'
          + (run.protocol_version || '?') + '</span></td>'
          + '<td>' + rows + '</td>'
          + '<td><a href="/decode?job=' + run.job_id + '" style="color:var(--accent)">card</a>'
-         + ' <a href="/decode/result/' + run.job_id + '/lem.csv" style="color:var(--accent)">csv</a>'
-         + ' <a href="/results/decode/' + run.job_id + '/download.json" style="color:var(--accent)">full json</a></td></tr>';
+         + ' <a href="/decode/result/' + run.job_id + '/lem.csv" style="color:var(--accent)">csv</a></td></tr>';
     }
+    // (the old "full json" link went to /results/decode/…/download.json, which
+    // 400s — decode isn't in that route's allow-list; JSON is per batch or via a
+    // finding's source carve-out)
     el.innerHTML = h + '</table>';
   } catch (e) {}
 }
@@ -1087,9 +1291,10 @@ function renderJob(j) {
       CUR_JOB ? ' <a href="/decode/result/' + CUR_JOB + '/lem.csv" '
               + 'style="color:var(--accent);font-size:0.78rem;margin-left:0.6rem">'
               + '⬇ raw samples (LEM CSV)</a>'
-              + ' <a href="/results/decode/' + CUR_JOB + '/download.json" '
-              + 'style="color:var(--accent);font-size:0.78rem;margin-left:0.6rem">'
-              + '⬇ full result (JSON)</a>' : '');
+              + (j.result && j.result.batch_id
+                 ? ' <a href="/decode/batch/' + j.result.batch_id + '" '
+                   + 'style="color:var(--accent);font-size:0.78rem;margin-left:0.6rem">'
+                   + '⊞ campaign</a>' : '') : '');
     if (j.partial_errors)
       h += '<div class="rig-err">partial: ' + JSON.stringify(j.partial_errors) + '</div>';
     h += resultTable(j.result);
@@ -1156,6 +1361,7 @@ async function runRecipe() {
               upload_name: tpl === 'upload' ? UPLOADED : undefined,
               cadence_s: cad,
               calibrate: document.getElementById('calibrate').checked};
+  if (document.getElementById('campaign').checked) body.batch_id = campaignId();
   if (tpl.indexOf('loop_') === 0)
     body.window_s = parseInt(document.getElementById('duration').value, 10);
   document.getElementById('btn-run').disabled = true;

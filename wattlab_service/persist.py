@@ -11,6 +11,7 @@ import power
 import version
 
 RESULTS_DIR = Path("/home/gos/wattlab/results")
+ENVELOPE_VERSION = 1   # see docs/result_envelope.md · absent on disk = 0
 
 
 def save_result(job_type: str, job_id: str, data: dict,
@@ -48,6 +49,10 @@ def save_result(job_type: str, job_id: str, data: dict,
         "job_id": job_id,
         "saved_at": datetime.now().isoformat(),
         "visitor_key": visitor_key,
+        # CR-031 §1 pre-work (2026-08-17): the on-disk contract this file
+        # satisfies. Absent = 0 (everything saved before this stamp). Bump on
+        # any shape change and record it in docs/result_envelope.md.
+        "envelope_version": ENVELOPE_VERSION,
         **data,
     }
     # Stamp the exact code that produced this result (provenance for CR-040
@@ -331,21 +336,32 @@ def _rem_rows(data: dict) -> list:
     return [_rem_row(data)]
 
 
+def list_batch(job_type: str, batch_id: str) -> list:
+    """Every stored result of `job_type` whose top-level `batch_id` matches,
+    sorted by saved_at (CR-073). Dir-scoped scan, no visitor scoping — a batch
+    is a Lab-measured group published by its id (REM multi-codec files, decode
+    campaigns). Same-shape files that predate batch stamping simply don't
+    match. O(files in the type dir); fine at 10³ (~0.1 s for decode)."""
+    out_dir = RESULTS_DIR / job_type
+    out = []
+    if not batch_id or not out_dir.exists():
+        return out
+    for p in out_dir.glob("*.json"):
+        try:
+            d = json.loads(p.read_text())
+        except Exception:
+            continue
+        if d.get("batch_id") == batch_id:
+            out.append(d)
+    out.sort(key=lambda d: d.get("saved_at") or "")
+    return out
+
+
 def rem_batch_csv(batch_id: str) -> str:
     """Combined energy CSV for every stored rem result sharing `batch_id`, one
     row per file (sorted by saved_at). 'Live': returns only completed rows if
     fetched before all codecs in the batch finish."""
-    out_dir = RESULTS_DIR / "rem"
-    rows = []
-    if out_dir.exists():
-        for p in out_dir.glob("*.json"):
-            try:
-                d = json.loads(p.read_text())
-            except Exception:
-                continue
-            if d.get("batch_id") == batch_id:
-                rows.append(_rem_row(d))
-    rows.sort(key=lambda r: r.get("saved_at") or "")
+    rows = [_rem_row(d) for d in list_batch("rem", batch_id)]
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=_REM_FIELDNAMES, extrasaction="ignore")
     writer.writeheader()

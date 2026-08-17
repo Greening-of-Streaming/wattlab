@@ -265,7 +265,7 @@ Flat JSON per result (`results/{type}/{date}_{job_id}.json`): fast, debuggable, 
 
 Decision criteria: if the historical-carbon work (now CR-007 Stage 1) and the calibration-history journals (CR-012, shipped — `results/diagnostics/history.jsonl`; their query friction is live evidence) show real flat-file pain, migrate; else index. Don't pre-decide the engine; REM coherence matters (owner: "I don't want five different databases").
 
-**Pre-work (2026-07-06, audit §3.4):** stamp `envelope_version: 1` in `persist.save_result` now (absent = 0) and record shape changes as version bumps in `docs/result_envelope.md`. Today every shape change is handled by making all 7 consumers tolerant of both forms forever (two cooldown shapes, small/large aliases, pre-CR-026 `visitor_key`-less records, …) — nothing on disk says which contract a file satisfies, and any §1 analytics/migration would have to reverse-engineer era boundaries from SHAs. Versioned envelopes are the precondition for merging OWL history into any store; `bin/anonymise-visitor-ips.py` is the in-repo template for backfill migrations. Also unify `RESULTS_DIR` resolution (`persist.py` absolute vs `findings.py` repo-relative — they agree only on GoS1) behind the §3 path root.
+**Pre-work — DONE 2026-08-17 (CR-073):** `envelope_version: 1` is stamped by `persist.save_result` (absent = 0). **First consumer of any future index:** `persist.list_batch` (CR-073's dir-scoped batch scan) — the API a SQLite mirror would back unchanged. Original text: stamp `envelope_version: 1` in `persist.save_result` now (absent = 0) and record shape changes as version bumps in `docs/result_envelope.md`. Today every shape change is handled by making all 7 consumers tolerant of both forms forever (two cooldown shapes, small/large aliases, pre-CR-026 `visitor_key`-less records, …) — nothing on disk says which contract a file satisfies, and any §1 analytics/migration would have to reverse-engineer era boundaries from SHAs. Versioned envelopes are the precondition for merging OWL history into any store; `bin/anonymise-visitor-ips.py` is the in-repo template for backfill migrations. Also unify `RESULTS_DIR` resolution (`persist.py` absolute vs `findings.py` repo-relative — they agree only on GoS1) behind the §3 path root.
 
 #### §2 Power source — STATUS: cheap wins shipped 2026-06-09 (`power.stamp()` provenance + `meter_display_name`); full backend NOT built
 
@@ -835,3 +835,46 @@ CR-069 verifications       ──→ CR-031 / CR-066 / CR-067 / CR-068 (dispatch
 5. **CR-031 §1** storage decision — unblocks the analytics layer (CR-003, CR-007); its new ungated pre-work list can proceed in parallel.
 6. **CR-029 remainder + CR-045** — Tania-led, as her availability allows; a §2 revision re-bases video numbers (re-run variance calibration), designed-for via `video._norm_args`.
 7. **CR-039 / CR-041 / CR-004 / CR-007 / CR-043 / CR-069** opportunistically; Track E as capacity allows. *(CR-024 done.)*
+
+## CR-073 · Decode campaigns = batches (collation view, no new store)
+
+**Status:** captured + shipped 2026-08-17 (owner decision the same day, engineering hat on: stop the
+scope creep). **Closed on ship** — kept here one cycle for the rationale, then to the closed archive.
+**Triggered by:** the 2026-08-16→17 overnight decode campaign (13 jobs, 45 cells) had no reader-facing
+whole-campaign view — the collation existed only in chat; `/decode` Recent-runs showed the last 8; the
+one prior attempt (`decode_bench/campaign.py` + `campaign_summary.py`, 2026-07-31, hardcoded paths,
+stdout table) was not reused. The owner asked "one-off vs CR vs a real DB?".
+
+### Decision (owner, 2026-08-17)
+
+**Reuse the existing `batch_id` mechanism** (REM multi-codec files: one uuid stamped per result +
+`persist.rem_batch_csv` scan) for decode; **public-by-link** batch page; **the DB stays a CR-031 §1
+decision** — the pain here is *presentation*, not *querying* (326 MB, glob+parse ≈ 0.1 s for all decode
+files, no time-series/joins/concurrency need). Do the cheap gating pre-work (`envelope_version`) now.
+
+### Shipped (`wattlab_service/decode_batch.py`, `routes_decode.py`, `persist.py`, `decode_run.py`, `bin/stamp-decode-batch`)
+
+- Envelope: decode results carry `batch_id` (None = solo); `POST /decode/run` accepts an optional
+  `batch_id` (`[0-9a-f]{6,32}`, REM's rule); the `/decode` recipe form has a **campaign** toggle that
+  mints one id per ticked session and shows the batch link. `persist.save_result` stamps
+  `envelope_version: 1` (CR-031 §1 pre-work; absent on disk = 0). Decode envelopes now store raw
+  samples ONCE (`runs[]`; `devices[].rows` keeps scalars) — files were 2× their size; readers tolerate
+  both eras. `protocol.window_s` records the window actually run (was the template default).
+- `persist.list_batch(job_type, batch_id)` — the shared dir-scoped scan (REM's csv now uses it).
+- `decode_batch.matrix(envelopes)` — pure collation: device × (content × codec[, screen]) with ΔW, CI,
+  flag, n, liveness proofs (mid-window PLAYING, screenshot, alive), repeats stacked (n>1 shown), errors
+  as ✗ never dropped, keep-awake/screen-mode disclosure notes.
+- Routes (Anonymous tier — a batch is a Lab-measured group published by its id, same reasoning as the
+  findings-source carve-out): `GET /decode/batch/{id}` (matrix page) · `.json` · `.csv`. `/decode`
+  Recent runs: default 25, batch badge → page; the dead `/results/decode/…/download.json` link removed
+  (decode is not in that route's allow-list — JSON is per batch or via a finding's source carve-out).
+- `bin/stamp-decode-batch <batch_id> <job_id>…` — idempotent, refusing backfill (dry-run default).
+  Applied to the 2026-08-16/17 campaign → **`/decode/batch/aae11481804e`** (14 jobs incl. the reference
+  hour `2c793c73`). The invalid 08-15 night is deliberately NOT collated (errata, JOURNAL S62).
+- Tests +14 (`tests/test_decode_batch.py`): collator shapes (errored rows, failed sections, screen
+  column, repeats), list_batch/rem csv, envelope_version, routes incl. Anonymous probe, backfill script.
+
+### Not in scope (named to stop creep)
+
+DB migration (CR-031 §1 unchanged bar the pre-work); findings-embed of a batch table; unifying
+`/benchmark` with batches; a campaign scheduler (queue + a feeder is enough); REM/OWL merge.

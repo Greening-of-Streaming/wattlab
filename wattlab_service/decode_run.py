@@ -689,7 +689,8 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                          mode: str, calibrate: bool,
                          upload_name: str | None = None,
                          cadence_s: float | None = None,
-                         window_s: int | None = None) -> None:
+                         window_s: int | None = None,
+                         batch_id: str | None = None) -> None:
     tpl = resolve_template(tpl_key, upload_name)
     job = jobs[job_id]
     phases = template_phases(tpl, window_s, cadence_s)
@@ -735,9 +736,15 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                 errors[name] = str(out)[:300]
                 sections[name] = {"error": errors[name]}
             else:
-                sections[name] = out
                 for r in out["rows"]:
                     flat_runs.append({**r, "device": name})
+                # Single-store (envelope_version 1, CR-073): the raw sample
+                # arrays live ONCE, in runs[]. devices[].rows keeps every
+                # scalar (a per-device summary) — files were 2× their size.
+                # Readers of the old shape (raw_* in both) still work.
+                sections[name] = {**out, "rows": [
+                    {k: v for k, v in r.items() if not k.startswith("raw_")}
+                    for r in out["rows"]]}
         if not flat_runs:
             raise RuntimeError("all devices failed: " + json.dumps(errors))
 
@@ -746,11 +753,15 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
             "template": tpl_key,
             "template_label": tpl["label"],
             "calibrate": bool(mode == "screen" and calibrate),
+            "batch_id": batch_id,          # CR-073: campaign = batch (None = solo)
             "devices": sections,
             "runs": flat_runs,
             "protocol": {"harness": "decode-bench bench.py",
                          "launched_from": "/decode", "parallel": mode == "headless",
-                         "window_s": tpl["bench"]["window_s"],
+                         # the window actually run (tester override / clip
+                         # clamp), not the template default (was wrong pre-2026-08-17)
+                         "window_s": (flat_runs[0].get("window_s")
+                                      or tpl["bench"]["window_s"]),
                          "pacing": tpl.get("pacing", "realtime"),
                          **({"marker_head": {"pattern": _MARKER_PATTERN,
                                              "seconds": MARKER_HEAD_S,
