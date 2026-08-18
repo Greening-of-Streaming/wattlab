@@ -65,66 +65,6 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
-## Session 62 — 2026-08-16 (afternoon)
-
-**Marginal vs attributional energy — a second accounting lens (methodology v0.7), and the VP9 post draws Jan Ozer**
-
-- **The question** (Ben, after the Thierry "speed dial" exchange on the VP9 LinkedIn post): OWL
-  subtracts idle and reports only the job's energy; a faster encode that draws more but finishes
-  30 s sooner might save more than it costs — should the VoD methodology be revisited?
-- **Code review says time is already in the metric.** `energy.energy_wh` is ΔW × Δt (an energy
-  integral) and parity normalises to `wh_per_min_video` = ΔE per minute of *content*, so a fast
-  encoder accrues fewer Δt seconds and wins automatically — exactly why S53 read NVENC's 2.5–4.4×
-  as "speed, not draw". No revisit on that axis.
-- **The genuine gap is idle attribution.** ΔW-only is *marginal* accounting: a job is never charged
-  for the W_base × Δt the machine burns while occupied (~79 W on GoS1). Correct for a shared box
-  that would be on anyway; on a dedicated encode fleet (race-to-idle) the *attributional* view
-  (W_base + ΔW) × Δt is the honest one. It only separates tasks that take **different time** —
-  VoD encode / batch jobs; realtime playback and the decode rig are immune (every codec occupies
-  the device for the same window). A scoping choice derived from the same samples, not a
-  correction and not a re-measurement.
-- **Shipped** (`79045ab`, additive, protocol unchanged): `parity._measure_recipe` now persists
-  per-row `w_base` (older parity artifacts never stored it — found en route) and
-  `wh_per_min_video_attributional`; `/methodology` → **v0.7** with a "Marginal vs attributional
-  energy — two lenses, one measurement" subsection (formula, when each applies, decode immune,
-  "roughly doubles CPU-encode figures while adding only a fraction to seconds-long hardware
-  encodes"). 993 tests, restarted, verified live.
-- **Retro-computation** over the stored S53 (207 rows) + VP9 (4 rows) datasets, off-repo
-  (`/srv/data/owl/campaign_2026-08-09_vp9/attributional_retrofit.py` → `.json`, nominal 79 W
-  post-swap floor, labelled NOMINAL since pre-08-15 rows lack `w_base`): attribution ×2.1–2.7 on
-  CPU rows, ×2.2–2.4 on 8 s NVENC rows; occupancy s per minute of video NVENC ~8 · x265 31–41 ·
-  VP9 90–130; VP9(cpu) vs NVENC h265: **ratio 16.3× → 14.7× but absolute gap 1.97 → 4.22 Wh/min**
-  (Meridian 2500k) — ratios hold, the fast-vs-slow gap widens. Team paragraph for Monday drafted.
-- **LinkedIn thread on the VP9 post** (context for the follow-ups; the report is
-  `docs/vp9_oneoff_2026-08.md`):
-  - *Thierry Fautier*: ChatGPT-sourced iso-VMAF compute ratios (HEVC ~4×, AV1 ~5×, VP9 ~20×),
-    "include the distribution budget", proposes a joint blog → Ben's reply: both right, software
-    encoders have a **speed dial**; OWL ran the production-VOD point (`cpu-used 2`) where VP9
-    compressed x264-class; joint article on energy-vs-quality curves, VoD vs linear.
-  - *Jan Ozer*: (1) most VOD (and much live) is software, so VP9-sw vs trio-hw "doesn't reflect the
-    market" — **fair hit on the 15× headline** (it describes NVIDIA/AMD lacking a VP9 path, not
-    the codec); (2) his 14-source 1080p convex-hull ladder timings on an i9-14900: x264 1× · x265
-    8.5× · SVT-AV1 8.6× · libvpx 9.5× at x264/x265 **slow**, SVT-AV1 **preset 3**, VP9 cpu-used 2,
-    two-pass. **Reconciles with ours once the dial is named:** OWL's S53 CPU rows are x264/x265
-    *medium* defaults and SVT-AV1 at ffmpeg's default (fast) preset, VP9 cpu-used 2 → VP9 3× x265,
-    5–6× x264/SVT-AV1; at everything-slow VP9 is only ~1.1× the others. Same curve, different
-    point. His data is time not watts (tracks on a saturated CPU per S53).
-  - *Thierry* → "x265 not speed-optimised; commercial HEVC ~2× x264 CPU for 30–50% saving"; Jan
-    asks for a source; Thierry cites the AWS 2022 MediaConvert settings post — checked: it compares
-    **price per transcode** (AVC $0.23 / HEVC $3.26 / AV1 $13.39 = AWS tiering) and file size, no
-    CPU or energy — doesn't support the claim. *Murat Pisat*: "Apple lacks VP9 decode" — stale
-    (M/A-series hw VP9, tvOS 14+), but the underlying point is the report's decode finding.
-  - Reply to Jan drafted in Ben's voice: concede the headline, show the two ladders agree once the
-    operating point is stated, offer the watt-metered + attributional lens as an independent check
-    on his timings, invite him onto the joint article (four software encoders × speed-dial sweep at
-    matched target quality, energy per minute of output; "your sources and methodology, our meter").
-- **Faultline interest** (08-17): the LinkedIn post reached ~2.7k views / 17 comments; Tommy Flanagan (Faultline, Rethink) DM'd asking for the full report for a possible story that week. Answer: the report is a working document under discussion, shared via the public GitHub URL (not /findings), caveats first, his questions welcome for the next revision, invited into the discussion.
-- **Report revised for outside readers** (08-17, prompted by that ask): `docs/vp9_oneoff_2026-08.md` now opens with a status + read-this-first block, §2 states every encoder's operating point and leads software-vs-software (the 15× NVENC ratio demoted to "hardware context"), §4 = what the discussion added (Thierry speed dial + AWS table read properly: HEVC 10–25 % longer wall-clock, not an energy datum; Jan's everything-at-slow reconciliation; attributional lens; Murat). LinkedIn draft dropped. Shared via the public GitHub URL, deliberately not /findings (n=1, under discussion).
-- **Standing wording rule** (from the VP9 arc): never "no VP9 hardware encode exists" — Intel QSV
-  since Kaby Lake and Google Argos do; say "no hardware path on NVIDIA/AMD".
-
----
-
 ## Session 64 — 2026-08-17 (afternoon)
 
 **CR-073 · Decode campaigns = batches — one public URL per campaign, no new store; DB stays a CR-031 §1 decision**
@@ -217,7 +157,7 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
-## Session 62 — 2026-08-16/17 (evening + overnight)
+## Session 62b — 2026-08-16/17 (evening + overnight decode campaign)
 
 **The STB "mid-window death" solved live: three sleep mechanisms + a paused player. GTV/Fire TV decode = ~+0.6 W sustained, 🟢. Earlier long-window GTV/Fire TV rows are INVALID.**
 
@@ -269,6 +209,66 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 62 — 2026-08-16 (afternoon)
+
+**Marginal vs attributional energy — a second accounting lens (methodology v0.7), and the VP9 post draws Jan Ozer**
+
+- **The question** (Ben, after the Thierry "speed dial" exchange on the VP9 LinkedIn post): OWL
+  subtracts idle and reports only the job's energy; a faster encode that draws more but finishes
+  30 s sooner might save more than it costs — should the VoD methodology be revisited?
+- **Code review says time is already in the metric.** `energy.energy_wh` is ΔW × Δt (an energy
+  integral) and parity normalises to `wh_per_min_video` = ΔE per minute of *content*, so a fast
+  encoder accrues fewer Δt seconds and wins automatically — exactly why S53 read NVENC's 2.5–4.4×
+  as "speed, not draw". No revisit on that axis.
+- **The genuine gap is idle attribution.** ΔW-only is *marginal* accounting: a job is never charged
+  for the W_base × Δt the machine burns while occupied (~79 W on GoS1). Correct for a shared box
+  that would be on anyway; on a dedicated encode fleet (race-to-idle) the *attributional* view
+  (W_base + ΔW) × Δt is the honest one. It only separates tasks that take **different time** —
+  VoD encode / batch jobs; realtime playback and the decode rig are immune (every codec occupies
+  the device for the same window). A scoping choice derived from the same samples, not a
+  correction and not a re-measurement.
+- **Shipped** (`79045ab`, additive, protocol unchanged): `parity._measure_recipe` now persists
+  per-row `w_base` (older parity artifacts never stored it — found en route) and
+  `wh_per_min_video_attributional`; `/methodology` → **v0.7** with a "Marginal vs attributional
+  energy — two lenses, one measurement" subsection (formula, when each applies, decode immune,
+  "roughly doubles CPU-encode figures while adding only a fraction to seconds-long hardware
+  encodes"). 993 tests, restarted, verified live.
+- **Retro-computation** over the stored S53 (207 rows) + VP9 (4 rows) datasets, off-repo
+  (`/srv/data/owl/campaign_2026-08-09_vp9/attributional_retrofit.py` → `.json`, nominal 79 W
+  post-swap floor, labelled NOMINAL since pre-08-15 rows lack `w_base`): attribution ×2.1–2.7 on
+  CPU rows, ×2.2–2.4 on 8 s NVENC rows; occupancy s per minute of video NVENC ~8 · x265 31–41 ·
+  VP9 90–130; VP9(cpu) vs NVENC h265: **ratio 16.3× → 14.7× but absolute gap 1.97 → 4.22 Wh/min**
+  (Meridian 2500k) — ratios hold, the fast-vs-slow gap widens. Team paragraph for Monday drafted.
+- **LinkedIn thread on the VP9 post** (context for the follow-ups; the report is
+  `docs/vp9_oneoff_2026-08.md`):
+  - *Thierry Fautier*: ChatGPT-sourced iso-VMAF compute ratios (HEVC ~4×, AV1 ~5×, VP9 ~20×),
+    "include the distribution budget", proposes a joint blog → Ben's reply: both right, software
+    encoders have a **speed dial**; OWL ran the production-VOD point (`cpu-used 2`) where VP9
+    compressed x264-class; joint article on energy-vs-quality curves, VoD vs linear.
+  - *Jan Ozer*: (1) most VOD (and much live) is software, so VP9-sw vs trio-hw "doesn't reflect the
+    market" — **fair hit on the 15× headline** (it describes NVIDIA/AMD lacking a VP9 path, not
+    the codec); (2) his 14-source 1080p convex-hull ladder timings on an i9-14900: x264 1× · x265
+    8.5× · SVT-AV1 8.6× · libvpx 9.5× at x264/x265 **slow**, SVT-AV1 **preset 3**, VP9 cpu-used 2,
+    two-pass. **Reconciles with ours once the dial is named:** OWL's S53 CPU rows are x264/x265
+    *medium* defaults and SVT-AV1 at ffmpeg's default (fast) preset, VP9 cpu-used 2 → VP9 3× x265,
+    5–6× x264/SVT-AV1; at everything-slow VP9 is only ~1.1× the others. Same curve, different
+    point. His data is time not watts (tracks on a saturated CPU per S53).
+  - *Thierry* → "x265 not speed-optimised; commercial HEVC ~2× x264 CPU for 30–50% saving"; Jan
+    asks for a source; Thierry cites the AWS 2022 MediaConvert settings post — checked: it compares
+    **price per transcode** (AVC $0.23 / HEVC $3.26 / AV1 $13.39 = AWS tiering) and file size, no
+    CPU or energy — doesn't support the claim. *Murat Pisat*: "Apple lacks VP9 decode" — stale
+    (M/A-series hw VP9, tvOS 14+), but the underlying point is the report's decode finding.
+  - Reply to Jan drafted in Ben's voice: concede the headline, show the two ladders agree once the
+    operating point is stated, offer the watt-metered + attributional lens as an independent check
+    on his timings, invite him onto the joint article (four software encoders × speed-dial sweep at
+    matched target quality, energy per minute of output; "your sources and methodology, our meter").
+- **Faultline interest** (08-17): the LinkedIn post reached ~2.7k views / 17 comments; Tommy Flanagan (Faultline, Rethink) DM'd asking for the full report for a possible story that week. Answer: the report is a working document under discussion, shared via the public GitHub URL (not /findings), caveats first, his questions welcome for the next revision, invited into the discussion.
+- **Report revised for outside readers** (08-17, prompted by that ask): `docs/vp9_oneoff_2026-08.md` now opens with a status + read-this-first block, §2 states every encoder's operating point and leads software-vs-software (the 15× NVENC ratio demoted to "hardware context"), §4 = what the discussion added (Thierry speed dial + AWS table read properly: HEVC 10–25 % longer wall-clock, not an energy datum; Jan's everything-at-slow reconciliation; attributional lens; Murat). LinkedIn draft dropped. Shared via the public GitHub URL, deliberately not /findings (n=1, under discussion).
+- **Standing wording rule** (from the VP9 arc): never "no VP9 hardware encode exists" — Intel QSV
+  since Kaby Lake and Google Argos do; say "no hardware path on NVIDIA/AMD".
+
+---
+
 ## Session 61 — 2026-08-16 (overnight review)
 
 **Long-window loop night: mechanics good, playback dies mid-window on the STBs — the negative rows are artefacts**
@@ -310,10 +310,8 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 **Rig hygiene day: idle auto-off, ADB-authorisation repair, Fire TV back (Pi 5 parked), CEC off**
 
-> Journal gap: sessions between S59 (07-30) and here (07-31 → 08-14: LG C2 native + CR-071 webOS
-> control, Bbox operator CPE on the bench, Fire TV first bench, CR-072 origin, SMPTE overnight
-> couplings, VP9 one-off, marginal-vs-attributional lens) are un-journaled — the commit log and
-> memory notes carry them. Back-fill is on the doc-debt list.
+> Journal gap (07-31 → 08-14) BACK-FILLED 2026-08-19 as Sessions 59b–59g below (from git log, campaign
+> stores and memory notes; items marked inferred where evidence is indirect).
 
 - **Idle auto-off** (`c65fb38`; owner came home after a week to find every rig box powered): the
   rig poller tracks activity (Lab control op, Lab `/decode` visit, decode job queued/busy/finished,
@@ -361,6 +359,134 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
   decode of 1080p is ~0.1–0.3 W, below a 34 s window's noise (long loop windows needed, as July);
   C2 native −2 W ± 5 = content-driven panel, all-in figure meaningless without the differential.
 - Suite: **1007 passing**. Commits `c65fb38` `0cfcc17` `20fe6a9` `f9052ba` `5d51108` (unpushed).
+
+---
+
+## Session 59g — 2026-08-13 → 08-15 (back-filled 2026-08-19)
+
+**Prior-art positioning on the gpu-boost finding, a LinkedIn framing tweak, and the attributional lens landing after midnight**
+
+- `8c25ecd` (08-13) — gpu-boost finding v2 after Tania's review: `version` 1→2, new "Where this sits in prior
+  work" section (arXiv:2605.01187 NVENC HQ/UHQ longitudinal energy analysis, arXiv:2605.16738, OBS-community
+  observations, HPC/DVFS "racing vs pacing to idle"); the finding does not claim the principle — its contribution
+  is the measured energy-vs-clock curve, the knee (~9 % saving at negligible time cost), the starvation floor and
+  the `nvidia-smi -lgc` fix; the two-front cooling argument flagged as apparently ours "absence of a citation is
+  not proof of novelty".
+- `6277321` (08-14) — VP9 report's LinkedIn draft opens with a one-line OWL reminder; the post went out and the
+  Fautier/Ozer thread started (JOURNAL S62).
+- `79045ab` (08-15 01:15) — marginal vs attributional energy, /methodology v0.7 — journaled in S62; the
+  retro-computation `/srv/data/owl/campaign_2026-08-09_vp9/attributional_retrofit.py|.json` is timestamped the
+  same hour.
+
+---
+
+## Session 59f — 2026-08-09/10 (VP9 one-off; back-filled 2026-08-19)
+
+**VP9 vs the OWL trio in one overnight orchestrator run — encode 3–6× dearer in software, decode the cheapest software codec, and a report for Ben's LinkedIn post**
+
+- Single detached `orchestrator.sh` in `/srv/data/owl/campaign_2026-08-09_vp9/` (prep → encode → decode →
+  summary), `STATUS` = ALL DONE.
+- Encode (parity wrap, libvpx-vp9 cpu-used 2, one-pass ABR; `results/diagnostics/encode_parity_nvenc_24c_2026-08-09.json`):
+  Meridian 2500k 2.09 Wh/min (VMAF 87.7) · 5000k 2.55 (90.7) · BBB 2500k 1.72 (94.0) · 5000k 1.93 (96.4);
+  ΔW 67.9–70.8 W on every row ≈ 3× libx265, 5–6× libx264/SVT-AV1 at their default presets, ~15× NVENC;
+  compression at that point ≈ x264-class (NEG-93 rung 4048 vs x264 4051 kb/s).
+- Decode (27 rows, headless realtime, NEG≈93 BBB clips): Pi 5 sw VP9 0.96–1.12 W = cheapest of the four (h264
+  1.13–1.19, av1 1.24–1.36, hevc 2.28–2.31 ≈ 2–2.5× VP9); Pi 400 sw VP9 1.07–1.21 vs hevc 2.87–3.03; GTV hw
+  hevc 0.36, h264 0.32–0.35, av1 0.29–0.35 🟢, VP9 inside the noise (`c2.mtk.vp9.decoder` proven) — hardware-
+  neutral, not free.
+- ⚠ VP9-in-MP4 (`vp09`) stalls the GTV player 3/3; the same stream in WebM plays 2/2 — stage `.webm` for
+  Android boxes (paid for itself in S65).
+- Report `docs/vp9_oneoff_2026-08.md` (`f152546`, 08-10 01:21) with the LinkedIn draft; corrected ten minutes
+  later (`9d3cb07`): never "no VP9 hardware encode exists" — Intel QSV since Kaby Lake and Google Argos do; say
+  "no hardware path on NVIDIA/AMD". Standing wording rule.
+- The four staged clips (`*_bbb_120s` in decode-bench `_uploads/`) = reusable iso-quality CPU-encoded family
+  from the r12 ProRes reference.
+
+---
+
+## Session 59e — 2026-08-08/09 (overnight, SMPTE #4951; back-filled 2026-08-19)
+
+**R6 reconciles the hw-vs-sw ratio, and four Tier-3 encode↔decode couplings measured in one night — all digests pushed**
+
+- Bench prep: saturated-pacing regime templates `bbb_h264_{hw,sw}_sat` first-class, Pi 400 back on Lab-B for R6,
+  Firestick parked (`bfea8ab`).
+- R6 — the F2 ratio reconciled (`/srv/data/owl/campaign_2026-08-08_r6/`, interleaved arms, protocol v3, 18 rows
+  🟢): hw_rt +0.411 ± 0.073 W (n=6) · sw_rt +1.503 ± 0.034 (n=3) · hw_sat +0.594 ± 0.049 · sw_sat +2.723 ± 0.073
+  → citable **3.7× realtime / 4.6× saturated**; the 07-30 "~7×" rested on one baseline-suspect hw row. Method
+  rule adopted: small-numerator ratios need n≥5 on the numerator arm.
+- Findings de-DRAFTed + lab-reviewed (`ff7fd9f`): `hw-decoder-cuts-client-energy-4x` 3.6× → 3.7× with four
+  new source ids; `codec-decode-energy-depends-on-silicon-and-regime` gains the 08-01 corroboration caveat;
+  `streaming-box-plays-4-7x-cheaper-than-general-purpose` touched.
+- Four Tier-3 couplings (digests C13–C16 in the separate `smpte-4951` writing repo, `OVERNIGHT_REPORT_2026-08-09.md`):
+  R11 FGS — at matched VMAF-NEG −19 % bits but 2.15× encode Wh and +26 % Pi 5 decode, GTV synthesises grain
+  free (⚠ this SVT-AV1 build defaults `film-grain-denoise=0`); R12 CABAC — byte-matched +46 % Pi 5 decode on
+  BBB 60 fps but only +22 % on Kranjska 30 fps, hw flat, "widening" prediction falsified; R13 effort — refs16/bf8
+  = 2.3× encode Wh, −9 % bits, +21 % Pi 5 decode (n=6); R16 fps — 60→30 saves 26–29 % sw decode and ~+0.2 W on
+  hardware: the one workload-gated knob vs the coverage-gated ones (codec/FGS/entropy/effort) — the taxonomy
+  that framed the paper's Section 5.
+- Durable kit: `/srv/data/owl/figenv/` (matplotlib venv), grain corpus `/srv/data/owl/test_content/grain/`
+  (Nocturne, CC BY 4.0), VMAF-NEG via `model=version=vmaf_v0.6.1neg`, the reusable metered-encode stage-B
+  pattern; campaign stores `campaign_2026-08-0{8,9}_r{6,11,12,12k,13,16}/`; R14/R15 deferred with specs in
+  RUN_QUEUE. 93 decode envelopes dated 2026-08-09.
+
+---
+
+## Session 59d — 2026-08-02 → 08-07 (quiet; back-filled 2026-08-19)
+
+**Owner away; rig idle. Four smoke envelopes on 08-03 only** — no commits between `80bd783` (08-01) and `bfea8ab`
+(08-08); `results/decode/2026-08-03_*.json` = 4 rows (loop/smoke, inferred remote checks). The week the rig stayed
+powered — the direct cause of S60's idle auto-off.
+
+---
+
+## Session 59c — 2026-08-01 (back-filled 2026-08-19)
+
+**The 66-cell campaign lands: four findings (F7/F9/F10/F11), parallel measurement validated — and the C2 standby lock-out root-caused with a Wake-on-LAN packet**
+
+- Campaign complete 03:01, 0 real errors (`done.txt` 66 cells incl. 3 backfill); 46 envelopes
+  `results/decode/2026-08-01_*.json`. UI: duration selector for loop recipes (`2ea9789`), progress phases honour
+  duration/cadence overrides (`f63493f`).
+- F7 codec × silicon at scale (54 cells, 3 families, 150 s, headless): Pi 5 sw H.264 ~1.15 W < AV1 ~1.5 <
+  HEVC ~2.2 (≈1.9× H.264) in every family; fixed-function boxes H.264 ≈ free, HEVC/AV1 +0.3–0.5 W.
+- F11 (new) operator CPE without AV1 hardware: Bbox H.264/HEVC ≈ zero marginal, AV1 +1.2–1.4 W on all three
+  families = software AV1 on an installed operator box.
+- F9 (methodology) confidence vs run length is non-monotonic: Pi 5 sw 🟢 from 30 s to 59 min; GTV/Bbox 🔴 at
+  every length (a zero margin can't be rescued by samples); Firestick +0.6 W 🟢 at 5 min → −0.3 W 🔴 at 59 min as
+  baseline drift swamps it → sweet spot 5–20 min.
+- F10 5-device parallel measurement validated: Pi 5 matches sequential within ~0.05 W across nine cells; only
+  the C2 diverges (unstable panel baseline), not parallel contamination.
+- F8 extended — C2 as its own decoder: panel dominates and is content-signed (+16 W BBB, −3 W Meridian); the
+  decode term (~1.4 W by differential) is buried under tens of watts of luminance; single-run C2 numbers not
+  citable.
+- C2 standby lock-out root-caused (`80bd783`): in Always-Ready standby the C2 answers SSAP but rejects every
+  connection with WS close 1008; fix = raw Wake-on-LAN (`lg.C2_MAC`, `wake()`, `power(True)` WoL-first);
+  `rig._wake_and_wait`, `claim_screen`, `recycle_c2_panel`, `bench.py WebosDevice.prepare` all wake-and-retry;
+  verified standby 10 W → awake 86.7 W → SSAP on the existing key in 0.5 s. Poller deliberately does not
+  auto-wake (household TV); tests stub `rig.lg.wake`. Diagnostic scripts kept in `decode_bench/` (`c2_hunt.py`,
+  `keyless.py`, `libtest.py`, `pair_waiter.py`).
+
+---
+
+## Session 59b — 2026-07-31 (back-filled 2026-08-19)
+
+**Five metered devices on the bench: Bbox back on Ethernet, Fire TV Stick 4K enrolled, the C2 becomes a decoder — and the first autonomous campaign orchestrator**
+
+- Bbox re-onboarded after a factory reset: Ethernet `.10` (`17aff06`), `idle_w` 3.0 → 6.6 W (`888822e`) — the
+  operator box idles high enough that the stable-idle guard timed out against a floor it could never reach.
+- Fire TV Stick 4K enrolled (AFTKRT, MediaTek MT8696), Pi 400 parked (`1e0b574`).
+- C2 as a native-decode device (CR-071): `lg.py` `launch_url`/`go_home` (`663006b`), `current_app` +
+  `screen_off/on` (`001b97f`); `bench.py` webOS driver, differential method (`e233a0a`); rig wires the C2 as
+  `webos` (`e8a4c90`, `88c0b6a`); `decode_run` skips `claim_screen` for it (`b7d8751`), segments the C2 marker
+  head off the primary Lab-E trace (`68d807f`); reclaim blink 12 → 8 s (`07217ae`).
+- Rig hardening that unblocked scale (`4bd605f`): asyncio readline buffer 8 MB, faster settle, C2 screensaver
+  panel-recycle; `d617569` tester-set duration / loop recipes + webOS connect retries; `d4c9182` purges
+  `/dev/shm` before staging.
+- Campaign machinery: `decode_bench/campaign.py` (resumable orchestrator over duration × codec, `58e4f70`) and
+  `campaign_summary.py` (`f4c4b49`); 66-cell campaign launched 19:41 (`/srv/data/owl/campaign_2026-07-31/`),
+  41 envelopes `results/decode/2026-07-31_*.json`.
+- Also: `/decode` progress shows TV/screen wattage co-equal with the box in screen mode (`4f3d371`); `/video`
+  "Cannot access 'STAGES' before initialization" fixed (`b6b59da`). Known limit: the Kranjska 60-min H.264 clip
+  (5.2 GB) does not stage into the Pi 5's 8 GB `/dev/shm`.
 
 ---
 
@@ -3338,3 +3464,78 @@ TinyLlama ~15x more energy efficient per token than Mistral. TinyLlama too fast 
 | LLM test | `http://192.168.1.62:8000/llm` | TinyLlama + Mistral, 3 tasks |
 | Ollama | `localhost:11434` | systemd, ROCm GPU |
 | Remote tunnel | `ssh -p 2222 -L 8000:localhost:8000 user@gos1.duckdns.org` | Simon, Tania, Dom |
+
+---
+
+## Addenda — durable notes recovered from session memory (consolidated 2026-08-19)
+
+*Session memory (Claude's per-project notes) had accumulated ~70 files; on the owner's instruction the
+ones that carried facts not recorded anywhere else were folded here (or into CHANGE_REQUESTS.md /
+CLAUDE.md / GOS1_INFRA.md) and then deleted. Dates are when the fact was established.*
+
+- **STB decode spike (2026-07-26/27), the pre-rig origin story:** the Google TV Streamer was first driven by
+  Cast (`pychromecast`: discovery, play/pause, wake-from-standby worked; `current_time` is a cached snapshot —
+  call `update_status()`), but the Cast Default Media Receiver **does not decode AV1** (MP4/WebM → audio-only,
+  HLS/DASH rejected) → the ADB + Just Player path was born. Full report of the 3-content × 3-codec experiment:
+  `/srv/data/owl/stb-decode-2026-07/results/stb_decode_report.html` (+ `docs/stb_decode_energy_2026-07.md`).
+  Headlines: codec spread ≤0.08 W (AV1 cheapest, MediaTek hw decoders); sustained-streaming premium +0.42 W =
+  5–14× the codec effect; network alone +0.21 W (local file vs HTTP); media3 fetched 2.1× file size over HTTP
+  (later traced to the old `http.server` ignoring Range → CR-072 origin). "Where the Watts Go" hackathon
+  follow-up draft v0.1 (unpublished) combined this with the REM Summer-2026 hackathon.
+- **Loop-validity experiment (2026-07-07):** report `docs/loop_validity_report_2026-07.md` (moved from the
+  repo root). Verdicts: 1× short encodes are correctly RED; looping to green is valid only if the encoder stays
+  continuously busy; parity's back-to-back repeat is validated but its short-clip Wh/min is startup-inflated
+  (+36 % GPU / +22 % CPU vs internal `-stream_loop`); re-run-N-times-and-aggregate is INVALID (under-counts
+  ~40 %). Caveat lives in /methodology (parity "repeat-to-20 s").
+- **NR-VQA metric assessment (2026-06-10):** chose CompressedVQA-HDR (Apache 2.0, only HDR-capable NR candidate;
+  ICME 2025 winner). Rejected SimpleVQA (SDR-UGC training, OpenCV 8-bit decode mangles PQ, unmaintained deps),
+  DOVER / FAST-VQA (S-Lab licence restricts commercial use, SDR-only), HIDRO-VQA (clunky 10-bit YUV pipeline).
+  Framing rule: an NR score is a learned opinion, presented as a relative indicator within one run, never an
+  absolute quality claim beside energy numbers. Vendor-portability rule: any torch wiring must survive an AMD
+  fallback (`torch.cuda.is_available()`, no hardcoded CUDA).
+- **Plug-family metering facts (LEM session, 2026-07):** Shelly Plug G3 answers at ~20 Hz but the meter
+  refreshes ~1 Hz with ~0.1 W resolution (noisy near zero → unreliable for STB standby); Tapo P110 = integer mW
+  over LAN, 0.8 s on fw 1.3.x / 1.5 s on fw 1.4. Rule: Shelly for TV-class loads, Tapo for anything small or
+  precise; all OWL STB work stays on Tapo. LEM = Local Energy Measurement, GoS's third programme (repos on the
+  `Greening-of-Streaming` GitHub org: LEM public, rem private, wattlab public); the "1 W / 10 s" floor is REM's
+  TP-Link cloud path, never the sensor.
+- **ElectricityMaps trial (2026-05-12, verdict S24): don't integrate, don't pay** — for FR the free Eco2mix path
+  is better (RTE 15-min telemetry vs modelled hourly); token expired 2026-05-18, `.env` line removable.
+  Standing idea (Ben): default all CO₂e-card data (time + geography) from ONE provider — evaluate Nowtricity
+  when carbon work next comes up (now an item under CR-007).
+- **Findings impact rubric (2026-07-01):** three orthogonal axes — `confidence` (is it real, Φ(ΔW/SE)),
+  `review_status` (draft/for-comment/validated; validated = lab-committee sign-off), `impact` 1–3
+  (actionability: 3 = a reader could change a setting/purchase; 2 = reframes understanding, conditional action;
+  1 = interesting explanation; **0 = don't publish, park under `docs/findings/_parked/`**). Impact drives
+  catalog order and is a living field. Implemented in `findings.py` + `routes_findings.py`.
+- **Finding drafter (2026-06-24, restored 2026-07-01):** OWL's first non-measurement LLM use — Lab-only,
+  human-gated `CREATE_FINDING`; deterministic code detects signals and sets confidence/scope/sources, `gpt-oss:20b`
+  only verbalises; guardrails block GoS-framing/confidence/scope violations. Lives on branch
+  `feat/finding-draft-restore` (`9fab401`, **not merged**); `stash@{0}` still holds a duplicate drafter WIP —
+  reconcile before dropping. See CHANGE_REQUESTS.md backlog notes.
+- **/prepare-rem (2026-06-23/26, on main):** engine `rem_prep.py` + `routes_rem.py`; Member-viewable, Lab-run;
+  un-gated share links `/rem-file/{token}`; Simon's timer wired via `bin/rem_timer.sh`; SDR 1080p now, HDR next;
+  open follow-up: report a decode/encode/total split (metered figure is a full transcode) — tracked under CR-008.
+- **Guided Tour v2 non-obvious facts (S54):** `demo_pinned_results` is LIVE STATE in settings.json (enhance is
+  pin-only by design; after re-pinning enhance re-run `bin/make-demo-enhance-previews` and review the step-3
+  copy); Pixop maps non-16:9 sources by anamorphic stretch (measured); detail-crop previews at native 4K pixels
+  are the only comparison that shows the enhancement.
+- **Image models WIP (2026-06-03):** SDXL-Lightning loader fix + `cuda_only` gate shipped; FLUX.1-schnell wiring
+  written but dormant (gated HF repo needs a token; ~33 GB must land on /srv/data — see the model-cache
+  relocation item in GOS1_INFRA.md); bitsandbytes NF4 smoke-passed on the 5080.
+- **Dual-track one-pager (2026-06-09):** `REM/DUAL_TRACK_METHODOLOGY.md` (outside this repo) — the IEEE promo
+  piece; "REM identifies *where* effects exist; OWL quantifies *why*"; corrections baked in (shared trait is
+  the method not the scope; REM runs designed campaigns with energy-signature sequences; integration = share
+  the workload). SMPTE 2026 material now under `docs/smpte_2026/`.
+- **Board direction (2026-05-11):** AI jobs stay tethered to streaming; carbon = indicative add-on, hard-badged;
+  OWL = member-recruitment loss-leader, not a production tool; hosting toward a data-centre rack needs ~1 s
+  power granularity (CR-031); batten-down budget year (~€45k) — favour lightweight over ambitious.
+- **REM notes parked here (sibling project, no change tracking of its own):** background-polling concept
+  (2026-05-08: two cadences — background for all active devices, experiment for focused groups, per-experiment
+  `suspend_background`); handover state 2026-05: origin `nebul2/REM`, upstream `dom-robinson/stats`, target
+  `greeningofstreaming/REM`, GoS1↔Linode via `ssh rem-linode`.
+- **ForTania export (2026-05-29):** `data_exports/for_tania_video.py` → `ForTania.csv`, public un-gated link
+  `/static/dl-9e58fc984c102e35/ForTania.csv` (unguessable-token pattern also used for the VP9 mirror).
+- **Bug fixed 2026-08-19 from a memory note (2026-07-05):** `/enhance-run` timeout never reaped the Docker
+  container (GPU pinned at ~252 W off the books, job `cbf57ff0`) → `pixop.run_transcode_subprocess` now
+  `docker kill`s `owl_enhance_<job>` on timeout (`bcc4915`).

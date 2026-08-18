@@ -2030,3 +2030,119 @@ Between separately queued jobs there was no idle guard: `queue_control._worker` 
 
 - `baseline_elevated` persists on video/pixop paths only (they store whole baseline dicts); llm/rag/image pluck scalars — covered at job level by `pre_job_cooldown`.
 - parity.py fixed sleeps and benchmark.py inter-step gaps stay as-is (own validated protocol / accepted trade-off).
+
+---
+
+## CR-071 · LG C2 55" OLED as the decode rig's reference display
+
+**Status (closed 2026-08-19):** ✅ shipped — webOS control (`wattlab_service/lg.py`), CEC/screen arbitration in `decode_bench/bench.py`, C2 as `webos` rig device + `recycle_c2_panel`, Lab-C/Lab-E metering; closing commits `7de0636` + `c14ed4d` ("CR-071 delivered", 2026-07-30), Wake-on-LAN standby fix `80bd783` (2026-08-01). Residual: the C2's own decode is not isolable (panel/picture term) — recorded in JOURNAL S63/S65, not a CR.
+**Original status:** captured 2026-07-30 (owner request during the S59 rig build-out).
+**Triggered by:** owner — the shared PA329C is an LCD whose backlight mutes content response
+(measured white−black swing just 5.0 W on ~30 W); his 2022 LG C2 55" OLED would make the
+display the content-tracking instrument the device-side story needs.
+
+### Problem
+
+The Nov 2025 hackathon found device-side power dominated by **content luminance** — on OLED
+panels. The rig's current LCD barely expresses that (5 W swing); an OLED's pixel-level
+emission tracks luminance directly (tens of W expected on a 55" panel), turning every
+screen-mode row's marker head and content trace into a first-order measurement rather than a
+context reading. The C2 also does not auto-switch inputs like the PA329C — but that opens the
+door to something better than passive switching.
+
+### Agreed direction
+
+1. **Input arbitration goes positive via HDMI-CEC** (LG SIMPLINK, one-time enable): sources
+   *claim* the TV with One Touch Play / Active Source instead of the current darkening dance —
+   GTV does it natively on wake; Pis get `cec-ctl` (`apt install cec-utils`; Pi HDMI has CEC
+   silicon). `rig.claim_screen` gains a CEC path when the display is the C2; the DPMS
+   machinery stays for the PA329C.
+2. **webOS network control as the TV-side layer**: pair once (stored client key), then
+   websocket `ssap://` gives input select, power off / Wake-on-LAN power on, and — key for
+   methodology — **programmatic OLED backlight/pixel-brightness settings**, a first-order
+   energy variable the rig can then sweep as a recipe dimension.
+3. **Metering: Lab-C** (`192.168.1.35`, fw 1.3.1) becomes the C2's plug **after the Bouygues
+   router moves to a dumb socket** (hard precondition — see the standing hazard note). C2
+   standby, on/idle, and per-content draw all land in the monitor-context pipeline unchanged.
+4. **Methodology cautions to encode in the recipes**: OLED **ABL** makes full-white power
+   non-linear with bright-area (the white marker reads *panel policy*, not just luminance —
+   segmentation stays valid, interpretation notes required); keep static full-white segments
+   short (the 5 s marker head is already burn-in-kind); pixel-refresh cycles can add draw
+   after power-off (observe on Lab-C before trusting standby figures).
+5. **Placement**: C2 joins as the *measured* display; the PA329C stays as the owner's working
+   monitor (its Lab-E metering continues for LCD-vs-OLED comparison rows — a finding in
+   itself, and directly citable in the SMPTE device-side narrative).
+
+### Scope / effort
+
+`cec-utils` on both Pis + CEC probe (half a day incl. reliability testing) · webOS pairing +
+a small `webos.py` client (day) · rig config gains a display registry entry with
+arbitration kind (`cec+ssap` vs `dpms`) · recipes gain an optional brightness dimension ·
+LCD↔OLED comparison recipe. **Effort: ~2–3 lab days**, hardware-gated on the router socket
+move and the C2 physically joining the rig.
+
+---
+
+---
+
+## CR-073 · Decode campaigns = batches (collation view, no new store)
+
+**Status (closed 2026-08-19):** ✅ shipped — `decode_batch.py`, `/decode/batch/{id}` (+`.json`/`.csv`), `/decode/batches`, stamp/unstamp routes, `persist.list_batch/list_batches/stamp_batch/unstamp_batch`, `bin/stamp-decode-batch`, Recent-runs filter/paging; closing commits `f5a6366` + `202fbcb` + `c667a35` (2026-08-17), campaign-picks-across-pages fix `0047188` (2026-08-18). Live batches: `aae11481804e`, `20260817b9c0de`, `bf59a3a129f5`.
+**Original status:** captured + shipped 2026-08-17 (owner decision the same day, engineering hat on: stop the
+scope creep). **Closed on ship** — kept here one cycle for the rationale, then to the closed archive.
+**Triggered by:** the 2026-08-16→17 overnight decode campaign (13 jobs, 45 cells) had no reader-facing
+whole-campaign view — the collation existed only in chat; `/decode` Recent-runs showed the last 8; the
+one prior attempt (`decode_bench/campaign.py` + `campaign_summary.py`, 2026-07-31, hardcoded paths,
+stdout table) was not reused. The owner asked "one-off vs CR vs a real DB?".
+
+### Decision (owner, 2026-08-17)
+
+**Reuse the existing `batch_id` mechanism** (REM multi-codec files: one uuid stamped per result +
+`persist.rem_batch_csv` scan) for decode; **public-by-link** batch page; **the DB stays a CR-031 §1
+decision** — the pain here is *presentation*, not *querying* (326 MB, glob+parse ≈ 0.1 s for all decode
+files, no time-series/joins/concurrency need). Do the cheap gating pre-work (`envelope_version`) now.
+
+### Shipped (`wattlab_service/decode_batch.py`, `routes_decode.py`, `persist.py`, `decode_run.py`, `bin/stamp-decode-batch`)
+
+- Envelope: decode results carry `batch_id` (None = solo); `POST /decode/run` accepts an optional
+  `batch_id` (`[0-9a-f]{6,32}`, REM's rule); the `/decode` recipe form has a **campaign** toggle that
+  mints one id per ticked session and shows the batch link. `persist.save_result` stamps
+  `envelope_version: 1` (CR-031 §1 pre-work; absent on disk = 0). Decode envelopes now store raw
+  samples ONCE (`runs[]`; `devices[].rows` keeps scalars) — files were 2× their size; readers tolerate
+  both eras. `protocol.window_s` records the window actually run (was the template default).
+- `persist.list_batch(job_type, batch_id)` — the shared dir-scoped scan (REM's csv now uses it).
+- `decode_batch.matrix(envelopes)` — pure collation: device × (content × codec[, screen]) with ΔW, CI,
+  flag, n, liveness proofs (mid-window PLAYING, screenshot, alive), repeats stacked (n>1 shown), errors
+  as ✗ never dropped, keep-awake/screen-mode disclosure notes.
+- Routes (Anonymous tier — a batch is a Lab-measured group published by its id, same reasoning as the
+  findings-source carve-out): `GET /decode/batch/{id}` (matrix page) · `.json` · `.csv`. `/decode`
+  Recent runs: default 25, batch badge → page; the dead `/results/decode/…/download.json` link removed
+  (decode is not in that route's allow-list — JSON is per batch or via a finding's source carve-out).
+- `bin/stamp-decode-batch <batch_id> <job_id>…` — idempotent, refusing backfill (dry-run default).
+  Applied to the 2026-08-16/17 campaign → **`/decode/batch/aae11481804e`** (14 jobs incl. the reference
+  hour `2c793c73`). The invalid 08-15 night is deliberately NOT collated (errata, JOURNAL S62).
+- Tests +14 (`tests/test_decode_batch.py`): collator shapes (errored rows, failed sections, screen
+  column, repeats), list_batch/rem csv, envelope_version, routes incl. Anonymous probe, backfill script.
+- **Self-service (same day, owner: "no UI list, and I have to ask you to create one"):**
+  `GET /decode/batches` (+`.json`) — inventory of every campaign (label, jobs, dates, devices,
+  recipes; public); `POST /decode/batch/{id}/stamp` (Lab) — add ticked Recent-runs to a new or
+  existing campaign and/or set a **label** (`batch_label`, stored ON the envelopes — no sidecar);
+  `persist.list_batches` + `persist.stamp_batch` (the one implementation behind the route and
+  `bin/stamp-decode-batch --label`). Batch page/title show the label. Tests 1024 (+3).
+- **Curation follow-up (same evening):** Recent runs gained a server-side **filter** (`?q=`, substring
+  over template/label/batch label/job id/devices/upload name — "vp9" finds the Aug-09 rows on page 1)
+  and **older/newer paging** (`?offset=`, 25 per page, total shown) instead of a longer list; the batch
+  badge shows the **label** (clipped, full on hover); **remove from campaign** on the batch page (Lab,
+  `POST /decode/batch/{id}/unstamp`, `persist.unstamp_batch`) clears batch_id+label on those files only
+  if they are in THIS batch (409 otherwise, nothing written); removing the last job dissolves the batch.
+  Tests 1027 (+3).
+- **Cross-type collections (VP9 = video encodes + decode rows on one page) are NOT this CR** — a
+  per-type renderer + a type-spanning collection is findings-embed / CR-004 territory; VP9 stays out
+  of /findings while the discussion is open (owner, 2026-08-17). Noted, not built.
+
+### Not in scope (named to stop creep)
+
+DB migration (CR-031 §1 unchanged bar the pre-work); findings-embed of a batch table; unifying
+`/benchmark` with batches; a campaign scheduler (queue + a feeder is enough); REM/OWL merge.
+
+---

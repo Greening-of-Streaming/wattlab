@@ -22,7 +22,7 @@ OWL was designed as a **lab tool first** — dense, fast, neutral, no marketing 
 
 ## CR-003 · Iso-energy bitrate sweep ("I want to spend X Wh, what are my options?")
 
-**Status:** captured 2026-05-01 — longer horizon (long test runs needed).
+**Status:** captured 2026-05-01. **Instrument shipped 2026-06-19** (`parity.py` + measured `/video/budget`, `e124bf1`; two 90+-encode campaigns run since, artifacts `results/diagnostics/encode_parity_*.json`); the iso-*energy* job mode and its published finding remain open.
 **Triggered by:** Dom (transcript ~T+1126s and ~T+2398s).
 
 ### Problem
@@ -440,7 +440,7 @@ Port CR-064's enhance retention pattern to `/video`:
 
 ## CR-045 · Comparison-mode toggle on the all-codecs comparison (Same bitrate / Typical use / Constant quality)
 
-**Status:** captured 2026-05-22 (owner idea). Rides on the VMAF axis (CR-044, ✅ shipped). **Absorbs CR-029 §4 ("typical use" mode, 2026-06-11)** — same control, same result-framing rule. Sequence after / alongside CR-029's remaining review.
+**Status:** captured 2026-05-22 (owner idea). Rides on the VMAF axis (CR-044, ✅ shipped). **Absorbs CR-029 §4 ("typical use" mode, 2026-06-11)** — same control, same result-framing rule. **The V2 "constant quality" instrument already exists** as `parity.py` + measured `/video/budget` (2026-06-19, `e124bf1`); what remains is the toggle on the all-codecs compare itself. Sequence after / alongside CR-029's remaining review.
 **Triggered by:** owner — *"the compare-all-codecs button could have a toggle: Same Bitrate OR Same Quality"* + team meeting 2026-05-04 (typical-use mode).
 
 ### Problem / opportunity
@@ -552,6 +552,25 @@ When implementing, the density audit at PR review is non-optional. Concrete test
 ### Priority: **awaiting lab review.**
 
 Smallest-footprint flow change in the findings chain that touches the *most-visited* surface — so the design risk is highest. The mechanical work is ~half a day; the design discussion is the bottleneck. **Not blocking** — CR-057 staying captured lets the rest of the backlog progress; the findings chain still pays off (catalog + worked example + bulk import + /demo rewire shipped) even if `/` never moves.
+
+---
+
+## CR-059 · Social share / OG meta tags for the public pages
+
+**Status:** captured 2026-08-19 (the number was dispatched to in `CHANGE_REQUESTS_CLOSED.md` on 2026-05-27
+but no entry was ever written). **Launch-blocking for any GoS-account LinkedIn post that links OWL** — a bare
+link renders without title/description/card. Blocked since 2026-06-12 on Marketing wording (one approved GoS
+identity sentence + a share-card design; drafts on the temporary mockup pages are marked "[DRAFT wording]").
+
+### Scope
+
+`<meta property="og:title|og:description|og:image">` + Twitter card on `/`, `/demo`, `/findings`,
+`/findings/<slug>`, `/methodology`, `/decode/batch/{id}` — description from the page (finding claim_short for
+findings), one static share image (`bin/make-og-card` exists as the generator seed). Ship behind the identity
+sentence being approved; a neutral fallback ("OWL — Greening of Streaming's open energy bench") is acceptable
+to unblock the VP9 posts. **Also:** delete `wattlab_service/routes_mockups.py` + its `main.py` registration
+(the 2026-06-12 `/preview-c5d9b3be` scenario mockups) once the Marketing Lab has picked the landing scenario —
+they are TEMP and still live.
 
 ---
 
@@ -677,54 +696,6 @@ CR-031 (a container-runnable suite is a stated precondition) · CR-026 closed (t
 
 ---
 
-## CR-071 · LG C2 55" OLED as the decode rig's reference display
-
-**Status:** captured 2026-07-30 (owner request during the S59 rig build-out).
-**Triggered by:** owner — the shared PA329C is an LCD whose backlight mutes content response
-(measured white−black swing just 5.0 W on ~30 W); his 2022 LG C2 55" OLED would make the
-display the content-tracking instrument the device-side story needs.
-
-### Problem
-
-The Nov 2025 hackathon found device-side power dominated by **content luminance** — on OLED
-panels. The rig's current LCD barely expresses that (5 W swing); an OLED's pixel-level
-emission tracks luminance directly (tens of W expected on a 55" panel), turning every
-screen-mode row's marker head and content trace into a first-order measurement rather than a
-context reading. The C2 also does not auto-switch inputs like the PA329C — but that opens the
-door to something better than passive switching.
-
-### Agreed direction
-
-1. **Input arbitration goes positive via HDMI-CEC** (LG SIMPLINK, one-time enable): sources
-   *claim* the TV with One Touch Play / Active Source instead of the current darkening dance —
-   GTV does it natively on wake; Pis get `cec-ctl` (`apt install cec-utils`; Pi HDMI has CEC
-   silicon). `rig.claim_screen` gains a CEC path when the display is the C2; the DPMS
-   machinery stays for the PA329C.
-2. **webOS network control as the TV-side layer**: pair once (stored client key), then
-   websocket `ssap://` gives input select, power off / Wake-on-LAN power on, and — key for
-   methodology — **programmatic OLED backlight/pixel-brightness settings**, a first-order
-   energy variable the rig can then sweep as a recipe dimension.
-3. **Metering: Lab-C** (`192.168.1.35`, fw 1.3.1) becomes the C2's plug **after the Bouygues
-   router moves to a dumb socket** (hard precondition — see the standing hazard note). C2
-   standby, on/idle, and per-content draw all land in the monitor-context pipeline unchanged.
-4. **Methodology cautions to encode in the recipes**: OLED **ABL** makes full-white power
-   non-linear with bright-area (the white marker reads *panel policy*, not just luminance —
-   segmentation stays valid, interpretation notes required); keep static full-white segments
-   short (the 5 s marker head is already burn-in-kind); pixel-refresh cycles can add draw
-   after power-off (observe on Lab-C before trusting standby figures).
-5. **Placement**: C2 joins as the *measured* display; the PA329C stays as the owner's working
-   monitor (its Lab-E metering continues for LCD-vs-OLED comparison rows — a finding in
-   itself, and directly citable in the SMPTE device-side narrative).
-
-### Scope / effort
-
-`cec-utils` on both Pis + CEC probe (half a day incl. reliability testing) · webOS pairing +
-a small `webos.py` client (day) · rig config gains a display registry entry with
-arbitration kind (`cec+ssap` vs `dpms`) · recipes gain an optional brightness dimension ·
-LCD↔OLED comparison recipe. **Effort: ~2–3 lab days**, hardware-gated on the router socket
-move and the C2 physically joining the rig.
-
----
 
 ## CR-072 · The origin as a measured workload
 
@@ -771,9 +742,148 @@ The old "caught during the session but **not** new CRs" lists (2026-05-01 demo, 
 
 ---
 
+## CR-074 · Connection method as an energy variable — Wi-Fi vs Ethernet vs no network on the client
+
+**Status:** captured 2026-08-18 (owner, evening); **initial test run the same night** (batch
+`20260818ae7ba7b0`, `/decode/batch/20260818ae7ba7b0`) — a stand-alone experiment, not part of the
+codec panels.
+**Triggered by:** the Fire TV Stick's Wi-Fi-only disclosure on `/decode` and the July "network alone
++0.21 W (local-file vs HTTP)" datum: is the delivery path a first-order client cost, and does it depend
+on bitrate and on burst vs paced (live-like) delivery?
+
+### Problem
+
+Every client decode row so far bundles decode + render + player + *network path* into one ΔW. The rig
+mixes interfaces (GTV/Bbox/C2/Pi 400 Ethernet, Fire TV Wi-Fi), so cross-device comparisons carry an
+unquantified network term, and the Wi-Fi radio's duty cycle should depend on throughput and on whether
+the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live edge).
+
+### Design (shipped in `decode_run.py` / `origin.py` / `bench.py`, `960675c`)
+
+- **Arms:** {no network (local file), Ethernet HTTP, Wi-Fi HTTP} × {1.5, 8, 20 Mb/s} × {burst (default
+  file fetch), paced (origin `?pace_kbps=` = 1.25× clip rate — the player cannot buffer ahead; the
+  live-edge approximation)}. Same content (BBB) and codec (H.264, hardware on every STB) so only the
+  path varies. Templates `net_*`; window 600 s (network shares are ~0.1–0.3 W; CIs from the S63/S65
+  nights: GTV ±0.06 at 1080 s).
+- **Pi 400 carries the full three-way tonight** (eth0/wlan0 both configured; `nmcli` toggled per run via
+  the new `pre_cmd`/`post_cmd` hooks, control over the interface under test — `ssh_host_override` +
+  `HostName` pinning, since `~/.ssh/config` aliased the Wi-Fi IP to Ethernet), plus a "Wi-Fi radio off"
+  Ethernet control (idle radio cost).
+- **STBs run bitrate × pacing on their current interface** (GTV/Bbox Ethernet, Fire TV Wi-Fi) + a
+  local-file control (adb push) on GTV/Fire TV. **Blocker for the STB Ethernet↔Wi-Fi arm:** unrooted
+  Android TV exposes no shell path to drop Ethernet (`svc ethernet` absent, `cmd ethernet` has no shell
+  implementation, `ip link` denied); Bbox has no saved Wi-Fi network. → **Enabler:** a small managed
+  switch on the rig's Ethernet drop (per-port disable via CLI/SNMP), or an on-site cable pull per arm.
+  Also to add: Bbox Wi-Fi credentials; C2 (Ethernet + Wi-Fi both up, prefers Ethernet) via webOS luna
+  network settings, if controllable.
+- Mid-window provenance on ssh rows now records the active interfaces (`ifaces_midwindow`).
+
+### Open questions
+
+- Is a 600 s window enough for the Fire TV (noisiest meter, ±0.15–0.20 W)? If not, 1080 s + n=2.
+- Paced arm on the Pi is weak by construction (`ffmpeg -re` already reads at ~1× rate); the STB
+  players are where burst vs paced should show.
+- Cross-check the Wi-Fi share against the July "network alone" +0.21 W and against REM's field data.
+
+---
+
+---
+
+## CR-075 · Apple TV 4K on the decode rig — second attempt
+
+**Status:** captured 2026-08-18 (owner). First attempt 2026-07-30: pyatv Companion + AirPlay paired
+(creds `/srv/data/owl/atv/`), power/keys work, **AirPlay `play_url` push blocked** by a tvOS-18/pyatv
+issue; box currently disconnected (not on the LAN 2026-08-18 night — `atvremote scan` sees only the
+C2's and the Onkyos' AirPlay endpoints). pyatv venv `/tmp/pyatv-venv` is already at the latest release
+(0.18.0), so "just upgrade" is not the fix.
+
+### Why it matters
+
+The Apple TV 4K is the reference premium STB (A15, hardware H.264/HEVC/VP9/AV1 on the 3rd gen), the
+one box the Fire TV / GTV / Bbox numbers get compared against by readers, and the platform whose
+codec support Murat's LinkedIn comment questioned. Without it the STB panel is Android-only.
+
+### Plan (one on-site session + one desk session)
+
+1. **Desk, before the session:** reproduce the `play_url` failure with pyatv 0.18.0 against the
+   *C2's* AirPlay endpoint (Pairing: Mandatory) to separate "tvOS 18 refuses" from "our origin/URL":
+   AirPlay video expects an HLS or MP4 URL the *receiver* fetches — try (a) the MP4 via the origin,
+   (b) an HLS packaging of the same clip (`ffmpeg -hls_time 6 -hls_playlist_type vod`, served by
+   `origin.py` — `.m3u8`/`.ts` mime), (c) `atvremote --debug` to capture the tvOS error.
+2. **On-site (owner):** power the box on a free rig plug (Lab-C if free; NOT Lab-A, shared with the parked
+   Pi 5), HDMI_3 on the C2, Ethernet; wake with pyatv power control; re-pair if tvOS rotated the
+   credentials; disable screensaver/sleep in tvOS Settings (no shell on tvOS — settings are manual and
+   must be *disclosed* like the Android keep-awake pins).
+3. **Playback paths, in order:** (a) AirPlay `play_url` (HLS first if MP4 fails); (b) Companion
+   `launch_app` of a player that takes a URL scheme — VLC for tvOS (`vlc-x-callback://…?url=`) or
+   Infuse — verify the deep link opens a network stream; (c) last resort: the YouTube app deep link
+   (codec not under our control → excluded from panels, only a "does the rig work" smoke).
+4. **Driver:** `AtvDevice` in `bench.py` (pyatv async: power, play_url/launch, playback state via
+   `atvremote playing` for the PLAYING gate, no screenshot/logcat → liveness = state + flat trace);
+   `rig.py` device entry (plug, HDMI, `idle_w`); templates reuse the loop families.
+5. **First rows:** the S63/S65 recipe (BBB/Meridian/Kranjska × H.264/HEVC/AV1/VP9 iso-bitrate, 1080 s,
+   n=2) so it slots straight into the existing campaign tables.
+
+### Not in scope
+
+Screen-mode marker calibration on the Apple TV (no way to inject the marker head into AirPlay
+playback without re-encoding); AirPlay *from* a Mac (measures the Mac too).
+
+---
+
+## Backlog notes recovered from session memory (2026-08-19, not CRs yet)
+
+*Folded here on the owner's instruction when the per-project session memory was pruned; each is a candidate
+experiment or chore with its evidence pointer. Promote to a CR when picked up.*
+
+- **STB quick-win test shortlist (2026-07-28 sweep):** (1) HEVC→H.264 rollback client-cost write-up — data
+  exists (h264↔h265 ≤0.08 W on fixed-function decode); (2) hardware-decode companion to
+  `input-master-sensitivity` (its sw ladder inverts on hw); (3) feed the autocorrelation-honest estimator
+  (30-s Welch blocks) back into `conf_green_polls`/`conf_yellow_polls` from stored raw samples; (4)
+  resolution/upscale-location sweep on the box (hackathon Q1, device-side half of `upscale-sweetspot`);
+  (5) media3 over-fetch — resolved by CR-072's Range-correct origin (verify with `/status` counters);
+  (6) the ~0.14 W non-network residual (two 20-min runs, force-stop + grants, no `pm clear`); (7) REM-cloud
+  vs local dual-path on the same playback (Simon's repeatability question). Best single-session combo: 4 + 6.
+- **LAN-misconfig energy experiment (2026-07-05, Ben's design; parked):** does a badly-configured LAN
+  (multicast flood exemplar) waste measurable energy at a metered endpoint? Endpoint-first, non-invasive
+  (import OWL, don't edit it). Design in the plan file `~/.claude/plans/ok-so-i-want-synchronous-island.md`,
+  branch `feat/lan-multicast-flood-findings` (draft findings, missing the "real 4K reaching a metered victim"
+  arm). Next step was a reuse audit. Plugs used then: .32/.147/.133.
+- **ffmpeg old-vs-new energy test:** once stock 6.1.1 and a newer static build coexist (they do:
+  `/usr/bin/ffmpeg` vs `/usr/local/bin/ffmpeg-master`), run the same encode through both — "updating your
+  encoding software as a measurable energy improvement". `apply_custom_cmd` honours absolute paths, so no code
+  is needed.
+- **Finding drafter (LLM-assisted, Lab-only, human-gated)** — complete on branch `feat/finding-draft-restore`
+  (`9fab401`), never merged; `stash@{0}` holds a duplicate WIP. Decide: merge behind a flag, or drop both.
+  Design rule worth keeping either way: deterministic code detects signals and sets confidence/scope/sources,
+  the model only verbalises.
+- **`/audience` analytics contamination:** pytest's TestClient writes real visits (every dev day inflates all
+  tiers) and ~40–55 anonymous hits/day are one-hit crawlers on `/demo` — never read `/audience` trends at
+  face value; cross-check `journalctl -u wattlab` (real member logins = `POST /auth/sign-in` + `/auth/verify`
+  302). Fix candidates: skip `record_visit` under pytest; UA/one-hit filtering. → CR-067 item.
+- **Model caches on the system disk:** HF cache 27 GB + Ollama models 54 GB sit on the 457 GB system disk;
+  relocate to `/srv/data/owl/{hf-cache,ollama}` before any large download (FLUX NF4 ~33 GB, SD3.5). HF move
+  needs no sudo (`mv` + symlink, service stopped); Ollama needs `OLLAMA_MODELS=` in the unit. → GOS1_INFRA.md.
+- **CO₂e single source (Ben):** default all carbon-card data (time + geography) from one provider —
+  evaluate Nowtricity when CR-007 is picked up. ElectricityMaps verdict (S24) stands: don't pay.
+- **/prepare-rem follow-ups (CR-008):** report a decode/encode/total split (metered figure is a full
+  transcode); HDR path (Simon's config supports PQ/HEVC main10); verify closed-GOP NVENC concat on 4K.
+- **CR-031 §2 status:** `power.stamp()` + `meter_display_name` shipped 2026-06-09 (provenance + display only);
+  the `PowerBackend` ABC / PDU / synthetic backends and resolution-aware confidence remain.
+
+---
+
 ## Groupings & dependencies (rewritten 2026-06-11 — restructure pass: CR-018 merged into CR-007, CR-064 closed, CR-029 §4/§6 extracted; **extended 2026-07-06 — Track F added from the OWL_AUDIT.md triage, CR-031/CR-008 refreshed**)
 
-The **17 active CRs** cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items. (CR-024 closed 2026-07-06, PR #5 `09480ec`.)
+The **21 active CRs** (as of 2026-08-19: 003 004 007 008 009 025 029 031 039 041 043 045 057 059 066 067 068 069 072 074 075) cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items. (Closed since the last rewrite: CR-024 2026-07-06 `09480ec`; **CR-071 and CR-073 closed 2026-08-19** — decode-rig display control and decode campaigns, both fully shipped; see CHANGE_REQUESTS_CLOSED.md.)
+
+### Track G — Decode rig (2026-07-29 → , the largest active surface)
+
+- **CR-072** origin as a measured workload — phase 1 plumbing shipped (`origin.py`, ownership hooks); phase 2 (metered serve window, origin ΔW/bytes in the envelope) is the point.
+- **CR-074** connection method (Wi-Fi / Ethernet / none) — harness shipped, first data 2026-08-19 night; STB Ethernet↔Wi-Fi arm needs a managed switch or a cable pull.
+- **CR-075** Apple TV 4K second attempt — hardware-gated (on-site session), plan written.
+- Rig-side open harness items (JOURNAL S65): Fire TV `alive_at_window_end` false negative (now instrumented), C2 SSAP timeouts at window end, parity's missing inter-row idle guard.
+
 
 ### Track A — Storage / analytics (Tania-elevated 2026-05-07)
 
@@ -835,149 +945,3 @@ CR-069 verifications       ──→ CR-031 / CR-066 / CR-067 / CR-068 (dispatch
 5. **CR-031 §1** storage decision — unblocks the analytics layer (CR-003, CR-007); its new ungated pre-work list can proceed in parallel.
 6. **CR-029 remainder + CR-045** — Tania-led, as her availability allows; a §2 revision re-bases video numbers (re-run variance calibration), designed-for via `video._norm_args`.
 7. **CR-039 / CR-041 / CR-004 / CR-007 / CR-043 / CR-069** opportunistically; Track E as capacity allows. *(CR-024 done.)*
-
-## CR-073 · Decode campaigns = batches (collation view, no new store)
-
-**Status:** captured + shipped 2026-08-17 (owner decision the same day, engineering hat on: stop the
-scope creep). **Closed on ship** — kept here one cycle for the rationale, then to the closed archive.
-**Triggered by:** the 2026-08-16→17 overnight decode campaign (13 jobs, 45 cells) had no reader-facing
-whole-campaign view — the collation existed only in chat; `/decode` Recent-runs showed the last 8; the
-one prior attempt (`decode_bench/campaign.py` + `campaign_summary.py`, 2026-07-31, hardcoded paths,
-stdout table) was not reused. The owner asked "one-off vs CR vs a real DB?".
-
-### Decision (owner, 2026-08-17)
-
-**Reuse the existing `batch_id` mechanism** (REM multi-codec files: one uuid stamped per result +
-`persist.rem_batch_csv` scan) for decode; **public-by-link** batch page; **the DB stays a CR-031 §1
-decision** — the pain here is *presentation*, not *querying* (326 MB, glob+parse ≈ 0.1 s for all decode
-files, no time-series/joins/concurrency need). Do the cheap gating pre-work (`envelope_version`) now.
-
-### Shipped (`wattlab_service/decode_batch.py`, `routes_decode.py`, `persist.py`, `decode_run.py`, `bin/stamp-decode-batch`)
-
-- Envelope: decode results carry `batch_id` (None = solo); `POST /decode/run` accepts an optional
-  `batch_id` (`[0-9a-f]{6,32}`, REM's rule); the `/decode` recipe form has a **campaign** toggle that
-  mints one id per ticked session and shows the batch link. `persist.save_result` stamps
-  `envelope_version: 1` (CR-031 §1 pre-work; absent on disk = 0). Decode envelopes now store raw
-  samples ONCE (`runs[]`; `devices[].rows` keeps scalars) — files were 2× their size; readers tolerate
-  both eras. `protocol.window_s` records the window actually run (was the template default).
-- `persist.list_batch(job_type, batch_id)` — the shared dir-scoped scan (REM's csv now uses it).
-- `decode_batch.matrix(envelopes)` — pure collation: device × (content × codec[, screen]) with ΔW, CI,
-  flag, n, liveness proofs (mid-window PLAYING, screenshot, alive), repeats stacked (n>1 shown), errors
-  as ✗ never dropped, keep-awake/screen-mode disclosure notes.
-- Routes (Anonymous tier — a batch is a Lab-measured group published by its id, same reasoning as the
-  findings-source carve-out): `GET /decode/batch/{id}` (matrix page) · `.json` · `.csv`. `/decode`
-  Recent runs: default 25, batch badge → page; the dead `/results/decode/…/download.json` link removed
-  (decode is not in that route's allow-list — JSON is per batch or via a finding's source carve-out).
-- `bin/stamp-decode-batch <batch_id> <job_id>…` — idempotent, refusing backfill (dry-run default).
-  Applied to the 2026-08-16/17 campaign → **`/decode/batch/aae11481804e`** (14 jobs incl. the reference
-  hour `2c793c73`). The invalid 08-15 night is deliberately NOT collated (errata, JOURNAL S62).
-- Tests +14 (`tests/test_decode_batch.py`): collator shapes (errored rows, failed sections, screen
-  column, repeats), list_batch/rem csv, envelope_version, routes incl. Anonymous probe, backfill script.
-- **Self-service (same day, owner: "no UI list, and I have to ask you to create one"):**
-  `GET /decode/batches` (+`.json`) — inventory of every campaign (label, jobs, dates, devices,
-  recipes; public); `POST /decode/batch/{id}/stamp` (Lab) — add ticked Recent-runs to a new or
-  existing campaign and/or set a **label** (`batch_label`, stored ON the envelopes — no sidecar);
-  `persist.list_batches` + `persist.stamp_batch` (the one implementation behind the route and
-  `bin/stamp-decode-batch --label`). Batch page/title show the label. Tests 1024 (+3).
-- **Curation follow-up (same evening):** Recent runs gained a server-side **filter** (`?q=`, substring
-  over template/label/batch label/job id/devices/upload name — "vp9" finds the Aug-09 rows on page 1)
-  and **older/newer paging** (`?offset=`, 25 per page, total shown) instead of a longer list; the batch
-  badge shows the **label** (clipped, full on hover); **remove from campaign** on the batch page (Lab,
-  `POST /decode/batch/{id}/unstamp`, `persist.unstamp_batch`) clears batch_id+label on those files only
-  if they are in THIS batch (409 otherwise, nothing written); removing the last job dissolves the batch.
-  Tests 1027 (+3).
-- **Cross-type collections (VP9 = video encodes + decode rows on one page) are NOT this CR** — a
-  per-type renderer + a type-spanning collection is findings-embed / CR-004 territory; VP9 stays out
-  of /findings while the discussion is open (owner, 2026-08-17). Noted, not built.
-
-### Not in scope (named to stop creep)
-
-DB migration (CR-031 §1 unchanged bar the pre-work); findings-embed of a batch table; unifying
-`/benchmark` with batches; a campaign scheduler (queue + a feeder is enough); REM/OWL merge.
-
----
-
-## CR-074 · Connection method as an energy variable — Wi-Fi vs Ethernet vs no network on the client
-
-**Status:** captured 2026-08-18 (owner, evening); **initial test run the same night** (batch
-`20260818ae7ba7b0`, `/decode/batch/20260818ae7ba7b0`) — a stand-alone experiment, not part of the
-codec panels.
-**Triggered by:** the Fire TV Stick's Wi-Fi-only disclosure on `/decode` and the July "network alone
-+0.21 W (local-file vs HTTP)" datum: is the delivery path a first-order client cost, and does it depend
-on bitrate and on burst vs paced (live-like) delivery?
-
-### Problem
-
-Every client decode row so far bundles decode + render + player + *network path* into one ΔW. The rig
-mixes interfaces (GTV/Bbox/C2/Pi 400 Ethernet, Fire TV Wi-Fi), so cross-device comparisons carry an
-unquantified network term, and the Wi-Fi radio's duty cycle should depend on throughput and on whether
-the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live edge).
-
-### Design (shipped in `decode_run.py` / `origin.py` / `bench.py`, `960675c`)
-
-- **Arms:** {no network (local file), Ethernet HTTP, Wi-Fi HTTP} × {1.5, 8, 20 Mb/s} × {burst (default
-  file fetch), paced (origin `?pace_kbps=` = 1.25× clip rate — the player cannot buffer ahead; the
-  live-edge approximation)}. Same content (BBB) and codec (H.264, hardware on every STB) so only the
-  path varies. Templates `net_*`; window 600 s (network shares are ~0.1–0.3 W; CIs from the S63/S65
-  nights: GTV ±0.06 at 1080 s).
-- **Pi 400 carries the full three-way tonight** (eth0/wlan0 both configured; `nmcli` toggled per run via
-  the new `pre_cmd`/`post_cmd` hooks, control over the interface under test — `ssh_host_override` +
-  `HostName` pinning, since `~/.ssh/config` aliased the Wi-Fi IP to Ethernet), plus a "Wi-Fi radio off"
-  Ethernet control (idle radio cost).
-- **STBs run bitrate × pacing on their current interface** (GTV/Bbox Ethernet, Fire TV Wi-Fi) + a
-  local-file control (adb push) on GTV/Fire TV. **Blocker for the STB Ethernet↔Wi-Fi arm:** unrooted
-  Android TV exposes no shell path to drop Ethernet (`svc ethernet` absent, `cmd ethernet` has no shell
-  implementation, `ip link` denied); Bbox has no saved Wi-Fi network. → **Enabler:** a small managed
-  switch on the rig's Ethernet drop (per-port disable via CLI/SNMP), or an on-site cable pull per arm.
-  Also to add: Bbox Wi-Fi credentials; C2 (Ethernet + Wi-Fi both up, prefers Ethernet) via webOS luna
-  network settings, if controllable.
-- Mid-window provenance on ssh rows now records the active interfaces (`ifaces_midwindow`).
-
-### Open questions
-
-- Is a 600 s window enough for the Fire TV (noisiest meter, ±0.15–0.20 W)? If not, 1080 s + n=2.
-- Paced arm on the Pi is weak by construction (`ffmpeg -re` already reads at ~1× rate); the STB
-  players are where burst vs paced should show.
-- Cross-check the Wi-Fi share against the July "network alone" +0.21 W and against REM's field data.
-
----
-
-## CR-075 · Apple TV 4K on the decode rig — second attempt
-
-**Status:** captured 2026-08-18 (owner). First attempt 2026-07-30: pyatv Companion + AirPlay paired
-(creds `/srv/data/owl/atv/`), power/keys work, **AirPlay `play_url` push blocked** by a tvOS-18/pyatv
-issue; box currently disconnected (not on the LAN 2026-08-18 night — `atvremote scan` sees only the
-C2's and the Onkyos' AirPlay endpoints). pyatv venv `/tmp/pyatv-venv` is already at the latest release
-(0.18.0), so "just upgrade" is not the fix.
-
-### Why it matters
-
-The Apple TV 4K is the reference premium STB (A15, hardware H.264/HEVC/VP9/AV1 on the 3rd gen), the
-one box the Fire TV / GTV / Bbox numbers get compared against by readers, and the platform whose
-codec support Murat's LinkedIn comment questioned. Without it the STB panel is Android-only.
-
-### Plan (one on-site session + one desk session)
-
-1. **Desk, before the session:** reproduce the `play_url` failure with pyatv 0.18.0 against the
-   *C2's* AirPlay endpoint (Pairing: Mandatory) to separate "tvOS 18 refuses" from "our origin/URL":
-   AirPlay video expects an HLS or MP4 URL the *receiver* fetches — try (a) the MP4 via the origin,
-   (b) an HLS packaging of the same clip (`ffmpeg -hls_time 6 -hls_playlist_type vod`, served by
-   `origin.py` — `.m3u8`/`.ts` mime), (c) `atvremote --debug` to capture the tvOS error.
-2. **On-site (owner):** power the box on a free rig plug (Lab-C if free; NOT Lab-A, shared with the parked
-   Pi 5), HDMI_3 on the C2, Ethernet; wake with pyatv power control; re-pair if tvOS rotated the
-   credentials; disable screensaver/sleep in tvOS Settings (no shell on tvOS — settings are manual and
-   must be *disclosed* like the Android keep-awake pins).
-3. **Playback paths, in order:** (a) AirPlay `play_url` (HLS first if MP4 fails); (b) Companion
-   `launch_app` of a player that takes a URL scheme — VLC for tvOS (`vlc-x-callback://…?url=`) or
-   Infuse — verify the deep link opens a network stream; (c) last resort: the YouTube app deep link
-   (codec not under our control → excluded from panels, only a "does the rig work" smoke).
-4. **Driver:** `AtvDevice` in `bench.py` (pyatv async: power, play_url/launch, playback state via
-   `atvremote playing` for the PLAYING gate, no screenshot/logcat → liveness = state + flat trace);
-   `rig.py` device entry (plug, HDMI, `idle_w`); templates reuse the loop families.
-5. **First rows:** the S63/S65 recipe (BBB/Meridian/Kranjska × H.264/HEVC/AV1/VP9 iso-bitrate, 1080 s,
-   n=2) so it slots straight into the existing campaign tables.
-
-### Not in scope
-
-Screen-mode marker calibration on the Apple TV (no way to inject the marker head into AirPlay
-playback without re-encoding); AirPlay *from* a Mac (measures the Mac too).
