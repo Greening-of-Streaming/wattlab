@@ -3507,7 +3507,7 @@ CLAUDE.md / GOS1_INFRA.md) and then deleted. Dates are when the fact was establi
   `review_status` (draft/for-comment/validated; validated = lab-committee sign-off), `impact` 1–3
   (actionability: 3 = a reader could change a setting/purchase; 2 = reframes understanding, conditional action;
   1 = interesting explanation; **0 = don't publish, park under `docs/findings/_parked/`**). Impact drives
-  catalog order and is a living field. Implemented in `findings.py` + `routes_findings.py`.
+  catalog order and is a living field. ⚠ Verified 2026-08-19: `findings.py` on `main` carries only `confidence` — the `review_status`/`impact` fields never landed on main (they were on the parked finding-draft branch); the rubric stands as editorial policy, the schema fields are still to do.
 - **Finding drafter (2026-06-24, restored 2026-07-01):** OWL's first non-measurement LLM use — Lab-only,
   human-gated `CREATE_FINDING`; deterministic code detects signals and sets confidence/scope/sources, `gpt-oss:20b`
   only verbalises; guardrails block GoS-framing/confidence/scope violations. Lives on branch
