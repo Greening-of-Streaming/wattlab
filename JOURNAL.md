@@ -7,6 +7,63 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 65 — 2026-08-17 evening → 08-18 morning (overnight VP9 re-run)
+
+**VP9 re-run for the LinkedIn thread + Faultline: iso-bitrate, software vs software, n=2–3 — two sequenced campaigns, both clean**
+
+- **Why:** Tania (n=1 one-off too thin for a Faultline piece; iso-bitrate please), Jan Ozer
+  (software vs software; everything-at-slow ladder), Thierry Fautier (speed dial), Tommy Flanagan
+  asking for the report. Ben: "finish with a few affirmations we can stand behind" (memory
+  `few-affirmations-over-conjecture`), publish after Tania checks, thank Thierry + Jan.
+- **Design (plan file could-you-do-a-groovy-whale.md):** encode and decode cannot overlap (parity
+  needs `/tmp/owl-paused`; origin :8123 lives on GoS1) → prep → encode → decode, one detached
+  `orchestrator.sh` (E/D/S phases, markers, pause flag cleared on any exit) in
+  `/srv/data/owl/campaign_2026-08-17_vp9b/` (scripts copied to `docs/vp9_rerun_2026-08-17/`).
+  Lab-session mode on for the night (`bin/lab-session-on`), off in the morning.
+- **Prep (`prep_iso_family.py`, 42 min):** iso-bitrate loop family, 3 contents × 4 codecs, software
+  encoders at production points, two-pass ABR, GOP 120, silent audio, 120 s from the ProRes refs
+  (Meridian: 1080p ProRes made from the compressed 4K master), concat ×10 → 20-min loops in
+  `streams/` (`<fam>iso_<codec>_20min.mp4|webm`). Bitrates = each existing H.264 family clip's
+  (BBB 8 Mb/s, Meridian 4.5, Kranjska 10 — 12 would breach the Pi 400 shm ceiling). Gotchas: WebM
+  needs Opus not AAC; **WebM's 1 ms timebase mis-pairs frames against a 1/fps reference when libvmaf
+  pairs by timestamp** (VP9 scored 55.7 on Kranjska until re-scored with `settb=1/fps,setpts=N`
+  → 89.2; H.264 control unchanged) — remember for any WebM scoring. Manifest
+  `iso_family_manifest.json` (VMAF v1 at that bitrate: BBB 97.9/98.2/98.3/98.5, Kranjska
+  90.5/87.0/87.0/89.2, Meridian 93.3/93.7/92.7/91.1).
+- **Service (`e3862a7`):** `decode_run.ISO_FAMILIES × ISO_CODECS` → 12 `loop_<fam>iso_<codec>`
+  templates (VP9 as `.webm`, clamp 1080 s), `decode_batch._FAMILY_LABEL` entries, tests
+  (1027 green), restart. GTV smoke on the new WebM: `c2.mtk.vp9.decoder`, PLAYING, +0.60 W 🟢.
+- **Encode (`run_encode_matrix.py`, 20:18→22:35, 108 rows, all 🟢, artifact
+  `results/diagnostics/encode_parity_nvenc_24c_2026-08-17.json`):** x264/x265/SVT-AV1/libvpx ×
+  {default, slow(=Jan's set)} (+ VP9 cpu-used 1) × {2500, 5000 k} × {bbb, meridian} × n=3, reps
+  outermost. Probe first (x264 8.7/11.2 s, x265 18/41, SVT 12.5/96, VP9 39/50 per 30 s of BBB).
+  Two rows excluded (w_base 98.7 / 95.1 W — hot baseline; parity has no inter-row idle guard).
+  **Results:** at defaults x264 1 : x265 2.0 : SVT-AV1 1.0–1.5 : **VP9 4.6–4.9**; at Jan's slow set
+  x264 1 : x265 3.6–4.0 : **SVT-AV1 9.5–10.8** : VP9 4.6–5.0 (Jan: 1 : 8.5 : 8.6 : 9.5 in time) —
+  the operating point decides which new codec is dearest; ΔW 65–71 W on every sw row → time =
+  energy on a saturated CPU, attributional ≈ ×2.2 everywhere so ratios hold; VP9 dial cu4→2→1 =
+  1.7× for ~+0.5 VMAF, SVT p10→p3 8–15×; **no iso-bitrate quality claim** (one-pass ABR on 30 s
+  trims missed target −32…+46 %; VP9 +45 % on BBB).
+- **Decode (`decode_feeder.py`, 22:40→08:21, 30 jobs, batch `20260817b9c0de`,
+  `/decode/batch/20260817b9c0de`):** 3 contents × 4 codecs, 1080 s headless, 5 devices parallel,
+  n=2 (+ pass 3 for H.264/VP9). First feeder launch 400'd — batch id must be hex (`1708vp9iso01`
+  wasn't), 4 min lost. Gates: PLAYING mid-window + trace flat to window end (**Fire TV
+  `alive_at_window_end` is a false negative on 24/30 rows whose traces are flat to the last
+  second — harness bug to fix**; 3 rows genuinely dead/paused excluded; C2 lost 3 rows to
+  webOS SSAP timeouts/1008). **Results:** hardware boxes — VP9 inside the ±0.1 W codec spread on
+  all three contents (GTV BBB 0.58 vs 0.55–0.59, Kranjska 0.30 vs 0.28–0.29, Meridian 0.57 vs
+  0.50–0.53; Fire TV likewise), content moves the number 2×; Pi 400 sw — VP9 1.1–1.2 W cheapest/
+  tied with H.264, AV1 1.5–1.8, HEVC 2.4–3.3; Bbox AV1 +1.2 W all contents (software), rest in
+  idle drift; C2 = panel/picture term (BBB +16 W, dark contents ≈0/negative), not decode.
+- **Published:** report §5 (`bc6572f`, tables from `analyze_night.py` → `analysis.md`), status
+  block, "what we would now say / not say" (§5.3), thanks to Thierry + Jan; OWL mirror refreshed
+  (`0444cba`); GitHub link back after the outage. Awaiting Tania's check before Ben posts.
+- **Open (harness):** Fire TV end-of-window liveness false negative; C2 SSAP 1008/timeout at
+  window end loses the row; parity has no inter-row idle guard (2/108 hot baselines);
+  `/decode` "add to campaign" across Recent-runs pages creates a new campaign per page (Ben).
+
+---
+
 ## Session 62 — 2026-08-16 (afternoon)
 
 **Marginal vs attributional energy — a second accounting lens (methodology v0.7), and the VP9 post draws Jan Ozer**
