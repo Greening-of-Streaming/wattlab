@@ -851,6 +851,7 @@ _BODY = """
       <select id="batch-target"><option value="__new__">new campaign</option></select>
       label <input type="text" id="batch-label" placeholder="e.g. Overnight 5×3×3, 2026-08-17" style="width:16rem">
       <button class="rig-btn" onclick="addToBatch()">Add to campaign</button>
+      <span id="batch-picked" class="rig-detail"></span>
       <span id="batch-msg" class="rig-detail"></span>
     </div>
     <div class="rig-note" style="margin:0 0 0.3rem 0;display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
@@ -1264,6 +1265,17 @@ function runsFilterChanged() {
   }, 250);
 }
 function runsPage(delta) { RUNS_OFFSET = Math.max(0, RUNS_OFFSET + delta); loadRecent(); }
+// Ticks and the chosen target campaign survive paging/filtering: the table is
+// re-rendered per page, so selection state lives here, not in the DOM
+// (2026-08-18: adding from a second "older" page silently created a new
+// campaign each time — the target <select> was rebuilt and reset).
+var BATCH_PICKS = {};
+function pickChanged(cb) { if (cb.checked) BATCH_PICKS[cb.value] = 1; else delete BATCH_PICKS[cb.value]; pickCount(); }
+function pickCount() {
+  var el = document.getElementById('batch-picked'); if (!el) return;
+  var n = Object.keys(BATCH_PICKS).length;
+  el.textContent = n ? n + ' ticked' + (n > 1 ? ' (across pages)' : '') : '';
+}
 
 async function loadRecent() {
   try {
@@ -1297,6 +1309,7 @@ async function loadRecent() {
         : '';
       var tick = IS_LAB
         ? '<input type="checkbox" class="batch-pick" value="' + run.job_id + '" '
+          + (BATCH_PICKS[run.job_id] ? 'checked ' : '') + 'onchange="pickChanged(this)" '
           + (run.batch_id ? 'data-batch="' + run.batch_id + '" ' : '') + 'style="margin-right:0.3rem">'
         : '';
       h += '<tr><td>' + tick + when + '</td><td>' + (run.label || '') + batch + '</td>'
@@ -1316,13 +1329,16 @@ async function loadRecent() {
       try {
         var b = await (await fetch('/decode/batches.json')).json();
         var sel = document.getElementById('batch-target');
+        var keep = sel.value;   // rebuilding the list must not reset the tester's choice
         sel.innerHTML = '<option value="__new__">new campaign</option>';
         (b.batches || []).forEach(function(x) {
           var o = document.createElement('option'); o.value = x.batch_id;
           o.textContent = (x.label || x.batch_id) + ' (' + x.n_jobs + ')';
           sel.appendChild(o);
         });
+        if (keep && Array.prototype.some.call(sel.options, function(o){ return o.value === keep; })) sel.value = keep;
       } catch (e2) {}
+      pickCount();
     }
   } catch (e) {}
 }
@@ -1332,8 +1348,7 @@ loadRecent();
 // optionally labelling it. Server refuses if a run is already in another
 // batch — a result belongs to one campaign.
 async function addToBatch() {
-  var picks = Array.prototype.slice.call(document.querySelectorAll('.batch-pick:checked'))
-                .map(function(c){ return c.value; });
+  var picks = Object.keys(BATCH_PICKS);   // every page's ticks, not just the visible one
   var target = document.getElementById('batch-target').value;
   var label = document.getElementById('batch-label').value.trim();
   var msg = document.getElementById('batch-msg');
@@ -1354,7 +1369,13 @@ async function addToBatch() {
       + (j.skipped && j.skipped.length ? ', ' + j.skipped.length + ' already in' : '')
       + ' → <a href="/decode/batch/' + bid + '" style="color:var(--accent)">/decode/batch/' + bid + '</a>';
     if (target === '__new__') CAMPAIGN_ID = null;
-    loadRecent();
+    BATCH_PICKS = {};
+    // the campaign just created/extended becomes the target, so the next
+    // "Add" from any page appends to it instead of opening a new one
+    document.getElementById('batch-label').value = '';
+    await loadRecent();
+    var sel2 = document.getElementById('batch-target');
+    if (Array.prototype.some.call(sel2.options, function(o){ return o.value === bid; })) sel2.value = bid;
   } catch (e) { msg.textContent = String(e); }
 }
 
