@@ -1,53 +1,18 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-08-18 (Session 65 — overnight VP9 re-run: iso-bitrate sw-vs-sw encode+decode, report §5; see JOURNAL S65)
-# Previous: 2026-08-16 (Session 62 — marginal vs attributional lens, /methodology v0.7, Jan Ozer thread; see JOURNAL S62)
-# Previous: 2026-08-16 (Session 61 — overnight long-window review: STB playback dies mid-window
-#   (GTV ~20 min, Fire TV ~5 min, GTV HEVC never renders; AV1 fine) → negative 1 h ΔWs are artefacts;
-#   valid: Bbox H.264 1 h +0.22 🟢, AV1 rows 🟢; C2 differential −7 W = picture-mode confound; logcat/C2-wake
-#   fixes 7a01def. On-site GTV 20-min diagnosis pending. See JOURNAL S61.)
-# Previous: 2026-08-15 (Session 60 — rig hygiene: idle auto-off (rig_idle_off_* in /settings →
-#   Decode rig, default 4 h, bench.py hold file keeps CLI campaigns alive; ALSO fixed: the whole
-#   Decode-rig settings section never persisted — keys weren't in settings.DEFAULTS) · unauthorised-ADB
-#   diagnosis + "Repair ADB (on-site)" (claim screen + ONE reconnect + fingerprint; stuck tiles self-heal,
-#   Claim screen on stuck) · Fire TV Stick back on Lab-A/HDMI_4, Pi 5 PARKED (return headless on a spare
-#   P110), per-device `network` attr + Wi-Fi-only disclosure on /decode + /methodology · C2 SIMPLINK/CEC
-#   turned OFF by owner (auto-switch was hopping inputs into the C2's own baseline; C2 launch retries once;
-#   error rows carry error_where + log tail) · first 5-device promo-clip runs: hw-STB decode of 1080p is
-#   ~0.1–0.3 W = below a 34 s window's noise (🔴 is honest; use long loop windows). Tests 1007.
-#   ⚠ Journal gap 07-31→08-14 (C2/CR-071, Bbox, Fire TV, CR-072, SMPTE couplings, VP9) — see git log.)
-# Previous: 2026-07-29 (Session 58 — client decode goes first-class: portable decode-bench rig
-#   (/srv/data/owl/decode-bench/ — Google TV + Raspberry Pi 5 + Pi 400, adb/ssh drivers, July-protocol)
-#   → new `decode` result type (mode decode_panel; envelopes results/decode/2026-07-29_dec0de{04,05,06}.json
-#   via bin/import-decode-bench-results, idempotent) + two DRAFT findings on /findings
-#   (hw-decoder-cuts-client-energy-4x · codec-decode-energy-depends-on-silicon-and-regime).
-#   Headlines: hw decoder 3.6–4.1× cheaper than sw SAME board; Pi 5 (dropped hw H.264) pays ~4.5×;
-#   sw codec ranking h264<av1<hevc at 1× on both Pis, INVERTS saturated — state the regime.
-#   /methodology → v0.6 (REM+LEM named in Principle, "1 W API" myth corrected to mW, redundancy pruned,
-#   client-decode disclosed in Scope/Test Types). Report: docs/pi_decode_energy_2026-07.md. Tests 896.)
-# Previous: 2026-07-20 (Session 57 — FR "sandwich" live on /enhance-run: full-reference VMAF v1
-#   for the 10 degraded-ladder fixtures ONLY (uploads/kranjska stay NR-only). Anchors in
-#   test_content/degraded/fr_anchors_v1.json via bin/make-enhance-fr-anchors (re-run after any
-#   vmaf_model change): baseline = player-style lanczos naive upscale vs ref_4k; ceilings = ref through
-#   pipeline, BBB 89.40 / Meridian 91.49 in v1 (gap to 100 = encode cost). pixop.probe_fr_sandwich in
-#   the terminal post-lock slot (substage fr-vmaf), single + compare runners; anchors attach only under
-#   the SAME vmaf_model; result block fr:{vmaf, vmaf_model, baseline_vmaf, ceiling_vmaf}. ⚠ bbb_hd_clean
-#   naive baseline 93.09 > BBB ceiling 89.40 — ordering expected NOT guaranteed, caveat in UI copy.
-#   Tests 894.)
-# Previous: 2026-07-20 (Session 56 — CR-070 pre-job idle guard, the meeting's "baseline bug":
-#   between queued jobs OWL took every job's first baseline unverified (CR-062 only guarded intra-job
-#   gaps). Now the queue worker waits for the previous baseline's floor before dispatching —
-#   power.LAST_W_BASE rolling reference (updated EVERY baseline; a risen floor self-corrects after one
-#   flagged job); attended Lab jobs get a "Run job anyway" button after pre_job_skip_after_s (5 s) via
-#   POST /job/{id}/cooldown-skip (→ method="idle+skipped"); outcome persists consume-once as
-#   pre_job_cooldown; baseline_elevated/baseline_reference_w stamped (persisted video/pixop paths only —
-#   llm/rag/image pluck scalars, covered at job level). 120 s cap unchanged; hot baselines under-count
-#   ΔW, never inflate. Commit 1bf87d6. Tests 884.)
+# Last updated: 2026-08-19 (S66 overnight: connection-method campaign CR-074 running on the rig; documentation
+#   sweep — JOURNAL back-filled 07-31→08-14, CRs tidied (071/073 closed, 059/074/075 added), memory pruned,
+#   /methodology-vs-code inconsistency journal at docs/methodology_vs_code_2026-08-19.md. See JOURNAL S66.)
+# Previous: S65 (08-17→18) VP9 re-run for the LinkedIn thread — report §5 (iso-bitrate, sw-vs-sw, n=2–3), Tania
+#   checked, Ben posting. Standing rules from that arc: state the operating point of every encoder; software vs
+#   software is the VOD market frame; "no VP9 hw path on NVIDIA/AMD", never "none exists"; WebM for VP9 on Android
+#   boxes and frame-index alignment (settb/setpts=N) when scoring WebM.
+
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 17 active CRs + CR-073 (shipped, one cycle) (+ groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - CHANGE_REQUESTS.md — 21 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
 #   - TESTING.md — pytest suite (1027 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
@@ -55,7 +20,12 @@
 #   - docs/wattlab_traffic_light_confidence.md (Tania §9 spec) · docs/wattlab_parameters_audit.md (param taxonomy)
 #   - docs/input_sensitivity_findings.md (CR-047 pre-test) · docs/dual_meter_pretest_findings.md (CR-065 pre-test)
 #   - docs/gpu_swap_amd_baseline.md (frozen AMD-era data)
-#   - REM/CLAUDE.md — sibling project (Tapo fleet via TP-Link cloud). OWL = bench, REM = meter on the building.
+#   - REM/CLAUDE.md — sibling project (Tapo fleet via TP-Link cloud). OWL = bench, REM = field meter; LEM = Local
+#     Energy Measurement (mW-lossless local plug polling; repos on the Greening-of-Streaming GitHub org).
+#   - docs/vp9_oneoff_2026-08.md (+ docs/vp9_rerun_2026-08-17/) — the VP9 report the LinkedIn thread revolves around
+#   - docs/methodology_vs_code_2026-08-19.md — methodology-vs-implementation inconsistency journal (owner review)
+#   - docs/TOOLSET_STRATEGY.md — decode-rig toolset decision doc · docs/smpte_2026/ — SMPTE 2026 tables
+#   - .claude/skills/ — operational skills (bench-preflight, decode-campaign, ship-service-change, finding-draft, session-close)
 
 ## Project Identity
 - **Name:** WattLab · **Repo:** https://github.com/greeningofstreaming/wattlab
@@ -68,6 +38,10 @@
 - Separate device / network / data center / production+storage impacts explicitly.
 - State scoping assumptions. Signal uncertainty. Traffic Light Confidence on all claims.
 - Audience: CTOs, operators, infrastructure players, policymakers.
+- Board steer (2026-05-11): AI jobs stay tethered to streaming; carbon = indicative add-on, hard-badged, never
+  quoted as GoS data; OWL = member-recruitment loss-leader, not a production tool; lightweight over ambitious.
+- Publication rule (2026-08-17): finish with a few affirmations we can stand behind (n + CI stated, operating
+  point named); Tania checks before Ben posts; credit the critics.
 
 ## GoS1 Server
 - CPU: AMD Ryzen 9 7900, 24 cores · RAM: 61GB · Python 3.12.3 · Node 20.x
@@ -118,8 +92,10 @@ DuckDNS updater: see GOS1_INFRA.md.)
   reapply after any re-clone. Fail-softs to "no score" if missing.
 
 ## Repo Structure
-**See ARCHITECTURE.md for the module map** (main.py = ~500-line app assembly; twelve flat `routes_*.py` feature
-modules; `runtime.py` jobs/telemetry; `ui.py` page chrome + serve-time wording; measurement modules `video.py`
+**See ARCHITECTURE.md for the module map** (main.py = ~640-line app assembly; eighteen flat `routes_*.py` feature
+modules incl. `routes_decode.py`/`routes_rem.py`; rig side = `rig.py` (state machine + plugs), `decode_run.py`
+(templates → bench configs), `decode_batch.py`, `lg.py` (webOS), `origin_control.py` (:8123 origin child), `idle_wait.py`;
+`runtime.py` jobs/telemetry; `ui.py` page chrome + serve-time wording; measurement modules `video.py`
 `llm.py` `image_gen.py` `rag.py`; `power.py`/`gpu.py` instrumentation; `persist.py`/`settings.py` storage).
 Key paths: `wattlab_service/static/wl-*.js` (shared JS bundles, sha cache-busted, configured via `/ui-config.js`);
 `results/` → `/srv/data/owl/results` (per-result JSON, `{type}/{date}_{job_id}.json`); `test_content/`, `corpus/`,
@@ -130,7 +106,7 @@ binds a name, not main.
 ## Measurement Protocol
 1. Focus mode: stop background timers (sudoers: `/etc/sudoers.d/wattlab-focus`)
 2. LLM only: unload model (keep_alive=0), sleep 3s
-3. Baseline: 10 polls × 1s → W_base
+3. Baseline: `baseline_polls` × 1 s → W_base (live value 5; rolling floor `power.LAST_W_BASE`, CR-070)
 4. Lock: `/tmp/gos-measure.lock`
 5. Task: ffmpeg (nice -n -5) or Ollama API
 6. Poll P110(s) + sensors at 1s (dual-meter: 2nd plug staggered 0.5s, per-meter ΔW combine — CR-065)
@@ -157,7 +133,8 @@ LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised tr
 ## Services & URLs
 wattlab (systemd, port 8000, 1 worker — restart needs the OWNER: not in Claude's sudoers) · ollama (11434).
 LAN `http://192.168.1.62:8000` · public `https://wattlab.greeningofstreaming.org` (nginx + certbot).
-Pages: `/video /llm /rag /image /demo /findings /benchmark /enhance-run /settings /queue-status /methodology /carbon /privacy`.
+Pages: `/video /llm /rag /image /demo /findings /benchmark /enhance-run /enhance-run/ladder /video/budget /decode
+/decode/batches /decode/batch/{id} /prepare-rem /settings /queue-status /methodology /carbon /privacy`.
 Hidden: `/audience` (Lab-only visit dashboard — anonymous aggregate counts from analytics.py; not in any nav).
 Auth tiers (CR-001): Anonymous (public) · Member (magic-link, allowlist `data/members.json`) · Lab (LAN/loopback).
 Policy lives ONLY in `capabilities.py`; routes never compare tiers. Tests run as Lab — reason about
@@ -166,47 +143,21 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 17 CRs** in CHANGE_REQUESTS.md (CR-066–069 captured 2026-07-06 from the
+tour/credibility → RAG). **Active: 21 CRs** in CHANGE_REQUESTS.md (CR-066–069 captured 2026-07-06 from the
 OWL_AUDIT.md triage; CR-024 closed same week — PR #5 `09480ec`); closed archive in CHANGE_REQUESTS_CLOSED.md.
 CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — owner-infra remainders keep them active.
 
 ### Recent sessions (true one-liners — full entries in JOURNAL.md)
-- S26–S30 (05-20→27): credibility bundle, versioning, VMAF + CI confidence model, BBB/variants picker, model-ladder refresh. 218→290 tests.
-- S31–S33 (05-27/28): compare trilogy (CR-048/049/050), RAG corpus self-service (CR-051), findings catalog (CR-054–058). →339.
-- S34–S35 (05-28/29): CR-061 benchmark orchestrator + CR-029 §2 encode norm; CR-060 GPU abstraction + AMD baseline frozen. →385.
-- S36 (05-29): GPU swap — RTX 5080 first light, zero code edits; NVENC beats VAAPI on energy, +20 W idle. 
-- S37 (06-01): /demo tour trap + findings-embed 404 fixes. →392.
-- S38 (06-02): CR-062 omnibus — unified cooldown/wait-for-idle, /video codec split, queue resume, JS bundling guard. →427.
-- S39 (06-03): compare-page cooldown-label factoring + /image compare fixes. →432.
-- S40 (06-08): CR-063 Pixop /enhance-run integration (pixop.py). →505.
-- S41 (06-10): architecture review; refactor Phases 0–1 (JS bundles → files, serve-time config); tinyllama-default fix; idle-wait readout. →560.
-- S42 (06-10/11): refactor Phases 2–4 — ui.render_page(), twelve routes_*.py + runtime.py, result-envelope contract. →566.
-- CR-064 arc (06-10 evening): /enhance-run revamp — uploads, NVEncC args editor, queue controls, upload TTL sweep, UGC VFR×forcecfr bisect. →614.
-- S43 (06-11): /video batch-box selection affordance fix (boxes looked dead; clicks worked) + doc cleanup. →615.
-- S44 (06-11): CR-064 Jon's answers — conditional input normalization (pre-baseline, energy-clean) + per-job logs; hdr_4k = 96.8% VRAM (OOM theory). →628.
-- S45 (06-11 pm): Pixop named (member-contributed framing) · queue pause toggle · UGC energy-vs-quality learnings · degradation ladder frozen (test_content/degraded/). →648.
-- S46 (06-11 eve): CR-065 complete — pre-test PASSED (2.5× fresh gain, probe + findings doc) then integration: meter registry/cached handles, shared sampler, ci2 combine, energy.meters, cadence token. →662.
-- S47 (06-12): P110 fw experiment (bin/probe-p110-fw) — fw≥1.4.0 = 1.5s refresh CONFIRMED + local-API lockout + two EU hw variants; meter fw is measurement setup, 1.3.1 irreplaceable, get spares.
-- S48 (06-12 night): upscale sweet-spot sweep (16 runs, all 🟢, dual-meter) → finding `upscale-sweetspot-degraded-sources` + /enhance-run/ladder subpage (chart + fixtures). Restart pending. →668.
-- S49 (06-12 pm): anonymous-landing audit (`docs/anon_landing_audit_2026-06.md`) + /demo truth pass (copy bakes from live model/GPU/source registries) + global viewport meta + TEMP Marketing mockups `/preview-c5d9b3be`. OG tags open. →682.
-- S50 (06-13): Marketing email out (A-vs-B home page + C deep-links) · findings enhance-embed renderer + card CSS · compare panels sorted by model size · PCE-AAC audio-only pre-remux (Jon's workaround; paced runs on 5.1-AAC restored, verification run pending). →687.
-- S51 (06-15): conference-demo pre-flight (demo lock = stage-on staging mode; remote = SSH tunnel) · GDPR anonymous-analytics: visit counter (analytics.py) + /audience (hidden Lab) + IP pseudonymisation (no raw IP on disk, 7 legacy files migrated) + /privacy notice. →702. (ccb77a9)
-- S52 (06-16): HDR→4K enhancement unblocked — measured Jon's memory-throttle env vars (VRAM 94→85%, energy/throughput cost within noise), applied to hdr_4k combo ONLY (`_COMBO_ENV`/combo_env), `_COMBO_EXCLUSIONS` emptied, methodology + page "mild throttle" note/tooltip · /enhance-run progress bar fed `elapsed` · compare-disable HDR tooltip. →704.
-- S53 (06-18/19): encode-parity & energy-quality calibration — `parity.py`+`bin/run-encode-parity` harness (repeat-to-20s for NVENC sampling, per-row checkpoint, pause-not-stop poller guard); first 90-encode run (all 🟢) → NVENC 2.5–4.4× less Wh/min than CPU, GPU-worse-esp-AV1 gap is low-complexity/low-bitrate only (Meridian: NVENC AV1 beats libsvtav1), tuned NVENC bundle REJECTED for live (more energy, lower VMAF) · /video/budget auto-flips to measured (`budget_data.py`) · target_vmaf=92 on /settings · method note + /video/budget/reconfigure (Lab re-cal). Tests 704. ⚠ 1 restart pending. →704.
-- S54 (07-07): Guided Tour v2 — stranded 9-step tour recovered from stash + redesigned (core path w/ optional AI detour, honest counter) · pinned tour preloads (`demo_pinned_results`; enhance pin-only, rag pseudo-type) · /video rich renderer unified into wl-result.js (fresh==stored==embeds) · slim public nav all pages · budget-step teaser from current_fixture(). →849.
-- S55 (07-17): VMAF v1 adoption — quality.py single funnel (FR+NR metrics, delegate pattern), vmaf_model/vmaf_ffmpeg_bin settings lever, provenance stamping (`vmaf_model`; absent = legacy v0.6.1, UI labels both), /methodology v1 note, /video per-run VMAF checkbox · scoring binary separate from encode binary · budget/target_vmaf stay v0 until re-cal · tour/video progress bars unified (WL_VIDEO_PRESET_STAGES in wl-progress.js; demo VMAF stage was invisible). →872.
-- S56 (07-20): CR-070 pre-job idle guard (meeting's "baseline bug" — real, was only intra-job-fixed by CR-062) — rolling floor power.LAST_W_BASE, queue-worker wait before every job, "Run job anyway" skip after 5 s (Lab, /job/{id}/cooldown-skip), consume-once pre_job_cooldown persist stamp, baseline_elevated provenance · verified live (job 02dc670c, 22.7 s settle) · 1bf87d6. →884.
-- S57 (07-20): FR sandwich live on /enhance-run — v1 anchors for the 10 ladder fixtures (bin/make-enhance-fr-anchors → fr_anchors_v1.json; ceilings BBB 89.40/Meridian 91.49), pixop.probe_fr_sandwich terminal slot both runners, fr result block + sandwich on result cards; same-model guard; bbb_hd_clean naive 93.09 > ceiling (ordering caveat is real) · non-4K fixture runs stamp fr.skipped + note · fair FLOOR added (naive upscale through the matched encode via the compare ffmpeg arm; ordered lines are same-path only, source-as-displayed = context) — bbb_sd_dirty enhanced 31.57 vs floor 32.69. →895.
-- S58 (07-28/29): client decode first-class — decode-bench rig (GTV smoke replicates July 1.91 vs 1.887 W; Pi 5 sw-only + Pi 400 hw-vs-sw panels, 21 rows 🟢, contaminated rows discarded+documented) → `decode` result type + 2 DRAFT findings (hw-decoder ~4×; codec ranking depends on silicon+regime) · /methodology v0.6 (REM/LEM named, mW-API fix, redundancy pruned) · report docs/pi_decode_energy_2026-07.md. →896.
-- S59 (07-29/30): `/decode` Lab console (rig.py state machine, claim-screen, poller) + recipe runs (headless parallel fan-out, screen mode) + protocol v3 marker head + shared idle guard (idle_wait.py) + LEM csv export; rig on Ethernet + reservations. →964.
-- [07-31→08-14 un-journaled: LG C2 native + CR-071 webOS control, Bbox operator CPE, Fire TV first bench, CR-072 origin, SMPTE couplings, VP9 one-off, marginal-vs-attributional lens.]
-- S60 (08-15): rig hygiene — idle auto-off (4 h, hold file for CLI) + Decode-rig settings persistence bug fixed · unauthorised-ADB diagnosis + Repair ADB (on-site only) · Fire TV back on Lab-A/HDMI_4, Pi 5 parked, Wi-Fi-only disclosure · C2 CEC off (input-hop confound) · 5-device promo runs (hw STB decode below 34 s noise). →1007.
-- S61 (08-16): overnight long-window review — mechanics + auto-off worked; **STB playback dies mid-window** (GTV H.264 stops at ~20 min — standing since 07-31; Fire TV ~5 min; GTV HEVC never renders; AV1 fine everywhere) → negative hour-long ΔWs are artefacts; valid: Bbox H.264 1 h +0.22 🟢, AV1 GTV +0.12 / Fire +0.16 / Bbox +1.35 (sw?) 🟢; C2 differential −7 W is a picture-mode confound. Fixes: logcat non-UTF-8, wake C2 in _wait_ready (7a01def). On-site GTV 20-min diagnosis pending.
-- S62 (08-16/17): STB death SOLVED live — GTV `sleep_timeout` 20 min + CEC active-source-lost `standby_now`, Fire TV `screen_off_timeout` 5 min, Just Player launches PAUSED via ADB (alive_at_window_end lied) → bench.py ensure_keep_awake + play-verify + PLAYING liveness (fec0065). 1 h H.264: GTV +0.65 W 🟢, Fire TV +0.59 W 🟢 (≈0.6 Wh/h). ERRATA: pre-fec0065 long GTV/Fire TV rows invalid. Overnight 5-device × 3 content × 3 codec campaign queued.
-- S62 (08-16 pm): marginal vs attributional energy — time was already in ΔE/Wh-per-min; the gap was idle attribution → additive second lens (W_base+ΔW)×Δt: parity rows persist `w_base` + `wh_per_min_video_attributional`, /methodology v0.7 subsection, off-repo retro over S53+VP9 (CPU rows ×2.1–2.7, NVENC-vs-VP9 gap 1.97→4.22 Wh/min, ratios hold; decode immune) `79045ab` · VP9 post: Jan Ozer's slow-preset ladder (x265 8.5×/SVT 8.6×/VP9 9.5× vs x264) reconciles with OWL's default-preset rows once the operating point is named; sw-vs-hw 15× headline conceded; joint article (Thierry+Jan) in play. →993.
-- S65 (08-17→18 overnight): VP9 re-run for the thread/Faultline — iso-bitrate sw-encoded loop family (12 `loop_<fam>iso_<codec>` templates, VP9 WebM; ⚠ WebM 1 ms timebase breaks timestamp-paired VMAF, use settb/setpts=N) · encode 108 rows n=3 all 🟢: defaults VP9 4.6–4.9× x264, Jan's slow set SVT-p3 9.5–10.8× / VP9 4.6–5×, ΔW 65–71 W everywhere (time = energy), no iso-bitrate quality claim · decode 30 jobs: hw boxes VP9 inside ±0.1 W on 3 contents, Pi 400 sw VP9 cheapest, HEVC 2–3×; ⚠ Fire TV alive_at_window_end false-negative → report §5, mirror refreshed; Tania to check before Ben posts. →1027.
-- S63 (08-17): first clean 5×3×3 decode campaign (55 rows, harness held, all screenshots show content; S62 HEVC-black claim withdrawn) — GTV/Fire TV decode-and-play 0.25–0.65 W 🟢, content > codec (≤0.1 W codec spread); Bbox H.264/HEVC inside its own idle noise, AV1 +1.2–1.4 W = software; C2 native-vs-HDMI differential is a picture-path term (parked); finding `stb-decode-and-play-content-over-codec` (DRAFT); C2 wake-on-launch-fail + loop-window clamps (bd5d7f7) · public pointers: /decode?job=<id> cards, /findings/source/decode/<id>/download.json, /decode/result/<id>/lem.csv · open: Fire TV meridian_h264 repeat, Bbox-AV1-sw finding?, lab review of the draft.
-- S64 (08-17 pm): CR-073 campaigns = batches — reuse REM `batch_id`; `decode_batch.matrix` + `/decode/batch/{id}` (+json/csv, Anonymous) + campaign toggle + `persist.list_batch` + `envelope_version: 1` + decode single-store + `bin/stamp-decode-batch`; last night → `/decode/batch/aae11481804e`; DB stays CR-031 §1 (pain = presentation, not querying) · self-service: /decode/batches list, Lab Add-to-campaign + labels (persist.stamp_batch/list_batches); VP9 cross-type page NOT built (still in discussion) · Recent-runs filter+paging, label badge, remove-from-campaign. →1027.
+- S26–S45 (05-20→06-11): credibility bundle, VMAF+CI confidence, compare trilogy, findings catalog, benchmark orchestrator, GPU swap → RTX 5080, CR-062 cooldown omnibus, Pixop /enhance-run (CR-063/064), refactor to routes_*.py + runtime.py.
+- S46–S53 (06-11→06-19): CR-065 dual P110 (ci2), P110 fw facts, upscale sweet-spot finding, anon-landing audit + TEMP mockups, GDPR analytics + /audience, HDR→4K throttle, encode-parity calibration harness + /video/budget measured.
+- S54–S57 (07-07→07-20): Guided Tour v2 (9 steps, pins = live state), VMAF v1 via quality.py, CR-070 pre-job idle guard, FR "sandwich" on /enhance-run.
+- S58–S59 (07-28→30): client decode first-class — portable decode-bench rig, `decode` result type, /decode Lab console (rig.py), protocol v3 idle guard, LEM csv export.
+- S59b–S59g (07-31→08-15, back-filled): five devices on the bench (Bbox, Fire TV, C2 native via CR-071), 66-cell campaign (F7/F9/F10/F11), C2 WoL fix, SMPTE overnight couplings (R6 3.7×/4.6×, FGS/CABAC/effort/fps), VP9 one-off + report, gpu-boost prior-art v2, attributional lens.
+- S60–S61 (08-15/16): rig hygiene (idle auto-off, ADB repair, CEC off), overnight long-window review — STB playback dies mid-window (sleep timers) → negative rows are artefacts.
+- S62–S62b (08-16): methodology v0.7 marginal vs attributional; Jan Ozer thread; first clean 5×3×3 decode campaign overnight (harness pins sleep timers, PLAYING gate, screenshots).
+- S63–S64 (08-17): campaign reviewed → finding `stb-decode-and-play-content-over-codec` (DRAFT); CR-073 campaigns = batches (+ self-service, filter/paging).
+- S65 (08-17→18): VP9 re-run — iso-bitrate sw-vs-sw encode (108 rows, n=3) + decode (30 jobs, 3 contents) → report §5; affirmations: operating point decides the dearest codec; hw decode VP9 inside ±0.1 W; sw VP9 cheapest, HEVC 2–3×; no iso-bitrate quality claim. Fire TV liveness false-negative instrumented; campaign paging bug fixed.
+- S66 (08-18→19 overnight): CR-074 network-path campaign (Pi 400 eth/wifi/local × 3 bitrates × burst/paced; STBs on current interface; origin `?pace_kbps=`), CR-075 Apple TV plan, docs sweep (JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal), pixop timeout container reap. Tests 1027.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -217,21 +168,24 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
   VMAF checkbox defaulting from `vmaf_enabled` (video.py:229).
 - **Guided Tour Findings step** — redesign to aggregate across all stored results, not echo the session run.
 - **Power-user/visitor UX watch** — revisit if a visible density toggle becomes needed.
-- **2026-07 audit doc-debt** (OWL_AUDIT.md §3.7, residue after the CR-066–069 triage): JOURNAL back-fill for
-  07-31→08-14 (C2/CR-071, Bbox, Fire TV, CR-072, SMPTE couplings, VP9 — see git log) · JOURNAL entry for the
-  un-journaled prepare-REM arc (06-20→30: `/prepare-rem`, `uploads.py`, GPU clock pin, budget 3-clip campaign) ·
-  `ARCHITECTURE.md` map refresh (17 routers, real line counts) · VERSION/tag reconciliation (v0.8.7 "rollback
-  anchor" is 111+ commits stale, v1.x tags coexist) · back-fill the 28 closed-CR entries missing closing-commit hashes.
+- **2026-07 audit doc-debt residue** (after the 2026-08-19 sweep): VERSION/tag reconciliation (`v1.0.0` tag is
+  150+ commits stale; `VERSION` frozen at 1.0.0) · back-fill the 28 closed-CR entries missing closing-commit hashes ·
+  ARCHITECTURE.md is refreshed but its per-module line counts will drift again — regenerate, don't hand-edit.
+- **Rig harness open items** (S65/S66): Fire TV `alive_at_window_end` false negative (instrumented via
+  `playback_state_at_end`, root cause open) · Fire TV loses ADB authorisation after a mains power cycle (on-site
+  accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard.
 
 ## Key Findings to Date
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real
-stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs:
+stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs (12):
 `abr-all-codecs-meridian-120s` · `av1-hw-sw-vmaf-tradeoff` ⭐ · `input-master-sensitivity` ·
 `llm-cold-inference-mwh-per-token` 🟡 · `rag-faithfulness-rem-question` 🟡 · `sd-turbo-cpu-image-first-run` ·
-`hw-decoder-cuts-client-energy-4x` (DRAFT) · `codec-decode-energy-depends-on-silicon-and-regime` 🟡 (DRAFT) ·
-`stb-decode-and-play-content-over-codec` 🟢 (DRAFT).
+`upscale-sweetspot-degraded-sources` · `gpu-boost-overclocks-fixed-function-nvenc` (v2, prior-art positioned) ·
+`hw-decoder-cuts-client-energy-4x` (3.7× rt / 4.6× sat, lab-reviewed) · `codec-decode-energy-depends-on-silicon-and-regime` 🟡 ·
+`streaming-box-plays-4-7x-cheaper-than-general-purpose` · `stb-decode-and-play-content-over-codec` (DRAFT).
 Not catalogued (live on `/methodology`): French grid evolution (Eco2mix lifecycle series); CR-016 insight —
-Eco2mix `taux_co2` is combustion-only, never compare it to lifecycle means.
+Eco2mix `taux_co2` is combustion-only, never compare it to lifecycle means. VP9 stays a report
+(`docs/vp9_oneoff_2026-08.md`) until the discussion settles.
 
 ## Visual Identity
 Owl SVG `wattlab_service/static/owl.svg`; GoS round bug footer-only. Dark theme `#0a0a0a` bg / `#00ff99`
