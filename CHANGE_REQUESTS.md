@@ -894,3 +894,90 @@ files, no time-series/joins/concurrency need). Do the cheap gating pre-work (`en
 
 DB migration (CR-031 §1 unchanged bar the pre-work); findings-embed of a batch table; unifying
 `/benchmark` with batches; a campaign scheduler (queue + a feeder is enough); REM/OWL merge.
+
+---
+
+## CR-074 · Connection method as an energy variable — Wi-Fi vs Ethernet vs no network on the client
+
+**Status:** captured 2026-08-18 (owner, evening); **initial test run the same night** (batch
+`20260818ae7ba7b0`, `/decode/batch/20260818ae7ba7b0`) — a stand-alone experiment, not part of the
+codec panels.
+**Triggered by:** the Fire TV Stick's Wi-Fi-only disclosure on `/decode` and the July "network alone
++0.21 W (local-file vs HTTP)" datum: is the delivery path a first-order client cost, and does it depend
+on bitrate and on burst vs paced (live-like) delivery?
+
+### Problem
+
+Every client decode row so far bundles decode + render + player + *network path* into one ΔW. The rig
+mixes interfaces (GTV/Bbox/C2/Pi 400 Ethernet, Fire TV Wi-Fi), so cross-device comparisons carry an
+unquantified network term, and the Wi-Fi radio's duty cycle should depend on throughput and on whether
+the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live edge).
+
+### Design (shipped in `decode_run.py` / `origin.py` / `bench.py`, `960675c`)
+
+- **Arms:** {no network (local file), Ethernet HTTP, Wi-Fi HTTP} × {1.5, 8, 20 Mb/s} × {burst (default
+  file fetch), paced (origin `?pace_kbps=` = 1.25× clip rate — the player cannot buffer ahead; the
+  live-edge approximation)}. Same content (BBB) and codec (H.264, hardware on every STB) so only the
+  path varies. Templates `net_*`; window 600 s (network shares are ~0.1–0.3 W; CIs from the S63/S65
+  nights: GTV ±0.06 at 1080 s).
+- **Pi 400 carries the full three-way tonight** (eth0/wlan0 both configured; `nmcli` toggled per run via
+  the new `pre_cmd`/`post_cmd` hooks, control over the interface under test — `ssh_host_override` +
+  `HostName` pinning, since `~/.ssh/config` aliased the Wi-Fi IP to Ethernet), plus a "Wi-Fi radio off"
+  Ethernet control (idle radio cost).
+- **STBs run bitrate × pacing on their current interface** (GTV/Bbox Ethernet, Fire TV Wi-Fi) + a
+  local-file control (adb push) on GTV/Fire TV. **Blocker for the STB Ethernet↔Wi-Fi arm:** unrooted
+  Android TV exposes no shell path to drop Ethernet (`svc ethernet` absent, `cmd ethernet` has no shell
+  implementation, `ip link` denied); Bbox has no saved Wi-Fi network. → **Enabler:** a small managed
+  switch on the rig's Ethernet drop (per-port disable via CLI/SNMP), or an on-site cable pull per arm.
+  Also to add: Bbox Wi-Fi credentials; C2 (Ethernet + Wi-Fi both up, prefers Ethernet) via webOS luna
+  network settings, if controllable.
+- Mid-window provenance on ssh rows now records the active interfaces (`ifaces_midwindow`).
+
+### Open questions
+
+- Is a 600 s window enough for the Fire TV (noisiest meter, ±0.15–0.20 W)? If not, 1080 s + n=2.
+- Paced arm on the Pi is weak by construction (`ffmpeg -re` already reads at ~1× rate); the STB
+  players are where burst vs paced should show.
+- Cross-check the Wi-Fi share against the July "network alone" +0.21 W and against REM's field data.
+
+---
+
+## CR-075 · Apple TV 4K on the decode rig — second attempt
+
+**Status:** captured 2026-08-18 (owner). First attempt 2026-07-30: pyatv Companion + AirPlay paired
+(creds `/srv/data/owl/atv/`), power/keys work, **AirPlay `play_url` push blocked** by a tvOS-18/pyatv
+issue; box currently disconnected (not on the LAN 2026-08-18 night — `atvremote scan` sees only the
+C2's and the Onkyos' AirPlay endpoints). pyatv venv `/tmp/pyatv-venv` is already at the latest release
+(0.18.0), so "just upgrade" is not the fix.
+
+### Why it matters
+
+The Apple TV 4K is the reference premium STB (A15, hardware H.264/HEVC/VP9/AV1 on the 3rd gen), the
+one box the Fire TV / GTV / Bbox numbers get compared against by readers, and the platform whose
+codec support Murat's LinkedIn comment questioned. Without it the STB panel is Android-only.
+
+### Plan (one on-site session + one desk session)
+
+1. **Desk, before the session:** reproduce the `play_url` failure with pyatv 0.18.0 against the
+   *C2's* AirPlay endpoint (Pairing: Mandatory) to separate "tvOS 18 refuses" from "our origin/URL":
+   AirPlay video expects an HLS or MP4 URL the *receiver* fetches — try (a) the MP4 via the origin,
+   (b) an HLS packaging of the same clip (`ffmpeg -hls_time 6 -hls_playlist_type vod`, served by
+   `origin.py` — `.m3u8`/`.ts` mime), (c) `atvremote --debug` to capture the tvOS error.
+2. **On-site (owner):** power the box on a free rig plug (Lab-C if free; NOT Lab-A, shared with the parked
+   Pi 5), HDMI_3 on the C2, Ethernet; wake with pyatv power control; re-pair if tvOS rotated the
+   credentials; disable screensaver/sleep in tvOS Settings (no shell on tvOS — settings are manual and
+   must be *disclosed* like the Android keep-awake pins).
+3. **Playback paths, in order:** (a) AirPlay `play_url` (HLS first if MP4 fails); (b) Companion
+   `launch_app` of a player that takes a URL scheme — VLC for tvOS (`vlc-x-callback://…?url=`) or
+   Infuse — verify the deep link opens a network stream; (c) last resort: the YouTube app deep link
+   (codec not under our control → excluded from panels, only a "does the rig work" smoke).
+4. **Driver:** `AtvDevice` in `bench.py` (pyatv async: power, play_url/launch, playback state via
+   `atvremote playing` for the PLAYING gate, no screenshot/logcat → liveness = state + flat trace);
+   `rig.py` device entry (plug, HDMI, `idle_w`); templates reuse the loop families.
+5. **First rows:** the S63/S65 recipe (BBB/Meridian/Kranjska × H.264/HEVC/AV1/VP9 iso-bitrate, 1080 s,
+   n=2) so it slots straight into the existing campaign tables.
+
+### Not in scope
+
+Screen-mode marker calibration on the Apple TV (no way to inject the marker head into AirPlay
+playback without re-encoding); AirPlay *from* a Mac (measures the Mac too).
