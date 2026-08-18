@@ -1454,12 +1454,25 @@ def run_transcode_subprocess(cmd: list[str], timeout_s: int,
     t0 = time.time()
     out = err = ""
     rc: Optional[int] = None
+
+    def _reap_container():
+        # A subprocess timeout kills only the docker CLIENT; the container (and
+        # its NVEncC pinning the GPU at ~250 W) keeps running off the books —
+        # job cbf57ff0, 2026-07-05. Kill it by the --name we gave it.
+        try:
+            i = cmd.index("--name")
+            subprocess.run(["docker", "kill", cmd[i + 1]], capture_output=True,
+                           timeout=30)
+        except (ValueError, IndexError, Exception):
+            pass
+
     if pacer_cmd is None:
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
             out, err, rc = r.stdout or "", r.stderr or "", r.returncode
         except subprocess.TimeoutExpired:
-            err, rc = f"timed out after {timeout_s}s", None
+            _reap_container()
+            err, rc = f"timed out after {timeout_s}s (container killed)", None
     else:
         pacer = subprocess.Popen(pacer_cmd, stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL)
@@ -1471,8 +1484,9 @@ def run_transcode_subprocess(cmd: list[str], timeout_s: int,
             rc = proc.returncode
         except subprocess.TimeoutExpired:
             proc.kill()
+            _reap_container()
             out, err = proc.communicate()
-            err = (err or "") + f"\ntimed out after {timeout_s}s"
+            err = (err or "") + f"\ntimed out after {timeout_s}s (container killed)"
             rc = None
         finally:
             pacer.terminate()
