@@ -117,6 +117,19 @@ class RangeHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Range", f"bytes */{size}")
             self.end_headers()
             return
+        # Optional server-side pacing (2026-08-18, network-path experiment):
+        # `?pace_kbps=N` caps THIS response at N kbit/s so the player cannot
+        # buffer ahead — a live-edge-like delivery, versus the default
+        # unpaced (burst) file fetch. Per response, so a client that opens
+        # parallel ranges could exceed it; media3/Just Player use one.
+        pace_kbps = 0
+        if "?" in self.path:
+            from urllib.parse import parse_qs
+            q = parse_qs(self.path.split("?", 1)[1])
+            try:
+                pace_kbps = int(q.get("pace_kbps", ["0"])[0])
+            except ValueError:
+                pace_kbps = 0
         self._send_file_head(path, size, start, end, status)
         sent = 0
         with _lock:
@@ -125,13 +138,21 @@ class RangeHandler(SimpleHTTPRequestHandler):
             with open(path, "rb") as f:
                 f.seek(start)
                 remaining = end - start + 1
+                chunk_size = 64 * 1024 if pace_kbps > 0 else 256 * 1024
+                t0 = time.time()
                 while remaining > 0:
-                    chunk = f.read(min(256 * 1024, remaining))
+                    chunk = f.read(min(chunk_size, remaining))
                     if not chunk:
                         break
                     self.wfile.write(chunk)
                     sent += len(chunk)
                     remaining -= len(chunk)
+                    if pace_kbps > 0:
+                        # sleep until the bytes sent so far fit the rate budget
+                        due = sent * 8 / (pace_kbps * 1000.0)
+                        lag = due - (time.time() - t0)
+                        if lag > 0:
+                            time.sleep(min(lag, 0.5))
         except (BrokenPipeError, ConnectionResetError):
             pass                                    # client hung up — normal
         finally:
@@ -141,6 +162,8 @@ class RangeHandler(SimpleHTTPRequestHandler):
                 _stats["bytes_sent"] += sent
                 if status == 206:
                     _stats["ranged_requests"] += 1
+                if pace_kbps > 0:
+                    _stats["paced_requests"] = _stats.get("paced_requests", 0) + 1
 
 
 def main():

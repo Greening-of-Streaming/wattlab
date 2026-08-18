@@ -181,6 +181,54 @@ for _fam in ISO_FAMILIES:
                       "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
         }
 
+# Network-path arms (2026-08-18, Ben: isolate the connection method's power
+# share — Wi-Fi vs Ethernet vs no network, low/high bitrate, burst vs paced
+# ["live-like"] delivery). Same BBB content, H.264 (hardware on every STB),
+# three bitrates; the origin's ?pace_kbps= caps delivery at 1.25× the clip
+# rate so the player cannot buffer ahead. STB Ethernet↔Wi-Fi swaps need a
+# cable/managed switch (no shell path on unrooted Android TV) — the Pi 400
+# carries the full three-way comparison tonight; the STBs run bitrate ×
+# pacing on their current interface (GTV/Bbox Ethernet, Fire TV Wi-Fi).
+_NET_CLIPS = {1500: "bbbnet_h264_1500k_20min.mp4", 8000: "bbbiso_h264_20min.mp4",
+              20000: "bbbnet_h264_20000k_20min.mp4"}
+_NET_BENCH = {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+              "startup_skip_s": 8, "window_s": 600, "gap_s": 10}
+_PI_WIFI = "192.168.1.110"   # Pi 400 wlan0 (eth0 = the rig target .108)
+for _kb, _clip in _NET_CLIPS.items():
+    for _pace in ("burst", "paced"):
+        _q = f"pace_kbps={int(_kb * 1.25)}" if _pace == "paced" else ""
+        TEMPLATES[f"net_b{_kb}_{_pace}"] = {
+            "label": f"Net — BBB H.264 {_kb/1000:g} Mb/s HTTP {_pace} (current interface)",
+            "clips": {f"net_b{_kb}_{_pace}": _clip}, "url_query": _q,
+            "ssh_source": "http", "max_window_s": 1080, "bench": dict(_NET_BENCH),
+            "devices": ["gtv", "firestick", "bbox", "pi400"],
+        }
+        TEMPLATES[f"net_pi_wifi_b{_kb}_{_pace}"] = {
+            "label": f"Net — Pi 400 over Wi-Fi, BBB H.264 {_kb/1000:g} Mb/s HTTP {_pace}",
+            "clips": {f"net_pi_wifi_b{_kb}_{_pace}": _clip}, "url_query": _q,
+            "ssh_source": "http", "ssh_host_override": _PI_WIFI,
+            "pre_cmd": "sudo nmcli dev disconnect eth0", "pre_wait_s": 8,
+            "post_cmd": "sudo nmcli dev connect eth0",
+            "max_window_s": 1080, "bench": dict(_NET_BENCH), "devices": ["pi400"],
+        }
+    TEMPLATES[f"net_pi_local_b{_kb}"] = {
+        "label": f"Net — Pi 400 local file (/dev/shm), BBB H.264 {_kb/1000:g} Mb/s — no network",
+        "clips": {f"net_pi_local_b{_kb}": _clip}, "max_window_s": 1080,
+        "bench": dict(_NET_BENCH), "devices": ["pi400"],
+    }
+TEMPLATES["net_pi_eth_b8000_wifioff"] = {
+    "label": "Net — Pi 400 Ethernet HTTP 8 Mb/s burst with the Wi-Fi radio OFF (radio-idle control)",
+    "clips": {"net_pi_eth_b8000_wifioff": _NET_CLIPS[8000]}, "ssh_source": "http",
+    "pre_cmd": "sudo nmcli radio wifi off", "pre_wait_s": 5,
+    "post_cmd": "sudo nmcli radio wifi on",
+    "max_window_s": 1080, "bench": dict(_NET_BENCH), "devices": ["pi400"],
+}
+TEMPLATES["net_local_b8000"] = {
+    "label": "Net — STB local file (adb push), BBB H.264 8 Mb/s — no network",
+    "clips": {"net_local_b8000": _NET_CLIPS[8000]}, "delivery": "local",
+    "max_window_s": 1080, "bench": dict(_NET_BENCH), "devices": ["gtv", "firestick"],
+}
+
 # Screen-mode marker head (2026-07-30, Ben's design): 5 s black · 5 s white ·
 # 5 s black prepended to the CONTENT clip as one contiguous video (content
 # stream-copied — re-encoding would change the decode workload; markers are
@@ -245,10 +293,16 @@ _SAMPLE_RE = re.compile(r"\] sample ([0-9.]+)W(?: ctx=([0-9.]+)W)?")
 
 def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
              window_s: int | None = None, decoder: str | None = None,
-             delivery: str = "http", pacing: str = "realtime") -> dict:
+             delivery: str = "http", pacing: str = "realtime",
+             url_query: str = "", ssh_source: str = "shm") -> dict:
+    """url_query (2026-08-18, network-path arms): appended to every HTTP clip
+    URL, e.g. "pace_kbps=10000" — the origin caps that response's rate.
+    ssh_source: "shm" (default: clip staged in /dev/shm) or "http" (ffmpeg
+    reads the origin URL, so the Pi's network path is inside the window)."""
     row: dict = {"name": name}
     if window_s:
         row["window_s"] = window_s
+    q = f"?{url_query}" if url_query else ""
     if pacing == "saturated" and (mode == "screen" or dev_cfg["kind"] != "ssh"):
         # Real players pace themselves — a saturated row only exists on the
         # headless ffmpeg-over-ssh path. Refuse rather than silently pace.
@@ -256,14 +310,14 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
     if dev_cfg["kind"] == "webos":
         # C2 native decode: the harness WebosDevice launches this URL in the
         # built-in browser; its own SoC decodes+displays (no cmd/player).
-        row["url"] = f"{STREAM_BASE_URL}/{clip}"
+        row["url"] = f"{STREAM_BASE_URL}/{clip}{q}"
         return row
     if dev_cfg["kind"] == "adb":
         if delivery == "local":
             # July delivery-decomposition arm — clip staged by adb push.
             row["url"] = f"file:///sdcard/Download/decode/{Path(clip).name}"
         else:
-            row["url"] = f"{STREAM_BASE_URL}/{clip}"
+            row["url"] = f"{STREAM_BASE_URL}/{clip}{q}"
         return row
     shm = Path(clip).name       # staged flat into /dev/shm/decode/
     if mode == "screen":
@@ -286,7 +340,9 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         stem = Path(clip).stem
         dec = f"-c:v {decoder} " if decoder else ""
         pace = "-re " if pacing == "realtime" else "-stream_loop -1 "
-        row["cmd"] = (f"ffmpeg -nostdin {pace}{dec}-i /dev/shm/decode/{shm} "
+        src = (f"{STREAM_BASE_URL}/{clip}{q}" if ssh_source == "http"
+               else f"/dev/shm/decode/{shm}")
+        row["cmd"] = (f"ffmpeg -nostdin {pace}{dec}-i '{src}' "
                       f"-an -f null - ")
         row["stop_cmd"] = f"pkill -f 'ffmpeg.*{stem}'"
     return row
@@ -308,17 +364,26 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
                    or (tpl.get("decoder_by_device") or {}).get(dev_name))
         delivery = tpl.get("delivery", "http")
         pacing = tpl.get("pacing", "realtime")
+        extra = {"url_query": tpl.get("url_query", ""),
+                 "ssh_source": tpl.get("ssh_source", "shm")}
         if marked:
             # Marker-headed variant: window extends over the 15 s head; the
             # skip shrinks so the head lands inside the sampled window.
-            runs.append(_row_for(dev_cfg, run_name, marked_name(clip), mode,
-                                 window_s=base_window + MARKER_HEAD_S,
-                                 decoder=decoder, delivery=delivery,
-                                 pacing=pacing))
+            row = _row_for(dev_cfg, run_name, marked_name(clip), mode,
+                           window_s=base_window + MARKER_HEAD_S,
+                           decoder=decoder, delivery=delivery,
+                           pacing=pacing, **extra)
         else:
-            runs.append(_row_for(dev_cfg, run_name, clip, mode,
-                                 decoder=decoder, delivery=delivery,
-                                 pacing=pacing))
+            row = _row_for(dev_cfg, run_name, clip, mode,
+                           decoder=decoder, delivery=delivery,
+                           pacing=pacing, **extra)
+        # Per-run device/host hooks (2026-08-18): run by bench.py before the
+        # baseline (pre_*) and after stop (post_cmd) — e.g. drop the Pi's
+        # Ethernet before a Wi-Fi arm and restore it afterwards.
+        for k in ("pre_shell", "pre_cmd", "post_cmd", "pre_wait_s"):
+            if tpl.get(k) is not None:
+                row[k] = tpl[k]
+        runs.append(row)
     cfg = dict(tpl["bench"])
     proto = protocol_settings()
     cfg.update({k: proto[k] for k in
@@ -350,6 +415,9 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
         cfg["device"] = {"type": "webos", "host": dev_cfg["target"]}
     else:
         user, host = dev_cfg["target"].split("@", 1)
+        # ssh_host_override: reach the same box on another interface (Pi 400
+        # Wi-Fi arms: control + traffic over wlan0 while eth0 is dropped).
+        host = tpl.get("ssh_host_override") or host
         cfg["device"] = {"type": "ssh", "host": host, "user": user}
     cfg["runs"] = runs
     path = Path(f"/tmp/owl-decode-{job_id}-{dev_name}.json")
@@ -594,7 +662,7 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
         sub.update({"stage": "device", "phase_started": time.monotonic()})
         await _wait_ready(name, sub, 3 * dev_cfg["expected_boot_s"] + 45)
 
-        if dev_cfg["kind"] == "ssh":
+        if dev_cfg["kind"] == "ssh" and tpl.get("ssh_source", "shm") != "http":
             sub.update({"stage": "staging",
                         "detail": "copying clips to /dev/shm"})
             await asyncio.to_thread(_stage_clips_sync, dev_cfg,

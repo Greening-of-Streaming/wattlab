@@ -183,6 +183,12 @@ class AdbDevice:
             self.sh("pm", "grant", self.player, f"android.permission.{p}")
         self.sh("am", "force-stop", self.player)
         self.sh("input", "keyevent", "KEYCODE_HOME")
+        # Optional per-run device-side setup (2026-08-18, network-path arms):
+        # a list of adb shell command strings run before the baseline.
+        for c in run.get("pre_shell", []) or []:
+            self.sh(*shlex.split(c))
+        if run.get("pre_wait_s"):
+            time.sleep(float(run["pre_wait_s"]))
 
     def start(self, run):
         subprocess.run(self.adb + ["logcat", "-c"], capture_output=True, timeout=20)
@@ -275,7 +281,12 @@ class AdbDevice:
 class SshDevice:
     def __init__(self, cfg):
         self.target = f"{cfg['user']}@{cfg['host']}"
-        self.opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+        # -o HostName pins the address: ~/.ssh/config on GoS1 aliases the Pi's
+        # Wi-Fi IP to its Ethernet IP, which silently sent every "Wi-Fi" ssh
+        # over eth0 (2026-08-18) — and a config alias must never decide which
+        # interface a measurement rides on.
+        self.opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                     "-o", f"HostName={cfg['host']}"]
         self.proc = None
 
     def sh(self, cmd, timeout=20):
@@ -285,13 +296,22 @@ class SshDevice:
     def prepare(self, run):
         if run.get("stop_cmd"):
             self.sh(run["stop_cmd"] + " || true")
+        # Optional per-run host-side setup (2026-08-18, network-path arms):
+        # e.g. `sudo nmcli dev disconnect eth0` before a Wi-Fi arm.
+        if run.get("pre_cmd"):
+            self.sh(run["pre_cmd"] + " || true", timeout=60)
+        if run.get("pre_wait_s"):
+            time.sleep(float(run["pre_wait_s"]))
 
     def start(self, run):
         self.proc = subprocess.Popen(["ssh"] + self.opts + [self.target, run["cmd"]],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def provenance(self, run, results_dir):
-        return {"cmd": run["cmd"]}
+        # Mid-window record of the host's active interfaces (network-path
+        # arms, 2026-08-18): proves which link carried the traffic.
+        ifaces = self.sh("ip -o -4 addr show | awk '{print $2, $4}' | tr '\\n' ' '").strip()
+        return {"cmd": run["cmd"], "ifaces_midwindow": ifaces or None}
 
     def still_running(self, run):
         return self.proc is not None and self.proc.poll() is None
@@ -302,6 +322,8 @@ class SshDevice:
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
         self.proc = None
+        if run.get("post_cmd"):     # e.g. restore the interface dropped in pre_cmd
+            self.sh(run["post_cmd"] + " || true", timeout=60)
 
 
 class WebosDevice:
