@@ -1,0 +1,10 @@
+{
+ "x264/default": 8.7,
+ "x264/slow": 11.2,
+ "x265/default": 18.2,
+ "x265/slow": 40.8,
+ "svtav1/default": 12.5,
+ "svtav1/slow": 95.9,
+ "vp9/default": 38.6,
+ "vp9/slow": 50.3
+}

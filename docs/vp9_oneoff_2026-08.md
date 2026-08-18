@@ -1,4 +1,4 @@
-# VP9 one-off — first high-level indication vs the OWL trio (2026-08-09, revised 2026-08-17)
+# VP9 one-off — first high-level indication vs the OWL trio (2026-08-09, re-run 2026-08-17→18)
 
 One-off bench run prompted by the Disney+/HEVC royalty story: where does VP9 sit against
 the three codecs OWL measures (H.264, HEVC, AV1), on encode (GoS1 server) and client
@@ -9,7 +9,7 @@ the decode side. Nothing here joins OWL's standing codec set.
 Scope: device layer only (GoS1 server / named client devices). Network, CDN and
 production excluded. Energy, not CO₂e.
 
-**Status (2026-08-17):** working document, still under discussion — it lives in the repo
+**Status (2026-08-18):** working document, still under discussion. **§5 adds the overnight re-run of 17→18 Aug (iso-bitrate, software vs software, n=2–3) that the discussion asked for; read §5.3 first.** Earlier text — it lives in the repo
 rather than on the OWL findings page for that reason. The LinkedIn post that summarised
 the 08-09 run drew substantive comments (Thierry Fautier, Jan Ozer, Murat Pisat); §4
 records what that discussion added and what it corrects, in particular that the
@@ -202,6 +202,186 @@ either lens; slow encoders look worse in absolute terms once idle is charged.
 VP9 decode since 2020 (YouTube 4K on tvOS 14+), narrower than its HEVC path; across the
 wider TV fleet hardware VP9 is patchy. That is §3's finding restated from the field: with a
 hardware path codec choice is an energy rounding error, without one the CPU pays ~3×.
+
+## 5. Overnight re-run, 2026-08-17→18 — iso-bitrate, software vs software, repeats
+
+Run in direct response to §4: Jan's "compare software with software" and everything-at-slow
+ladder, Thierry's speed dial, Tania's iso-bitrate ask. Two sequenced campaigns, same GoS1
+harness and rig as §2/§3, all rows 🟢 unless stated. Raw artifacts:
+`results/diagnostics/encode_parity_nvenc_24c_2026-08-17.json` (108 rows), decode envelopes
+`results/decode/2026-08-1[78]_*.json` batch `20260817b9c0de`
+(campaign page `/decode/batch/20260817b9c0de`), analysis + clip manifest in
+`/srv/data/owl/campaign_2026-08-17_vp9b/`.
+
+### 5.1 Encode — four software encoders × speed points (GoS1, 24-core Ryzen 9 7900)
+
+Protocol: parity harness, 30 s 1080p trims of `bbb_120s` (high complexity) and `meridian_120s`
+(low), one-pass ABR at 2500 / 5000 kbps, pinned GOP 120, AAC 128k, dual P110, focus mode,
+VMAF v1 (3d0h) per row, **n=3 per cell, reps not adjacent**. Two rows excluded for an elevated
+baseline (w_base > median + 10 W; hot baselines under-count ΔW): meridian VP9 cpu-used 2 2500k
+rep 2 (98.7 W) and meridian x264 slow 2500k rep 3 (95.1 W). Operating points:
+
+| encoder | "default" point (= S53/OWL) | "slow" point (= Jan's set) | extra |
+|---|---|---|---|
+| libx264 | `-preset medium` | `-preset slow` | |
+| libx265 | `-preset medium` | `-preset slow` | |
+| SVT-AV1 | preset 10 (library default) | `-preset 3` | |
+| libvpx-VP9 (good, row-mt, 3 tile-cols, 16 thr) | `-cpu-used 4` | `-cpu-used 2` | `-cpu-used 1` |
+
+**bbb_120s** — Wh per minute of output (marginal | attributional), n, VMAF v1, achieved kb/s, encode s per minute of video
+
+| encoder | point | target | n | Wh/min | ±sd | attrib. | VMAF | ach. kb/s | s/min |
+|---|---|---|---|---|---|---|---|---|---|
+| libx264 | medium | 2500k | 3 | **0.302** | 0.003 | 0.65 | 89.7 | 2783 | 16 |
+| libx264 | medium | 5000k | 3 | **0.330** | 0.005 | 0.70 | 94.0 | 5675 | 17 |
+| libx264 | slow | 2500k | 3 | **0.375** | 0.004 | 0.80 | 89.8 | 2782 | 19 |
+| libx264 | slow | 5000k | 3 | **0.427** | 0.003 | 0.92 | 94.2 | 5667 | 22 |
+| libx265 | medium | 2500k | 3 | **0.618** | 0.008 | 1.33 | 91.5 | 2867 | 32 |
+| libx265 | medium | 5000k | 3 | **0.718** | 0.012 | 1.53 | 94.9 | 5924 | 37 |
+| libx265 | slow | 2500k | 3 | **1.328** | 0.021 | 2.88 | 92.7 | 2851 | 69 |
+| libx265 | slow | 5000k | 3 | **1.591** | 0.034 | 3.40 | 95.7 | 5903 | 82 |
+| SVT-AV1 | preset 10 (default) | 2500k | 3 | **0.482** | 0.011 | 1.06 | 94.6 | 2433 | 26 |
+| SVT-AV1 | preset 10 (default) | 5000k | 3 | **0.462** | 0.010 | 1.03 | 96.6 | 4396 | 25 |
+| SVT-AV1 | preset 3 | 2500k | 3 | **3.744** | 0.186 | 7.87 | 95.4 | 2291 | 186 |
+| SVT-AV1 | preset 3 | 5000k | 3 | **3.839** | 0.066 | 8.06 | 97.1 | 4108 | 191 |
+| libvpx-VP9 | cpu-used 4 | 2500k | 3 | **1.368** | 0.034 | 3.00 | 93.8 | 3661 | 72 |
+| libvpx-VP9 | cpu-used 4 | 5000k | 3 | **1.507** | 0.012 | 3.20 | 96.2 | 6393 | 77 |
+| libvpx-VP9 | cpu-used 2 | 2500k | 3 | **1.761** | 0.021 | 3.79 | 94.0 | 3594 | 91 |
+| libvpx-VP9 | cpu-used 2 | 5000k | 3 | **1.962** | 0.017 | 4.18 | 96.4 | 6325 | 100 |
+| libvpx-VP9 | cpu-used 1 | 2500k | 3 | **2.295** | 0.028 | 4.87 | 94.2 | 3620 | 117 |
+| libvpx-VP9 | cpu-used 1 | 5000k | 3 | **2.518** | 0.033 | 5.35 | 96.6 | 6411 | 128 |
+
+**meridian_120s** — Wh per minute of output (marginal | attributional), n, VMAF v1, achieved kb/s, encode s per minute of video
+
+| encoder | point | target | n | Wh/min | ±sd | attrib. | VMAF | ach. kb/s | s/min |
+|---|---|---|---|---|---|---|---|---|---|
+| libx264 | medium | 2500k | 3 | **0.343** | 0.004 | 0.75 | 88.9 | 2433 | 18 |
+| libx264 | medium | 5000k | 3 | **0.389** | 0.005 | 0.87 | 93.3 | 4890 | 22 |
+| libx264 | slow | 2500k | 2 | **0.407** | 0.005 | 0.91 | 90.2 | 2439 | 22 |
+| libx264 | slow | 5000k | 3 | **0.550** | 0.009 | 1.19 | 94.2 | 4898 | 29 |
+| libx265 | medium | 2500k | 3 | **0.663** | 0.002 | 1.44 | 90.0 | 2464 | 35 |
+| libx265 | medium | 5000k | 3 | **0.765** | 0.002 | 1.71 | 92.8 | 4926 | 42 |
+| libx265 | slow | 2500k | 3 | **1.685** | 0.019 | 3.62 | 90.5 | 2463 | 87 |
+| libx265 | slow | 5000k | 3 | **2.097** | 0.029 | 4.47 | 93.3 | 4924 | 106 |
+| SVT-AV1 | preset 10 (default) | 2500k | 3 | **0.358** | 0.007 | 0.80 | 88.3 | 1690 | 20 |
+| SVT-AV1 | preset 10 (default) | 5000k | 3 | **0.378** | 0.003 | 0.84 | 90.6 | 3397 | 21 |
+| SVT-AV1 | preset 3 | 2500k | 3 | **4.704** | 0.147 | 9.93 | 89.0 | 1715 | 235 |
+| SVT-AV1 | preset 3 | 5000k | 3 | **5.610** | 0.119 | 11.79 | 91.5 | 3473 | 278 |
+| libvpx-VP9 | cpu-used 4 | 2500k | 3 | **1.667** | 0.029 | 3.64 | 87.5 | 2780 | 87 |
+| libvpx-VP9 | cpu-used 4 | 5000k | 3 | **1.956** | 0.011 | 4.19 | 90.0 | 5439 | 101 |
+| libvpx-VP9 | cpu-used 2 | 2500k | 2 | **2.191** | 0.010 | 4.67 | 87.7 | 2796 | 112 |
+| libvpx-VP9 | cpu-used 2 | 5000k | 3 | **2.577** | 0.013 | 5.47 | 90.7 | 5383 | 131 |
+| libvpx-VP9 | cpu-used 1 | 2500k | 3 | **2.435** | 0.035 | 5.25 | 88.2 | 2822 | 126 |
+| libvpx-VP9 | cpu-used 1 | 5000k | 3 | **2.945** | 0.014 | 6.30 | 91.6 | 5407 | 150 |
+
+**Everything-at-default (x264 medium · x265 medium · SVT-AV1 p10 · VP9 cpu-used 4)** — energy per minute relative to x264 (same clip, same target), mean of the two targets
+
+| clip | x264 | x265 | SVT-AV1 | VP9 |
+|---|---|---|---|---|
+| bbb_120s | 1.0× | 2.1× | 1.5× | 4.6× |
+| meridian_120s | 1.0× | 2.0× | 1.0× | 4.9× |
+
+**Jan Ozer's everything-slow set (x264 slow · x265 slow · SVT-AV1 p3 · VP9 cpu-used 2)** — energy per minute relative to x264 (same clip, same target), mean of the two targets
+
+| clip | x264 | x265 | SVT-AV1 | VP9 |
+|---|---|---|---|---|
+| bbb_120s | 1.0× | 3.6× | 9.5× | 4.6× |
+| meridian_120s | 1.0× | 4.0× | 10.8× | 5.0× |
+
+Jan's ladder (14 sources, i9-14900, two-pass, per-title convex hull, wall-clock time):
+x264 1.0× · x265 8.5× · SVT-AV1 8.6× · libvpx 9.5×.
+
+**What these rows support (n=3, sd ≤5 %, all 🟢):**
+
+1. **The operating point decides which "new" codec is the expensive one.** At everyone's
+   defaults VP9 is the outlier: ~4.7× x264, ~2.3× x265, 3–5× SVT-AV1 per minute of video. At
+   Jan's everything-slow set VP9 is *not* the outlier: SVT-AV1 preset 3 costs ~2× VP9 and
+   ~2.5× x265; the three newer codecs sit 4–11× above x264 slow. Direction agrees with Jan's
+   ladder (x264 far cheapest, the rest a large multiple); magnitudes differ (24-core thread
+   scaling, one-pass vs two-pass, fixed-bitrate rows vs per-title ladders) and we do not claim
+   his numbers or ours are "the" ratio.
+2. **On a saturated CPU, time is energy.** ΔW was 65–71 W on every software row regardless
+   of encoder, so energy-per-minute ratios equal wall-clock ratios; a timing ladder like Jan's
+   is a fair proxy for marginal encode energy on a dedicated box. For the same reason the
+   attributional lens (§4.3) multiplies every row by ~2.2 and leaves the ratios unchanged.
+3. **libvpx's dial is short on this box.** cpu-used 4 → 2 → 1 spans 1.7× in energy for
+   about +0.5 VMAF; its fastest useful multithreaded point already costs more than x265
+   *slow*. x264's medium → slow spans 1.2–1.4×, x265's 2.1×, SVT-AV1's preset 10 → 3 8–15×.
+4. **No iso-bitrate quality claim from these rows.** One-pass ABR on 30 s trims missed its
+   target by −32 % (SVT-AV1, Meridian) to +46 % (libvpx, BBB): VP9's higher VMAF at "2500k" on
+   BBB was bought with ~45 % more bits. Achieved bitrates are in the tables; the compression
+   comparison belongs to a CRF/two-pass sweep, not here.
+
+### 5.2 Decode — VP9 vs the trio at iso-bitrate, three contents, five devices
+
+Protocol: new **iso-bitrate loop family** — per content ONE bitrate for all four codecs
+(BBB 1080p60 8 Mb/s, Kranjska 1440×1080p30 10 Mb/s, Meridian 1080p60 4.5 Mb/s = the bitrate of
+each existing H.264 family clip), **software encoders at production points** (x264 medium,
+x265 medium, SVT-AV1 preset 6, libvpx cpu-used 2), two-pass ABR, GOP 120, silent audio track,
+120 s from the ProRes references (Meridian: from the compressed 4K master), concatenated ×10 to
+20-min loops; VP9 in WebM (MP4/vp09 stalls the Google TV player). Clip quality at that bitrate
+(VMAF v1, frame-aligned): BBB 97.9 / 98.2 / 98.3 / **98.5** (H.264/HEVC/AV1/VP9), Kranjska
+90.5 / 87.0 / 87.0 / **89.2**, Meridian 93.3 / 93.7 / 92.7 / **91.1** — so at these bitrates the
+four streams are of broadly comparable quality, VP9 never the worst on the ProRes-sourced
+contents. Headless realtime playback via `/decode`, **1080 s windows**, five devices in
+parallel, n=2 (n=3 for H.264 and VP9), gates: PLAYING at mid-window (adb devices) + a trace flat
+to the window end (the Fire TV end-of-window liveness probe returned False on rows whose power
+trace is flat to the last second — a harness false negative, listed for repair; three rows where
+the trace really dropped or the player was PAUSED are excluded).
+
+**Google TV (MediaTek, hw)** — ΔW above device idle (mean of valid reps, n; per-run 95 % CI half-width shown as ±)
+
+| content | H.264 | HEVC | AV1 | VP9 |
+|---|---|---|---|---|
+| BBB 1080p60 @8 Mb/s | **+0.59** ±0.05 n=3 🟢🟢🟢 | **+0.57** ±0.06 n=2 🟢🟢 | **+0.55** ±0.06 n=2 🟢🟢 | **+0.58** ±0.06 n=3 🟢🟢🟢 |
+| Kranjska 1440×1080p30 @10 Mb/s | **+0.29** ±0.06 n=3 🟢🟢🟢 | **+0.28** ±0.08 n=2 🟢🟢 | **+0.28** ±0.06 n=2 🟢🟢 | **+0.30** ±0.06 n=3 🟢🟢🟢 |
+| Meridian 1080p60 @4.5 Mb/s | **+0.53** ±0.07 n=3 🟢🟢🟢 | **+0.50** ±0.08 n=2 🟢🟢 | **+0.51** ±0.08 n=2 🟢🟢 | **+0.57** ±0.06 n=3 🟢🟢🟢 |
+
+**Fire TV Stick 4K (hw, Wi-Fi)** — ΔW above device idle (mean of valid reps, n; per-run 95 % CI half-width shown as ±)
+
+| content | H.264 | HEVC | AV1 | VP9 |
+|---|---|---|---|---|
+| BBB 1080p60 @8 Mb/s | **+0.52** ±0.15 n=3 🟢🟢🟢 | **+0.49** ±0.18 n=2 🟢🟢 | **+0.51** ±0.18 n=2 🟢🟢 | **+0.46** ±0.20 n=3 🟢🟢🟢 |
+| Kranjska 1440×1080p30 @10 Mb/s | **+0.36** ±0.17 n=3 🟢🟢🟢 | **+0.34** ±0.18 n=1 🟢 | **+0.28** ±0.21 n=2 🟢🟢 | **+0.37** ±0.17 n=3 🟢🟢🟢 |
+| Meridian 1080p60 @4.5 Mb/s | **+0.41** ±0.19 n=3 🟢🟢🟢 | **+0.44** ±0.18 n=2 🟢🟢 | **+0.37** ±0.20 n=2 🟢🟢 | **+0.42** ±0.17 n=1 🟢 |
+
+**Pi 400 (software)** — ΔW above device idle (mean of valid reps, n; per-run 95 % CI half-width shown as ±)
+
+| content | H.264 | HEVC | AV1 | VP9 |
+|---|---|---|---|---|
+| BBB 1080p60 @8 Mb/s | **+1.40** ±0.17 n=3 🟢🟢🟢 | **+3.01** ±0.15 n=2 🟢🟢 | **+1.58** ±0.17 n=2 🟢🟢 | **+1.13** ±0.17 n=3 🟢🟢🟢 |
+| Kranjska 1440×1080p30 @10 Mb/s | **+1.08** ±0.15 n=3 🟢🟢🟢 | **+2.41** ±0.17 n=2 🟢🟢 | **+1.82** ±0.17 n=2 🟢🟢 | **+1.15** ±0.18 n=3 🟢🟢🟢 |
+| Meridian 1080p60 @4.5 Mb/s | **+1.42** ±0.17 n=3 🟢🟢🟢 | **+3.25** ±0.13 n=2 🟢🟢 | **+1.45** ±0.18 n=2 🟢🟢 | **+1.19** ±0.15 n=3 🟢🟢🟢 |
+
+**What these rows support:**
+
+5. **With a hardware decoder, VP9 costs what the other three cost.** On the Google TV
+   (`c2.mtk.vp9.decoder` allocated on every VP9 row) and the Fire TV Stick, VP9 sits inside the
+   ±0.1 W codec spread on all three contents at iso-bitrate; the per-run 95 % CIs (±0.05–0.20 W)
+   overlap. **Content moves the number 2×** (Google TV: BBB ~0.58 W, Kranjska ~0.30 W) —
+   any per-hour client figure that ignores content is quoting one clip. Fire TV emits no
+   decoder provenance; its VP9 level is consistent with hardware decode.
+6. **Without one, VP9 is the cheapest software decode.** On the Pi 400 (all four in software)
+   VP9 1.1–1.2 W is tied with or below H.264 (1.1–1.4), AV1 1.5–1.8, HEVC 2.4–3.3 W (2–3× VP9),
+   on all three contents. This replicates the 08-09 BBB-only result at iso-bitrate.
+7. Operator box (Bbox 4K): AV1 +1.2 W on every content (software AV1, no hardware path listed);
+   H.264/HEVC/VP9 all inside its idle drift (🔴/🟡) — no ranking. LG C2 (webOS, all-in panel):
+   BBB +16 W but Kranjska/Meridian ≈ 0 or negative — the OLED panel draws by picture, not by
+   codec; not a decode measurement (unchanged from S63).
+
+### 5.3 What we would now say, and what we would not
+
+Say: the software-encode cost of VP9 depends on the operating point more than on the codec —
+at defaults it is the dearest of the four on a 24-core server, at an everything-slow setting
+SVT-AV1 is; on hardware clients VP9 decode is energy-neutral vs H.264/HEVC/AV1 at matched bits;
+where decode falls back to software VP9 is the cheapest of the four and HEVC the dearest.
+Not say: any iso-bitrate *quality* ranking from the encode rows; any hardware-vs-software
+"×15" as a codec property; anything about distribution energy; anything from the C2 or the
+Bbox beyond "software AV1".
+
+Still one server, five client devices, 1080p, one-pass ABR encode; a first indication with
+repeats, not a lab-reviewed finding. Thanks to Thierry Fautier and Jan Ozer, whose comments
+set the design of this run.
 
 ---
 *Sources: `results/diagnostics/encode_parity_nvenc_24c_2026-08-09.json` (VP9 encode rows,
