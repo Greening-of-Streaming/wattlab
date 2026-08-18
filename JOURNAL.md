@@ -7,6 +7,66 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 66 — 2026-08-18 evening → 08-19 morning (overnight: CR-074 campaign + documentation sweep)
+
+**Connection method as an energy variable (first data), Apple TV plan, and the documentation sweep Ben asked for: JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal**
+
+- **Ben's evening brief:** (A1) test Wi-Fi vs Ethernet on every dual-interface device — very low/high bitrate,
+  live vs VoD, burst; switch what can be switched tonight (risk accepted); (A2) plan the Apple TV 4K second
+  attempt; (B) full documentation sweep incl. CR tidy (close what's shipped); (C) prune session memory into
+  JOURNAL/CRs; (D) reread /methodology against the code and journal the inconsistencies. Wi-Fi credentials
+  given for the boxes (kept out of the repo).
+- **A1 recon:** GTV (Android 14) has Wi-Fi + the saved SSID but **no shell path to drop Ethernet** unrooted
+  (`svc ethernet` absent, `cmd ethernet` no shell impl, `ip link` denied); Bbox (Android 11) no saved Wi-Fi;
+  Fire TV Wi-Fi-only (and came back from the auto-off power cycle ADB-**unauthorized** again → excluded
+  tonight, on-site accept needed); C2 no remote switch; **Pi 400 has eth0 `.108` + wlan0 `.110` both up** →
+  the full three-way lives there. Gotcha: `~/.ssh/config` aliased the Pi's Wi-Fi IP to its Ethernet IP, so
+  every "Wi-Fi" ssh (mine and the harness's first attempt) went over eth0 — the first Wi-Fi smoke hung on
+  `nmcli dev disconnect eth0` and stranded `.108` until restored over `-o HostName=.110`. bench.py now pins
+  `HostName` (`960675c`).
+- **Harness (`960675c`):** origin `?pace_kbps=N` server-side pacing (live-edge-like: the player can't buffer
+  ahead; 64 KB chunks + sleep-to-rate; verified 8000 kb/s → 1.00 MB/s); bench.py per-run `pre_shell` (adb),
+  `pre_cmd`/`post_cmd`/`pre_wait_s` (ssh), `ifaces_midwindow` provenance; decode_run template keys `url_query`,
+  `ssh_source: http` (ffmpeg reads the origin URL, no shm staging), `ssh_host_override`, hooks pass-through;
+  **17 `net_*` templates**: `net_b{1500,8000,20000}_{burst,paced}` (gtv/firestick/bbox/pi400 on their current
+  interface), `net_pi_wifi_*` (pre_cmd drops eth0, post_cmd restores), `net_pi_local_*` (/dev/shm), `net_pi_eth_b8000_wifioff`
+  (radio-off control), `net_local_b8000` (adb push, gtv/firestick). Clips: `bbbnet_h264_{1500,20000}k_20min.mp4`
+  (NVENC CBR from the ProRes ref) + the 8 Mb/s iso clip. Feeder `net_feeder.py` (batch `20260818ae7ba7b0`,
+  17 jobs, 600 s windows, n=1, self-heals the Pi's eth0 between jobs); launched 00:34 → ≈04:00.
+- **CR-074 + CR-075 written** (`093cb0f`): design, blocker (managed switch / cable pull for the STB arm), Apple TV
+  plan (reproduce `play_url` against the C2's AirPlay endpoint first, HLS packaging, Companion `launch_app`
+  fallback, `AtvDevice` driver; box is off the LAN; pyatv already 0.18.0).
+- **Bug fixed from a memory note:** `/enhance-run` timeout never reaped the Docker container (GPU pinned
+  ~252 W off the books, job cbf57ff0 2026-07-05) → `pixop.run_transcode_subprocess` `docker kill`s
+  `owl_enhance_<job>` on timeout (`bcc4915`, tests 152 pixop green).
+- **B — documentation sweep** (three read-only audits fanned out, then applied): JOURNAL **back-filled
+  S59b–S59g** (07-31 → 08-15) from git log, campaign stores and memory, reordered newest-first (S62b renamed);
+  **CRs**: CR-071 + CR-073 closed to the archive with hashes, CR-059 written (OG/share tags — the dangling
+  pointer since 05-27, launch-blocking for GoS-account posts; + delete the TEMP mockups), CR-003/CR-045 status
+  lines corrected (the parity/budget instrument shipped), 074/075 placed above the trailer, trailer refreshed
+  (21 active, Track G rig), **backlog notes** appendix (STB quick-win shortlist, LAN-misconfig experiment,
+  ffmpeg old-vs-new, finding drafter branch, /audience contamination, model caches, CO₂e single source,
+  /prepare-rem, CR-031 §2 status); **CLAUDE.md** lean rewrite (one-liner sessions, 18 routers / 21 CRs / 12
+  findings, pages list, see-also, board steer + publication rule); TESTING/README/ARCHITECTURE/GOS1_INFRA
+  (disks, rig plugs, open chores)/decode_bench README (dedup + device table + protocol)/bin README (11 scripts)/
+  result_envelope (`rem` type)/SPEC/TOOLSET refreshed; `.claude/skills/`, `docs/smpte_2026/`,
+  `docs/TOOLSET_STRATEGY.md`, `docs/loop_validity_report_2026-07.md` committed. (`ecc25f6`, `abbca6b`, `6f9c80d`)
+- **C — memory prune:** 70 → 15 files; 55 archived at `/srv/data/owl/claude-memory-archive-2026-08-19/`
+  after folding durable content into JOURNAL "Addenda" (VQA assessment, plug metering facts, LEM, loop
+  validity, findings rubric, finding drafter, prepare-rem, tour v2, image WIP, dual-track one-pager, board,
+  REM notes, ForTania), CHANGE_REQUESTS backlog notes, CLAUDE.md, GOS1_INFRA. Correction found en route: the
+  findings `review_status`/`impact` axes never landed on main (parked branch) — rubric = policy, schema to do.
+- **D — `docs/methodology_vs_code_2026-08-19.md`** (`75e391a`): 33 items with file:line — sev 3: LLM/RAG never
+  enter focus mode though the page says every test does; the decode keep-awake pins / PLAYING gate / liveness
+  rule are analysis practice, not code, and undisclosed; sev 2: cooldown is an idle-floor guard not a fixed
+  sleep, CR-070 pre-job guard undocumented, RAG and image ΔE mix windows (ΔW over load+gen/retrieval, Δt =
+  inference/gen only), attributional shown nowhere and computed off a nominal 79 W, decode confidence uses
+  GoS1's drift calibration on 0.5–20 W devices, GOP "not normalised" is stale since CR-029 §2, AI multiple
+  anchored on the AMD-era pin, parity has no idle guard, iso-family Opus/AAC audio confound; plus a suggested
+  disposition (wording fixes vs paragraphs vs owner decisions).
+
+---
+
 ## Session 65 — 2026-08-17 evening → 08-18 morning (overnight VP9 re-run)
 
 **VP9 re-run for the LinkedIn thread + Faultline: iso-bitrate, software vs software, n=2–3 — two sequenced campaigns, both clean**
