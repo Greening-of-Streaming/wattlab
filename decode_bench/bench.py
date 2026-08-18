@@ -96,8 +96,10 @@ def sample_window(meters, seconds, cadence):
 
 class AdbDevice:
     def __init__(self, cfg):
+        self.serial = cfg["serial"]
         self.adb = [ADB_BIN, "-s", cfg["serial"]]
         self.player = cfg.get("player", "com.brouken.player")
+        self.state_at_end = None
         subprocess.run(self.adb[:1] + ["connect", cfg["serial"]],
                        capture_output=True, text=True, timeout=15)
 
@@ -246,7 +248,24 @@ class AdbDevice:
     def still_running(self, run):
         # PLAYING only — a paused/errored player with a live session used to
         # count as alive (alive_at_window_end lied on the 2026-08-15 rows).
-        return self.playback_state() == "PLAYING"
+        # 2026-08-18: the Fire TV (Wi-Fi ADB) answered "not PLAYING" at the end
+        # of 24/30 windows whose power traces were flat to the last second and
+        # that answered PLAYING on every out-of-harness poll — so retry a few
+        # times, reconnect ADB if the dump came back empty, and RECORD what was
+        # seen (row.playback_state_at_end) so a False is diagnosable.
+        seen = []
+        for attempt in range(3):
+            st = self.playback_state()
+            seen.append(st)
+            if st == "PLAYING":
+                self.state_at_end = "PLAYING" if attempt == 0 else f"PLAYING (after {seen[:-1]})"
+                return True
+            if st is None:   # empty/failed dumpsys → ADB hiccup: reconnect once
+                subprocess.run([ADB_BIN, "connect", self.serial],
+                               capture_output=True, text=True, timeout=15)
+            time.sleep(3)
+        self.state_at_end = str(seen)
+        return False
 
     def stop(self, run):
         self.sh("am", "force-stop", self.player)
@@ -434,6 +453,7 @@ def one_run(dev, meters, run, cfg, results_dir):
         "raw_context_w": [round(x, 2) for x in task_c] or None,
         "raw_context_baseline_w": [round(x, 2) for x in base_c] or None,
         "alive_at_window_end": alive_at_end,
+        "playback_state_at_end": getattr(dev, "state_at_end", None),
         "confidence": {k: (round(v, 4) if isinstance(v, float) else v)
                        for k, v in conf.items() if k in
                        ("flag", "label", "method", "confidence_positive", "ci_delta_w_95")},
