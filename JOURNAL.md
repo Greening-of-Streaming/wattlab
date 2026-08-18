@@ -58,7 +58,8 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 - **Published:** report §5 (`bc6572f`, tables from `analyze_night.py` → `analysis.md`), status
   block, "what we would now say / not say" (§5.3), thanks to Thierry + Jan; OWL mirror refreshed
   (`0444cba`); GitHub link back after the outage. Awaiting Tania's check before Ben posts.
-- **Open (harness):** Fire TV end-of-window liveness false negative; C2 SSAP 1008/timeout at
+- **Follow-ups same morning:** `/decode` campaign ticks + target now survive Recent-runs paging (`0047188`; three "VP9 First Run" batches merged into `bf59a3a129f5`, 29 jobs; last night's batch labelled). Fire TV liveness: out-of-harness the box answers PLAYING on every poll for 22 min AND after 11 min of ADB idle, so the False is not reproducible standalone → `still_running` now retries 3× with ADB reconnect on an empty dump and rows record `playback_state_at_end` (`bench.py`) so the next False is diagnosable.
+- **Open (harness):** Fire TV end-of-window liveness false negative (root cause still unknown, now instrumented); C2 SSAP 1008/timeout at
   window end loses the row; parity has no inter-row idle guard (2/108 hot baselines);
   `/decode` "add to campaign" across Recent-runs pages creates a new campaign per page (Ben).
 
