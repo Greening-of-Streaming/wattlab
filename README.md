@@ -63,9 +63,12 @@ Published findings live at [`/findings`](https://wattlab.greeningofstreaming.org
 
 - **AV1 hardware vs software** ⭐ — same 1500 kbps target: hw uses ~55% less energy but loses ~2 VMAF and produces ~40% larger files. ([finding](https://wattlab.greeningofstreaming.org/findings/av1-hw-sw-vmaf-tradeoff))
 - **ABR all-codecs** — H.264 / H.265 / AV1 at typical streaming bitrates, CPU vs GPU; GPU wins on time and energy across all three. ([finding](https://wattlab.greeningofstreaming.org/findings/abr-all-codecs-meridian-120s))
-- **Hardware decoder worth ~4× on the client** (draft) — same board, same file: hw H.264 decode +0.35 W vs software +1.25 W; a device that drops the silicon (Pi 5) pays ~4.5×. ([finding](https://wattlab.greeningofstreaming.org/findings/hw-decoder-cuts-client-energy-4x))
+- **Hardware decoder worth ~4× on the client** (lab-reviewed 2026-08-09) — same board, same file: hw H.264 decode +0.41 W vs software +1.50 W (3.7× realtime, 4.6× saturated); a device that drops the silicon (Pi 5) pays ~4×. ([finding](https://wattlab.greeningofstreaming.org/findings/hw-decoder-cuts-client-energy-4x))
 - **LLM cold inference** 🟡 — per-token energy across the size ladder (pre-S30 panel; refresh pending).
 - **RAG faithfulness** 🟡 — retrieval works at small scale, but smaller models still hallucinate against correctly-retrieved chunks.
+- **Client decode: content moves the number more than codec** (DRAFT, 2026-08-17) — on hardware-decode boxes H.264/HEVC/AV1 differ by ≤0.1 W while content moves the box 2× (bright animation ~0.6 W vs quiet drama ~0.3 W). ([finding](https://wattlab.greeningofstreaming.org/findings/stb-decode-and-play-content-over-codec))
+- **GPU boost on fixed-function NVENC** — pinning the SM clock saves ~9 % at negligible time cost; positioned against prior art. ([finding](https://wattlab.greeningofstreaming.org/findings/gpu-boost-overclocks-fixed-function-nvenc))
+- **VP9 vs H.264/HEVC/AV1** (report, not a finding — under public discussion): the operating point decides which software encoder is dearest; on hardware clients VP9 decodes at the same cost as the trio; in software it is the cheapest. ([report](docs/vp9_oneoff_2026-08.md))
 
 **Ship-of-Theseus honesty:** when methodology changes (full GPU pipeline, ABR rate control, VMAF measurement), older findings are versioned via `supersedes:` in the finding file — citable URLs stay stable; the new reading lives alongside, marked as the current one.
 
@@ -81,7 +84,7 @@ Three tiers, one URL — `https://wattlab.greeningofstreaming.org`. The same pag
 | **Member** | GoS members on the allowlist | Sign in via the magic-link form on `/auth/sign-in` (email-based) | Custom prompts / ffmpeg commands, all-codecs sweeps, RAG corpus uploads, video uploads ≤ 1 GB, CSV/JSON bulk export |
 | **Lab** | Operators on GoS1 | LAN address (`192.168.x.x`) or SSH tunnel | Full settings, variance calibration, thermal-recovery probe, all jobs unscoped |
 
-**Anonymous quick-look:** `https://wattlab.greeningofstreaming.org/demo` — the seven-step Guided Tour with predetermined demo jobs (H.265 CPU vs GPU, a representative LLM run, SD-Turbo, RAG comparison).
+**Anonymous quick-look:** `https://wattlab.greeningofstreaming.org/demo` — the nine-step Guided Tour with predetermined demo jobs (H.265 CPU vs GPU, a representative LLM run, SD-Turbo, RAG comparison).
 
 **Lab via SSH tunnel:**
 ```
@@ -106,7 +109,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 The service runs as a systemd unit on GoS1 (`systemctl status wattlab`).
 
-**Run the tests:** `cd wattlab_service && pytest tests/` — 896 tests as of 2026-07-29, count drifts upward (the suite must be run from `wattlab_service/`; its `conftest.py` sets up the import path).
+**Run the tests:** `cd wattlab_service && pytest tests/` — 1027 tests as of 2026-08-19, count drifts upward (the suite must be run from `wattlab_service/`; its `conftest.py` sets up the import path).
 
 ---
 
@@ -123,4 +126,9 @@ The service runs as a systemd unit on GoS1 (`systemctl status wattlab`).
 - [`CHANGE_REQUESTS_CLOSED.md`](CHANGE_REQUESTS_CLOSED.md) — shipped CRs archive
 - [`docs/wattlab_traffic_light_confidence.md`](docs/wattlab_traffic_light_confidence.md) — Tania's statistical framework for the confidence flag (CR-028 Phase 2 spec)
 - [`docs/wattlab_parameters_audit.md`](docs/wattlab_parameters_audit.md) — every settings parameter classified and the path to principled values
+- [`docs/result_envelope.md`](docs/result_envelope.md) — the mode → renderer contract for every persisted result type
+- [`decode_bench/README.md`](decode_bench/README.md) — the client decode rig (devices, plugs, protocol, origin)
+- [`docs/vp9_oneoff_2026-08.md`](docs/vp9_oneoff_2026-08.md) · [`docs/pi_decode_energy_2026-07.md`](docs/pi_decode_energy_2026-07.md) · [`docs/encode_parity_calibration_2026-06.md`](docs/encode_parity_calibration_2026-06.md) — campaign reports
+- [`docs/methodology_vs_code_2026-08-19.md`](docs/methodology_vs_code_2026-08-19.md) — where /methodology and the implementation disagree (owner review list)
+- [`GOS1_INFRA.md`](GOS1_INFRA.md) — the server: disks, network, backups, incident log
 - [`CLAUDE.md`](CLAUDE.md) — project context for Claude Code (AI assistant config)

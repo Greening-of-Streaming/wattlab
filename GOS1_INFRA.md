@@ -1,6 +1,7 @@
 # GoS1 Infrastructure & Backup Context
 # Companion to CLAUDE.md (which covers WattLab project specifics)
-# Last updated: 2026-06-26 (two infra facts logged in "External Access Incidents & DNS": GoS1 now has a
+# Last updated: 2026-08-19 (disk inventory refreshed; decode-rig plugs + open infra chores added — see the two
+#   sections at the end). Previous: 2026-06-26 (two infra facts logged in "External Access Incidents & DNS": GoS1 now has a
 #   FIXED public IP — free "IP fixe" opt-in on the Bouygues portal after a WiFi 7 Bbox firmware upgrade
 #   blocked all ports; and the LAN link-flap / old-switch (IPTV-multicast-flood) incident.)
 
@@ -33,12 +34,15 @@ nvme0n1  500 GB  Crucial CT500P310SSD8 — system disk
   └─ nvme0n1p2 465 GB  ext4   /            ~170G used, ~264G free (40%)  [post-S24]
 
 nvme1n1  4 TB    SPCC M.2 PCIe SSD — data disk (added S24)
-  └─ nvme1n1p1 3.6T  ext4 (label "tests", mkfs -m 1)  /srv/data   ~79G used
-     /srv/data/owl/      OWL bulk + archival data — symlinked into the repo:
-       test_content/       <- ~/wattlab/test_content   (Meridian source clips, ~1 GB)
+  └─ nvme1n1p1 3.6T  ext4 (label "tests", mkfs -m 1)  /srv/data   ~310G used (2026-08-19)
+     /srv/data/owl/      OWL bulk + archival data (~230 GB) — the first four symlinked into the repo:
+       test_content/       <- ~/wattlab/test_content   (source clips incl. 4K masters + grain corpus)
        results/            <- ~/wattlab/results        (result JSON archive — grows forever; no pruning)
        corpus/             <- ~/wattlab/corpus          (RAG source PDFs, ~280 MB)
        .chroma/            <- ~/wattlab/.chroma         (RAG vector store, ~140 MB)
+       decode-bench/       the client decode rig harness (symlink target of ~/wattlab/decode_bench) + streams/ (clip origin root, ~40 GB)
+       stb-decode-2026-07/ July STB decode experiment (report html) · campaign_2026-*/ one dir per campaign (r6/r11–r16, vp9, vp9b, netpath…)
+       vmaf/               VMAF v1 scoring binary + models · vqa-eval/ NR-VQA sandbox · pixop/ · rem_out/ · uploads/ · lg/ atv/ (device creds) · figenv/
      /srv/data/rem/        Simon's REM display-test clips (77 GB) — symlinked from /home/simon/rem
      /srv/data/media/      general media bucket (empty)
 ```
@@ -47,7 +51,7 @@ fstab entry: `UUID=3b621612-f3fa-4873-8c10-0cea94105591  /srv/data  ext4  defaul
 `wattlab.service` drop-in `/etc/systemd/system/wattlab.service.d/mount.conf` adds `RequiresMountsFor=/srv/data` so the service waits for the mount on boot.
 
 ```
-/home/gos     ~57 GB  (mostly caches/venvs — wattlab/ itself ~1.4 GB; .cache 20G, .local 18G, .venvs 6.8G, .ollama 4.7G, snap 2.2G)
+/home/gos     ~60 GB  (mostly caches/venvs — wattlab/ itself ~5 GB; .cache 20G, .local 18G, .venvs 6.8G, .ollama 4.7G, snap 2.2G)
 /opt          ~27 GB  rocm-6.2.4 (reinstallable) + amdgpu + teamviewer
 /usr          ~64 GB
 /var          ~10 GB  (logs, package cache, snapd, docker)
@@ -197,3 +201,29 @@ sudo sed -i 's|/var/log/wattlab-backup.log|/home/gos/.cache/wattlab-backup.log|'
 - Prefer offline-first, open-source tools
 - Favor clean architecture over patchwork workarounds
 - Long-term sovereignty over short-term convenience
+
+## Decode-rig plugs (2026-07-29 → ; authoritative table = `wattlab_service/rig.py` `RIG`)
+
+Six Tapo P110 "Lab" plugs feed the client rig downstairs (LG C2 room), fixed IPs on the Bbox:
+Lab-A `.146` (Fire TV Stick 4K; shared with the parked Pi 5 — never power both) · Lab-B `.31` (Pi 400) ·
+Lab-C `.35` (⚠ see rig.py hazard comment) · Lab-D `.36` (Google TV Streamer) · Lab-E `.71` (the C2 panel =
+monitor plug) · Lab-F `.155` (Bbox 4K operator CPE, fw 1.3.1). Plus a Shelly (`rig_shelly_ip`) and the rig
+master switch (`rig_master_tapo_ip`). KLAP sessions are exclusive per plug: the rig poller pauses a plug while
+a bench process samples it (`rig.PAUSED_PLUGS`); never poll a Lab plug out-of-band while `/decode` is busy.
+Idle auto-off (S60) cuts the rig after `rig_idle_off_hours` (4 h) of no activity; CLI campaigns keep it alive
+via `/tmp/owl-rig-hold`. The Fire TV loses ADB authorisation after a mains power cycle (on-site accept).
+
+## Open infra chores (2026-08-19)
+
+- **Model caches on the system disk:** HF cache 27 GB (`~/.cache/huggingface`) + Ollama models 54 GB
+  (`/usr/share/ollama/.ollama/models`) + stray `~/.ollama` 4.7 GB sit on the 457 GB system disk while
+  `/srv/data` has 3.3 TB free. Relocate to `/srv/data/owl/{hf-cache,ollama}` before any large download
+  (FLUX NF4 ~33 GB, SD3.5): HF = `mv` + symlink with the service stopped (no sudo); Ollama = rsync + `OLLAMA_MODELS=`
+  in a `systemctl edit ollama` drop-in (sudo).
+- **Backup scope** (CR-067 item 5): the Nextcloud/rclone manifest predates `/srv/data/owl/{decode-bench,campaign_*}`
+  and `results/decode/` — confirm they are inside the backup set.
+- **Managed switch for the rig's Ethernet drop** (CR-074 enabler): per-port disable would make the STB
+  Ethernet↔Wi-Fi arm scriptable; unrooted Android TV cannot drop Ethernet from the shell.
+- **DuckDNS** updater lives on GoS1 (`/home/gos/duckdns/duck.sh`, gos crontab, 5 min, forces IPv4) — kept as
+  portability insurance although the public IP is now fixed (see External Access section).
+

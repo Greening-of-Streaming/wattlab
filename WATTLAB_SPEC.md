@@ -1,13 +1,13 @@
 # WattLab — Product Specification & Roadmap
 # Version 0.2 — 2026-04-04
 
-> **Note (2026-05-08):** this document is the **original product spec from April 2026**. Phases 1–6 are essentially shipped (with material refinements). Treat this as the historical design intent; **current architecture lives in [`CLAUDE.md`](CLAUDE.md)** and per-session detail in [`JOURNAL.md`](JOURNAL.md).
+> **Note (2026-05-08):** this document is the **original product spec from April 2026**. Phases 1–8 are shipped (with material refinements; see CLAUDE.md Roadmap). Treat this as the historical design intent; **current architecture lives in [`CLAUDE.md`](CLAUDE.md)** and per-session detail in [`JOURNAL.md`](JOURNAL.md).
 >
 > Material differences between the v0.2 spec and current state:
 > - **Three tiers, not two.** CR-001 added a Member tier between Anonymous and Lab; the "Demo Mode / Lab Mode" framing here predates magic-link auth.
 > - **Confidence is a per-run CI, not absolute-watts.** The 5W / 2W thresholds at the bottom of this file are long gone. Tania's §9 unified-CI redesign **shipped 2026-05-22** (CR-028 Phase 2, `confidence.py`): `confidence_positive = Φ(ΔW / SE_final)` from this run's own samples + the calibrated idle floor (`docs/wattlab_traffic_light_confidence.md`). The earlier `noise_w = variance_pct/100 × w_base` rule survives only as the legacy fallback for results saved without raw samples.
 > - **CO₂e was added in Session 16** — `carbon.py` module, live Eco2mix grid intensity, lifecycle factors, EV-distance equivalence, 24/7 projection toggle. Not in this spec.
-> - **Three new measurement surfaces shipped beyond Phases 1–6:** `/methodology` (full protocol page), `/queue-status` (queue health), `/rag` (RAG energy test, Phase 5 sibling).
+> - **Surfaces shipped beyond the original phases** (as of 2026-08): `/methodology`, `/queue-status`, `/rag`, `/findings`, `/benchmark`, `/enhance-run` (+`/ladder`), `/video/budget`, `/carbon`, `/privacy`, `/audience` (hidden), `/decode` (+ campaigns), `/prepare-rem`.
 
 ---
 

@@ -5,20 +5,34 @@ sample window → stop → OWL `confidence.py` → per-row checkpoint), pluggabl
 JSON config. New rows are directly comparable with the July Google TV panel.
 
 ```
-python3 bench.py gtv_smoke.json        # Google TV, one 90 s validation row
-python3 bench.py pi4.json / pi5.json   # copy pi_matrix.json.example, fill host + meter
+python3 bench.py configs/gtv_smoke.json      # Google TV, one 90 s validation row (CLI path)
+python3 bench.py configs/pi4_matrix.json     # copy configs/pi_matrix.json.example, fill host + meter
 ```
 
-Results land in `results/<config name>.json` (raw 1.5 s samples included, resumable).
-Streams: `streams/` → symlink to the 27 matched-VMAF (~92–93, v1) 1080p NVENC encodes,
-served by the http server on GoS1 `:8123` (⚠ it ignores Range requests — see below).
+**Since S59 (2026-07-30) the normal path is OWL's `/decode` Lab console** (`wattlab_service/rig.py` +
+`decode_run.py`): templates → per-device bench configs → one `bench.py` subprocess per device in
+parallel, envelopes under `results/decode/`, campaigns collated at `/decode/batch/{id}` (CR-073). The
+CLI path above still works for stand-alone runs but bypasses the queue, the plug-pause hand-off and
+the envelope; only use it when the rig poller is not watching the same plugs.
+
+Results (CLI) land in `results/<config name>.json` (raw samples included, resumable).
+Streams: `streams/` (→ `/srv/data/owl/stb-decode-2026-07/streams`, ~40 GB): the matched-VMAF
+(~92–93, v1) 1080p NVENC loop families (`<fam>_<codec>_{20,60}min.mp4`, fams bbb/meridian/kranjska),
+the **iso-bitrate software-encoded family** `<fam>iso_<codec>_20min.{mp4|webm}` (2026-08-17, VP9 as
+WebM+Opus — MP4/vp09 stalls the GTV player) and the `bbbnet_h264_{1500,20000}k_20min.mp4` network arms;
+served by the Range-correct `origin.py` on GoS1 `:8123` (CR-072; `?pace_kbps=` caps a response for the
+paced/live-like arm).
 
 ## Devices
 
 | driver | box | start | provenance |
 |---|---|---|---|
-| `adb` | Google TV Streamer `.126` (plug: Lab-D `.36` (was `.94` pre-2026-07-29), monitor `.199`) | VIEW intent → Just Player | logcat `CCodec allocate(c2.*)` + mid-window screenshot |
-| `ssh` | Raspberry Pi 4 / 5 | per-run `cmd` over SSH | the command itself (+ check player log) |
+| `adb` | Google TV Streamer `.126` (Lab-D `.36`, HDMI_2) · Fire TV Stick 4K `.200` (Lab-A `.146`, HDMI_4, **Wi-Fi only**, no logcat decoder names, loses ADB auth after a mains cycle) · Bbox 4K operator CPE `.10` (Lab-F `.155`, HDMI_1, Android 11) | VIEW intent → Just Player, `--ei position 0`, PLAYING verified (≤2 presses), keep-awake pins + CEC rule applied in `prepare()` | logcat `CCodec allocate(c2.*)` + mid-window screenshot + `playback_state_midwindow`/`_at_end`, `alive_at_window_end` |
+| `ssh` | Raspberry Pi 400 `.108` (Lab-B `.31`, HDMI_3; Wi-Fi `.110` for the CR-074 arms) · Pi 5 `.102` (**parked**, shares Lab-A) | per-run `cmd` over SSH (`ffmpeg -re … -f null -` headless, `mpv` screen mode); `pre_cmd`/`post_cmd` hooks | the command + `ifaces_midwindow` |
+| `webos` | LG C2 55" `.25` (Lab-E `.71` = the panel plug; native decode via the built-in browser, `lg.py` SSAP + Wake-on-LAN) | `launch_url` | `current_app` only (no state/screenshot); rows are panel-dominated (picture term) — differential only |
+
+Authoritative registry (IPs, plugs, `idle_w`, boot thresholds, HDMI ports): `wattlab_service/rig.py` `RIG`.
+The table above is a reading aid; when it disagrees with `rig.py`, `rig.py` wins.
 
 Protocol fix vs July: the adb driver never runs `pm clear` (grants + force-stop only), so
 the first-run tooltip overlay that contaminated all nine 20-min runs cannot recur; the
@@ -57,10 +71,9 @@ Two arms per condition, don't mix them:
    focus-mode equivalent, manual for now).
 
 ## Known infra caveats
-- `:8123` is a bare `python -m http.server` and **ignores Range requests** (returns 200 +
-  full body — verified 2026-07-28). Prime suspect for the July media3 2.1× over-fetch.
-  For any fetch-behaviour experiment, swap in a range-capable server (nginx or
-  `python -m RangeHTTPServer`) and log access; for pure decode rows it only wastes LAN bytes.
+- (Fixed 2026-07-31, CR-072) the old bare `python -m http.server` on `:8123` ignored Range requests
+  (200 + full body) — the prime suspect for the July media3 2.1× over-fetch. `origin.py` is
+  Range-correct (206/416/HEAD, `/status` byte counters) and owned by the service.
 - Box home-screen baseline drifts 0.9–1.4 W between runs → ordered cross-condition
   comparisons should use device-total W (as in the July report), ΔW for magnitude only.
 - Meters `.94`/`.199` have never had `bin/probe-p110-fw` run on them (dual-meter doc rule).
@@ -69,8 +82,8 @@ Two arms per condition, don't mix them:
 
 ## Network — fixed addresses (router DHCP reservations, set 2026-07-29)
 
-All bench devices and lab plugs have (or are pending) router reservations. All three
-devices are on **Ethernet** via the bench switch (parallel throughput verified 178–582 Mbps,
+All bench devices and lab plugs have router reservations. GTV, Bbox, Pi 400 and the C2 are on
+**Ethernet** via the bench switch (the Fire TV Stick is Wi-Fi only; Bbox re-onboarded on `.10` 2026-07-31) (parallel throughput verified 178–582 Mbps,
 2026-07-29). Pi 5 Wi-Fi is **soft-blocked** (rfkill, persistent) since 2026-07-29 — eth0 only. Pi 400
 still has Wi-Fi up; apply the same sudo rfkill block wifi next time it is powered.
 Pi 5 PSU replaced 2026-07-29 (old one under-voltage-throttled; throttled=0x0 verified —
@@ -82,15 +95,19 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | `.126` | Google TV Streamer (eth0) | `b4:23:a2:af:e4:a4` | rebound from Wi-Fi MAC → returns to its July address after lease renewal (was `.189` on 2026-07-29) |
 | `.102` | Raspberry Pi 5 (eth0) | `88:a2:9e:27:40:ed` | user `admin` |
 | `.108` | Raspberry Pi 400 (eth0) | `d8:3a:dd:76:f8:5b` | user `nebul2` |
-| `.146` | Lab-A P110 — Pi 5 meter | `bc:07:1d:a2:d3:11` | fw 1.3.1 |
+| `.146` | Lab-A P110 — Fire TV Stick meter (Pi 5 parked on the same plug — never power both) | `bc:07:1d:a2:d3:11` | fw 1.3.1 |
 | `.31` | Lab-B P110 — Pi 400 meter | `bc:07:1d:a2:df:66` | fw 1.3.1 |
 | `.35` | Lab-C P110 — ⚠ POWERS THE BOUYGUES ROUTER (as of 2026-07-29) | `bc:07:1d:a2:e2:6a` | fw 1.3.1 — **NEVER SWITCH OFF**: relay-off kills the whole LAN including the path to switch it back on (unrecoverable remotely). Move router to a dumb socket; until then Lab-C is read-only and must never appear in any control UI. |
 | `.36` | Lab-D P110 — GTV meter | `bc:07:1d:a2:da:48` | fw 1.3.1; replaced `.94` (fw 1.4.6) on 2026-07-29; moved off its first lease `.1` (router pool constraint: `.36`, not `.147`) |
-| `.71` | Lab-E P110 — 4K monitor (context) | — | fw 1.3.1; replaced Ben1-4k-monitor `.199` (fw 1.4.6) on 2026-07-29 |
+| `.71` | Lab-E P110 — the LG C2 panel (context meter / C2 device plug) | — | fw 1.3.1; replaced Ben1-4k-monitor `.199` (fw 1.4.6) on 2026-07-29 |
+| `.155` | Lab-F P110 — Bbox 4K meter | — | fw 1.3.1 (re-plugged 2026-07-30; the earlier `.22` unit was fw 1.4.0) |
+| `.10` | Bbox 4K (eth0) | — | operator CPE, ADB authorised; was `.173` on Wi-Fi 2026-07-30 |
+| `.200` | Fire TV Stick 4K (Wi-Fi) | — | AFTKRT; ADB re-auth needed after a mains power cycle |
+| `.25` | LG C2 (eth0; also `.109` Wi-Fi) | — | webOS SSAP + WoL (`lg.C2_MAC`) |
 | `.159` | P110-GoS1-Server | — | pre-existing reservation, unchanged |
 | `.91` | P110-GoS1b | — | pre-existing reservation, unchanged |
 
-All five Lab plugs (A–E) are on fw **1.3.1** (mW local API, 1–2 s effective cadence).
+All six Lab plugs (A–F) are on fw **1.3.1** (mW local API, 1–2 s effective cadence).
 Configs written before 2026-07-29 that reference STB plug `.94` are historical — new
 GTV rows meter via **Lab-D `.36`**.
 
@@ -152,3 +169,40 @@ its HDMI signal competes in the auto-switch behaviour above. Leave Lab-E on.
   claim the target — or power-cycle the target device (boot hot-plug always
   wins). All-three bounce verified clean 2026-07-29 after the DPMS +
   layer-repair + GTV-transition fixes.
+
+## Downstairs rig — LG C2 OLED display (2026-07-30 →)
+
+Rig migrated to the **LG OLED55C25LB (C2 55")** as the shared display, replacing the PA329C
+LCD (now upstairs). Dumb switch (no IGMP snooping) — fine for discovery.
+
+**Display control — webOS (CR-071, closed 2026-08-19):** the C2 does NOT auto-switch inputs;
+arbitration is an explicit `set_input(HDMI_n)` via aiowebostv (`/tmp/pyatv-venv`), client key at
+`/srv/data/owl/lg/client_key`, host `192.168.1.25` (Ethernet; `.109` is its Wi-Fi). Always-Ready
+standby rejects SSAP with WS 1008 → wake with raw Wake-on-LAN first (`lg.wake()`, 2026-08-01). The
+poller never auto-wakes it (household TV); SIMPLINK/CEC turned OFF by the owner 2026-08-15 (input
+hopping was contaminating baselines).
+
+**HDMI port map (rig.py):** Bbox → HDMI_1 · GTV → HDMI_2 · Pi 400 → HDMI_3 · Fire TV → HDMI_4 (Pi 5 parked).
+
+**Bbox (Bouygtel4K, operator CPE):** ADB authorised (Android 11), Ethernet `.10` since 2026-07-31,
+plug Lab-F `.155`, `idle_w` 6.6 W (drifts 6.3–6.8 → its H.264/HEVC ΔW sits inside its own noise; AV1
++1.2–1.4 W = software AV1). Plays via VIEW intent through the origin.
+
+**Fire TV Stick 4K (AFTKRT, MediaTek MT8696, Fire OS 8):** Wi-Fi only, `.200`, plug Lab-A `.146`;
+never emits `CCodec allocate` lines (no decoder provenance); `alive_at_window_end` returned False on flat
+traces (S65 — retries + `playback_state_at_end` since `10ed87f`); loses ADB authorisation after a mains
+power cycle (on-site accept, ONE reconnect).
+
+**Apple TV 4K (tvOS 18):** Companion + AirPlay paired (creds `/srv/data/owl/atv/`); power/keys work;
+AirPlay `play_url` blocked by a tvOS-18/pyatv issue; currently off the LAN. Second attempt = CR-075.
+
+**Origin:** Range-correct `origin.py` on `:8123`, a child of wattlab.service (`origin_control.py`,
+reboot-persistent; `sudo systemctl stop wattlab` kills it — restart, don't stop). CR-072 phase 2
+(metered serve window) open. `?pace_kbps=N` caps one response's rate (CR-074 paced arm).
+
+**Harness protocol since 2026-08-16 (`fec0065`, `10ed87f`, `960675c`):** keep-awake pins
+(`secure sleep_timeout=-1`, `system screen_off_timeout=2147460000`) + CEC `power_state_change_on_active_source_lost=none`
+applied and recorded in provenance; start at position 0; PLAYING verified before the baseline; mid-window
+screenshot + state; end-of-window liveness with 3 retries + ADB reconnect; per-run `pre_shell`/`pre_cmd`/`post_cmd`
+hooks; ssh rows record `ifaces_midwindow`. Long-window rows count only with PLAYING at mid-window and a
+trace flat to the end (analysis rule, JOURNAL S65).

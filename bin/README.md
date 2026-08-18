@@ -154,7 +154,7 @@ Shipped as part of **CR-022 / CR-023** investigation in S21. Captured in `CHANGE
 
 - **Holds visitor-protection flags.** Touches `/tmp/owl-paused` (queue worker stops dispatching new jobs) and `/tmp/gos-measure.lock` (system-busy marker). Both released on clean exit and Ctrl-C. Visitors can still browse and queue jobs during the run; nothing executes until the probe finishes.
 - **Aborts at startup if `LOCK_FILE` already exists.** Wait for any in-flight measurement to finish, or `rm /tmp/gos-measure.lock` if it's stale.
-- **CPU and GPU use different inputs.** CPU runs `variance_cpu_cmd` on the full `meridian_4k.mp4` (172s heavy thermal load — what variance calibration uses). GPU runs the variance template against `meridian_120s.mp4` so CR-022's `-t 30` cap (which `transcode()` applies automatically) keeps the encode cleanly bounded. Asymmetric but representative.
+- **CPU and GPU use different inputs.** CPU runs `variance_cpu_cmd` (setting removed 2026-06; the probe now takes its command from the video presets) on the full `meridian_4k.mp4` (172s heavy thermal load — what variance calibration uses). GPU runs the variance template against `meridian_120s.mp4` so CR-022's `-t 30` cap (which `transcode()` applies automatically) keeps the encode cleanly bounded. Asymmetric but representative.
 - **~65 min wall time** for the default 12-distance sweep. The script's own estimate is printed at startup before it begins.
 - **Focus mode** stops 8 timer units (sysstat-collect, anacron, fwupd, apt-daily etc.) for the duration. Restored in `finally` — including on Ctrl-C.
 
@@ -286,3 +286,39 @@ counts only (no IPs or emails ever appear): owner vs member vs anonymous
 runs, per-ISO-week trend, non-owner activity by workload type.
 `--weeks N` limits the window. Pre-CR-026 results (no key) count as
 owner (Lab) — historically accurate, it was all bench work then.
+
+---
+
+## Compact index of the remaining scripts (added 2026-08-19 — one paragraph each; `--help` where present)
+
+- **`run-encode-parity`** — CLI driver for `wattlab_service/parity.py` (encode-parity / energy-quality
+  calibration harness): `--print-only --full` (list recipes) · `--dry` (real encodes, synthetic energy) ·
+  `--full [--duration 30]` (3 clips × 3 codecs × 3 profiles + ladder → `results/calibration/…`, the artifact
+  `/video/budget` picks up) · `--ladder`. **Needs `touch /tmp/owl-paused` first** (the service poller would
+  contend for the P110). Custom encoder matrices (VP9, speed points) are wrappers that monkeypatch
+  `parity.build_cmd` and set `parity.ARTIFACT_DIR = results/diagnostics` — see `docs/vp9_rerun_2026-08-17/`.
+- **`lab-session-on` / `lab-session-off`** — raise/lower `/tmp/owl-lab-session`: public browsing stays open with a
+  banner, non-Lab job submission gets a 503. Softer than `stage-on` (no code swap). Survives restarts, not reboots.
+  Use for overnight campaigns and hands-on lab work.
+- **`overnight-benchmark`** — the full-pipeline overnight benchmark runner (variance → video → llm → rag → image);
+  today the same orchestration is reachable as `POST /benchmark/run`; the script remains for headless runs.
+- **`gpu-clock-sweep`** — finds the lowest NVENC SM clock that still holds throughput (`nvidia-smi -lgc`), the
+  data behind the `gpu-boost-overclocks-fixed-function-nvenc` finding.
+- **`passive-idle-sweep`** — one-shot passive idle-power sweep (display blanked vs active, GPU idle states) used to
+  set the documented idle floors.
+- **`make-enhance-fr-anchors`** — builds the FR "sandwich" anchors (`test_content/degraded/fr_anchors_v1.json`) for
+  the 10 degraded-ladder fixtures in VMAF v1; **re-run after any `vmaf_model` change** (anchors attach only
+  under the same model).
+- **`make-demo-enhance-previews`** — regenerates the pinned enhance showcase before/after previews for the Guided
+  Tour; re-run after changing the enhance pin (`demo_pinned_results`), then review the step-3 copy in
+  `routes_demo.py`. Last good invocation: `--start 0 --dur 6 --zoom --cx 800 --cy 550 --window 900`.
+- **`make-og-card`** — generates the social share card `wattlab_service/static/og-card.png` (CR-059's image seed).
+- **`anonymise-visitor-ips.py`** — one-off idempotent migration that pseudonymised raw IPs in the analytics files
+  (S51 GDPR pass); the template for any future backfill migration.
+- **`rem_timer.sh`** — the OWL ↔ Simon timer adapter for `/prepare-rem` (draws the MM:SS count-down + GoS logo;
+  called as `<out> <w> <h> <fps> <dur>`; path set via `rem_timer_script_path` in settings).
+- **`stamp-decode-batch`** — add existing decode results to a campaign (`batch_id`) and/or set its label; dry-run by
+  default, refuses backfill into another batch. The UI equivalent is the "Add to campaign" control on `/decode`.
+- **`import-decode-bench-results`** — imports CLI `decode_bench/results/*.json` rows into `results/decode/` envelopes
+  (idempotent; discards the documented July contamination).
+

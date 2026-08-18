@@ -1,10 +1,10 @@
 # WattLab — Testing Strategy
 
-*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (896 tests as of 2026-07-29 — the count drifts upward; `python3 -m pytest -q` from `wattlab_service/` is authoritative). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
+*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (1027 tests as of 2026-08-19 — the count drifts upward and the other docs must not quote it; `python3 -m pytest -q` from `wattlab_service/` is authoritative). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
 
 ## Philosophy
 
-Three tiers, each with a clear time budget and a clear coverage scope. The goal is the **sweet spot** where tests get *run*, not avoided. A 7-second suite that runs before every push is worth more than a 30-minute suite that runs once a quarter.
+Three tiers, each with a clear time budget and a clear coverage scope. The goal is the **sweet spot** where tests get *run*, not avoided. A one-minute suite that runs before every push is worth more than a 30-minute suite that runs once a quarter.
 
 We deliberately do **not** test:
 - Real ffmpeg / LLM / image measurements — require GPU + minutes of wall time + actual heat. Validated by accumulated `results/*.json` history.
@@ -16,17 +16,17 @@ These are covered by Tier 3 manual checks before high-stakes use.
 
 ---
 
-## Tier 1 — Full pytest suite (~7 seconds)
+## Tier 1 — Full pytest suite (~1 minute)
 
 **When:** Before every push. Run as a habit, not as a gate.
 **Catches:** "I broke an import" · "an endpoint is 500-ing" · "JSON shape changed" · "a template token didn't get baked" · "the JS bundle has a syntax error."
 
 ```bash
-cd wattlab_service && pytest tests/
-# 662 passed in ~9s
+cd wattlab_service && python3 -m pytest -q
+# 1027 passed in ~57s (2026-08-19)
 ```
 
-**Where it lives:** `wattlab_service/tests/` — 36 test files (~6,700 lines) plus `conftest.py`.
+**Where it lives:** `wattlab_service/tests/` — 55 test files (~12,200 lines) plus `conftest.py`.
 
 **Import-path note:** run pytest from inside `wattlab_service/` (or point it at `wattlab_service/tests/`). The suite's `tests/conftest.py` inserts `wattlab_service/` onto `sys.path` so tests can `import persist`, `import settings`, etc. Running bare `pytest` from the repo root collects nothing useful.
 
@@ -34,6 +34,7 @@ cd wattlab_service && pytest tests/
 - **Routes + access tiers** — `test_auth.py`, `test_audience.py`, `test_capabilities.py`, `test_queue_control.py`: FastAPI TestClient against the real app; sign-in flow, capability gating, queue actions.
 - **Measurement-adjacent pure logic** — `test_confidence.py`, `test_cooldown.py`, `test_sensors.py`, `test_vmaf.py`, `test_encode_norm.py`: the CI confidence model, cooldown dispatch, sensor parsing — everything around the measurement that doesn't need hardware.
 - **Result contract + persistence** — `test_result_envelope.py`, `test_persist_visitor_scope.py`, `test_persist_history.py`, `test_delete_result.py`: the mode→renderer contract (`docs/result_envelope.md`), CSV/JSON export shape, visitor scoping.
+- **Decode rig + REM** — `test_rig.py`, `test_decode_run.py`, `test_routes_decode.py`, `test_decode_batch.py`, `test_origin.py`, `test_rem_prep.py`: rig state machine (plug/boot thresholds, auto-off), template → bench config materialisation (incl. the iso and net_* families), batch collation, Range-correct origin, REM file prep. The C2 wake (`rig.lg.wake`) is stubbed by an autouse fixture so the suite never wakes the household TV.
 - **Factorisation guards** — `test_js_bundling.py`, `test_ui_config.py`, `test_gpu_ui_factorisation.py`, `test_page_model_defaults.py`: source-level guards that ban known regression classes (hardcoded cooldown labels, hardcoded GPU/encoder names, hardcoded model keys, JS syntax errors via `node --check`).
 
 **⚠ Known gotcha — tests run as Lab tier.** pytest's TestClient connects from loopback, which the audience layer resolves to **Lab** (full access). Anonymous/Member behaviour — CR-026 visitor-scoping 404s, lock badges, gated uploads — never surfaces by default; any test of those paths must construct the tier explicitly, and any reasoning about "the tests pass so anonymous is fine" is wrong by construction. (This bit us in S37: a `/findings` 404 affecting every non-Lab visitor was invisible to a green suite.)
@@ -99,7 +100,7 @@ The heavyweight differential check for envelope changes — re-summarising every
 - [ ] Phi-4 single run → answer mentions GoS streaming workflows (encoder, origin, packager, telco)
 
 ### Guided Tour (2 min)
-- [ ] `/demo` → step through Welcome → Findings (7 steps)
+- [ ] `/demo` → step through Welcome → Findings (9 steps: … Decode is step 8)
 - [ ] Welcome step: "→ Read the full measurement methodology" link below the two `<details>` blocks (CR-021 sibling)
 - [ ] Each step's prev-runs panel populates from the `/demo/last/{type}` carve-out endpoint, not from visitor-scoped `/results/{type}/list`
 - [ ] Run-button labels are explicit: "Run a standard transcode", "Run a standard LLM generation", "Run a standard image generation", "Run a standard RAG energy test" (each names model + duration)

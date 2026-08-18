@@ -3515,7 +3515,7 @@ CLAUDE.md / GOS1_INFRA.md) and then deleted. Dates are when the fact was establi
   reconcile before dropping. See CHANGE_REQUESTS.md backlog notes.
 - **/prepare-rem (2026-06-23/26, on main):** engine `rem_prep.py` + `routes_rem.py`; Member-viewable, Lab-run;
   un-gated share links `/rem-file/{token}`; Simon's timer wired via `bin/rem_timer.sh`; SDR 1080p now, HDR next;
-  open follow-up: report a decode/encode/total split (metered figure is a full transcode) — tracked under CR-008.
+  the decode/encode/total split Simon asked for IS implemented (`energy_split` = transcode − null-sink decode probe, rem_prep.py:798); the HDR path remains the open CR-008 follow-up.
 - **Guided Tour v2 non-obvious facts (S54):** `demo_pinned_results` is LIVE STATE in settings.json (enhance is
   pin-only by design; after re-pinning enhance re-run `bin/make-demo-enhance-previews` and review the step-3
   copy); Pixop maps non-16:9 sources by anamorphic stretch (measured); detail-crop previews at native 4K pixels

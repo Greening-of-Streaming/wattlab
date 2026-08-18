@@ -866,8 +866,9 @@ experiment or chore with its evidence pointer. Promote to a CR when picked up.*
   needs no sudo (`mv` + symlink, service stopped); Ollama needs `OLLAMA_MODELS=` in the unit. → GOS1_INFRA.md.
 - **CO₂e single source (Ben):** default all carbon-card data (time + geography) from one provider —
   evaluate Nowtricity when CR-007 is picked up. ElectricityMaps verdict (S24) stands: don't pay.
-- **/prepare-rem follow-ups (CR-008):** report a decode/encode/total split (metered figure is a full
-  transcode); HDR path (Simon's config supports PQ/HEVC main10); verify closed-GOP NVENC concat on 4K.
+- **/prepare-rem follow-ups (CR-008):** HDR path (Simon's config supports PQ/HEVC main10; the SDR-only
+  pin is in `rem_prep.build_encode_cmd`); verify closed-GOP NVENC concat on 4K. (The decode/encode split
+  Simon asked for is implemented — `energy_split`, transcode − null-sink decode probe.)
 - **CR-031 §2 status:** `power.stamp()` + `meter_display_name` shipped 2026-06-09 (provenance + display only);
   the `PowerBackend` ABC / PDU / synthetic backends and resolution-aware confidence remain.
 

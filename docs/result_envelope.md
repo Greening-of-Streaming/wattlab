@@ -125,6 +125,17 @@ confidence{}/raw sample arrays). Imported envelopes carry `import_note` and no
 contaminated rows visible with reasons instead of deleting them. Findings source
 allowlist includes `decode` (`routes_findings.py`).
 
+### `rem` (writer: `rem_prep.py` via `routes_rem` — `/prepare-rem`, S-2026-06-23/26)
+
+| mode | shape | summariser | JS renderer |
+|---|---|---|---|
+| `rem_prep` (single) / batch (`batch_id` shared by the multi-codec checkbox jobs) | source (master or upload), codec, target VMAF **or** fixed bitrate, resolution, the two-stage encode (bitrate search on a 2-min excerpt seeded from parity curves → one full 6.5-min confirming encode), `energy{}` for the clean video encode only (markers/timer/concat assembled outside the window), output file name + un-gated share token (`/rem-file/{token}`, index in `<rem_output_dir>/share_tokens.json`), `vmaf` (v1, provenance-stamped) | `_rem_rows` / `_REM_FIELDNAMES` (per-file + per-batch CSV via `persist.rem_batch_csv`) | `/prepare-rem` page only |
+
+Files live under `results/rem/`; the deliverable video under `settings.rem_output_dir` (`/srv/data/owl/rem_out`,
+NOT /tmp). Metered figure = a full transcode (decode+scale+encode); `energy_split{transcode_wh, decode_wh, encode_wh}` = transcode minus a
+null-sink decode probe (approximation, overlap noted in the file's `note`). `results/network/` and `results/training/` on disk are legacy experiment folders with no
+current writer.
+
 ## Consumers (the blast-radius list)
 
 A mode/shape change fans out to, in order of how quickly the break is noticed:
