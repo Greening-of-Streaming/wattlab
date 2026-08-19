@@ -224,6 +224,37 @@ _STOPPED_STATES = ("off", "unpowered", "unreachable")
 # every poll while busy), a device powered from outside the UI (adopted by
 # the poller), or a fresh RIG_HOLD_FILE (touched per row by bench.py so a
 # standalone CLI campaign — overnight_queue.sh — is never cut mid-run).
+# Per-device target overrides from /settings (`rig_target_overrides`, e.g.
+# {"gtv": "192.168.1.143:5555"}) — 2026-08-19, CR-074: a box moved from Ethernet
+# to Wi-Fi comes back on a different DHCP address; the rig must follow it
+# without a code edit. Applied in place at import and on every poller sweep,
+# so a settings change takes effect within ~10 s. The original wired targets
+# stay in RIG_TARGETS_DEFAULT for the day the cable goes back in.
+RIG_TARGETS_DEFAULT: dict = {n: d.get("target") for n, d in RIG["devices"].items()}
+
+
+def apply_target_overrides(overrides: dict | None = None) -> dict:
+    """Merge settings `rig_target_overrides` into RIG in place; returns the
+    effective {name: target}. Unknown names / empty values are ignored; a
+    device absent from the dict reverts to its default target."""
+    if overrides is None:
+        try:
+            import settings as _cfg
+            overrides = _cfg.load().get("rig_target_overrides") or {}
+        except Exception:
+            overrides = {}
+    if not isinstance(overrides, dict):
+        overrides = {}
+    eff = {}
+    for name, dev in RIG["devices"].items():
+        t = overrides.get(name)
+        dev["target"] = str(t) if t else RIG_TARGETS_DEFAULT.get(name)
+        eff[name] = dev["target"]
+    return eff
+
+
+apply_target_overrides()
+
 RIG_HOLD_FILE = Path("/tmp/owl-rig-hold")
 # Ignore hold files older than this (a stale touch from a crashed campaign
 # must not pin the rig on forever) — generous vs bench.py's per-row cadence.
@@ -941,6 +972,7 @@ async def rig_poller():
     the Lab plugs share the household KLAP budget with the bench meter."""
     while True:
         try:
+            apply_target_overrides()      # /settings may have moved a box (Wi-Fi arms)
             await poll_once()
         except Exception:
             log.debug("rig_poller sweep failed", exc_info=True)

@@ -595,3 +595,14 @@ def test_adb_repair_refused_for_ssh_and_unpowered():
 
 async def _fake_sleep(s):
     return None
+
+
+def test_target_overrides_follow_settings_and_revert():
+    import rig
+    default_gtv = rig.RIG_TARGETS_DEFAULT["gtv"]
+    eff = rig.apply_target_overrides({"gtv": "192.168.1.143:5555", "nope": "x"})
+    assert eff["gtv"] == "192.168.1.143:5555"
+    assert rig.RIG["devices"]["gtv"]["target"] == "192.168.1.143:5555"
+    eff = rig.apply_target_overrides({})
+    assert rig.RIG["devices"]["gtv"]["target"] == default_gtv
+    assert eff["gtv"] == default_gtv
