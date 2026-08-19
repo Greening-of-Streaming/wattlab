@@ -36,7 +36,16 @@ def discover():
         print(f"{ip:16} {model:22} {ifaces[:90]}")
     return found
 
-def set_overrides(ov):
+def set_overrides(ov, merge=True):
+    # MERGE with what is already set — two feeders (gtv+bbox, then firestick) must not
+    # clobber each other's overrides (happened 2026-08-19 10:06, caught in time).
+    if merge and ov:
+        try:
+            cur = json.load(urllib.request.urlopen(BASE + "/settings.json", timeout=10)).get("rig_target_overrides") or {}
+        except Exception:
+            try: cur = json.load(open("/home/gos/wattlab/settings.json")).get("rig_target_overrides") or {}
+            except Exception: cur = {}
+        ov = {**cur, **ov}
     body = json.dumps({"rig_target_overrides": ov}).encode()
     req = urllib.request.Request(BASE + "/settings", data=body, headers={"Content-Type": "application/json"})
     try:
@@ -60,7 +69,7 @@ def run(devs):
     st = json.load(urllib.request.urlopen(BASE + "/decode/status.json"))
     for d in ov: print(d, "rig state:", (st.get("devices") or {}).get(d, {}).get("state"))
     cells = []
-    for rep in (1, 2, 3):
+    for rep in range(1, int(os.environ.get('WIFI_REPS', '3')) + 1):
         for pace in ("burst", "paced"):
             for kb in nf.KB:
                 cells.append((f"net_b{kb}_{pace}", list(ov), rep))
@@ -82,5 +91,5 @@ def run(devs):
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "discover"
     if cmd == "discover": discover()
-    elif cmd == "revert": set_overrides({}); print("overrides cleared")
+    elif cmd == "revert": set_overrides({}, merge=False); print("overrides cleared")
     elif cmd == "run": run(sys.argv[2:] or ["gtv", "bbox"])

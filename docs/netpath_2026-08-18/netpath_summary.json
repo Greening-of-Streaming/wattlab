@@ -1,0 +1,24 @@
+{
+ "per_device": {
+  "Google TV": {
+   "eth": 0.5138333333333334,
+   "wifi": 0.7243333333333333
+  },
+  "Bbox 4K operator box": {
+   "eth": 0.178,
+   "wifi": 1.1583333333333332
+  },
+  "Fire TV Stick": {
+   "eth": 0,
+   "wifi": 0.50125
+  },
+  "Raspberry Pi 400": {
+   "eth": 1.3581666666666667,
+   "wifi": 1.6806666666666665
+  },
+  "All devices with both\n(GTV, Bbox, Pi 400)": {
+   "eth": 0.6833333333333333,
+   "wifi": 1.1877777777777776
+  }
+ }
+}

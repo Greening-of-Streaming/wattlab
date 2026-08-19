@@ -804,6 +804,12 @@ the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live
   (cable pull → `python3 wifi_day.py run gtv bbox` from the campaign dir; it discovers the new addresses, sets
   `rig_target_overrides`, runs 6 arms × n=3; `revert` afterwards) and the Fire TV (re-accept ADB, then it joins the
   same run — Wi-Fi only, plus its local control).
+- **Day half done (2026-08-19, cables pulled by the owner; report `docs/netpath_2026-08-18/README.md` with the
+  summary + detail charts):** Wi-Fi vs Ethernet while playing — **GTV +0.21 W** (bitrate-dependent +0.16 → +0.30),
+  **Bbox +0.98 W flat** (the largest network effect on the rig), **Pi 400 +0.32 W** (+0 → +0.7 with bitrate), Fire TV
+  (Wi-Fi only) +0.1 → +0.35 W over its local file; across the three dual-interface devices **0.68 → 1.19 W average,
+  +0.50 W (+75 %)**. Ethernet and an idle radio cost nothing; paced vs burst no consistent difference; bitrate
+  matters even on Ethernet with hardware decode. One content, one codec, 600 s, n=1–3 — an indication.
 - Correction to the batch reference above: the batch id **is** `20260818ae7ba7b0` (the CR text was written
   before the first job landed).
 

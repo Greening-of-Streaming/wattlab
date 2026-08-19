@@ -68,6 +68,12 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
   +0.44/+0.55/+0.58, local +0.50±0.02 — Ethernet and pacing free on the GTV, bitrate step ~+0.17 W; Bbox +0.08→+0.22
   (burst), same trend, near drift. Scripts + analysis in `docs/netpath_2026-08-18/`. Tomorrow: `wifi_day.py run gtv bbox`
   after the cable pulls; Fire TV after ADB re-accept. Lab session left ON for the daytime runs.
+  **Day half (09:50→15:50, Ben pulled the cables; Fire TV re-authorised via Repair ADB; two feeders alternating,
+  32 jobs; `rig_target_overrides` followed the boxes to their Wi-Fi addresses — one near-miss when the second
+  feeder replaced the first's overrides, caught in time, `wifi_day.py` now merges):** Wi-Fi vs Ethernet **GTV
+  +0.21 W (+0.16→+0.30 with bitrate), Bbox +0.98 W flat, Pi 400 +0.32 W (+0→+0.7), Fire TV +0.1→+0.35 over
+  local; overall 0.68 → 1.19 W (+0.50 W, +75 %)**; Ethernet and idle radio free; paced ≈ burst; bitrate matters
+  on every device. Report + charts `docs/netpath_2026-08-18/README.md`; overrides reverted, cables back.
 - **D — `docs/methodology_vs_code_2026-08-19.md`** (`75e391a`): 33 items with file:line — sev 3: LLM/RAG never
   enter focus mode though the page says every test does; the decode keep-awake pins / PLAYING gate / liveness
   rule are analysis practice, not code, and undisclosed; sev 2: cooldown is an idle-floor guard not a fixed
