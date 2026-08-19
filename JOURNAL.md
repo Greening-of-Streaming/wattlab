@@ -56,6 +56,14 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
   validity, findings rubric, finding drafter, prepare-rem, tour v2, image WIP, dual-track one-pager, board,
   REM notes, ForTania), CHANGE_REQUESTS backlog notes, CLAUDE.md, GOS1_INFRA. Correction found en route: the
   findings `review_status`/`impact` axes never landed on main (parked branch) — rubric = policy, schema to do.
+- **CR-074 first data (pass 1, 00:34→03:34, 16 jobs, all Pi/GTV rows 🟢):** on the Pi 400 Ethernet HTTP ≈
+  local file, **Wi-Fi premium scales with throughput** (burst 1.38/1.67/1.98 W at 1.5/8/20 Mb/s vs Ethernet
+  1.39/1.37/1.28), an idle radio costs nothing (radio-off control 1.39 vs 1.37 W); GTV: Ethernet ≈ free
+  (local +0.48 vs HTTP +0.49 W), bitrate matters with hardware decode (+0.30/+0.49/+0.60 W), paced ≥ burst at
+  low bitrate (n=1). Bbox inside drift; Fire TV excluded (ADB unauthorized after the power cycle). Pi local
+  20 Mb/s impossible (3 GB clip > 1.9 GB shm). Pass 2/3 (Ethernet repeats GTV/Bbox + GTV local, 14 jobs) armed
+  for after pass 1; Bbox Wi-Fi network saved for tomorrow's cable pull; `rig_target_overrides` setting
+  (`5a7e334`) + `wifi_day.py` ready for the daytime Wi-Fi arms; service restart scheduled after pass 2.
 - **D — `docs/methodology_vs_code_2026-08-19.md`** (`75e391a`): 33 items with file:line — sev 3: LLM/RAG never
   enter focus mode though the page says every test does; the decode keep-awake pins / PLAYING gate / liveness
   rule are analysis practice, not code, and undisclosed; sev 2: cooldown is an idle-floor guard not a fixed

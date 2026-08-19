@@ -778,6 +778,27 @@ the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live
   network settings, if controllable.
 - Mid-window provenance on ssh rows now records the active interfaces (`ifaces_midwindow`).
 
+### First data (night of 2026-08-18→19, pass 1 = 16 jobs n=1; pass 2/3 = Ethernet repeats on GTV/Bbox running to ~06:20; analysis `/srv/data/owl/campaign_2026-08-18_netpath/analysis.md`)
+
+- **Pi 400 (software decode, the only box switched tonight; interfaces proven by `ifaces_midwindow`):**
+  Ethernet HTTP ≈ local file (1.28–1.47 W vs 1.19–1.46 W, inside noise); **Wi-Fi costs more and the premium
+  scales with throughput** — burst 1.38 / 1.67 / 1.98 W at 1.5 / 8 / 20 Mb/s vs Ethernet 1.39 / 1.37 / 1.28
+  (≈ +0.3 W at 8 Mb/s, +0.7 W at 20 Mb/s); paced (live-like) Wi-Fi 1.13 / 1.88 / 2.04. **An idle Wi-Fi radio
+  costs nothing measurable** (Ethernet 8 Mb/s with the radio off 1.39 W vs 1.37 W on). Local 20 Mb/s arm not
+  possible (3 GB clip > 1.9 GB /dev/shm).
+- **Google TV (Ethernet, hardware decode):** Ethernet delivery ≈ free (local file +0.48 W vs Ethernet HTTP
+  +0.49 W at 8 Mb/s); **bitrate matters even with hardware decode** (+0.30 / +0.49 / +0.60 W at 1.5 / 8 / 20
+  Mb/s burst — decoder/demux work, not the NIC); paced slightly higher at low bitrate (+0.45 vs +0.30 at
+  1.5 Mb/s), equal at 20 Mb/s — n=1, hypothesis: a player that cannot buffer ahead keeps its pipeline awake
+  more evenly.
+- **Bbox:** inside its idle drift (0.06–0.24 W, mixed flags) — no claim. **Fire TV:** ADB unauthorized after
+  the auto-off power cycle → excluded tonight (on-site accept).
+- **Enablers built for the daytime step:** Bbox now has the Wi-Fi network saved (fails over on a cable pull);
+  `rig_target_overrides` setting (`5a7e334`) lets the rig follow a box that re-appears on a Wi-Fi address;
+  `wifi_day.py discover|run|revert` (nmap sweep for :5555, model → device, override, 6 arms × n=3).
+- Correction to the batch reference above: the batch id **is** `20260818ae7ba7b0` (the CR text was written
+  before the first job landed).
+
 ### Open questions
 
 - Is a 600 s window enough for the Fire TV (noisiest meter, ±0.15–0.20 W)? If not, 1080 s + n=2.
