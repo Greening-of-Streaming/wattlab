@@ -63,7 +63,11 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
   low bitrate (n=1). Bbox inside drift; Fire TV excluded (ADB unauthorized after the power cycle). Pi local
   20 Mb/s impossible (3 GB clip > 1.9 GB shm). Pass 2/3 (Ethernet repeats GTV/Bbox + GTV local, 14 jobs) armed
   for after pass 1; Bbox Wi-Fi network saved for tomorrow's cable pull; `rig_target_overrides` setting
-  (`5a7e334`) + `wifi_day.py` ready for the daytime Wi-Fi arms; service restart scheduled after pass 2.
+  (`5a7e334`) + `wifi_day.py` ready for the daytime Wi-Fi arms; service restarted 06:13 after pass 2.
+  **Pass 2/3 (n=3, GTV/Bbox Ethernet):** GTV burst +0.41±0.10 / +0.52±0.02 / +0.58±0.02 W at 1.5/8/20 Mb/s, paced
+  +0.44/+0.55/+0.58, local +0.50±0.02 — Ethernet and pacing free on the GTV, bitrate step ~+0.17 W; Bbox +0.08→+0.22
+  (burst), same trend, near drift. Scripts + analysis in `docs/netpath_2026-08-18/`. Tomorrow: `wifi_day.py run gtv bbox`
+  after the cable pulls; Fire TV after ADB re-accept. Lab session left ON for the daytime runs.
 - **D — `docs/methodology_vs_code_2026-08-19.md`** (`75e391a`): 33 items with file:line — sev 3: LLM/RAG never
   enter focus mode though the page says every test does; the decode keep-awake pins / PLAYING gate / liveness
   rule are analysis practice, not code, and undisclosed; sev 2: cooldown is an idle-floor guard not a fixed

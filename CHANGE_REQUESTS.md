@@ -796,6 +796,14 @@ the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live
 - **Enablers built for the daytime step:** Bbox now has the Wi-Fi network saved (fails over on a cable pull);
   `rig_target_overrides` setting (`5a7e334`) lets the rig follow a box that re-appears on a Wi-Fi address;
   `wifi_day.py discover|run|revert` (nmap sweep for :5555, model → device, override, 6 arms × n=3).
+- **Pass 2/3 (03:34→06:13, Ethernet repeats, n=3):** GTV burst +0.41 ± 0.10 / +0.52 ± 0.02 / +0.58 ± 0.02 W at
+  1.5 / 8 / 20 Mb/s, paced +0.44 / +0.55 / +0.58, local (no network) +0.50 ± 0.02 → **on the GTV, Ethernet delivery
+  costs nothing measurable and pacing costs nothing at n=3; the 1.5 → 20 Mb/s bitrate step costs ~+0.17 W** (decoder/
+  demux). Bbox: +0.08 → +0.22 W (burst) / +0.15 → +0.28 (paced) with the same monotone bitrate trend, still near its
+  drift. Campaign scripts + analysis copied to `docs/netpath_2026-08-18/`. **Tomorrow's half:** GTV + Bbox Wi-Fi arms
+  (cable pull → `python3 wifi_day.py run gtv bbox` from the campaign dir; it discovers the new addresses, sets
+  `rig_target_overrides`, runs 6 arms × n=3; `revert` afterwards) and the Fire TV (re-accept ADB, then it joins the
+  same run — Wi-Fi only, plus its local control).
 - Correction to the batch reference above: the batch id **is** `20260818ae7ba7b0` (the CR text was written
   before the first job landed).
 
