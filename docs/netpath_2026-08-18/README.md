@@ -83,7 +83,7 @@ delivery? Stand-alone experiment on the OWL decode rig; not part of the codec pa
 
 ## What we can say (one content, one codec, 600 s windows, n as stated)
 
-1. **Ethernet delivery costs nothing measurable on the client.** GTV: local file +0.50 ± 0.02 W vs Ethernet HTTP
+1. **Ethernet delivery costs nothing measurable on the client** (note the bars in the charts are the *whole* playback cost above idle on each connection — decode + render + player + network — not the network share alone; the network share is read from the local-file control). GTV: local file +0.50 ± 0.02 W vs Ethernet HTTP
    +0.52 ± 0.02 W (8 Mb/s); Pi 400: Ethernet ≈ local across bitrates; Pi with the Wi-Fi radio OFF ≈ radio on
    (1.39 vs 1.37 W) — an idle radio is free too.
 2. **Wi-Fi costs every device more, by very different amounts:** GTV **+0.21 W** on average (+0.16 at 1.5 Mb/s

@@ -62,15 +62,15 @@ for dev,label in DEV:
 both=[i for i,(dev,_) in enumerate(DEV) if dev!="firestick"]
 labels.append("All devices with both\n(GTV, Bbox, Pi 400)"); E.append(st.mean([E[i] for i in both])); W.append(st.mean([W[i] for i in both])); Eerr.append(0); Werr.append(0)
 x=np.arange(len(labels)); wdt=0.38
-ax.bar(x-wdt/2,E,wdt,yerr=Eerr,color=ETH,label="Ethernet (mean of the 6 sub-cases)",capsize=3)
-ax.bar(x+wdt/2,W,wdt,yerr=Werr,color=WIFI,label="Wi-Fi (mean of the 6 sub-cases)",capsize=3)
+ax.bar(x-wdt/2,E,wdt,yerr=Eerr,color=ETH,label="Playing over Ethernet (decode + player + network), mean of 6 sub-cases",capsize=3)
+ax.bar(x+wdt/2,W,wdt,yerr=Werr,color=WIFI,label="Playing over Wi-Fi (same work + the Wi-Fi radio), mean of 6 sub-cases",capsize=3)
 for i in range(len(labels)):
     if E[i]: ax.text(i-wdt/2,E[i]+0.03,f"{E[i]:.2f}",ha="center",fontsize=9,color=ETH)
     ax.text(i+wdt/2,W[i]+0.03,f"{W[i]:.2f}",ha="center",fontsize=9,color=WIFI)
     if E[i]: ax.text(i,max(E[i],W[i])+0.2,f"Wi-Fi +{W[i]-E[i]:.2f} W  (+{100*(W[i]-E[i])/E[i]:.0f} %)",ha="center",fontsize=10,fontweight="bold",color="#333")
     else: ax.text(i,W[i]+0.2,"(no Ethernet port)",ha="center",fontsize=9,color="#777")
 ax.set_xticks(x); ax.set_xticklabels(labels,fontsize=9); ax.set_ylabel("ΔW above idle (W)"); ax.legend(frameon=False,loc="upper left")
-ax.set_title("Ethernet vs Wi-Fi — average extra power while playing, per device and overall\n(averaged over 1.5 / 8 / 20 Mb/s × burst/paced; one content (BBB); Fire TV is Wi-Fi only)",fontsize=11,loc="left")
+ax.set_title("Extra power while playing the same clip, connected by Ethernet vs by Wi-Fi\nBars = the whole playback cost above idle on that connection; the gap between them = what Wi-Fi adds.\nThe local-file control (no network) ≈ the Ethernet bar, so Ethernet delivery itself adds ~nothing. One content (BBB), 3 bitrates × burst/paced; Fire TV is Wi-Fi only.",fontsize=9.5,loc="left")
 ax.set_ylim(0,max(W)*1.45); fig2.tight_layout(); fig2.savefig("netpath_summary.png",dpi=160)
 json.dump({"per_device":{l:{"eth":e,"wifi":w} for l,e,w in zip(labels,E,W)}}, open("netpath_summary.json","w"), indent=1)
 print("charts ok", {l:(round(e,2),round(w,2)) for l,e,w in zip(labels,E,W)})
