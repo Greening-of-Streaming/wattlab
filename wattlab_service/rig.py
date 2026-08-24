@@ -68,19 +68,19 @@ ADB_BIN = "/srv/data/owl/decode-bench/tools/platform-tools/adb"
 RIG: dict = {
     "devices": {
         "pi5": {
-            # Parked 2026-08-15: the C2 has 4 HDMI and the rig 5 usable
-            # plugs — the Fire TV Stick took Lab-A + HDMI_4. Pi 5's story
-            # (sw-only, no hw H.264, ~4.5× vs Pi 400 hw) is captured in the
-            # findings + docs/pi_decode_energy_2026-07.md; the Pi 400 is the
-            # more interesting board (same-silicon hw-vs-sw). Pi 5 can come
-            # back HEADLESS on any spare P110 (pure-decode rows need no HDMI).
-            "parked": True,
-            "label": "Pi 5", "plug_name": "Lab-A",
-            "plug_ip": "192.168.1.146",
+            # Un-parked 2026-08-24 (SMPTE gap-fill, F9 control pair): back
+            # HEADLESS — no HDMI at all (pure-decode rows need none) — on a
+            # NEW owner-added P110 (Tapo nickname "F2" — owner renamed it
+            # 2026-08-24 from "lab-F", which had collided with the Bbox's
+            # "Lab-F" at .155; named lab-F2 here). Not on the
+            # Shelly-metered strip (master tile won't see it). The board now
+            # also runs Pi-hole (LAN DNS) — a small always-on background
+            # load, disclosed per campaign; do NOT stop it (LAN infra).
+            "label": "Pi 5", "plug_name": "lab-F2",
+            "plug_ip": "192.168.1.184",
             "kind": "ssh", "target": "admin@192.168.1.102",
             "device_class": "sbc",
             "silicon": "BCM2712 · sw decode only",
-            "hdmi_input": "HDMI_4",   # C2 port map (owner, 2026-07-30)
             "expected_boot_s": 29, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 22,
             "network": "ethernet",
@@ -105,8 +105,8 @@ RIG: dict = {
             "hdmi_input": "HDMI_3",   # kept on the bench (owner) — spare port
         },
         "firestick": {
-            # Back on the bench 2026-08-15 on Lab-A + HDMI_4 (Pi 5 parked
-            # above). Was parked 2026-08-08 (Pi 400 needed Lab-B for R6);
+            # Back on the bench 2026-08-15 on Lab-A + HDMI_4 (Pi 5 now on its
+            # own plug, above). Was parked 2026-08-08 (Pi 400 took Lab-B for R6);
             # first bench 2026-07-31 on Lab-B/HDMI_3.
             "label": "Fire TV 4K", "plug_name": "Lab-A",
             "plug_ip": "192.168.1.146",
