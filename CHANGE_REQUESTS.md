@@ -824,6 +824,76 @@ the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live
 
 ---
 
+## CR-077 · Device-onboarding idle-settle characterization tool
+
+**Status:** captured 2026-08-27 (owner, mid-overnight session, triggered by the Apple TV settle-time
+incident of the same night — see JOURNAL S69/S70).
+
+### Why it matters
+
+Tonight's Apple TV campaign silently corrupted its own baselines for about an hour: the generic
+`decode_settle_s`/`decode_baseline_samples` protocol (5 s / 20 samples) was tuned against the Android
+boxes' fast post-`stop` settle, and nobody had asked whether a new device kind matched that assumption.
+The Apple TV's draw kept moving for 15–20+ s after `stop` — `idle_wait.wait_for_stable` (the shared
+guard behind both `power.LAST_W_BASE`/CR-070 on the server and `decode_bench.wait_for_stable_idle` on
+the rig) passed on a transient 3 s window, and the fixed-length baseline then sampled the tail of a
+decay curve, producing base sd up to 2 W and several rows that flagged 🔴 for no real reason. It was
+found only by hand — a bespoke probe script run with much longer settle/baseline windows stayed clean
+all night; the discrepancy between "the standard protocol" and "what this device actually needs" was
+never measured, only guessed at (`rig.py`'s own comment on `expected_boot_s`/`boot_threshold_w` already
+admits these are "placeholders until the first live verification"). The fix shipped tonight
+(`min_settle_s`/`min_baseline_samples` per device, S69/S70 commit) treats the symptom; this CR is the
+fix for not measuring it in the first place.
+
+### Ask
+
+A standalone characterization script — **not** a redesign of `idle_wait.py`'s converge algorithm, which
+is already validated — that any new rig device (or any new *host*, see below) is run through once before
+its first real campaign, and that answers, with data rather than a guess:
+
+1. **Boot-to-ready:** how long from power-on to a stable floor, and what threshold watts marks "booting"
+   vs "drawing power but not yet ready" (informs `expected_boot_s`/`boot_threshold_w`).
+2. **Post-task decay:** several reps of prepare → brief representative task → stop, then fine-cadence
+   polling of the decay back to idle. Two questions from the same curve: (a) does
+   `idle_wait.wait_for_stable`'s poll-until-N-consecutive-agree rule converge correctly, or does it
+   settle *falsely early* on a transient plateau (the Apple TV failure mode)? (b) if a fixed
+   settle/baseline is used instead (or as a floor under the guard, as `min_settle_s` now does), how long
+   does it actually need to be, empirically, not by copying the last device's numbers?
+3. **Verdict + numbers, not just a recommendation applied blind:** output the raw decay curves (so a
+   human looks at the shape once), a plain-language verdict ("guard alone is sufficient" vs "guard
+   converges early — needs a floor"), and the concrete `idle_w` / `min_settle_s` /
+   `min_baseline_samples` / `idle_guard` tolerance to put in the device's config. Advisory only — it
+   proposes, a human commits the values (never auto-writes `rig.py` or the CR-076 settings table).
+
+### Generalize the tool, not just the rig
+
+Build it against pluggable "read power" and "trigger a representative task, then stop" callables, so the
+*same* script — same math, same shared `idle_wait.wait_for_stable` primitive already proven on both
+sides of OWL — onboards: a new decode-rig device (P110 + adb/ssh/webos/atv trigger, this CR's immediate
+use); **GoS1 itself**, the day a second bare-metal server joins the fleet (P110 + an encode/LLM job as
+the trigger — the exact mechanism CR-070 already encodes for GoS1's own pre-job guard, just never run as
+a one-time characterization pass rather than baked into a fixed 120 s cap); and **OWL in the cloud**,
+whenever that happens — a VM's idle-return behaviour under a hypervisor is exactly the kind of thing that
+should not be assumed identical to a physical box's, and a cloud provider's power/cost proxy is a
+different "read power" callable but the same characterization logic applies unchanged.
+
+### Not in scope
+
+Auto-applying recommendations without review; changing `idle_wait.py`'s algorithm; a UI (a CLI script +
+a written verdict per device is enough for now).
+
+### For the SMPTE paper
+
+Worth flagging to the writing desk for a "future plans" mention (Section 6 / conclusion): the
+generalizable methodological point — *the settle time before a device's baseline is trustworthy is an
+empirical property of that device, not a protocol constant, and a measurement framework should say how
+it establishes that per platform rather than assume it* — is a clean addition to the paper's own
+"reports its retractions" argument (the outline already names two self-corrections; this would be a
+third, forward-looking one: a general onboarding discipline rather than a specific fixed finding). See
+`IDEAS.md` in the SMPTE repo.
+
+---
+
 ## CR-076 · /decode fully dynamic from settings — devices, meters, HDMI sockets
 
 **Status:** captured 2026-08-26 (owner, after the Apple TV + screen-map work of S69).
