@@ -877,6 +877,24 @@ whenever that happens — a VM's idle-return behaviour under a hypervisor is exa
 should not be assumed identical to a physical box's, and a cloud provider's power/cost proxy is a
 different "read power" callable but the same characterization logic applies unchanged.
 
+### Second finding, same night (2026-08-27, post-fix): a genuinely SUSTAINED elevated draw, not a decay tail
+
+After `min_settle_s`/`min_baseline_samples` shipped, the very first row of the re-run campaign was
+*worse* (base 8.3 W, Δ −3.85 W) — and a careful 30 s fine-cadence trace right afterward showed the box
+oscillating at **7–11.5 W with no decay trend at all**, not settling toward the known ~2.1–2.3 W floor.
+Ruled out: Tapo API latency (67 ms, normal), GoS1 host load (0.98 load average / 24 cores, idle). The box
+had been manually updated to **tvOS 26.6 only ~2.5 hours earlier** — the leading hypothesis is post-update
+background housekeeping (app updates, on-device model refresh, re-indexing), invisible to pyatv's
+foreground-app view, and it is *sustained* work, not a transient after `stop`. No settle/baseline floor
+fixes a sustained elevated state — only waiting it out does. Mitigation applied live: a one-time
+"is this device trustworthy right now" stability wait (5 continuous minutes inside the known floor band)
+gates resuming the campaign, kept separate from the per-row settle guard.
+
+**Folds into the onboarding tool's scope:** a device just off a major OS update should not be trusted
+for a baseline campaign — `onboard_device.py`'s boot/decay characterization should be re-run (or at least
+sanity-checked) after any update, and the tool's report should flag it if the "idle" trace it captures
+doesn't look like the device's own history.
+
 ### Not in scope
 
 Auto-applying recommendations without review; changing `idle_wait.py`'s algorithm; a UI (a CLI script +
