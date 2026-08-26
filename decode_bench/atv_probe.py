@@ -192,7 +192,7 @@ def main():
     p.add_argument("--settle", type=int, default=20)
     p.add_argument("--baseline", type=int, default=40)
     p.add_argument("--clips", default="h264,h265,av1,vp9")
-    p.add_argument("--park", default="settings", choices=sorted(PARK))
+    p.add_argument("--park", default="vlc", choices=sorted(PARK))   # Settings spikes on tvOS 26.6 — VLC-stopped is the floor
     a = p.parse_args()
     codecs = [c.strip() for c in a.clips.split(",") if c.strip()]
     meter = Meter(a.plug)

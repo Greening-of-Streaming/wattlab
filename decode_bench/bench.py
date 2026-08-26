@@ -420,8 +420,9 @@ class AtvDevice:
     clip URL from the origin with Range requests. One-time on-screen "Open
     VLC?" confirmation on the remote the first time (already accepted on the
     rig box). No screenshot/logcat: liveness = pyatv playback state, position
-    advancing. Baseline state = tvOS Settings (static UI; the home screen
-    autoplays app previews, 6–15 W) — a harness choice, recorded in provenance.
+    advancing. Baseline state = VLC stopped on its library screen (the home
+    screen autoplays previews, 6–15 W; the Settings app spikes to ~5.7 W on
+    tvOS 26.6) — a harness choice, recorded in provenance.
     Rows are "VLC on tvOS", not the native player — say so when quoting."""
 
     ATVREMOTE = ("/srv/data/owl/pyatv-venv/bin/atvremote", "/tmp/pyatv-venv/bin/atvremote")
@@ -461,8 +462,13 @@ class AtvDevice:
         return d
 
     def park(self):
+        # Baseline state = VLC stopped on its (static) library screen. NOT the
+        # tvOS Settings app: on tvOS 26.6 launching Settings pushes the box
+        # from ~2.2 W to ~5.7 W for tens of seconds (it goes off checking
+        # things) — that was the "screensaver ramp" of 2026-08-26, caught
+        # live in the inter-row gap capture at 23:34. VLC-stopped is 2.15–2.3 W
+        # flat and is where the box sits between rows anyway.
         self.atv("stop")
-        self.atv("launch_app=com.apple.TVSettings")
 
     def prepare(self, run):
         self.state_at_end = None
@@ -475,7 +481,7 @@ class AtvDevice:
     def provenance(self, run, results_dir):
         p = self.playing()
         return {"url": run["url"], "player": "VLC for tvOS via Companion launch_app",
-                "baseline_state": "tvOS Settings (parked)", "playback_state_midwindow": p}
+                "baseline_state": "VLC stopped (library screen)", "playback_state_midwindow": p}
 
     def still_running(self, run):
         p = self.playing()
