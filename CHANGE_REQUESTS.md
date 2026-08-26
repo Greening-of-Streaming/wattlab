@@ -824,6 +824,43 @@ the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live
 
 ---
 
+## CR-076 · /decode fully dynamic from settings — devices, meters, HDMI sockets
+
+**Status:** captured 2026-08-26 (owner, after the Apple TV + screen-map work of S69).
+
+### Ask
+
+The rig topology should be **data, not code**: `/settings` lists the devices (name, label, kind
+ssh/adb/atv/webos, target IP/serial, the IP of its Tapo meter, the HDMI socket of the shared screen it is
+cabled to — if any, silicon/network notes, idle_w, boot expectations), and `/decode` renders whatever is
+listed. Adding the next box or re-cabling the four HDMI sockets is then a settings edit, no `rig.py` change,
+no service restart.
+
+### Where we are (S69)
+
+Two pieces already moved to settings: `rig_target_overrides` (CR-074) and `rig_hdmi_inputs` (screen map, with
+`rig.screen_claimable()` as the single rule the UI consumes). `rig.RIG` is still the device list in code
+(seven devices), `decode_run.TEMPLATES` names devices by key for a few device-specific templates, and the
+`/decode` page carries no device-specific logic beyond `device_class` shapes.
+
+### Sketch
+
+1. `rig_devices` setting (list of dicts, validated on save: unique names, kinds in DRIVERS, IPs well-formed,
+   one device per HDMI socket, plug IPs distinct) with `rig.py`'s current table as the shipped default.
+2. `rig.RIG` built from settings at import and on each poller sweep (like the two overrides today);
+   `rig_cache` gains/drops entries when the list changes (blank state for new devices; busy devices never
+   dropped mid-job).
+3. `/settings › Rig` editor: a table with add/remove rows; the four HDMI selects fold into it.
+4. Templates: `devices:` filters by **capability** (kind / hw decoder tags) rather than by device key.
+5. Tests: settings → RIG round-trip, poller adoption of a new device, refusal of invalid edits.
+
+### Not in scope
+
+New device kinds (each still needs a bench.py driver + rig.py probe/shutdown branch); meter firmware
+checks; the C2 monitor block (stays code — it is the household TV).
+
+---
+
 ## CR-075 · Apple TV 4K on the decode rig — second attempt
 
 **Status:** captured 2026-08-18 (owner). First attempt 2026-07-30: pyatv Companion + AirPlay paired

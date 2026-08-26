@@ -62,6 +62,11 @@ wattlab-side JOURNAL entries are still owed.*
   power-cycle (`ready` via pyatv in ~45 s), headless job `7dd3a106` end-to-end (VLC Playing, 🟢). Tests 1044.
   **Open:** that job read 1.4 W idle / 1.7 W playing vs 2.8 / 5.1 W with the display attached an hour
   earlier — headless-vs-HDMI comparison pending the owner confirming the cable state.
+- **Bbox Ethernet back in** (owner, 2026-08-26 evening) — rig.py/README/CLAUDE.md updated; `.10` again.
+  Claim/HDMI UI factorised to one server rule (`rig.screen_claimable`, `not_claimable_reason`) consumed
+  by `claim_screen`, the run route and `status.json`; the tile JS has one `claimButton()` + `hdmiBadge()`
+  and no device knowledge. **CR-076 captured**: the whole /decode topology (devices, targets, Tapo IPs,
+  HDMI sockets) from settings.
 - Rig powered down at the end (graceful off on all five). SMPTE side: C11 digest device list + F11 note
   + Q9, RESULTS_INDEX C11, RUN_QUEUE R3a addendum, Apple TV digest — pushed with `bin/push`.
 - **Router reservations completed (owner, same evening).** Handed Ben the full fixed-address list

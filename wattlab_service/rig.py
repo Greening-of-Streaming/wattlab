@@ -174,11 +174,11 @@ RIG: dict = {
             # bench. On Ethernet at .10 (re-onboarded after a factory reset
             # 2026-07-31: complete setup wizard → dev options → USB debugging →
             # re-auth; never power-cycle it mid-boot). Its Ethernet cable was
-            # pulled for CR-074 (2026-08-19) and is still out: it comes up on
-            # Wi-Fi at .173 (both MACs reserved on the router 2026-08-26),
-            # which the MAC follower below resolves either way.
+            # pulled for CR-074 (2026-08-19) and put back 2026-08-26 evening;
+            # both MACs are reserved on the router (.10 eth / .173 Wi-Fi) and
+            # the MAC follower below resolves it either way.
             "kind": "adb", "target": "192.168.1.10:5555",
-            "macs": ["ec:6c:9a:ef:73:a1", "70:f7:54:37:4f:e4"],   # eth0, wlan0
+            "macs": ["ec:6c:9a:ef:73:a1", "70:f7:54:37:4f:e4"],   # eth0 (.10), wlan0 (.173)
             "device_class": "stb",
             "silicon": "Marvell Berlin (Arcadyan HMB9213NW) · Android 11 · hw H.264/HEVC, no AV1 block",
             "hdmi_input": "HDMI_1",
@@ -432,6 +432,21 @@ def apply_hdmi_assignments(overrides: dict | None = None) -> dict:
         if want:
             taken[want] = name
     return {inp: taken.get(inp) for inp in inputs}
+
+
+def screen_claimable(dev_cfg: dict) -> bool:
+    """THE rule for "may this device take the shared screen": the webOS panel
+    always (it is the screen), anything else only when the screen map puts
+    it on one of the panel's HDMI inputs. Used by claim_screen, the run
+    route's screen-mode check and status.json (`screen_claimable`) — the UI
+    reads the boolean and carries no device-specific knowledge."""
+    return dev_cfg.get("kind") == "webos" or bool(dev_cfg.get("hdmi_input"))
+
+
+def not_claimable_reason(dev_cfg: dict) -> str:
+    return (f"{dev_cfg['label']} is not cabled to one of the screen's "
+            f"{len(RIG['monitor'].get('hdmi_inputs') or [])} HDMI inputs "
+            "— assign it under /settings › Rig › HDMI inputs first")
 
 
 def hdmi_map() -> dict:
@@ -1364,10 +1379,8 @@ async def claim_screen(name: str) -> None:
             rig_cache["screen_claimed_at"] = time.monotonic()
             return
         hdmi = dev_cfg.get("hdmi_input")
-        if not hdmi:
-            raise RigError(409, f"{dev_cfg['label']} is not cabled to one of the screen's "
-                                f"{len(RIG['monitor'].get('hdmi_inputs') or [])} HDMI inputs "
-                                "— assign it under /settings › Rig › HDMI inputs first")
+        if not screen_claimable(dev_cfg):
+            raise RigError(409, not_claimable_reason(dev_cfg))
         try:
             await asyncio.to_thread(lg.set_input, lg_host, hdmi)
         except Exception as e:
@@ -1511,6 +1524,7 @@ def status_payload() -> dict:
             "target": cfg_d.get("target"),
             "target_source": target_source(name),
             "hdmi_input": cfg_d.get("hdmi_input"),
+            "screen_claimable": screen_claimable(cfg_d),
         }
     master = rig_cache["master"]
     monitor = {**rig_cache["monitor"],

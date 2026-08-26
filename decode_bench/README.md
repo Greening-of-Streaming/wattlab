@@ -116,7 +116,7 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | `.36` | Lab-D P110 — GTV meter | `bc:07:1d:a2:da:48` | fw 1.3.1; replaced `.94` (fw 1.4.6) on 2026-07-29; moved off its first lease `.1` (router pool constraint: `.36`, not `.147`) |
 | `.71` | Lab-E P110 — the LG C2 panel (context meter / C2 device plug) | — | fw 1.3.1; replaced Ben1-4k-monitor `.199` (fw 1.4.6) on 2026-07-29 |
 | `.155` | Lab-F P110 — Bbox 4K meter | — | fw 1.3.1 (re-plugged 2026-07-30; the earlier `.22` unit was fw 1.4.0) |
-| `.10` | Bbox 4K (eth0) | `ec:6c:9a:ef:73:a1` (wlan0 `70:f7:54:37:4f:e4` → `.173`, reserved 2026-08-26) | operator CPE, ADB authorised; on Wi-Fi at `.173` whenever the cable is out (CR-074 pull 2026-08-19, still out on 2026-08-26 — eth0 NO-CARRIER); the rig follows it by MAC |
+| `.10` | Bbox 4K (eth0) | `ec:6c:9a:ef:73:a1` (wlan0 `70:f7:54:37:4f:e4` → `.173`, reserved 2026-08-26) | operator CPE, ADB authorised; Ethernet cable pulled for CR-074 2026-08-19 and **back in 2026-08-26 evening**; whenever it is out the box sits at `.173` and the rig follows it by MAC |
 | `.200` | Fire TV Stick 4K (Wi-Fi) | `ec:31:5f:6d:7c:a7` | AFTKRT; ADB re-auth needed after a mains power cycle (came back authorised on 2026-08-26) |
 | `.25` | LG C2 (eth0; also `.109` Wi-Fi) | — | webOS SSAP + WoL (`lg.C2_MAC`) |
 | `.159` | P110 `gos1-server` (outer bench meter, `TAPO_P110_IP_2`) | `40:ae:30:83:4f:ee` | pre-existing reservation, unchanged |
@@ -128,7 +128,7 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | `.95` / `.132` / `.199` | Ben's desk P110s: `Ben-Lab-X` · `Ben HD LCD monitor (Pi)` · `Ben1-4k-monitor` | `ec:75:0c:96:dd:a5` · `ec:75:0c:96:db:03` · `48:22:54:64:15:b6` | all fw 1.4.6 (~2 s update — not for 1 s rows); not rig plugs |
 
 Full reservation list handed to the owner 2026-08-26 (S69) and **applied the same evening** in the Bbox admin UI: everything above plus the
-Bbox's **wlan0** `70:f7:54:37:4f:e4` (→ `.173`, where it lives while its cable is out) and the C2's Wi-Fi `.109`.
+Bbox's **wlan0** `70:f7:54:37:4f:e4` (→ `.173`, where it lives whenever its cable is out) and the C2's Wi-Fi `.109`.
 
 All six Lab plugs (A–F) are on fw **1.3.1** (mW local API, 1–2 s effective cadence).
 Configs written before 2026-07-29 that reference STB plug `.94` are historical — new

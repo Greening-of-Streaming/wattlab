@@ -176,11 +176,9 @@ async def decode_run_start(request: Request, payload: dict):
                                       "exactly one device"}, status_code=400)
     if mode == "screen":
         dc = rig.RIG["devices"][devices[0]]
-        if dc.get("kind") != "webos" and not dc.get("hdmi_input"):
-            return JSONResponse(
-                {"error": f"{dc['label']} is not cabled to one of the screen's HDMI "
-                          "inputs — assign it under /settings › Rig › HDMI inputs, "
-                          "or run it headless"}, status_code=400)
+        if not rig.screen_claimable(dc):
+            return JSONResponse({"error": rig.not_claimable_reason(dc) + " — or run it headless"},
+                                status_code=400)
     cadence_s = p.get("cadence_s")
     if cadence_s is not None:
         try:
@@ -871,30 +869,39 @@ _BODY = """
   </div>
 
   <div class="rig-run" style="margin-top:1rem">
-    <h3>Open items <span class="rig-badge">2026-07-30 (overnight)</span></h3>
+    <h3>Open items <span class="rig-badge">2026-08-26</span></h3>
     <div class="rig-note" style="margin-top:0.2rem">
-    <b>Landed overnight:</b> clip upload (shared retention rules) · decode
-    parameters in /settings (Decode rig section) · shared stable-idle guard
-    (same idle_wait loop as GoS1's pre-job guard; rows stamp protocol v3) ·
-    per-sample timestamps · automated marker segmentation (shown under
-    results) · ⬇ LEM-style CSV export per run · screen-row skip absorbs the
-    1080p re-sync · harness versioned in wattlab/decode_bench/.<br>
+    <b>Landed this month:</b> campaigns = batches with self-service stamping, filter and paging
+    (CR-073) · rig follows a box that changes address by MAC (Ethernet↔Wi-Fi moves, forgotten
+    leases) · <b>Apple TV 4K</b> on the rig (pyatv power/readiness; playback = VLC via Companion —
+    AirPlay <code>play_url</code> is dead on tvOS 18; liveness = playback state, no marker; rows are
+    “VLC on tvOS”) · <b>screen map</b>: the C2 has four HDMI sockets and the rig seven external
+    devices — which four are cabled is set in <a href="/settings#s-decode">/settings › Rig › HDMI
+    inputs</a>; uncabled boxes are headless-only (no <i>Claim screen</i>, no screen-mode rows) ·
+    silicon audited per box (both streamers = MediaTek MT8696, Bbox = Marvell Berlin, Apple TV = A10X) ·
+    every rig address reserved on the router.<br>
     <b>Still open:</b><br>
-    · Pi 400 headless ΔW vs July (+1.57 vs +1.25 W) — deliberate n≥2 recheck<br>
-    · LG C2 OLED integration (CEC input claiming + webOS control; meter on
-      Lab-C once the router moves to a dumb socket)<br>
-    · uploaded clips: markers need h264/hevc/av1 sources (NVENC-matched);
-      other codecs run un-marked<br>
+    · Apple TV: tvOS screensaver contaminates parked baselines (disable it — a disclosed harness
+      setting — before the next rows); headless-vs-display power still to pin down; n≥3 owed (CR-075)<br>
+    · Fire TV <code>alive_at_window_end</code> false negative on flat traces (instrumented via
+      <code>playback_state_at_end</code>, root cause open) · Fire TV drops ADB authorisation after a
+      mains cycle (on-site accept, one reconnect)<br>
+    · C2 SSAP timeouts at window end lose rows · parity runs have no inter-row idle guard<br>
+    · whole rig topology from settings — devices, targets, Tapo meters, HDMI sockets — so a new
+      box is a settings edit, not a code change (CR-076)<br>
+    · uploaded clips: markers need h264/hevc/av1 sources (NVENC-matched); other codecs run un-marked<br>
     <b>Known quirks:</b> cold-panel first claim may need a second claim ·
     claim takes 10–20 s by design · deploys never run while the queue is busy ·
-    marker-row headline ΔW includes the 15 s head (quote segmented values).
+    marker-row headline ΔW includes the 15 s head (quote segmented values) ·
+    tvOS asks “Open VLC?” once per box on the first Companion launch (answer on the remote).
     </div>
   </div>
 
   <div class="rig-note">
-    Boxes are <b>off by default</b>. The screen auto-switches to the single
-    powered device — run one box at a time for display work. “Off” is always a
-    graceful shutdown (SSH/ADB) before the relay cut. The monitor has its own
+    Boxes are <b>off by default</b>. The shared screen is an explicit HDMI
+    input-select on the C2 (<i>Claim screen</i>) — one owner at a time, and only
+    for boxes on one of its four sockets. “Off” is always a graceful shutdown
+    (SSH / ADB / pyatv) before the relay cut. The monitor has its own
     wall socket — cutting the strip never darkens the screen. Boot
     expectations: Pi 5 ≈ 29 s; Pi 400 and Google TV get measured on first use.
   </div>
@@ -969,6 +976,23 @@ var SCREEN_SHAPE =
   + '<rect class="scr-fill" x="8" y="8" width="116" height="62"/>'
   + '<line x1="50" y1="82" x2="82" y2="82"/><line x1="66" y1="74" x2="66" y2="82"/></svg>';
 
+// Shared-screen rules live on the server (rig.screen_claimable → status.json
+// `screen_claimable`; the socket itself in `hdmi_input`, from rig.py defaults
+// + /settings › Rig › HDMI inputs). The UI only renders those two fields —
+// a new box or a re-cabling needs no change here.
+function claimButton(name, dev, screenOwner) {
+  if (!dev.screen_claimable || screenOwner === name || dev.busy) return '';
+  return ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
+       + '/screen\\', {})">Claim screen</button>';
+}
+function hdmiBadge(dev) {
+  if (dev.conn === 'webos') return '';        // the panel itself
+  return dev.hdmi_input
+    ? ' <span class="rig-badge" title="cabled to this input of the shared screen">📺 ' + dev.hdmi_input + '</span>'
+    : ' <span class="rig-badge" style="opacity:.6" title="not on one of the screen\\'s HDMI inputs — '
+      + 'headless only; assign a socket under /settings › Rig › HDMI inputs">no HDMI</span>';
+}
+
 function deviceTile(name, dev, screenOwner, screenSettling) {
   var pct = null;
   if ((dev.state === 'booting' || dev.state === 'powering') && dev.elapsed_s != null)
@@ -989,13 +1013,7 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
              + 'carry no such share. State this next to any cross-device comparison.">📶 Wi-Fi only</span>'
            : '') + '</div>'
         + '<div class="rig-w">⚡ ' + fmtW(dev.watts)
-        + ' <span class="rig-badge">🔌 ' + dev.plug_name + '</span>'
-        + (dev.conn === 'webos' ? ''
-           : (dev.hdmi_input
-              ? ' <span class="rig-badge" title="cabled to this input of the shared screen">📺 ' + dev.hdmi_input + '</span>'
-              : ' <span class="rig-badge" style="opacity:.6" title="not on one of the screen\\'s four HDMI '
-                + 'inputs — headless only; assign an input under /settings › Rig">no HDMI</span>'))
-        + '</div>';
+        + ' <span class="rig-badge">🔌 ' + dev.plug_name + '</span>' + hdmiBadge(dev) + '</div>';
   if (pct !== null)
     h += '<div class="rig-bar"><div style="width:' + pct.toFixed(0) + '%"></div></div>'
        + '<div class="rig-detail">' + Math.round(dev.elapsed_s) + ' / ~' + dev.expected_s + ' s — ' + (dev.detail || '') + '</div>';
@@ -1006,19 +1024,15 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
     if (dev.state === 'off')
       h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'on\\')">On</button>';
     else if (dev.state === 'ready') {
-      h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Off</button>';
-      if (screenOwner !== name && !dev.busy && (dev.hdmi_input || dev.conn === 'webos'))
-        h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
-           + '/screen\\', {})">Claim screen</button>';
+      h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Off</button>'
+         + claimButton(name, dev, screenOwner);
     }
     else if (dev.state === 'stuck') {
       h += '<button class="rig-btn warn" onclick="devPower(\\'' + name + '\\',\\'cycle\\')">Power-cycle</button>'
          + ' <button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Force off</button>';
       // A stuck box is powered but its probe fails — often an on-screen prompt
       // (adb "Allow USB debugging?", 2026-08-15) that only the TV can show.
-      if (dev.conn !== 'webos' && screenOwner !== name && dev.hdmi_input)
-        h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
-           + '/screen\\', {})">Claim screen</button>';
+      h += claimButton(name, dev, screenOwner);
       if (dev.adb_auth === 'unauthorized')
         h += ' <button class="rig-btn warn" title="Needs someone AT the rig with this box\\'s remote — '
            + 'the accept step cannot be done remotely" onclick="adbRepair(\\'' + name

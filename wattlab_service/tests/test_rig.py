@@ -370,7 +370,7 @@ def test_status_payload_shape():
                       "screen_settling", "total_w", "saving_note", "age_s",
                       "idle_off"}
     for name, d in p["devices"].items():
-        assert set(d) == {"label", "plug_name", "device_class", "silicon", "target", "target_source", "hdmi_input",
+        assert set(d) == {"label", "plug_name", "device_class", "silicon", "target", "target_source", "hdmi_input", "screen_claimable",
                           "conn", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s", "adb_auth",
                           "network"}
@@ -754,6 +754,12 @@ def test_status_payload_carries_the_screen_map():
     assert p["devices"]["atv"]["hdmi_input"] is None
     assert p["devices"]["gtv"]["hdmi_input"] == "HDMI_2"
     assert p["devices"]["atv"]["conn"] == "atv"
+    assert p["devices"]["atv"]["screen_claimable"] is False
+    assert p["devices"]["gtv"]["screen_claimable"] is True
+    assert p["devices"]["c2"]["screen_claimable"] is True     # the panel itself
+    rig.apply_hdmi_assignments({"atv": "HDMI_3", "pi400": ""})
+    p = rig.status_payload()
+    assert p["devices"]["atv"]["screen_claimable"] is True and p["devices"]["pi400"]["screen_claimable"] is False
 
 
 # --- Apple TV device kind (pyatv) -------------------------------------------
