@@ -895,6 +895,24 @@ for a baseline campaign — `onboard_device.py`'s boot/decay characterization sh
 sanity-checked) after any update, and the tool's report should flag it if the "idle" trace it captures
 doesn't look like the device's own history.
 
+### Live validation (2026-08-27, same night)
+
+Run against two real devices with different driver kinds while waiting on the Apple TV to settle:
+
+- **Pi 5 (ssh).** First run caught a bug in the tool itself — rep 1, started right at boot-ready with no
+  pause, absorbed lingering post-boot settling and read back a spurious ~39 s "decay"; reps 2–3 (already
+  warmed up) settled in under 0.1 s. Fixed with a `boot_settle_s` warm-up buffer before rep 1 (default
+  45 s); re-run then correctly recommended **no override** — matches every clean Pi 5 row measured
+  tonight. +3 tests (one exercises the exact failure via a fake sampler; the curve-based version of that
+  test was itself flawed — a real device keeps cooling in real time whether or not anything reads it,
+  which a call-count-driven fake trace can't represent — replaced with a direct check that the buffer
+  sleep fires only after boot-ready, never when disabled or when the device never reports ready).
+- **GTV (adb).** Recommended a modest `min_settle_s: 5` / `min_baseline_samples: 3` — smaller than the
+  existing protocol default and consistent with GTV showing zero baseline problems all night. The
+  contrast with the Apple TV's 25 s/40-sample recommendation is exactly the discrimination the tool is
+  for: it should say "fine as-is" for a well-behaved device and "needs a floor" for a problematic one,
+  without a human having to already know which is which.
+
 ### Not in scope
 
 Auto-applying recommendations without review; changing `idle_wait.py`'s algorithm; a UI (a CLI script +
