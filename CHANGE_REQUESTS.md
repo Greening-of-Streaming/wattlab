@@ -901,8 +901,13 @@ baselines ramp 2.7→6 W within 45 s (tvOS **screensaver** — disable it, discl
 contaminated by post-boot activity. Raw `/srv/data/owl/atv/probe_2026-08-26.jsonl`; SMPTE digest
 `digests/2026-08-appletv-vlc.md` (C19). **Rig integration shipped the same evening:** `rig.py` kind `atv` (pyatv
 power/readiness, Lab-F3, MAC-followed), bench.py `AtvDevice`, decode_run `atv` config, /decode tile + headless job
-verified (`7dd3a106`). Remaining: screensaver off (disclosed) + n≥3 + second content; the headless-vs-display power
-question (job read 1.4/1.7 W with the cable state unconfirmed vs 2.8/5.1 W displayed); then close.
+verified (`7dd3a106`). **Headless answered (59-min row `fe9d69b0`, owner at the screen, 1-s trace segmented):** with no display VLC
+reports `Playing` (position advancing) at **1.6–1.8 W** — below the box's paused-with-display draw (2.3–3.1 W)
+and a third of full-screen playback (**4.87 W**; quarter-screen unscaled 4.42 W). A display hot-plug in either
+direction **pauses VLC**. So: **Apple TV rows are only valid with a display attached and stable before
+`prepare()`; headless Apple TV rows are not decode energy** (the section caveat says so). Remaining: the rig
+should refuse/flag `headless` for `atv` unless the operator asserts a display (a `display_attached` flag on the
+run, disclosed in the row); screensaver off (disclosed) + n≥3 + second content; then close.
 
 ### Plan (one on-site session + one desk session)
 

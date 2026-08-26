@@ -223,7 +223,10 @@ work; AirPlay `play_url` is **dead on tvOS 18** (receiver 500 on `/playback-info
 via Companion**: `launch_app=vlc-x-callback://x-callback-url/stream?url=<origin URL>` (one-time "Open VLC?"
 on the remote). Harness `atv_probe.py` / `atv_summary.py`; meter Lab-F3 `.1`; park the box in Settings for
 baselines and **disable the tvOS screensaver first** (it ramps the parked floor 2.7→6 W within a minute —
-2026-08-26 rows). First result: H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W. pyatv 0.18.0 venv is at `/tmp/pyatv-venv`
+2026-08-26 rows). First result: H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W. **Never measure it headless:** with no
+display VLC still says `Playing` but the box draws 1.6–1.8 W (full-screen playback 4.9 W, quarter-screen
+unscaled 4.4 W) — not decode energy; and an HDMI hot-plug in either direction pauses VLC (frozen frame),
+so attach the display before the row and leave it. Asleep between rows is normal (`turn_on` wakes it). pyatv 0.18.0 venv is at `/tmp/pyatv-venv`
 (⚠ under /tmp — recreate with `python3 -m venv … && pip install pyatv==0.18.0` if it is gone). CR-075.
 
 **Origin:** Range-correct `origin.py` on `:8123`, a child of wattlab.service (`origin_control.py`,

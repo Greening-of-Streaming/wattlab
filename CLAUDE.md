@@ -185,7 +185,9 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - **Rig harness open items** (S65/S66): Fire TV `alive_at_window_end` false negative (instrumented via
   `playback_state_at_end`, root cause open) · Fire TV loses ADB authorisation after a mains power cycle (on-site
   accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard ·
-  Bbox Ethernet cable back in since 2026-08-26 evening (both its addresses reserved; MAC follower covers either).
+  Bbox Ethernet cable back in since 2026-08-26 evening (both its addresses reserved; MAC follower covers either) ·
+  Apple TV: never headless (1.6 W "Playing" ≠ decode; hot-plug pauses VLC) — display attached + screensaver off
+  before rows; `display_attached` flag for atv runs still to add (CR-075).
 
 ## Key Findings to Date
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real

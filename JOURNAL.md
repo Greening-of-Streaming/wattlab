@@ -62,6 +62,16 @@ wattlab-side JOURNAL entries are still owed.*
   power-cycle (`ready` via pyatv in ~45 s), headless job `7dd3a106` end-to-end (VLC Playing, 🟢). Tests 1044.
   **Open:** that job read 1.4 W idle / 1.7 W playing vs 2.8 / 5.1 W with the display attached an hour
   earlier — headless-vs-HDMI comparison pending the owner confirming the cable state.
+- **Hour run on the Apple TV (19:24–20:23, job `fe9d69b0`, 15-s pyatv watcher + Ben at the screen).** The
+  box had gone to sleep parked headless (pyatv `PowerState.Off`) → wake path added (On / wait-ready /
+  bench prepare send `turn_on`; poller says "asleep", never "stuck"). Segmented 1-s trace: **headless
+  "Playing" 1.62 W** (position advancing, 20 min) · HDMI in → **VLC pauses itself**, frozen frame · resumed:
+  1080p unscaled in a quarter of the 4K panel 4.42 W · re-open of the 3.6 GB file wedged ("please wait", no
+  origin fetch) → 3-min cut, then the 20-min file: **full-screen 4.87 W** for 20 min · HDMI out → VLC pauses
+  again, `PowerState.Off` · resumed headless 1.7–1.8 W. Conclusion: headless Apple TV rows are not decode
+  energy (VLC's `Playing` is a clock, not proof of decode+render); display must be attached and stable before
+  prepare; hot-plug either way pauses VLC; the scaler costs ~0.45 W. Written into the C19 digest (F5, Q0),
+  CR-075, README. The stored row is a diagnostic (mixed states), not a data point.
 - **Bbox Ethernet back in** (owner, 2026-08-26 evening) — rig.py/README/CLAUDE.md updated; `.10` again.
   Claim/HDMI UI factorised to one server rule (`rig.screen_claimable`, `not_claimable_reason`) consumed
   by `claim_screen`, the run route and `status.json`; the tile JS has one `claimButton()` + `hdmiBadge()`
