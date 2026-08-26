@@ -166,7 +166,9 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
   HMB9213NW), `rig.py` MAC target follower (Bbox on Wi-Fi .173 vs .10 — cable still out since CR-074),
   CR-075: box = AppleTV6,2 (2017 A10X); AirPlay play_url dead on tvOS 18 → VLC via Companion; first rows
   (n=2, VLC): H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W (+27 %) — third vendor for the penalty claim (🟡, screensaver
-  hit the baselines). Router reservations completed by Ben. Tests 1033.
+  hit the baselines). Router reservations completed by Ben. Then: Apple TV on /decode (`atv` kind, pyatv) +
+  **screen map** — C2 has 4 HDMI inputs for 7 devices, assignable in /settings, claim/screen-mode refused
+  when uncabled (Pi 5, Apple TV). Tests 1044.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

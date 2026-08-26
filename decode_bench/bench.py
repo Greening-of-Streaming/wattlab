@@ -412,7 +412,80 @@ class WebosDevice:
         self.lg.go_home(self.host)
 
 
-DRIVERS = {"adb": AdbDevice, "ssh": SshDevice, "webos": WebosDevice}
+class AtvDevice:
+    """Apple TV over pyatv (CR-075, 2026-08-26). AirPlay `play_url` is dead on
+    tvOS 18 (the receiver accepts POST /play, then 500s GET /playback-info and
+    never fetches — pyatv #2403), so playback is VLC for tvOS launched by the
+    Companion protocol with VLC's x-callback stream scheme; VLC fetches the
+    clip URL from the origin with Range requests. One-time on-screen "Open
+    VLC?" confirmation on the remote the first time (already accepted on the
+    rig box). No screenshot/logcat: liveness = pyatv playback state, position
+    advancing. Baseline state = tvOS Settings (static UI; the home screen
+    autoplays app previews, 6–15 W) — a harness choice, recorded in provenance.
+    Rows are "VLC on tvOS", not the native player — say so when quoting."""
+
+    ATVREMOTE = ("/srv/data/owl/pyatv-venv/bin/atvremote", "/tmp/pyatv-venv/bin/atvremote")
+    CREDS = Path("/srv/data/owl/atv")
+
+    def __init__(self, cfg):
+        self.host = cfg["host"]
+        self.bin = next((b for b in self.ATVREMOTE if Path(b).is_file()), None)
+        if not self.bin:
+            raise RuntimeError("atvremote not installed (pyatv venv missing)")
+        self.cc = (self.CREDS / "companion_creds").read_text().strip()
+        self.ac = (self.CREDS / "airplay_creds").read_text().strip()
+        self.state_at_end = None
+
+    def atv(self, *cmds, timeout=45):
+        r = subprocess.run([self.bin, "-s", self.host, "--companion-credentials", self.cc,
+                            "--airplay-credentials", self.ac, *cmds],
+                           capture_output=True, text=True, timeout=timeout)
+        return (r.stdout or "") + (r.stderr or "")
+
+    def playing(self):
+        out = self.atv("playing", "app", timeout=35)
+        d = {"state": None, "position_s": None, "title": None, "app": None}
+        for line in out.splitlines():
+            s = line.strip()
+            if s.startswith("Device state:"):
+                d["state"] = s.split(":", 1)[1].strip()
+            elif s.startswith("Position:"):
+                try:
+                    d["position_s"] = float(s.split(":", 1)[1].strip().split("/")[0].rstrip("s"))
+                except ValueError:
+                    pass
+            elif s.startswith("Title:"):
+                d["title"] = s.split(":", 1)[1].strip()
+            elif s.startswith("App:"):
+                d["app"] = s.split(":", 1)[1].strip()
+        return d
+
+    def park(self):
+        self.atv("stop")
+        self.atv("launch_app=com.apple.TVSettings")
+
+    def prepare(self, run):
+        self.state_at_end = None
+        self.park()
+
+    def start(self, run):
+        self.atv(f"launch_app=vlc-x-callback://x-callback-url/stream?url={run['url']}")
+
+    def provenance(self, run, results_dir):
+        p = self.playing()
+        return {"url": run["url"], "player": "VLC for tvOS via Companion launch_app",
+                "baseline_state": "tvOS Settings (parked)", "playback_state_midwindow": p}
+
+    def still_running(self, run):
+        p = self.playing()
+        self.state_at_end = p
+        return p.get("state") == "Playing"
+
+    def stop(self, run):
+        self.park()
+
+
+DRIVERS = {"adb": AdbDevice, "ssh": SshDevice, "webos": WebosDevice, "atv": AtvDevice}
 
 
 def wait_for_stable_idle(meters, ig, cadence):

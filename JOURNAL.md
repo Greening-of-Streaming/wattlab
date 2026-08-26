@@ -49,7 +49,19 @@ wattlab-side JOURNAL entries are still owed.*
   hardware pair flat, **+1.35 W (+27 %) for both codecs the A10X lacks**; every row 12/12 polls playing.
   🟡: baselines ramp 2.7→6 W inside 45 s = tvOS screensaver (disable next time, disclosed); H.264 #1 hit
   by post-boot activity. Raw `/srv/data/owl/atv/probe_2026-08-26.jsonl`; SMPTE `digests/2026-08-appletv-vlc.md`
-  (C19); CR-075 stays open for screensaver-off n≥3 + `rig.py` entry.
+  (C19); CR-075 stays open for screensaver-off n≥3.
+- **Apple TV on /decode + the screen map (same evening, owner ask).** `rig.py` kind `atv` (pyatv:
+  `power_state` = readiness, `turn_off` = graceful stop, MAC-followed as a bare IP; bench.py `AtvDevice`
+  = VLC via Companion, liveness = playback state; decode_run `{"type":"atv"}` + display caveat). The C2
+  has **four HDMI inputs and the rig seven external devices**: monitor `hdmi_inputs` + per-device
+  `hdmi_input` defaults (Bbox 1 · GTV 2 · Pi 400 3 · Fire TV 4; Pi 5 and Apple TV none) overridden from
+  `/settings › Rig › HDMI inputs` (four selects → `rig_hdmi_inputs`, one device per socket, applied by
+  the poller); tiles show `📺 HDMI_n` / `no HDMI`, the screen tile lists the sockets, and *Claim screen* /
+  screen-mode runs are refused with a pointer for anything uncabled (the Pi 5 could previously be
+  "claimed" onto a socket it isn't on). Live-verified: tile, `/settings` selects, 409 on claim, graceful
+  power-cycle (`ready` via pyatv in ~45 s), headless job `7dd3a106` end-to-end (VLC Playing, 🟢). Tests 1044.
+  **Open:** that job read 1.4 W idle / 1.7 W playing vs 2.8 / 5.1 W with the display attached an hour
+  earlier — headless-vs-HDMI comparison pending the owner confirming the cable state.
 - Rig powered down at the end (graceful off on all five). SMPTE side: C11 digest device list + F11 note
   + Q9, RESULTS_INDEX C11, RUN_QUEUE R3a addendum, Apple TV digest — pushed with `bin/push`.
 - **Router reservations completed (owner, same evening).** Handed Ben the full fixed-address list

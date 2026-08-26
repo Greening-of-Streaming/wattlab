@@ -20,6 +20,7 @@ import queue_control
 import settings as cfg
 import ui
 import video as vid
+import rig
 from capabilities import (requires, can, PUBLIC_PAGE, SETTINGS_READ_FULL,
                           SETTINGS_WRITE, VARIANCE_RUN, QUEUE_VIEW)
 from runtime import jobs
@@ -291,6 +292,25 @@ async def settings_page(request: Request):
                 f'{ctrl}<span style="color:var(--text-3);font-size:0.8rem">{unit}</span>'
                 f'</div></div>')
 
+    def _hdmi_rows():
+        import html as _h
+        inputs = list(rig.RIG["monitor"].get("hdmi_inputs") or [])
+        current = rig.hdmi_map()
+        cands = [(n, d["label"]) for n, d in rig.RIG["devices"].items()
+                 if d.get("kind") != "webos"]
+        rows = []
+        for inp in inputs:
+            opts = ['<option value="">— nothing cabled —</option>'] + [
+                f'<option value="{n}"{" selected" if current.get(inp) == n else ""}>{_h.escape(lab)}</option>'
+                for n, lab in cands]
+            rows.append(f'<div class="row"><label for="hdmi_{inp}">{inp.replace("_", " ")}</label>'
+                        f'<select id="hdmi_{inp}" style="width:14rem">{"".join(opts)}</select></div>')
+        return "\n".join(rows)
+
+    import json as _json
+    hdmi_devices_json = _json.dumps([n for n, d in rig.RIG["devices"].items() if d.get("kind") != "webos"])
+    hdmi_inputs_json = _json.dumps(list(rig.RIG["monitor"].get("hdmi_inputs") or []))
+
     def toggle_field(fid, val, hint="", onchange=""):
         oc = f' onchange="{onchange}"' if onchange else ""
         if local:
@@ -460,6 +480,13 @@ async def settings_page(request: Request):
     {toggle_field("rig_idle_off_monitor", s.get('rig_idle_off_monitor', False),
                   "ON: the idle auto-off also cuts the shared screen's plug (Lab-E). OFF by default — "
                   "that panel doubles as the household TV / Mac extension, not just the bench monitor.")}
+    <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin:0.75rem 0 0.25rem">
+      <strong>HDMI inputs.</strong> The shared screen has {len(rig.RIG["monitor"].get("hdmi_inputs") or [])}
+      HDMI sockets and the rig has more external devices than that — pick which device is cabled to each.
+      A device on no socket is headless-only: no <em>Claim screen</em>, no screen-mode rows. Takes effect
+      within ~10 s (poller); the C2 is the screen itself and never appears here.
+    </div>
+    {_hdmi_rows()}
 
     <div class="section" id="s-staging">Staging</div>
     {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
@@ -616,8 +643,19 @@ async def settings_page(request: Request):
         const bool_fields = ['cooldown_wait_for_idle','cooldown_show_wait_detail',
                              'decode_idle_guard','rig_idle_off_enabled','rig_idle_off_monitor'];
         const str_fields = ['members','rig_master_tapo_ip'];
+        // Screen map: one select per HDMI socket → {{device: input}} with every
+        // cabled-capable device present ("" = not on any socket).
+        const hdmiDevices = {hdmi_devices_json};
+        const hdmiInputs = {hdmi_inputs_json};
+        const hdmi = {{}};
+        for (const d of hdmiDevices) hdmi[d] = '';
+        for (const inp of hdmiInputs) {{
+            const el = document.getElementById('hdmi_' + inp);
+            if (el && el.value) hdmi[el.value] = inp;
+        }}
         const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};
+        body.rig_hdmi_inputs = hdmi;
         for (const f of num_fields) {{
             const el = document.getElementById(f);
             if (el) body[f] = parseFloat(el.value);

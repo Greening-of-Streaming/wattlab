@@ -378,3 +378,24 @@ def test_page_has_mode_and_device_controls():
         assert frag in page, frag
     for key in decode_run.TEMPLATES:
         assert key in page
+
+
+def test_materialize_apple_tv_uses_urls_and_pyatv_driver():
+    p = decode_run._materialize("tj-atv", "bbb_codecs_rt", "atv", "headless", False)
+    try:
+        cfg = json.loads(p.read_text())
+        assert cfg["device"] == {"type": "atv", "host": rig.RIG["devices"]["atv"]["target"]}
+        assert cfg["meter_ip"] == rig.RIG["devices"]["atv"]["plug_ip"]
+        assert "monitor_meter_ip" not in cfg
+        for r in cfg["runs"]:
+            assert r["url"].startswith(decode_run.STREAM_BASE_URL) and "cmd" not in r
+    finally:
+        p.unlink()
+
+
+def test_run_endpoint_refuses_screen_mode_for_uncabled_device():
+    rig.apply_hdmi_assignments({})
+    for dev in ("pi5", "atv"):
+        r = client.post("/decode/run", headers=_LAB, json={
+            "template": "bbb_h264_rt", "devices": [dev], "mode": "screen"})
+        assert r.status_code == 400 and "HDMI inputs" in r.json()["error"]

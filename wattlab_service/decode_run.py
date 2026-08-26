@@ -312,6 +312,11 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         # built-in browser; its own SoC decodes+displays (no cmd/player).
         row["url"] = f"{STREAM_BASE_URL}/{clip}{q}"
         return row
+    if dev_cfg["kind"] == "atv":
+        # Apple TV: VLC for tvOS fetches the URL itself (Companion launch with
+        # VLC's x-callback stream scheme — bench.py AtvDevice, CR-075).
+        row["url"] = f"{STREAM_BASE_URL}/{clip}{q}"
+        return row
     if dev_cfg["kind"] == "adb":
         if delivery == "local":
             # July delivery-decomposition arm — clip staged by adb push.
@@ -413,6 +418,8 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
                          "player": "com.brouken.player"}
     elif dev_cfg["kind"] == "webos":
         cfg["device"] = {"type": "webos", "host": dev_cfg["target"]}
+    elif dev_cfg["kind"] == "atv":
+        cfg["device"] = {"type": "atv", "host": dev_cfg["target"]}
     else:
         user, host = dev_cfg["target"].split("@", 1)
         # ssh_host_override: reach the same box on another interface (Pi 400
@@ -754,6 +761,12 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
         # errored — the only place the failure sequence survives (2026-08-15).
         if any("error" in r for r in section["rows"]):
             section["log_tail"] = lines[-40:]
+        if dev_cfg["kind"] == "atv":
+            section["display_caveat"] = (
+                "Apple TV rows are VLC for tvOS (Companion launch), liveness = "
+                "pyatv playback state, no in-clip marker" +
+                (" — headless: the screen was not claimed, the box renders "
+                 "regardless" if mode == "headless" else ""))
         if dev_cfg["kind"] == "adb" and mode == "headless":
             section["display_caveat"] = (
                 "Android renders regardless of the shared monitor; headless "

@@ -174,6 +174,13 @@ async def decode_run_start(request: Request, payload: dict):
     if mode == "screen" and len(devices) != 1:
         return JSONResponse({"error": "screen mode is exclusive — pick "
                                       "exactly one device"}, status_code=400)
+    if mode == "screen":
+        dc = rig.RIG["devices"][devices[0]]
+        if dc.get("kind") != "webos" and not dc.get("hdmi_input"):
+            return JSONResponse(
+                {"error": f"{dc['label']} is not cabled to one of the screen's HDMI "
+                          "inputs — assign it under /settings › Rig › HDMI inputs, "
+                          "or run it headless"}, status_code=400)
     cadence_s = p.get("cadence_s")
     if cadence_s is not None:
         try:
@@ -776,6 +783,7 @@ _BODY = """
         <div class="rig-detail" id="screen-panel"></div>
         <div class="rig-w" id="w-monitor">—</div>
         <div class="rig-detail" id="d-monitor"></div>
+        <div class="rig-detail" id="screen-inputs" title="The panel's HDMI sockets and what is cabled to each — set under /settings › Rig › HDMI inputs"></div>
         <div class="rig-chips"><span class="rig-badge" id="screen-plug">🔌 Lab-E</span>
           <span class="rig-badge">not on strip</span></div>
         <button class="rig-btn" id="btn-monitor" onclick="monitorToggle()">…</button>
@@ -981,7 +989,13 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
              + 'carry no such share. State this next to any cross-device comparison.">📶 Wi-Fi only</span>'
            : '') + '</div>'
         + '<div class="rig-w">⚡ ' + fmtW(dev.watts)
-        + ' <span class="rig-badge">🔌 ' + dev.plug_name + '</span></div>';
+        + ' <span class="rig-badge">🔌 ' + dev.plug_name + '</span>'
+        + (dev.conn === 'webos' ? ''
+           : (dev.hdmi_input
+              ? ' <span class="rig-badge" title="cabled to this input of the shared screen">📺 ' + dev.hdmi_input + '</span>'
+              : ' <span class="rig-badge" style="opacity:.6" title="not on one of the screen\\'s four HDMI '
+                + 'inputs — headless only; assign an input under /settings › Rig">no HDMI</span>'))
+        + '</div>';
   if (pct !== null)
     h += '<div class="rig-bar"><div style="width:' + pct.toFixed(0) + '%"></div></div>'
        + '<div class="rig-detail">' + Math.round(dev.elapsed_s) + ' / ~' + dev.expected_s + ' s — ' + (dev.detail || '') + '</div>';
@@ -993,7 +1007,7 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
       h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'on\\')">On</button>';
     else if (dev.state === 'ready') {
       h += '<button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Off</button>';
-      if (screenOwner !== name && !dev.busy)
+      if (screenOwner !== name && !dev.busy && (dev.hdmi_input || dev.conn === 'webos'))
         h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
            + '/screen\\', {})">Claim screen</button>';
     }
@@ -1002,7 +1016,7 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
          + ' <button class="rig-btn" onclick="devPower(\\'' + name + '\\',\\'off\\')">Force off</button>';
       // A stuck box is powered but its probe fails — often an on-screen prompt
       // (adb "Allow USB debugging?", 2026-08-15) that only the TV can show.
-      if (dev.conn !== 'webos' && screenOwner !== name)
+      if (dev.conn !== 'webos' && screenOwner !== name && dev.hdmi_input)
         h += ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
            + '/screen\\', {})">Claim screen</button>';
       if (dev.adb_auth === 'unauthorized')
@@ -1087,6 +1101,13 @@ function render(s) {
           : (mon.on ? 'powered · no owner' : 'off')));
   document.getElementById('screen-shape').className =
     'rig-shape' + (mon.in_use_hint ? ' lit' : '');
+  var inputs = mon.hdmi_inputs || {};
+  document.getElementById('screen-inputs').innerHTML = Object.keys(inputs).map(function (inp) {
+    var owner = inputs[inp];
+    var lab = owner && s.devices[owner] ? s.devices[owner].label : '—';
+    return '<span class="rig-badge"' + (owner ? '' : ' style="opacity:.55"') + '>' + inp.replace('HDMI_', 'HDMI ')
+         + ' · ' + lab + '</span>';
+  }).join(' ');
   var mb = document.getElementById('btn-monitor');
   mb.textContent = mon.on ? 'Off' : 'On';
   mb.disabled = !mon.reachable;

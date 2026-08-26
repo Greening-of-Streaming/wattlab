@@ -217,6 +217,7 @@ DEFAULTS = {
     "rig_idle_off_enabled": True,
     "rig_idle_off_hours": 4.0,
     "rig_target_overrides": {},      # {device: target} — follow a box that moved to Wi-Fi (CR-074)
+    "rig_hdmi_inputs": {},           # {device: "HDMI_n" | ""} — which 4 devices are cabled to the C2 (2026-08-26)
     "rig_idle_off_monitor": False,
     "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
     "rag_chroma_path": "/home/gos/wattlab/.chroma",

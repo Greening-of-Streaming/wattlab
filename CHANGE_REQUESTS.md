@@ -862,8 +862,10 @@ the hardware pair is flat, **AV1 and VP9 both +1.35 W (+27 %)**: software fallba
 (third vendor for the penalty half after Marvell; VP9 question answered for VLC). Liveness 12/12 every row. 🟡:
 baselines ramp 2.7→6 W within 45 s (tvOS **screensaver** — disable it, disclosed, before the next run); H.264 #1
 contaminated by post-boot activity. Raw `/srv/data/owl/atv/probe_2026-08-26.jsonl`; SMPTE digest
-`digests/2026-08-appletv-vlc.md` (C19). Remaining plan: screensaver off, n≥3, second content, `rig.py` device entry
-(pyatv power control) so it joins campaigns; then close.
+`digests/2026-08-appletv-vlc.md` (C19). **Rig integration shipped the same evening:** `rig.py` kind `atv` (pyatv
+power/readiness, Lab-F3, MAC-followed), bench.py `AtvDevice`, decode_run `atv` config, /decode tile + headless job
+verified (`7dd3a106`). Remaining: screensaver off (disclosed) + n≥3 + second content; the headless-vs-display power
+question (job read 1.4/1.7 W with the cable state unconfirmed vs 2.8/5.1 W displayed); then close.
 
 ### Plan (one on-site session + one desk session)
 

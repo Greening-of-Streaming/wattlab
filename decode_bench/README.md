@@ -27,6 +27,7 @@ paced/live-like arm).
 
 | driver | box | start | provenance |
 |---|---|---|---|
+| `atv` (pyatv) | Apple TV 4K 1st gen `.152` (Lab-F3 `.1`, **no HDMI input** unless assigned in /settings › Rig › HDMI inputs) | Companion `launch_app` → VLC x-callback stream URL; baseline parked in tvOS Settings; power = plug + `turn_off` | `playing` state + position (no screenshot/logcat/marker) — `playback_state_midwindow`/`_at_end` |
 | `adb` | Google TV Streamer `.126` (Lab-D `.36`, HDMI_2) · Fire TV Stick 4K `.200` (Lab-A `.146`, HDMI_4, **Wi-Fi only**, no logcat decoder names, loses ADB auth after a mains cycle) · Bbox 4K operator CPE `.10` eth / `.173` Wi-Fi, MAC-followed (Lab-F `.155`, HDMI_1, Android 11, Marvell Berlin) | VIEW intent → Just Player, `--ei position 0`, PLAYING verified (≤2 presses), keep-awake pins + CEC rule applied in `prepare()` | logcat `CCodec allocate(c2.*)` + mid-window screenshot + `playback_state_midwindow`/`_at_end`, `alive_at_window_end` |
 | `ssh` | Raspberry Pi 400 `.108` (Lab-B `.31`, HDMI_3; Wi-Fi `.110` for the CR-074 arms) · Pi 5 `.102` (**parked**, shares Lab-A) | per-run `cmd` over SSH (`ffmpeg -re … -f null -` headless, `mpv` screen mode); `pre_cmd`/`post_cmd` hooks | the command + `ifaces_midwindow` |
 | `webos` | LG C2 55" `.25` (Lab-E `.71` = the panel plug; native decode via the built-in browser, `lg.py` SSAP + Wake-on-LAN) | `launch_url` | `current_app` only (no state/screenshot); rows are panel-dominated (picture term) — differential only |

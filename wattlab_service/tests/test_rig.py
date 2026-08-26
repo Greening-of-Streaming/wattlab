@@ -6,6 +6,11 @@ import pytest
 
 import rig
 
+# Originals captured before the autouse fixture stubs them — for tests of the
+# real implementations (the fixture neutralises hardware IO for everyone else).
+_ORIG_SEND_SHUTDOWN = rig.send_shutdown
+_ORIG_PROBE_READY = rig.probe_ready
+
 
 def _run(coro):
     return asyncio.run(coro)
@@ -26,6 +31,8 @@ def _fresh_rig(monkeypatch):
     rig.DISCOVERED_TARGETS.clear()
     rig._discover_last.clear()
     rig.apply_target_overrides({})
+    rig.apply_hdmi_assignments({})
+    monkeypatch.setattr(rig, "atv_cmd", lambda dev, *c, **k: "")   # never shell out to pyatv
     monkeypatch.setattr(rig, "_neigh_table", lambda: {})     # no LAN IO from tests
     monkeypatch.setattr(rig, "_ping_sweep", lambda *a, **k: None)
     rig.rig_cache["screen_owner"] = None
@@ -363,12 +370,12 @@ def test_status_payload_shape():
                       "screen_settling", "total_w", "saving_note", "age_s",
                       "idle_off"}
     for name, d in p["devices"].items():
-        assert set(d) == {"label", "plug_name", "device_class", "silicon", "target", "target_source",
+        assert set(d) == {"label", "plug_name", "device_class", "silicon", "target", "target_source", "hdmi_input",
                           "conn", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s", "adb_auth",
                           "network"}
         assert d["device_class"] in ("sbc", "stb", "tv")
-        assert d["conn"] in ("ssh", "adb", "webos")
+        assert d["conn"] in ("ssh", "adb", "webos", "atv")
         assert d["network"] in ("ethernet", "wifi")
     # Transparency: the Fire TV Stick is the ONLY Wi-Fi device on the rig.
     assert [n for n, d in p["devices"].items() if d["network"] == "wifi"] == ["firestick"]
@@ -693,3 +700,100 @@ def test_poller_does_not_sweep_before_the_box_has_had_time_to_boot(monkeypatch):
     d.update({"state": "booting", "boot_started": time.monotonic() - 5})
     _run(rig.poll_once())
     assert calls == [] and d["state"] == "booting"
+
+
+# --- Screen map: four HDMI sockets, seven devices (2026-08-26) ----------------
+
+def test_hdmi_defaults_leave_pi5_and_apple_tv_headless():
+    m = rig.apply_hdmi_assignments({})
+    assert set(m) == {"HDMI_1", "HDMI_2", "HDMI_3", "HDMI_4"}
+    assert m["HDMI_1"] == "bbox" and m["HDMI_2"] == "gtv"
+    assert m["HDMI_3"] == "pi400" and m["HDMI_4"] == "firestick"
+    assert rig.RIG["devices"]["pi5"]["hdmi_input"] is None
+    assert rig.RIG["devices"]["atv"]["hdmi_input"] is None
+    assert rig.RIG["devices"]["c2"]["hdmi_input"] is None
+    assert rig.hdmi_map() == m
+
+
+def test_hdmi_assignment_recables_a_socket_and_unplugs_the_previous_device():
+    # Apple TV takes the Pi 400's socket; "" unplugs the Pi 400 explicitly.
+    m = rig.apply_hdmi_assignments({"atv": "HDMI_3", "pi400": ""})
+    assert m["HDMI_3"] == "atv"
+    assert rig.RIG["devices"]["atv"]["hdmi_input"] == "HDMI_3"
+    assert rig.RIG["devices"]["pi400"]["hdmi_input"] is None
+    # devices not mentioned keep their rig.py default
+    assert rig.RIG["devices"]["gtv"]["hdmi_input"] == "HDMI_2"
+    rig.apply_hdmi_assignments({})
+    assert rig.RIG["devices"]["pi400"]["hdmi_input"] == "HDMI_3"
+
+
+def test_hdmi_assignment_one_device_per_socket_and_ignores_junk():
+    # atv also asks for HDMI_2 — gtv (earlier in RIG order) keeps it.
+    m = rig.apply_hdmi_assignments({"atv": "HDMI_2", "pi5": "HDMI_9", "c2": "HDMI_1", "nope": "HDMI_4"})
+    assert m["HDMI_2"] == "gtv" and rig.RIG["devices"]["atv"]["hdmi_input"] is None
+    assert rig.RIG["devices"]["pi5"]["hdmi_input"] is None       # unknown socket
+    assert rig.RIG["devices"]["c2"]["hdmi_input"] is None        # the panel itself
+    assert m["HDMI_1"] == "bbox"
+    assert rig.apply_hdmi_assignments("garbage") == rig.apply_hdmi_assignments({})
+
+
+def test_claim_screen_refused_for_headless_devices_with_a_pointer(monkeypatch):
+    monkeypatch.setitem(rig.RIG["monitor"], "lg_host", "10.0.0.9")
+    monkeypatch.setattr(rig.lg, "set_input", lambda host, hdmi: None)
+    for name in ("pi5", "atv"):
+        rig.rig_cache["devices"][name]["state"] = "ready"
+        with pytest.raises(rig.RigError) as e:
+            _run(rig.claim_screen(name))
+        assert e.value.status == 409 and "HDMI inputs" in e.value.reason and "/settings" in e.value.reason
+    assert rig.rig_cache["screen_owner"] is None
+
+
+def test_status_payload_carries_the_screen_map():
+    p = rig.status_payload()
+    assert p["monitor"]["hdmi_inputs"] == rig.hdmi_map()
+    assert p["devices"]["atv"]["hdmi_input"] is None
+    assert p["devices"]["gtv"]["hdmi_input"] == "HDMI_2"
+    assert p["devices"]["atv"]["conn"] == "atv"
+
+
+# --- Apple TV device kind (pyatv) -------------------------------------------
+
+def test_atv_power_state_parses_atvremote_output(monkeypatch):
+    monkeypatch.setattr(rig, "atv_cmd", lambda dev, *c, **k: "PowerState.On\n")
+    assert rig.atv_power_state(rig.RIG["devices"]["atv"]) == "On"
+    monkeypatch.setattr(rig, "atv_cmd", lambda dev, *c, **k: "PowerState.Off\n")
+    assert rig.atv_power_state(rig.RIG["devices"]["atv"]) == "Off"
+
+    def boom(dev, *c, **k):
+        raise RuntimeError("no venv")
+    monkeypatch.setattr(rig, "atv_cmd", boom)
+    assert rig.atv_power_state(rig.RIG["devices"]["atv"]) is None
+
+
+def test_atv_probe_ready_and_graceful_shutdown_go_through_pyatv(monkeypatch):
+    calls = []
+
+    def fake(dev, *c, **k):
+        calls.append(c)
+        return "PowerState.On\n" if c == ("power_state",) else ""
+    monkeypatch.setattr(rig, "atv_cmd", fake)
+    assert _ORIG_PROBE_READY(rig.RIG["devices"]["atv"]) is True
+    _ORIG_SEND_SHUTDOWN(rig.RIG["devices"]["atv"])
+    assert ("turn_off",) in calls
+    rig.set_signal(rig.RIG["devices"]["atv"], False)    # no-op, must not raise
+
+
+def test_atv_is_followed_by_mac_as_a_bare_ip(monkeypatch):
+    monkeypatch.setattr(rig, "_neigh_table", lambda: {"90:dd:5d:ab:70:8e": "192.168.1.77"})
+    monkeypatch.setattr(rig, "_ping_sweep", lambda *a, **k: None)
+    assert rig.discover_target(rig.RIG["devices"]["atv"]) == "192.168.1.77"
+    assert rig.discover_target(rig.RIG["devices"]["bbox"]) is None      # not in the table
+
+
+def test_atv_poller_readiness_via_power_state(monkeypatch):
+    _stub_plugs(monkeypatch, on=True, watts=3.0)
+    monkeypatch.setattr(rig, "probe_ready", lambda dev: dev["kind"] == "atv")
+    d = rig.rig_cache["devices"]["atv"]
+    d.update({"state": "booting", "boot_started": time.monotonic() - 5})
+    _run(rig.poll_once())
+    assert d["state"] == "ready" and d["detail"] == "pyatv ok"

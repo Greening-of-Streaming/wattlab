@@ -83,6 +83,10 @@ RIG: dict = {
             # also runs Pi-hole (LAN DNS) — a small always-on background
             # load, disclosed per campaign; do NOT stop it (LAN infra).
             "label": "Pi 5", "plug_name": "lab-F2",
+            # Headless since 2026-08-19 (own P110, no HDMI cable) — not on any
+            # of the C2's four inputs; the screen map (rig_hdmi_inputs) can
+            # put it on one when it is physically re-cabled.
+            "hdmi_input": None,
             "plug_ip": "192.168.1.184",
             "kind": "ssh", "target": "admin@192.168.1.102",
             "device_class": "sbc",
@@ -186,6 +190,29 @@ RIG: dict = {
             "idle_w": 6.6,
             "network": "ethernet",
         },
+        "atv": {
+            # Apple TV 4K 1st gen (AppleTV6,2, 2017, A10X Fusion, tvOS 18.0) —
+            # CR-075, on the rig 2026-08-26. Driven over pyatv (Companion +
+            # AirPlay creds in /srv/data/owl/atv/): power state = readiness,
+            # `turn_off` = graceful stop, playback = VLC for tvOS launched with
+            # its x-callback stream scheme (AirPlay play_url is dead on tvOS
+            # 18 — receiver-side, pyatv #2403). No screenshot/logcat: liveness
+            # is the pyatv playback state. Not cabled to the C2 (no HDMI
+            # input) until the screen map says otherwise.
+            "label": "Apple TV 4K", "plug_name": "Lab-F3",
+            "plug_ip": "192.168.1.1",
+            "kind": "atv", "target": "192.168.1.152",
+            "macs": ["90:dd:5d:ab:70:8e"],
+            "device_class": "stb",
+            "silicon": "Apple A10X Fusion (2017) · hw H.264/HEVC · no AV1/VP9 block",
+            "network": "ethernet",
+            "hdmi_input": None,
+            "expected_boot_s": 60, "boot_threshold_w": 1.0,
+            "shutdown_wait_s": 10,
+            # Parked in tvOS Settings the box sits at ~2.8 W (2026-08-26);
+            # the home screen autoplays previews (6–15 W) — never the idle.
+            "idle_w": 2.8,
+        },
         "c2": {
             # The C2 as a native decoder (CR-071): its own α9 SoC decodes+
             # displays the clip in the built-in webOS browser. It IS the shared
@@ -212,6 +239,12 @@ RIG: dict = {
         "label": "Shared screen", "plug_name": "Lab-E",
         "plug_ip": "192.168.1.71",
         "panel": "LG OLED55C2 (OLED55C25LB)",
+        # The panel has exactly four HDMI inputs; which four of the external
+        # devices are cabled to them is the screen map — rig.py defaults per
+        # device (`hdmi_input`) overridden from /settings `rig_hdmi_inputs`
+        # (2026-08-26: seven devices, four sockets — a device without an
+        # input cannot claim the screen or run screen mode).
+        "hdmi_inputs": ["HDMI_1", "HDMI_2", "HDMI_3", "HDMI_4"],
         # webOS control (CR-071): lg_host set ⇒ claim_screen is an explicit
         # HDMI input-select, not the auto-switch/DPMS dance. Client key at
         # lg.CLIENT_KEY_PATH. `.25` (Ethernet); the C2 is also on Wi-Fi `.109`.
@@ -231,6 +264,8 @@ RIG: dict = {
 }
 
 _STOPPED_STATES = ("off", "unpowered", "unreachable")
+_READY_DETAIL = {"ssh": "ssh ok", "adb": "adb ok", "atv": "pyatv ok"}
+_WAIT_LABEL = {"ssh": "SSH", "adb": "ADB", "atv": "pyatv"}
 
 # --- Idle auto-off ---------------------------------------------------------
 #
@@ -316,11 +351,12 @@ def discover_target(dev: dict) -> str | None:
     macs = [m.lower() for m in dev.get("macs", [])]
     if not macs:
         return None
+    suffix = ":5555" if dev.get("kind") == "adb" else ""   # pyatv targets are bare IPs
     for attempt in (0, 1):
         table = _neigh_table()
         for mac in macs:
             if mac in table:
-                return f"{table[mac]}:5555"
+                return f"{table[mac]}{suffix}"
         if attempt == 0:
             _ping_sweep()
     return None
@@ -357,6 +393,56 @@ def apply_target_overrides(overrides: dict | None = None) -> dict:
 
 
 apply_target_overrides()
+
+# --- Screen map: which device sits on which of the panel's HDMI inputs ------
+RIG_HDMI_DEFAULT: dict = {n: d.get("hdmi_input") for n, d in RIG["devices"].items()}
+
+
+def apply_hdmi_assignments(overrides: dict | None = None) -> dict:
+    """Merge settings `rig_hdmi_inputs` ({device: "HDMI_n" | ""}) into RIG in
+    place; returns the effective {input: device | None} over the monitor's
+    inputs. Rules: a device absent from the dict keeps its rig.py default,
+    "" explicitly unplugs it, unknown devices/inputs are ignored, the webOS
+    panel never has an input (it IS the screen), and an input holds ONE
+    device — a second claimant (in RIG order) is dropped with a log line."""
+    if overrides is None:
+        try:
+            import settings as _cfg
+            overrides = _cfg.load().get("rig_hdmi_inputs") or {}
+        except Exception:
+            overrides = {}
+    if not isinstance(overrides, dict):
+        overrides = {}
+    inputs = list(RIG["monitor"].get("hdmi_inputs") or [])
+    taken: dict = {}
+    for name, dev in RIG["devices"].items():
+        if dev.get("kind") == "webos":
+            dev["hdmi_input"] = None
+            continue
+        want = overrides[name] if name in overrides else RIG_HDMI_DEFAULT.get(name)
+        want = str(want).strip() if want else None
+        if want and want not in inputs:
+            log.warning("rig: %s → unknown HDMI input %r ignored", name, want)
+            want = None
+        if want and want in taken:
+            log.warning("rig: %s and %s both mapped to %s — keeping %s",
+                        taken[want], name, want, taken[want])
+            want = None
+        dev["hdmi_input"] = want
+        if want:
+            taken[want] = name
+    return {inp: taken.get(inp) for inp in inputs}
+
+
+def hdmi_map() -> dict:
+    """{input: device | None} from the current RIG state (no settings IO)."""
+    inputs = list(RIG["monitor"].get("hdmi_inputs") or [])
+    by_input = {d.get("hdmi_input"): n for n, d in RIG["devices"].items()
+                if d.get("hdmi_input")}
+    return {inp: by_input.get(inp) for inp in inputs}
+
+
+apply_hdmi_assignments()
 
 RIG_HOLD_FILE = Path("/tmp/owl-rig-hold")
 # Ignore hold files older than this (a stale touch from a crashed campaign
@@ -730,14 +816,55 @@ def _run(cmd: list, timeout: int = 20):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
+# --- Apple TV (pyatv) ---------------------------------------------------------
+ATV_CREDS_DIR = Path("/srv/data/owl/atv")
+_ATVREMOTE_CANDIDATES = ("/srv/data/owl/pyatv-venv/bin/atvremote",
+                         "/tmp/pyatv-venv/bin/atvremote")
+
+
+def atvremote_bin() -> str | None:
+    for c in _ATVREMOTE_CANDIDATES:
+        if Path(c).is_file():
+            return c
+    return None
+
+
+def atv_cmd(dev: dict, *cmds: str, timeout: int = 40) -> str:
+    """Run atvremote against the device with the stored Companion + AirPlay
+    credentials; returns stdout+stderr. Raises if pyatv is not installed."""
+    bin_ = atvremote_bin()
+    if not bin_:
+        raise RuntimeError("atvremote not installed (pyatv venv missing)")
+    cc = (ATV_CREDS_DIR / "companion_creds").read_text().strip()
+    ac = (ATV_CREDS_DIR / "airplay_creds").read_text().strip()
+    r = _run([bin_, "-s", dev["target"], "--companion-credentials", cc,
+              "--airplay-credentials", ac, *cmds], timeout=timeout)
+    return (r.stdout or "") + (r.stderr or "")
+
+
+def atv_power_state(dev: dict) -> str | None:
+    """"On" / "Off" / None (unreachable) from `atvremote power_state`."""
+    try:
+        out = atv_cmd(dev, "power_state", timeout=25)
+    except Exception:
+        return None
+    for line in out.splitlines():
+        if "PowerState." in line:
+            return line.strip().rsplit(".", 1)[-1]
+    return None
+
+
 def probe_ready(dev: dict) -> bool:
-    """True when the device is ready for work: SSH answers (Pis) or Android
-    reports boot completed (GTV). Runs in a thread; must stay cheap."""
+    """True when the device is ready for work: SSH answers (Pis), Android
+    reports boot completed (GTV), pyatv reports PowerState.On (Apple TV).
+    Runs in a thread; must stay cheap."""
     try:
         if dev["kind"] == "webos":
             return lg.status(dev["target"]).get("reachable", False)
         if dev["kind"] == "ssh":
             return _run(["ssh"] + _SSH_OPTS + [dev["target"], "true"]).returncode == 0
+        if dev["kind"] == "atv":
+            return atv_power_state(dev) == "On"
         serial = dev["target"]
         _run([ADB_BIN, "connect", serial], timeout=10)
         out = _run([ADB_BIN, "-s", serial, "shell", "getprop",
@@ -812,6 +939,8 @@ def set_signal(dev: dict, on: bool) -> None:
       output is already enabled — no fresh hot-plug, the panel never re-scans.
     - GTV wake/sleep must retry + verify mWakefulness: a single keyevent
       frequently doesn't stick (same finding as bench.py's prepare())."""
+    if dev["kind"] == "atv":
+        return      # no signal control over pyatv; the C2 input-select path does the arbitration
     if dev["kind"] == "ssh":
         # DPMS via wlopm, NOT output disable via wlr-randr: labwc auto-revives
         # a session's only output when disabled (seen live 2026-07-29 as the
@@ -874,6 +1003,8 @@ def send_shutdown(dev: dict) -> None:
     try:
         if dev["kind"] == "ssh":
             _run(["ssh"] + _SSH_OPTS + [dev["target"], "sudo -n shutdown -h now"])
+        elif dev["kind"] == "atv":
+            atv_cmd(dev, "turn_off", timeout=30)     # tvOS sleep; the relay cut follows
         else:
             serial = dev["target"]
             _run([ADB_BIN, "connect", serial], timeout=10)
@@ -994,7 +1125,7 @@ async def _step_device(name: str, master_off: bool) -> None:
             via = (f" · at {dev_cfg['target']} (followed by MAC)"
                    if name in DISCOVERED_TARGETS else "")
             d.update({"state": "ready", "probe_fails": 0, "adb_auth": None,
-                      "detail": ("ssh ok" if dev_cfg["kind"] == "ssh" else "adb ok") + via})
+                      "detail": _READY_DETAIL.get(dev_cfg["kind"], "adb ok") + via})
             return
         # An adb box that answers but rejects our key is a distinct
         # condition: it will NEVER become ready until someone accepts the
@@ -1010,7 +1141,7 @@ async def _step_device(name: str, master_off: bool) -> None:
         # Not answering on the configured address past its boot time: it may
         # be up on another lease (Ethernet↔Wi-Fi move) — follow it by MAC
         # before calling it stuck. Rate-limited; the sweep runs in a thread.
-        if (dev_cfg["kind"] == "adb" and dev_cfg.get("macs")
+        if (dev_cfg["kind"] in ("adb", "atv") and dev_cfg.get("macs")
                 and (d["elapsed_s"] or 0) >= dev_cfg["expected_boot_s"]
                 and now - _discover_last.get(name, 0) >= DISCOVER_MIN_INTERVAL_S):
             _discover_last[name] = now
@@ -1031,7 +1162,7 @@ async def _step_device(name: str, master_off: bool) -> None:
                       "detail": f"not ready after {int(d['elapsed_s'])}s — power-cycle?"})
         else:
             d["detail"] = ("waiting for draw" if d["state"] == "powering"
-                           else f"waiting on {'SSH' if dev_cfg['kind'] == 'ssh' else 'ADB'}")
+                           else f"waiting on {_WAIT_LABEL.get(dev_cfg['kind'], 'ADB')}")
         return
 
     if d["state"] in ("ready", "busy"):
@@ -1096,6 +1227,7 @@ async def rig_poller():
     while True:
         try:
             apply_target_overrides()      # /settings may have moved a box (Wi-Fi arms)
+            apply_hdmi_assignments()      # …or re-cabled the four HDMI sockets
             await poll_once()
         except Exception:
             log.debug("rig_poller sweep failed", exc_info=True)
@@ -1233,7 +1365,9 @@ async def claim_screen(name: str) -> None:
             return
         hdmi = dev_cfg.get("hdmi_input")
         if not hdmi:
-            raise RigError(409, f"{dev_cfg['label']} has no HDMI port mapped")
+            raise RigError(409, f"{dev_cfg['label']} is not cabled to one of the screen's "
+                                f"{len(RIG['monitor'].get('hdmi_inputs') or [])} HDMI inputs "
+                                "— assign it under /settings › Rig › HDMI inputs first")
         try:
             await asyncio.to_thread(lg.set_input, lg_host, hdmi)
         except Exception as e:
@@ -1376,11 +1510,13 @@ def status_payload() -> dict:
             "adb_auth": d.get("adb_auth"),
             "target": cfg_d.get("target"),
             "target_source": target_source(name),
+            "hdmi_input": cfg_d.get("hdmi_input"),
         }
     master = rig_cache["master"]
     monitor = {**rig_cache["monitor"],
                "panel": RIG["monitor"].get("panel", ""),
-               "plug_name": RIG["monitor"]["plug_name"]}
+               "plug_name": RIG["monitor"]["plug_name"],
+               "hdmi_inputs": hdmi_map()}
     total = sum(w for w in
                 ([d["watts"] for d in rig_cache["devices"].values()]
                  + [monitor.get("watts")])
