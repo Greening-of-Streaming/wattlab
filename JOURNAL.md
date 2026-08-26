@@ -87,6 +87,73 @@ wattlab-side JOURNAL entries are still owed.*
   1 s meter. Table in `decode_bench/README.md` (Network section). The MAC follower stays as the
   belt-and-braces for the day a reservation is forgotten again.
 
+### Continued overnight (08-26 evening → 08-27 morning) — owner granted OWL until 10am; goal: complete Apple TV data set + sanity-check the paper's existing device readings
+
+- **tvOS updated to 26.6 (build 23L773).** Two failed download attempts (network interruptions —
+  once from my own directed `atvremote` probe, once from a physical Ethernet fault), third succeeded.
+  The update **invalidated both pyatv pairings**; re-pairing failed with AirPlay pair-setup → HTTP 403
+  and Companion → "Non-home access not allowed" until *Settings › AirPlay and HomeKit › Allow Access*
+  was set to **Everyone** — then both re-paired with on-screen PINs (old tvOS-18 creds kept as
+  `*.tvos18.bak`). pyatv moved off the 0.18.0 release entirely: **`/srv/data/owl/pyatv-venv`** now runs
+  git master (post-0.18.0 tvOS-26 fixes upstream; `/tmp/pyatv-venv` is a dead leftover). Owner also set,
+  disclosed: screensaver off, OS + app auto-updates off. Bonus finding: with upstream **PR #2899** (play
+  queue over `/command` instead of `POST /play`), AirPlay `play_url` actually gets the receiver to *fetch*
+  the media (origin logged 25 Range requests) — stops only because `atvremote` exits after queueing;
+  a driver that holds the session open would give the **native tvOS player**, no VLC caveat. Test venv
+  at `/srv/data/owl/pyatv-pr2899`.
+- **Screen-claim/HDMI UI factorised further; Bbox back on Ethernet confirmed** (`target_source: default`
+  at `.10`, settled ~6.5 W — the transient 7.5 W baseline in the first sanity row was mid-reconnect, not
+  a rig fault, and matches C18's known +0.98 W Wi-Fi-class premium almost exactly).
+- **CR-076 sibling captured: CR-077**, device-onboarding idle-settle characterization tool — triggered
+  live by the incidents below. `decode_bench/onboard_device.py`: pure curve-analysis functions
+  (`detect_true_floor`, `replay_guard_convergence`, `verdict_for_curve`, `recommend`) unit-tested
+  (`test_onboard_device.py`, 6 tests, synthetic curves incl. an exact reproduction of the false-early-settle
+  pattern below) against a `RigDeviceSampler` that drives the real `bench.DRIVERS` classes via a real
+  `decode_run._materialize()` config — no reimplementing adb/ssh/webos/pyatv control. Advisory only
+  (never auto-writes `rig.py`). Generalized on purpose to a future second GoS1-class server or OWL in
+  the cloud (same primitive `idle_wait.wait_for_stable` both sides already share via CR-070). Pushed to
+  the SMPTE desk as a "future plans" idea for Section 6 (`IDEAS.md`, OPEN). Fixed a latent bug found
+  while wiring it up: `bench.py` called `main()` unconditionally at module scope (harmless while it was
+  always run as `__main__`, but made it unimportable) — guarded.
+- **Sanity check across the panel (batch `5e8b5b97a742`, vs C17/C11 reference cells).** GTV/Fire TV/
+  Pi 400 device-total W within 0.02–0.06 W of the paper's numbers — safe to add Apple TV data without
+  rerunning them. Bbox flagged (explained above). Fire TV `alive_at_window_end=False` on every row is
+  the known pre-documented false negative. Pi 5 has no matching iso-bitrate reference cells (C11 used
+  150 s duration-study cells, not this content); today's numbers become its new baseline.
+- **7-device parallel exploratory test, requested by the owner** (batch `1cbf04e86b15`, one rep, H.264,
+  all three iso-bitrate contents, all seven devices at once — extends C11 F10 from five devices to
+  seven). **19 of 21 device-cells matched known reference within ≤0.06 W** (task level); the two misses
+  were the Apple TV's Meridian **baseline** (task itself matched its own solo numbers to 0.02 W) and
+  C2's Kranjska/Meridian **magnitude** drifting ~1–2 W low while the *direction* (Meridian colder than
+  BBB) held. Read as encouraging but not citable at n=1 — **kept as a separate dataset**, not merged,
+  per the owner's instruction. Written into the C11 digest as addendum F10b.
+- **First Apple TV settle-time incident.** The campaign's generic protocol (5 s settle / 20-sample
+  baseline — tuned to the Android boxes' fast post-`stop` return) produced base sd up to 2 W and several
+  false 🔴 rows; task-level numbers stayed rock solid throughout (e.g. AV1 5.69–5.71 W across all three
+  reps) — only the baseline was hit. Fix: `rig.py` gained `min_settle_s`/`min_baseline_samples` (25 s /
+  40 samples for `atv`), applied in `decode_run._materialize` as a `max()` floor over the protocol
+  default — never lowers another device's numbers (+1 test). Also found and fixed live: the park state
+  (`atv("stop")` alone) does **not** leave the box on VLC's library screen as assumed — `app` reports
+  **Apple Music foregrounded** instead, with a power level that drifted upward across consecutive rows;
+  bench.py's `AtvDevice.park()` now explicitly re-launches the VLC bundle after `stop`.
+- **Second, deeper incident, same night, post-fix.** The very first row of the settle-fixed re-run
+  campaign came back *worse* (base 8.3 W, Δ −3.85 W) — a careful 30 s fine-cadence trace immediately
+  after showed the box **sustained at 7–11.5 W, oscillating, not decaying** toward the known ~2.1–2.3 W
+  floor. Ruled out: Tapo API latency (67 ms, normal) and GoS1 host load (0.98 load-average / 24 cores,
+  idle). Leading explanation: the box had been manually updated to tvOS 26.6 only ~2.5 h earlier —
+  freshly-updated Apple TVs are known to run background housekeeping (app updates, on-device model
+  refresh, re-indexing) invisible to pyatv's foreground-app view, and unlike a post-`stop` decay tail
+  this is *sustained* real work that no settle/baseline floor can wait out reliably. Mitigation: a
+  standalone one-time stability gate (`wait_for_true_idle.py`, kept separate from the per-row guard —
+  requires 5 continuous minutes inside the known 1.8–2.8 W floor band, 90-minute cap) chained
+  (`chain_after_stable.sh`) ahead of a **fresh** clean campaign batch (`9d39def85f1b`) — the two rows
+  captured mid-episode on `bb65c5494a6b` are not cited. Folded into CR-077's scope: a device just off a
+  major OS update should not be trusted for a baseline campaign without re-checking.
+- The five sanity devices (Pi 5/400, Fire TV, GTV, Bbox) powered down gracefully once their checks were
+  done, to stop burning idle power during the stability wait; the shared C2/monitor left alone (household
+  TV, not the rig's to touch). *Continues past this entry — see the wrap-up note once the Apple TV data
+  set and final sanity pass are complete.*
+
 ## Session 66 — 2026-08-18 evening → 08-19 morning (overnight: CR-074 campaign + documentation sweep)
 
 **Connection method as an energy variable (first data), Apple TV plan, and the documentation sweep Ben asked for: JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal**
