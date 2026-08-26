@@ -23,6 +23,11 @@ def _fresh_rig(monkeypatch):
                                "switchable": False}
     rig.PAUSED_PLUGS.clear()
     rig._OP_LOCKS.clear()   # asyncio locks can't be reused across event loops
+    rig.DISCOVERED_TARGETS.clear()
+    rig._discover_last.clear()
+    rig.apply_target_overrides({})
+    monkeypatch.setattr(rig, "_neigh_table", lambda: {})     # no LAN IO from tests
+    monkeypatch.setattr(rig, "_ping_sweep", lambda *a, **k: None)
     rig.rig_cache["screen_owner"] = None
     monkeypatch.setattr(rig, "shelly_ip", lambda: None)
     monkeypatch.setattr(rig, "master_tapo_ip", lambda: None)
@@ -358,7 +363,7 @@ def test_status_payload_shape():
                       "screen_settling", "total_w", "saving_note", "age_s",
                       "idle_off"}
     for name, d in p["devices"].items():
-        assert set(d) == {"label", "plug_name", "device_class", "silicon",
+        assert set(d) == {"label", "plug_name", "device_class", "silicon", "target", "target_source",
                           "conn", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s", "adb_auth",
                           "network"}
@@ -606,3 +611,85 @@ def test_target_overrides_follow_settings_and_revert():
     eff = rig.apply_target_overrides({})
     assert rig.RIG["devices"]["gtv"]["target"] == default_gtv
     assert eff["gtv"] == default_gtv
+
+
+# --- Target discovery by MAC (2026-08-26) -------------------------------------
+
+_NEIGH = """192.168.1.10 dev eno2 FAILED
+192.168.1.173 dev eno2 lladdr 70:F7:54:37:4F:E4 REACHABLE
+192.168.1.99 dev eno2 lladdr 70:f7:54:37:4f:e4 STALE
+192.168.1.126 dev eno2 lladdr b4:23:a2:af:e4:a4 STALE
+192.168.1.1 dev eno2 lladdr 00:11:22:33:44:55 INCOMPLETE
+"""
+
+
+def test_parse_neigh_prefers_fresh_entry_and_ignores_failed():
+    t = rig._parse_neigh(_NEIGH)
+    assert t["70:f7:54:37:4f:e4"] == "192.168.1.173"   # REACHABLE beats STALE, case-folded
+    assert t["b4:23:a2:af:e4:a4"] == "192.168.1.126"
+    assert "00:11:22:33:44:55" not in t
+
+
+def test_discover_target_sweeps_once_when_table_is_cold(monkeypatch):
+    tables = [{}, {"70:f7:54:37:4f:e4": "192.168.1.173"}]
+    swept = []
+    monkeypatch.setattr(rig, "_neigh_table", lambda: tables.pop(0))
+    monkeypatch.setattr(rig, "_ping_sweep", lambda: swept.append(1))
+    dev = {"kind": "adb", "macs": ["EC:6C:9A:EF:73:A1", "70:f7:54:37:4f:e4"]}
+    assert rig.discover_target(dev) == "192.168.1.173:5555"
+    assert swept == [1]
+    assert rig.discover_target({"kind": "adb"}) is None      # no MACs → no scan
+
+
+def test_discovered_target_outranks_settings_and_default():
+    rig.DISCOVERED_TARGETS["bbox"] = "192.168.1.173:5555"
+    eff = rig.apply_target_overrides({"bbox": "192.168.1.50:5555"})
+    assert eff["bbox"] == "192.168.1.173:5555"
+    assert rig.target_source("bbox") == "discovered"
+    rig.DISCOVERED_TARGETS.clear()
+    eff = rig.apply_target_overrides({"bbox": "192.168.1.50:5555"})
+    assert eff["bbox"] == "192.168.1.50:5555"
+    assert rig.target_source("bbox") == "settings"
+    rig.apply_target_overrides({})
+    assert rig.target_source("bbox") == "default"
+
+
+def test_poller_follows_a_box_to_its_new_lease_and_forgets_it_when_off(monkeypatch):
+    """Bbox powered, not answering on .10 past its boot time → the sweep
+    finds its Wi-Fi MAC at .173 → target switches, then ADB succeeds → ready
+    with the provenance in the detail; plug off → back to the default."""
+    _stub_plugs(monkeypatch, on=True, watts=4.9)
+    monkeypatch.setattr(rig, "discover_target", lambda dev: "192.168.1.173:5555")
+    d = rig.rig_cache["devices"]["bbox"]
+    d.update({"state": "booting", "boot_started": time.monotonic() - 200})
+    _run(rig.poll_once())
+    assert rig.RIG["devices"]["bbox"]["target"] == "192.168.1.173:5555"
+    assert rig.DISCOVERED_TARGETS["bbox"] == "192.168.1.173:5555"
+    assert d["state"] == "booting" and "found at 192.168.1.173:5555" in d["detail"]
+    # the sweep is rate-limited: past boot time again but inside the window → no rescan
+    calls = []
+    monkeypatch.setattr(rig, "discover_target", lambda dev: calls.append(1) or None)
+    d.update({"boot_started": time.monotonic() - 60})
+    _run(rig.poll_once())
+    assert calls == [] and d["state"] == "booting"
+    monkeypatch.setattr(rig, "probe_ready", lambda dev: dev["target"] == "192.168.1.173:5555")
+    _run(rig.poll_once())
+    assert d["state"] == "ready" and "followed by MAC" in d["detail"]
+    payload = rig.status_payload()["devices"]["bbox"]
+    assert payload["target"] == "192.168.1.173:5555"
+    assert payload["target_source"] == "discovered"
+    _stub_plugs(monkeypatch, on=False, watts=0.0)
+    _run(rig.poll_once())
+    assert "bbox" not in rig.DISCOVERED_TARGETS
+    rig.apply_target_overrides({})
+    assert rig.RIG["devices"]["bbox"]["target"] == rig.RIG_TARGETS_DEFAULT["bbox"]
+
+
+def test_poller_does_not_sweep_before_the_box_has_had_time_to_boot(monkeypatch):
+    _stub_plugs(monkeypatch, on=True, watts=4.9)
+    calls = []
+    monkeypatch.setattr(rig, "discover_target", lambda dev: calls.append(1) or None)
+    d = rig.rig_cache["devices"]["bbox"]
+    d.update({"state": "booting", "boot_started": time.monotonic() - 5})
+    _run(rig.poll_once())
+    assert calls == [] and d["state"] == "booting"

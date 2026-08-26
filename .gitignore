@@ -49,3 +49,4 @@ oci-layout
 index.json
 manifest.json
 tmp/
+decode_bench/tools

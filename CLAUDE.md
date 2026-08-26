@@ -1,6 +1,9 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-08-19 (S66 overnight: connection-method campaign CR-074 running on the rig; documentation
+# Last updated: 2026-08-26 (S69: SMPTE-desk handoff — adb path made invocation-proof, SoC audit (GTV MT8696,
+#   Bbox Marvell Berlin), rig follows adb boxes by MAC across DHCP/interface moves, CR-075 corrected to the
+#   2017 A10X box + blocked attempt. See JOURNAL S69.)
+# Previous: 2026-08-19 (S66 overnight: connection-method campaign CR-074 running on the rig; documentation
 #   sweep — JOURNAL back-filled 07-31→08-14, CRs tidied (071/073 closed, 059/074/075 added), memory pruned,
 #   /methodology-vs-code inconsistency journal at docs/methodology_vs_code_2026-08-19.md. See JOURNAL S66.)
 # Previous: S65 (08-17→18) VP9 re-run for the LinkedIn thread — report §5 (iso-bitrate, sw-vs-sw, n=2–3), Tania
@@ -158,6 +161,10 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S63–S64 (08-17): campaign reviewed → finding `stb-decode-and-play-content-over-codec` (DRAFT); CR-073 campaigns = batches (+ self-service, filter/paging).
 - S65 (08-17→18): VP9 re-run — iso-bitrate sw-vs-sw encode (108 rows, n=3) + decode (30 jobs, 3 contents) → report §5; affirmations: operating point decides the dearest codec; hw decode VP9 inside ±0.1 W; sw VP9 cheapest, HEVC 2–3×; no iso-bitrate quality claim. Fire TV liveness false-negative instrumented; campaign paging bug fixed.
 - S66 (08-18→19 overnight): CR-074 network-path campaign (Pi 400 eth/wifi/local × 3 bitrates × burst/paced; STBs on current interface; origin `?pace_kbps=`), CR-075 Apple TV plan, docs sweep (JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal), pixop timeout container reap. Tests 1027.
+- S69 (08-26): handoff from the SMPTE desk — adb resolution fixed for both bench.py invocations (durable
+  r37.0.0 under /srv/data), SoC audit (GTV = MT8696 like the Fire TV; Bbox = Marvell Berlin/Arcadyan
+  HMB9213NW), `rig.py` MAC target follower (Bbox on Wi-Fi .173 vs .10 — cable still out since CR-074),
+  CR-075 corrected (AppleTV6,2 2017 A10X) + attempt blocked (box off the LAN). Tests 1033.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -173,7 +180,9 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
   ARCHITECTURE.md is refreshed but its per-module line counts will drift again — regenerate, don't hand-edit.
 - **Rig harness open items** (S65/S66): Fire TV `alive_at_window_end` false negative (instrumented via
   `playback_state_at_end`, root cause open) · Fire TV loses ADB authorisation after a mains power cycle (on-site
-  accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard.
+  accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard ·
+  Bbox Ethernet cable still out since CR-074 (GTV's is back; the Bbox runs on Wi-Fi .173, MAC-followed; its rows
+  carry the +0.98 W radio share) — plug it back on-site before the next Ethernet-framed campaign.
 
 ## Key Findings to Date
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real

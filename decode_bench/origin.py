@@ -38,6 +38,12 @@ _lock = threading.Lock()
 class RangeHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "owl-origin/1.0"
+    # HLS for AirPlay receivers (CR-075, 2026-08-26): the system mime table
+    # maps .ts to text/vnd.trolltech.linguist and knows no .m4s — an Apple TV
+    # fetching a playlist needs the real types.
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map,
+                      ".m3u8": "application/vnd.apple.mpegurl",
+                      ".ts": "video/mp2t", ".m4s": "video/iso.segment"}
 
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=ROOT, **kw)

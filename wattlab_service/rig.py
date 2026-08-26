@@ -57,6 +57,12 @@ log = logging.getLogger(__name__)
 
 _config = dotenv_values("/home/gos/wattlab/.env")
 
+# Android platform-tools r37.0.0 (adb 1.0.41, build 37.0.0-14910828), a pinned
+# release unpacked under /srv/data (the data NVMe — survives reboots and /tmp
+# cleaning; NOT the apt `adb` 34.x). decode_bench/tools -> that dir is a
+# gitignored symlink so bench.py resolves the same binary (it also honours
+# $OWL_ADB_BIN). Host key: ~/.android/adbkey — every box trusts THAT key's
+# fingerprint (adb_host_fingerprint()); never regenerate it. 2026-08-26.
 ADB_BIN = "/srv/data/owl/decode-bench/tools/platform-tools/adb"
 
 # --- Rig topology -----------------------------------------------------------
@@ -120,6 +126,7 @@ RIG: dict = {
             # so its device-total W includes a Wi-Fi share the Ethernet boxes
             # don't carry. State it next to any cross-device comparison.
             "kind": "adb", "target": "192.168.1.200:5555",
+            "macs": ["ec:31:5f:6d:7c:a7"],          # wlan0 (Wi-Fi only)
             "device_class": "stb",
             "silicon": "MediaTek MT8696 · hw H.264/HEVC/VP9/AV1",
             "network": "wifi",
@@ -140,8 +147,13 @@ RIG: dict = {
             # effect on the 2026-07-30 boot — the interim .189 lease is dead.
             # The "stuck/no-network" episode was this address move mid-flight.
             "kind": "adb", "target": "192.168.1.126:5555",
+            # eth0, then wlan0. The Wi-Fi MAC is Android's per-SSID randomised
+            # one (0e: = locally administered) — stable for the Bbox SSID
+            # unless the network is forgotten on the box; re-read with
+            # `adb shell ip link` if the follower stops finding it on Wi-Fi.
+            "macs": ["b4:23:a2:af:e4:a4", "0e:03:41:ca:06:29"],
             "device_class": "stb",
-            "silicon": "MediaTek · hw H.264/HEVC/AV1",
+            "silicon": "MediaTek MT8696 · hw H.264/HEVC/AV1",   # getprop ro.soc.model, R3a 2026-08-26
             "hdmi_input": "HDMI_2",
             "expected_boot_s": 90, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
@@ -153,13 +165,17 @@ RIG: dict = {
             # Lab-F re-plugged 2026-07-30 (new unit on fw 1.3.1 for 1 s mW
             # polling; old .22 was fw 1.4.0). New DHCP lease → .155.
             "plug_ip": "192.168.1.155",
-            # Operator CPE (Bouygtel4K, Android 11) — the first operator box on
-            # the bench. On Ethernet at .10 (re-onboarded after a factory reset
+            # Operator CPE (Bouygtel4K, Android 11, Marvell Berlin / Arcadyan
+            # HMB9213NW — R3a 2026-08-26) — the first operator box on the
+            # bench. On Ethernet at .10 (re-onboarded after a factory reset
             # 2026-07-31: complete setup wizard → dev options → USB debugging →
-            # re-auth; never power-cycle it mid-boot).
+            # re-auth; never power-cycle it mid-boot). Its Ethernet cable was
+            # pulled for CR-074 (2026-08-19) and is still out: it comes up on
+            # Wi-Fi at .173, which the MAC follower below resolves.
             "kind": "adb", "target": "192.168.1.10:5555",
+            "macs": ["ec:6c:9a:ef:73:a1", "70:f7:54:37:4f:e4"],   # eth0, wlan0
             "device_class": "stb",
-            "silicon": "operator CPE · Android 11",
+            "silicon": "Marvell Berlin (Arcadyan HMB9213NW) · Android 11 · hw H.264/HEVC, no AV1 block",
             "hdmi_input": "HDMI_1",
             "expected_boot_s": 45, "boot_threshold_w": 4.0,
             "shutdown_wait_s": 15,
@@ -232,11 +248,97 @@ _STOPPED_STATES = ("off", "unpowered", "unreachable")
 # stay in RIG_TARGETS_DEFAULT for the day the cable goes back in.
 RIG_TARGETS_DEFAULT: dict = {n: d.get("target") for n, d in RIG["devices"].items()}
 
+# Target discovery by MAC (2026-08-26). The adb targets above are DHCP
+# addresses, and a box takes a new lease whenever it moves between Ethernet
+# and Wi-Fi (CR-074 cable pulls) or the router forgets a reservation: the
+# Bbox came up on .173 (Wi-Fi) while rig.py said .10, and the rig reported
+# "stuck — not ready after 145s" with the box running happily at 4.9 W (R3a).
+# Each adb device lists the MACs of ALL its interfaces (`macs`); when a
+# powered adb box fails its readiness probe past its expected boot time, the
+# poller looks those MACs up in the kernel neighbour table (after a ~2 s
+# ping sweep of the /24 to populate it) and follows the box to wherever it
+# answers. In-memory only — logged, shown in the tile (`target_source`),
+# forgotten when the box goes off. Precedence: discovered > /settings
+# override > rig.py default (a discovered address was just seen on the wire;
+# an override can be as stale as the default).
+DISCOVERED_TARGETS: dict = {}          # name → "ip:5555" found by MAC
+_discover_last: dict = {}              # name → monotonic of the last sweep
+DISCOVER_MIN_INTERVAL_S = 45
+_LAN_PREFIX = "192.168.1."
+_NEIGH_STATE_RANK = {"REACHABLE": 0, "DELAY": 1, "PROBE": 1, "STALE": 2}
+
+
+def _parse_neigh(text: str) -> dict:
+    """`ip -4 neigh show` → {mac: ip}; the freshest entry wins per MAC,
+    FAILED/INCOMPLETE entries are ignored."""
+    best: dict = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or "lladdr" not in parts:
+            continue
+        ip = parts[0]
+        mac = parts[parts.index("lladdr") + 1].lower()
+        rank = _NEIGH_STATE_RANK.get(parts[-1])
+        if rank is None:
+            continue
+        if mac not in best or rank < best[mac][0]:
+            best[mac] = (rank, ip)
+    return {mac: ip for mac, (_, ip) in best.items()}
+
+
+def _neigh_table() -> dict:
+    try:
+        return _parse_neigh(_run(["ip", "-4", "neigh", "show"], timeout=5).stdout)
+    except Exception:
+        return {}
+
+
+def _ping_sweep(prefix: str = _LAN_PREFIX) -> None:
+    """One ICMP echo to every host of the /24, in parallel (~2 s) — only to
+    populate the neighbour table; replies are not inspected."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(i: int) -> None:
+        try:
+            subprocess.run(["ping", "-c", "1", "-W", "1", "-q", f"{prefix}{i}"],
+                           capture_output=True, timeout=3)
+        except Exception:
+            pass
+    with ThreadPoolExecutor(max_workers=128) as ex:
+        list(ex.map(_one, range(1, 255)))
+
+
+def discover_target(dev: dict) -> str | None:
+    """Find an adb device's current address by MAC: neighbour table first,
+    then a ping sweep and a second look. Returns "ip:5555" or None. Runs in
+    a thread."""
+    macs = [m.lower() for m in dev.get("macs", [])]
+    if not macs:
+        return None
+    for attempt in (0, 1):
+        table = _neigh_table()
+        for mac in macs:
+            if mac in table:
+                return f"{table[mac]}:5555"
+        if attempt == 0:
+            _ping_sweep()
+    return None
+
+
+def target_source(name: str) -> str:
+    """Where a device's effective target came from: discovered | settings |
+    default (for the tile and status.json)."""
+    if name in DISCOVERED_TARGETS:
+        return "discovered"
+    dev = RIG["devices"].get(name) or {}
+    return "default" if dev.get("target") == RIG_TARGETS_DEFAULT.get(name) else "settings"
+
 
 def apply_target_overrides(overrides: dict | None = None) -> dict:
     """Merge settings `rig_target_overrides` into RIG in place; returns the
     effective {name: target}. Unknown names / empty values are ignored; a
-    device absent from the dict reverts to its default target."""
+    device absent from the dict reverts to its default target. A target the
+    poller discovered by MAC (DISCOVERED_TARGETS) outranks both."""
     if overrides is None:
         try:
             import settings as _cfg
@@ -247,7 +349,7 @@ def apply_target_overrides(overrides: dict | None = None) -> dict:
         overrides = {}
     eff = {}
     for name, dev in RIG["devices"].items():
-        t = overrides.get(name)
+        t = DISCOVERED_TARGETS.get(name) or overrides.get(name)
         dev["target"] = str(t) if t else RIG_TARGETS_DEFAULT.get(name)
         eff[name] = dev["target"]
     return eff
@@ -848,6 +950,8 @@ async def _step_device(name: str, master_off: bool) -> None:
                   "detail": f"{dev_cfg['plug_name']} ready"})
         if rig_cache["screen_owner"] == name:
             rig_cache["screen_owner"] = None
+        if DISCOVERED_TARGETS.pop(name, None):
+            dev_cfg["target"] = RIG_TARGETS_DEFAULT.get(name)   # re-derived next sweep
         return
 
     if dev_cfg["kind"] == "webos":
@@ -886,8 +990,10 @@ async def _step_device(name: str, master_off: bool) -> None:
             return    # stuck: keep re-probing, but only every ~4 sweeps
         ready = await asyncio.to_thread(probe_ready, dev_cfg)
         if ready:
+            via = (f" · at {dev_cfg['target']} (followed by MAC)"
+                   if name in DISCOVERED_TARGETS else "")
             d.update({"state": "ready", "probe_fails": 0, "adb_auth": None,
-                      "detail": "ssh ok" if dev_cfg["kind"] == "ssh" else "adb ok"})
+                      "detail": ("ssh ok" if dev_cfg["kind"] == "ssh" else "adb ok") + via})
             return
         # An adb box that answers but rejects our key is a distinct
         # condition: it will NEVER become ready until someone accepts the
@@ -900,6 +1006,22 @@ async def _step_device(name: str, master_off: bool) -> None:
                       "detail": "ADB not authorised — needs an on-site OK on the "
                                 "box's remote (Repair ADB)"})
             return
+        # Not answering on the configured address past its boot time: it may
+        # be up on another lease (Ethernet↔Wi-Fi move) — follow it by MAC
+        # before calling it stuck. Rate-limited; the sweep runs in a thread.
+        if (dev_cfg["kind"] == "adb" and dev_cfg.get("macs")
+                and (d["elapsed_s"] or 0) >= dev_cfg["expected_boot_s"]
+                and now - _discover_last.get(name, 0) >= DISCOVER_MIN_INTERVAL_S):
+            _discover_last[name] = now
+            found = await asyncio.to_thread(discover_target, dev_cfg)
+            if found and found != dev_cfg["target"]:
+                DISCOVERED_TARGETS[name] = found
+                dev_cfg["target"] = found
+                log.info("rig: %s not at its configured target — followed to %s by MAC",
+                         name, found)
+                d.update({"state": "booting", "boot_started": now, "elapsed_s": 0.0,
+                          "detail": f"found at {found} (by MAC) — retrying ADB"})
+                return
         if d["state"] == "stuck":
             return
         limit = 3 * dev_cfg["expected_boot_s"]
@@ -1251,6 +1373,8 @@ def status_payload() -> dict:
             "detail": d["detail"], "elapsed_s": d["elapsed_s"],
             "expected_s": cfg_d["expected_boot_s"],
             "adb_auth": d.get("adb_auth"),
+            "target": cfg_d.get("target"),
+            "target_source": target_source(name),
         }
     master = rig_cache["master"]
     monitor = {**rig_cache["monitor"],

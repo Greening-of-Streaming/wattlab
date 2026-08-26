@@ -834,9 +834,27 @@ C2's and the Onkyos' AirPlay endpoints). pyatv venv `/tmp/pyatv-venv` is already
 
 ### Why it matters
 
-The Apple TV 4K is the reference premium STB (A15, hardware H.264/HEVC/VP9/AV1 on the 3rd gen), the
-one box the Fire TV / GTV / Bbox numbers get compared against by readers, and the platform whose
-codec support Murat's LinkedIn comment questioned. Without it the STB panel is Android-only.
+**Corrected 2026-08-26:** the box on the LAN (`192.168.1.152`, "TV Room") answers its AirPlay info
+endpoint as **`AppleTV6,2` = Apple TV 4K 1st generation (2017), A10X Fusion** — not the A15 3rd gen this
+CR first assumed. No Apple silicon before the A17 Pro / M3 has a hardware AV1 decoder, so this box cannot
+show "AV1 free on premium silicon"; it would instead be a **third independent instance** of AV1 falling
+back to software for want of a block (alongside Marvell/Bbox, against MediaTek where it is free). VP9 is
+the open question (YouTube 4K arrived on this generation around tvOS 14 — hardware path on the A10X or
+not is for the box to answer). It is still the one box readers compare the Fire TV / GTV / Bbox numbers
+against, and the platform whose codec support Murat's LinkedIn comment questioned. Without it the STB
+panel is Android-only.
+
+**2026-08-26 attempt (GoS1, handoff from the SMPTE desk; owner at the box):** step 1 answered without the
+C2 — `play_url` fails identically for MP4 and HLS: HAP + the full RTSP sequence succeed (`POST /play`,
+`/rate`, `setProperty`, all `errorCode 0`), then tvOS answers **500 to `GET /playback-info`** and never
+fetches the URL (origin: 0 requests). Upstream pyatv #2403/#2512 — `/playback-info` is AirPlay-1 only,
+gone on tvOS 17+/18; no version fix. **Step 3(b) works:** Companion
+`launch_app=vlc-x-callback://x-callback-url/stream?url=<origin URL>` opens VLC and plays from the origin
+(Range fetches) after a ONE-TIME on-screen "Open VLC?" confirmation (a launch that arrives while the dialog
+is up fails `RPErrorDomain 58809 Session not found`). Harness: `decode_bench/atv_probe.py` (home → baseline →
+launch → window, liveness = pyatv state + position advance, `confidence.py`), iso-bitrate 3-min clips under
+`streams/_atv/`; origin now serves `.m3u8`/`.ts`/`.m4s` with real mime types. Rows = **VLC on tvOS**, say so.
+Meter: the plug the box sat on (`Ben-Lab-X` .95) is fw 1.4.6 = ~2 s update; owner fitting a fw 1.3.1 plug.
 
 ### Plan (one on-site session + one desk session)
 

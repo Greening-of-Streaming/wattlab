@@ -23,7 +23,27 @@ sys.path.insert(0, "/home/gos/wattlab/wattlab_service")
 import confidence as owl_confidence
 
 HERE = Path(__file__).parent
-ADB_BIN = str(HERE / "tools" / "platform-tools" / "adb")
+
+
+def _find_adb() -> str:
+    """$OWL_ADB_BIN → decode_bench/tools/platform-tools/adb (a gitignored
+    symlink to /srv/data/owl/decode-bench/tools — platform-tools r37.0.0, the
+    binary rig.py uses) → that /srv/data path directly → PATH. The symlink
+    matters because HERE differs by invocation: /srv/data/owl/decode-bench
+    when the service runs bench.py through its symlink, the repo checkout when
+    run by hand. 2026-08-26."""
+    import os
+    import shutil
+    for cand in (os.environ.get("OWL_ADB_BIN"),
+                 HERE / "tools" / "platform-tools" / "adb",
+                 "/srv/data/owl/decode-bench/tools/platform-tools/adb",
+                 shutil.which("adb")):
+        if cand and Path(cand).is_file():
+            return str(cand)
+    return str(HERE / "tools" / "platform-tools" / "adb")   # fails loudly at first use
+
+
+ADB_BIN = _find_adb()
 ENV = dotenv_values("/home/gos/wattlab/.env")
 
 

@@ -7,6 +7,42 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 69 — 2026-08-26 (SMPTE-desk handoff: adb path, SoC audit, MAC target follower, Apple TV probe)
+
+*Numbering: S67 (08-24, SMPTE gap-fill digests) and S68 (08-25, REM-digests R2 / dual capture C8) were
+lab-bench sessions run from `~/dev/smpte-4951` (see that repo's `runs/handoff-*.md` and `digests/`); their
+wattlab-side JOURNAL entries are still owed.*
+
+**Prompt:** `~/dev/smpte-4951/runs/handoff-2026-08-26-adb-soc-appletv.md` (three tasks).
+
+- **Task 1 — adb durability.** The handoff's premise was half wrong: the rig had been using
+  `/srv/data/owl/decode-bench/tools/platform-tools/adb` (platform-tools r37.0.0, build 37.0.0-14910828,
+  data NVMe — durable) all along — `rig.py`, `decode_run.py` and the running adb server all pointed there;
+  the desk's `find` had not crossed the `/srv/data` mount. What WAS broken: `decode_bench/bench.py`'s
+  `HERE/tools/platform-tools/adb` only resolved when run through the `/srv/data/owl/decode-bench/bench.py`
+  symlink (the service's path), not from the checkout. Fixed with a gitignored `decode_bench/tools` symlink to
+  the /srv/data dir plus a `_find_adb()` chain (`$OWL_ADB_BIN` → symlink → /srv/data path → PATH). Keys:
+  `~/.android/adbkey` (unchanged since 07-26) backed up to `/srv/data/owl/decode-bench/android-keys-backup-2026-08-26/`;
+  the byte-identical stray under `/tmp` deleted after all three boxes reported `device`. Other `/tmp`
+  dependencies found: `/tmp/pyatv-venv` (pyatv 0.18.0 — CR-075 only) and `/tmp/lgtest` (one-off probes);
+  the rig proper has none besides its flag files.
+- **Task 2 — SoC audit + stale address.** `getprop` on every box (verbatim in the C11 digest): GTV
+  `ro.soc.model=MT8696` (same part as the Fire TV Stick 4K 2nd gen, whose `ro.vendor.mediatek.platform=mt8696`);
+  Bbox `marvellberlin` / Arcadyan `HMB9213NW` (`ro.soc.*` empty); Pi 5 BCM2712 rev e04171; Pi 400 BCM2711
+  rev c03130. The "stale address" was the Bbox on **Wi-Fi** at `.173` (eth0 NO-CARRIER — its cable has
+  been out since the CR-074 pull on 08-19) while `rig.py` said `.10`. Fix = **MAC target follower** in
+  `rig.py`: adb devices carry `macs` (all interfaces); a powered box that fails its probe past
+  `expected_boot_s` triggers a rate-limited ping sweep + neighbour-table lookup and is retargeted in memory
+  (`target_source: discovered`, tile says "followed by MAC"; precedence discovered > settings override >
+  default; forgotten when the box goes off). Verified live: Bbox followed `.10` → `.173` ~40 s after boot;
+  GTV `.126` (cable back in), Fire TV `.200` authorised after the mains cycle. +5 tests (1033 total).
+- **Task 3 — Apple TV.** Corrected CR-075 (box is `AppleTV6,2`, 2017 A10X — no hw AV1 on any Apple silicon
+  before A17 Pro/M3 → it would be the third software-AV1-fallback instance, VP9 open). Attempt blocked: the
+  box is not on the LAN tonight (ARP INCOMPLETE, absent from two mDNS scans); the C2 AirPlay comparison
+  needs an on-screen pairing PIN. Stop rule applied; written up in CR-075 and the SMPTE digest.
+- Rig powered down at the end (graceful off on all five). SMPTE side: C11 digest device list + F11 note
+  + Q9, RESULTS_INDEX C11, RUN_QUEUE R3a addendum, blocked-attempt digest — pushed with `bin/push`.
+
 ## Session 66 — 2026-08-18 evening → 08-19 morning (overnight: CR-074 campaign + documentation sweep)
 
 **Connection method as an energy variable (first data), Apple TV plan, and the documentation sweep Ben asked for: JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal**

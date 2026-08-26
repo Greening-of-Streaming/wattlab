@@ -27,7 +27,7 @@ paced/live-like arm).
 
 | driver | box | start | provenance |
 |---|---|---|---|
-| `adb` | Google TV Streamer `.126` (Lab-D `.36`, HDMI_2) · Fire TV Stick 4K `.200` (Lab-A `.146`, HDMI_4, **Wi-Fi only**, no logcat decoder names, loses ADB auth after a mains cycle) · Bbox 4K operator CPE `.10` (Lab-F `.155`, HDMI_1, Android 11) | VIEW intent → Just Player, `--ei position 0`, PLAYING verified (≤2 presses), keep-awake pins + CEC rule applied in `prepare()` | logcat `CCodec allocate(c2.*)` + mid-window screenshot + `playback_state_midwindow`/`_at_end`, `alive_at_window_end` |
+| `adb` | Google TV Streamer `.126` (Lab-D `.36`, HDMI_2) · Fire TV Stick 4K `.200` (Lab-A `.146`, HDMI_4, **Wi-Fi only**, no logcat decoder names, loses ADB auth after a mains cycle) · Bbox 4K operator CPE `.10` eth / `.173` Wi-Fi, MAC-followed (Lab-F `.155`, HDMI_1, Android 11, Marvell Berlin) | VIEW intent → Just Player, `--ei position 0`, PLAYING verified (≤2 presses), keep-awake pins + CEC rule applied in `prepare()` | logcat `CCodec allocate(c2.*)` + mid-window screenshot + `playback_state_midwindow`/`_at_end`, `alive_at_window_end` |
 | `ssh` | Raspberry Pi 400 `.108` (Lab-B `.31`, HDMI_3; Wi-Fi `.110` for the CR-074 arms) · Pi 5 `.102` (**parked**, shares Lab-A) | per-run `cmd` over SSH (`ffmpeg -re … -f null -` headless, `mpv` screen mode); `pre_cmd`/`post_cmd` hooks | the command + `ifaces_midwindow` |
 | `webos` | LG C2 55" `.25` (Lab-E `.71` = the panel plug; native decode via the built-in browser, `lg.py` SSAP + Wake-on-LAN) | `launch_url` | `current_app` only (no state/screenshot); rows are panel-dominated (picture term) — differential only |
 
@@ -71,6 +71,20 @@ Two arms per condition, don't mix them:
    focus-mode equivalent, manual for now).
 
 ## Known infra caveats
+- **adb** (2026-08-26): Android platform-tools **r37.0.0** (adb 1.0.41, build 37.0.0-14910828) lives at
+  `/srv/data/owl/decode-bench/tools/platform-tools/` on the data NVMe — durable across reboots; NOT the
+  apt `adb` (34.x, not installed). `rig.py`/`decode_run.py`/`c2_hunt.py` name that path; `decode_bench/tools`
+  is a gitignored symlink to it so `bench.py` resolves the same binary whether run through
+  `/srv/data/owl/decode-bench/bench.py` (the service) or the checkout (`$OWL_ADB_BIN` overrides). Host key
+  `~/.android/adbkey` (each box trusts its fingerprint — never regenerate); a copy is kept at
+  `/srv/data/owl/decode-bench/android-keys-backup-2026-08-26/` (mode 600, off-repo). The stray copy a
+  July session had left under `/tmp` (byte-identical) was deleted; all three boxes verified `device` after.
+- **Targets follow the box by MAC** (2026-08-26): adb devices carry `macs` (every interface); when a
+  powered box fails its readiness probe past `expected_boot_s`, the poller ping-sweeps the /24, reads the
+  neighbour table and retargets (`target_source: discovered` in status.json, "followed by MAC" in the tile).
+  Precedence discovered > `/settings` `rig_target_overrides` > `rig.py` default; forgotten when the box goes
+  off. This is the fix for the "stuck — not ready after 145s" class (Bbox on Wi-Fi at `.173` while rig.py
+  said `.10`; the CR-074 Wi-Fi moves before it).
 - (Fixed 2026-07-31, CR-072) the old bare `python -m http.server` on `:8123` ignored Range requests
   (200 + full body) — the prime suspect for the July media3 2.1× over-fetch. `origin.py` is
   Range-correct (206/416/HEAD, `/status` byte counters) and owned by the service.
@@ -92,7 +106,7 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | IP | What | MAC | Notes |
 |---|---|---|---|
 | `.62` | GoS1 (eno2) | `a0:ad:9f:58:ec:0d` | pre-existing reservation, confirmed correct (bound to eno2; eno1 is dark) |
-| `.126` | Google TV Streamer (eth0) | `b4:23:a2:af:e4:a4` | rebound from Wi-Fi MAC → returns to its July address after lease renewal (was `.189` on 2026-07-29) |
+| `.126` | Google TV Streamer (eth0) | `b4:23:a2:af:e4:a4` (wlan0 `0e:03:41:ca:06:29`, per-SSID randomised) | rebound from Wi-Fi MAC → returns to its July address after lease renewal (was `.189` on 2026-07-29); MediaTek MT8696 (`ro.soc.model`) |
 | `.102` | Raspberry Pi 5 (eth0) | `88:a2:9e:27:40:ed` | user `admin` |
 | `.108` | Raspberry Pi 400 (eth0) | `d8:3a:dd:76:f8:5b` | user `nebul2` |
 | `.146` | Lab-A P110 — Fire TV Stick meter (Pi 5 parked on the same plug — never power both) | `bc:07:1d:a2:d3:11` | fw 1.3.1 |
@@ -101,8 +115,8 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | `.36` | Lab-D P110 — GTV meter | `bc:07:1d:a2:da:48` | fw 1.3.1; replaced `.94` (fw 1.4.6) on 2026-07-29; moved off its first lease `.1` (router pool constraint: `.36`, not `.147`) |
 | `.71` | Lab-E P110 — the LG C2 panel (context meter / C2 device plug) | — | fw 1.3.1; replaced Ben1-4k-monitor `.199` (fw 1.4.6) on 2026-07-29 |
 | `.155` | Lab-F P110 — Bbox 4K meter | — | fw 1.3.1 (re-plugged 2026-07-30; the earlier `.22` unit was fw 1.4.0) |
-| `.10` | Bbox 4K (eth0) | — | operator CPE, ADB authorised; was `.173` on Wi-Fi 2026-07-30 |
-| `.200` | Fire TV Stick 4K (Wi-Fi) | — | AFTKRT; ADB re-auth needed after a mains power cycle |
+| `.10` | Bbox 4K (eth0) | `ec:6c:9a:ef:73:a1` (wlan0 `70:f7:54:37:4f:e4`) | operator CPE, ADB authorised; on Wi-Fi at `.173` whenever the cable is out (CR-074 pull 2026-08-19, still out on 2026-08-26 — eth0 NO-CARRIER); the rig follows it by MAC |
+| `.200` | Fire TV Stick 4K (Wi-Fi) | `ec:31:5f:6d:7c:a7` | AFTKRT; ADB re-auth needed after a mains power cycle (came back authorised on 2026-08-26) |
 | `.25` | LG C2 (eth0; also `.109` Wi-Fi) | — | webOS SSAP + WoL (`lg.C2_MAC`) |
 | `.159` | P110-GoS1-Server | — | pre-existing reservation, unchanged |
 | `.91` | P110-GoS1b | — | pre-existing reservation, unchanged |
@@ -184,7 +198,7 @@ hopping was contaminating baselines).
 
 **HDMI port map (rig.py):** Bbox → HDMI_1 · GTV → HDMI_2 · Pi 400 → HDMI_3 · Fire TV → HDMI_4 (Pi 5 parked).
 
-**Bbox (Bouygtel4K, operator CPE):** ADB authorised (Android 11), Ethernet `.10` since 2026-07-31,
+**Bbox (Bouygtel4K, operator CPE — Marvell Berlin, Arcadyan HMB9213NW, `ro.soc.*` empty; R3a 2026-08-26):** ADB authorised (Android 11), Ethernet `.10` since 2026-07-31 (on Wi-Fi `.173` since the CR-074 cable pull),
 plug Lab-F `.155`, `idle_w` 6.6 W (drifts 6.3–6.8 → its H.264/HEVC ΔW sits inside its own noise; AV1
 +1.2–1.4 W = software AV1). Plays via VIEW intent through the origin.
 
@@ -193,8 +207,12 @@ never emits `CCodec allocate` lines (no decoder provenance); `alive_at_window_en
 traces (S65 — retries + `playback_state_at_end` since `10ed87f`); loses ADB authorisation after a mains
 power cycle (on-site accept, ONE reconnect).
 
-**Apple TV 4K (tvOS 18):** Companion + AirPlay paired (creds `/srv/data/owl/atv/`); power/keys work;
-AirPlay `play_url` blocked by a tvOS-18/pyatv issue; currently off the LAN. Second attempt = CR-075.
+**Apple TV 4K — `AppleTV6,2` = 1st generation (2017), A10X Fusion, "TV Room", `.152` (identified from its
+AirPlay info endpoint by the desk 2026-08-26; NOT the A15 3rd gen CR-075 first assumed — no hardware AV1 on
+any Apple silicon before A17 Pro/M3):** Companion + AirPlay paired (creds `/srv/data/owl/atv/`); power/keys
+work; AirPlay `play_url` blocked by a tvOS-18/pyatv issue. pyatv 0.18.0 venv is at `/tmp/pyatv-venv`
+(⚠ under /tmp — recreate with `python3 -m venv … && pip install pyatv==0.18.0` if it is gone). Off the LAN
+on 2026-08-26 evening (ARP INCOMPLETE, no mDNS). Second attempt = CR-075.
 
 **Origin:** Range-correct `origin.py` on `:8123`, a child of wattlab.service (`origin_control.py`,
 reboot-persistent; `sudo systemctl stop wattlab` kills it — restart, don't stop). CR-072 phase 2
