@@ -1,12 +1,13 @@
 """Pure unit tests for onboard_device.py's curve analysis — no hardware,
 no rig import. Run: python3 -m pytest decode_bench/test_onboard_device.py -q"""
+import asyncio
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from onboard_device import (detect_true_floor, detect_true_settle_time,
                             replay_guard_convergence, verdict_for_curve,
-                            recommend)
+                            recommend, characterize)
 
 
 def _curve(vals, cadence=1.0):
@@ -67,3 +68,67 @@ def test_recommend_all_clean_reps_says_guard_is_enough():
             for _ in range(3)]
     rec = recommend(reps, tolerance_w=0.5, cadence_s=1.0)
     assert rec["guard_alone_sufficient"]
+
+
+class _FakeSampler:
+    """Satisfies RigDeviceSampler's protocol without any hardware: a
+    scripted power trace consumed one value per `read_w()` CALL (not per
+    unit of wall-clock time) — decoupled from real timing entirely, so the
+    test can use tiny real cadence/settle durations and still exercise the
+    exact same call pattern `characterize()` uses against a live device."""
+    name = "fake"
+
+    def __init__(self, trace, dev_cfg=None):
+        self.trace = list(trace)
+        self.i = 0
+        self.dev_cfg = dev_cfg or {}
+
+    async def power_on(self):
+        pass
+
+    async def read_w(self):
+        w = self.trace[min(self.i, len(self.trace) - 1)]
+        self.i += 1
+        return w
+
+    async def run_task_then_stop(self, hold_s):
+        pass   # the trace already encodes whatever "after stop" looks like
+
+
+def test_characterize_applies_boot_settle_buffer_only_when_ready(monkeypatch):
+    """2026-08-27, found live against the Pi 5: rep 1, run right at
+    boot-ready with no pause, absorbed lingering post-boot settling and
+    looked like a ~39 s decay; a warm-up buffer before rep 1 fixed it (the
+    real device keeps cooling in real time whether or not anything reads
+    it, so the fix is a genuine wall-clock wait, not simulable via a fake
+    trace consumed by call count). What's safe and valuable to lock in
+    without live hardware: the exact mechanism — `characterize()` sleeps
+    for `boot_settle_s` once, after boot-ready, before rep 1's first read;
+    it must NOT do so when boot never reports ready, or when the buffer is
+    explicitly disabled (0)."""
+    import onboard_device as od
+    sleeps = []
+
+    async def _spy_sleep(seconds):
+        sleeps.append(round(seconds, 3))
+    monkeypatch.setattr(od.asyncio, "sleep", _spy_sleep)
+
+    trace = [3.1] * 50
+    monkeypatch.setattr(od.rig, "probe_ready", lambda dev: True)
+    asyncio.run(characterize(_FakeSampler(trace), reps=1, hold_s=0, obs_s=0.1,
+                             cadence_s=0.01, tolerance_w=0.3, settle_polls=3,
+                             boot_timeout_s=1, boot_settle_s=12.5))
+    assert 12.5 in sleeps          # the buffer really fired
+
+    sleeps.clear()
+    asyncio.run(characterize(_FakeSampler(trace), reps=1, hold_s=0, obs_s=0.1,
+                             cadence_s=0.01, tolerance_w=0.3, settle_polls=3,
+                             boot_timeout_s=1, boot_settle_s=0))
+    assert 12.5 not in sleeps      # disabled buffer never fires
+
+    sleeps.clear()
+    monkeypatch.setattr(od.rig, "probe_ready", lambda dev: False)   # never becomes ready
+    asyncio.run(characterize(_FakeSampler(trace), reps=1, hold_s=0, obs_s=0.1,
+                             cadence_s=0.01, tolerance_w=0.3, settle_polls=3,
+                             boot_timeout_s=0.05, boot_settle_s=12.5))
+    assert 12.5 not in sleeps      # never got ready -> no buffer either

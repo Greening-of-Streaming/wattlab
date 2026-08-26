@@ -197,7 +197,7 @@ async def sample_for(sampler, seconds: float, cadence_s: float) -> list:
 
 async def characterize(sampler, reps: int, hold_s: float, obs_s: float,
                        cadence_s: float, tolerance_w: float, settle_polls: int,
-                       boot_timeout_s: float = 120):
+                       boot_timeout_s: float = 120, boot_settle_s: float = 45):
     print(f"[boot] powering on {sampler.name}...", flush=True)
     t0 = time.monotonic()
     await sampler.power_on()
@@ -212,6 +212,18 @@ async def characterize(sampler, reps: int, hold_s: float, obs_s: float,
         await asyncio.sleep(cadence_s)
     boot_s = boot_curve[-1][0] if boot_curve else None
     print(f"[boot] ready={ready} after {boot_s}s, {len(boot_curve)} samples", flush=True)
+
+    # 2026-08-27: found live against the Pi 5 — starting rep 1 right at
+    # boot-ready mixes lingering post-boot settling into the FIRST decay
+    # rep, inflating its true_settle_s with something that isn't the
+    # post-stop property this tool is trying to measure (Pi 5 rep 1 showed
+    # a spurious ~39 s "decay" that was actually still-cooling-from-boot;
+    # reps 2-3, run after this same buffer would have elapsed naturally,
+    # settled in <1 s). A boot-settle buffer before rep 1 keeps every rep
+    # measuring the same thing: decay from a genuinely warmed-up state.
+    if ready and boot_settle_s > 0:
+        print(f"[boot] warm-up buffer {boot_settle_s}s before rep 1...", flush=True)
+        await asyncio.sleep(boot_settle_s)
 
     reps_curves, verdicts = [], []
     for rep in range(1, reps + 1):
@@ -268,11 +280,15 @@ def main():
     p.add_argument("--cadence-s", type=float, default=1.0)
     p.add_argument("--tolerance-w", type=float, default=0.5, help="matches decode_idle_tolerance_w default")
     p.add_argument("--settle-polls", type=int, default=4, help="matches decode_idle_settle_polls default")
+    p.add_argument("--boot-settle-s", type=float, default=45,
+                  help="warm-up buffer after boot-ready, before rep 1 (avoids mixing "
+                       "post-boot settling into the first decay measurement)")
     p.add_argument("--out", default=None)
     a = p.parse_args()
     sampler = RigDeviceSampler(a.device, a.template)
     result = asyncio.run(characterize(sampler, a.reps, a.hold_s, a.obs_s, a.cadence_s,
-                                      a.tolerance_w, a.settle_polls))
+                                      a.tolerance_w, a.settle_polls,
+                                      boot_settle_s=a.boot_settle_s))
     report = render_report(a.device, result, a.tolerance_w, a.settle_polls)
     print("\n" + report)
     if a.out:
