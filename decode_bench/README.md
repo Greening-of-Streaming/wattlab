@@ -94,7 +94,7 @@ Two arms per condition, don't mix them:
 - KLAP sessions are exclusive per plug: don't run bench.py while anything else polls the
   same plugs locally (REM's *cloud* polling is fine — different path).
 
-## Network — fixed addresses (router DHCP reservations, set 2026-07-29)
+## Network — fixed addresses (router DHCP reservations, set 2026-07-29; **completed 2026-08-26** — owner reserved every row below in the Bbox admin UI, incl. the Bbox wlan0, the Apple TV, Lab-F3 and the Shelly)
 
 All bench devices and lab plugs have router reservations. GTV, Bbox, Pi 400 and the C2 are on
 **Ethernet** via the bench switch (the Fire TV Stick is Wi-Fi only; Bbox re-onboarded on `.10` 2026-07-31) (parallel throughput verified 178–582 Mbps,
@@ -115,11 +115,19 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | `.36` | Lab-D P110 — GTV meter | `bc:07:1d:a2:da:48` | fw 1.3.1; replaced `.94` (fw 1.4.6) on 2026-07-29; moved off its first lease `.1` (router pool constraint: `.36`, not `.147`) |
 | `.71` | Lab-E P110 — the LG C2 panel (context meter / C2 device plug) | — | fw 1.3.1; replaced Ben1-4k-monitor `.199` (fw 1.4.6) on 2026-07-29 |
 | `.155` | Lab-F P110 — Bbox 4K meter | — | fw 1.3.1 (re-plugged 2026-07-30; the earlier `.22` unit was fw 1.4.0) |
-| `.10` | Bbox 4K (eth0) | `ec:6c:9a:ef:73:a1` (wlan0 `70:f7:54:37:4f:e4`) | operator CPE, ADB authorised; on Wi-Fi at `.173` whenever the cable is out (CR-074 pull 2026-08-19, still out on 2026-08-26 — eth0 NO-CARRIER); the rig follows it by MAC |
+| `.10` | Bbox 4K (eth0) | `ec:6c:9a:ef:73:a1` (wlan0 `70:f7:54:37:4f:e4` → `.173`, reserved 2026-08-26) | operator CPE, ADB authorised; on Wi-Fi at `.173` whenever the cable is out (CR-074 pull 2026-08-19, still out on 2026-08-26 — eth0 NO-CARRIER); the rig follows it by MAC |
 | `.200` | Fire TV Stick 4K (Wi-Fi) | `ec:31:5f:6d:7c:a7` | AFTKRT; ADB re-auth needed after a mains power cycle (came back authorised on 2026-08-26) |
 | `.25` | LG C2 (eth0; also `.109` Wi-Fi) | — | webOS SSAP + WoL (`lg.C2_MAC`) |
-| `.159` | P110-GoS1-Server | — | pre-existing reservation, unchanged |
-| `.91` | P110-GoS1b | — | pre-existing reservation, unchanged |
+| `.159` | P110 `gos1-server` (outer bench meter, `TAPO_P110_IP_2`) | `40:ae:30:83:4f:ee` | pre-existing reservation, unchanged |
+| `.91` | P110 `GoS1b-server` (inner bench meter, `TAPO_P110_IP`) | `bc:07:1d:a2:d2:a1` | pre-existing reservation, unchanged |
+| `.1` | **Lab-F3 P110 — Apple TV meter** (fw 1.3.1, added 2026-08-26) | `b8:fb:b3:ef:27:26` | reserved 2026-08-26 (kept at `.1`; `atv_probe.py --plug 192.168.1.1`) |
+| `.152` | Apple TV 4K "TV Room" (`AppleTV6,2`, 2017 A10X, tvOS 18.0) | `90:dd:5d:ab:70:8e` | pyatv target (`ATV_IP` in `atv_probe.py`); reserved 2026-08-26 |
+| `.17` | Shelly Plug PM Gen3 (Lab-A/B/D strip meter, `shelly_ip`) | `90:70:69:5b:7c:78` | reserved 2026-08-26 |
+| `.184` | lab-F2 P110 — Pi 5 meter (2026-08-19) | `b8:fb:b3:ef:0e:df` | fw 1.3.1 |
+| `.95` / `.132` / `.199` | Ben's desk P110s: `Ben-Lab-X` · `Ben HD LCD monitor (Pi)` · `Ben1-4k-monitor` | `ec:75:0c:96:dd:a5` · `ec:75:0c:96:db:03` · `48:22:54:64:15:b6` | all fw 1.4.6 (~2 s update — not for 1 s rows); not rig plugs |
+
+Full reservation list handed to the owner 2026-08-26 (S69) and **applied the same evening** in the Bbox admin UI: everything above plus the
+Bbox's **wlan0** `70:f7:54:37:4f:e4` (→ `.173`, where it lives while its cable is out) and the C2's Wi-Fi `.109`.
 
 All six Lab plugs (A–F) are on fw **1.3.1** (mW local API, 1–2 s effective cadence).
 Configs written before 2026-07-29 that reference STB plug `.94` are historical — new
@@ -210,9 +218,12 @@ power cycle (on-site accept, ONE reconnect).
 **Apple TV 4K — `AppleTV6,2` = 1st generation (2017), A10X Fusion, "TV Room", `.152` (identified from its
 AirPlay info endpoint by the desk 2026-08-26; NOT the A15 3rd gen CR-075 first assumed — no hardware AV1 on
 any Apple silicon before A17 Pro/M3):** Companion + AirPlay paired (creds `/srv/data/owl/atv/`); power/keys
-work; AirPlay `play_url` blocked by a tvOS-18/pyatv issue. pyatv 0.18.0 venv is at `/tmp/pyatv-venv`
-(⚠ under /tmp — recreate with `python3 -m venv … && pip install pyatv==0.18.0` if it is gone). Off the LAN
-on 2026-08-26 evening (ARP INCOMPLETE, no mDNS). Second attempt = CR-075.
+work; AirPlay `play_url` is **dead on tvOS 18** (receiver 500 on `/playback-info`, pyatv #2403) — **use VLC
+via Companion**: `launch_app=vlc-x-callback://x-callback-url/stream?url=<origin URL>` (one-time "Open VLC?"
+on the remote). Harness `atv_probe.py` / `atv_summary.py`; meter Lab-F3 `.1`; park the box in Settings for
+baselines and **disable the tvOS screensaver first** (it ramps the parked floor 2.7→6 W within a minute —
+2026-08-26 rows). First result: H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W. pyatv 0.18.0 venv is at `/tmp/pyatv-venv`
+(⚠ under /tmp — recreate with `python3 -m venv … && pip install pyatv==0.18.0` if it is gone). CR-075.
 
 **Origin:** Range-correct `origin.py` on `:8123`, a child of wattlab.service (`origin_control.py`,
 reboot-persistent; `sudo systemctl stop wattlab` kills it — restart, don't stop). CR-072 phase 2

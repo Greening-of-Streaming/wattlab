@@ -36,12 +36,29 @@ wattlab-side JOURNAL entries are still owed.*
   (`target_source: discovered`, tile says "followed by MAC"; precedence discovered > settings override >
   default; forgotten when the box goes off). Verified live: Bbox followed `.10` → `.173` ~40 s after boot;
   GTV `.126` (cable back in), Fire TV `.200` authorised after the mains cycle. +5 tests (1033 total).
-- **Task 3 — Apple TV.** Corrected CR-075 (box is `AppleTV6,2`, 2017 A10X — no hw AV1 on any Apple silicon
-  before A17 Pro/M3 → it would be the third software-AV1-fallback instance, VP9 open). Attempt blocked: the
-  box is not on the LAN tonight (ARP INCOMPLETE, absent from two mDNS scans); the C2 AirPlay comparison
-  needs an on-screen pairing PIN. Stop rule applied; written up in CR-075 and the SMPTE digest.
+- **Task 3 — Apple TV: measured.** Corrected CR-075 (box is `AppleTV6,2`, 2017 A10X — no hw AV1 on any
+  Apple silicon before A17 Pro/M3). First look: box off the LAN → then Ben brought it up at his desk.
+  `play_url` reproduced dead for MP4 **and** HLS: the whole RTSP sequence succeeds, then tvOS answers 500 to
+  `GET /playback-info` and never fetches (origin 0 requests) — upstream pyatv #2403, receiver-side, no
+  version fix. **VLC via Companion `launch_app=vlc-x-callback://…/stream?url=` works** after a one-time
+  on-screen "Open VLC?" (Ben on the remote). Harness `decode_bench/atv_probe.py` (+ `atv_summary.py`):
+  park in tvOS Settings (home screen autoplays previews, 6–15 W) → baseline → launch → 120 s window,
+  liveness = pyatv state + position; iso-bitrate BBB 3-min cuts under `streams/_atv/`; origin serves HLS
+  mime types now. Meter: Ben fitted **Lab-F3** (`.1`, P110 fw 1.3.1) — his desk plug `.95` is fw 1.4.6
+  (~2 s). **Result (n=2):** device-total playing W H.264 5.10 · HEVC 5.07 · **AV1 6.44 · VP9 6.47** —
+  hardware pair flat, **+1.35 W (+27 %) for both codecs the A10X lacks**; every row 12/12 polls playing.
+  🟡: baselines ramp 2.7→6 W inside 45 s = tvOS screensaver (disable next time, disclosed); H.264 #1 hit
+  by post-boot activity. Raw `/srv/data/owl/atv/probe_2026-08-26.jsonl`; SMPTE `digests/2026-08-appletv-vlc.md`
+  (C19); CR-075 stays open for screensaver-off n≥3 + `rig.py` entry.
 - Rig powered down at the end (graceful off on all five). SMPTE side: C11 digest device list + F11 note
-  + Q9, RESULTS_INDEX C11, RUN_QUEUE R3a addendum, blocked-attempt digest — pushed with `bin/push`.
+  + Q9, RESULTS_INDEX C11, RUN_QUEUE R3a addendum, Apple TV digest — pushed with `bin/push`.
+- **Router reservations completed (owner, same evening).** Handed Ben the full fixed-address list
+  (GoS1 `.62` + NAT 2222, both bench P110s, Lab-A…F/F2/F3, Shelly `.17`, GTV `.126`, Fire TV `.200`,
+  Bbox eth `.10` **and wlan `.173`**, Pis `.102`/`.108`, C2 `.25`, Apple TV `.152`, desk P110s) and he
+  reserved every one in the Bbox admin UI — so a router outage/reset no longer moves anything the rig
+  addresses by IP. New tonight: **Lab-F3** (`.1`, P110 fw 1.3.1, `b8:fb:b3:ef:27:26`) = the Apple TV's
+  1 s meter. Table in `decode_bench/README.md` (Network section). The MAC follower stays as the
+  belt-and-braces for the day a reservation is forgotten again.
 
 ## Session 66 — 2026-08-18 evening → 08-19 morning (overnight: CR-074 campaign + documentation sweep)
 

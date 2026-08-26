@@ -171,7 +171,8 @@ RIG: dict = {
             # 2026-07-31: complete setup wizard → dev options → USB debugging →
             # re-auth; never power-cycle it mid-boot). Its Ethernet cable was
             # pulled for CR-074 (2026-08-19) and is still out: it comes up on
-            # Wi-Fi at .173, which the MAC follower below resolves.
+            # Wi-Fi at .173 (both MACs reserved on the router 2026-08-26),
+            # which the MAC follower below resolves either way.
             "kind": "adb", "target": "192.168.1.10:5555",
             "macs": ["ec:6c:9a:ef:73:a1", "70:f7:54:37:4f:e4"],   # eth0, wlan0
             "device_class": "stb",

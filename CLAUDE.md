@@ -62,8 +62,8 @@
 ## Network Topology
 Bbox Wi-Fi 7 (192.168.1.x) ── GoS1 ethernet `.62` · MacBook Wi-Fi · Tapo P110 ×2 daisy-chained (CR-065):
 wall → `.159` (outer, original) → `.91` (inner, primary, "GoS1b-server") → GoS1
-(Server + both plugs now have **fixed/reserved Bbox IPs** — 2026-06-19. External-access incidents +
-DuckDNS updater: see GOS1_INFRA.md.)
+(Server + both plugs **fixed/reserved Bbox IPs** since 2026-06-19; **every rig/lab address reserved 2026-08-26** —
+table in decode_bench/README.md §Network. External-access incidents + DuckDNS updater: see GOS1_INFRA.md.)
 
 ## Thermal Sensors
 - One source of truth: `power.read_sensors_dict()` → `{cpu_tctl, gpu_junction, gpu_ppt_w}`; per-module
@@ -164,7 +164,9 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - S69 (08-26): handoff from the SMPTE desk — adb resolution fixed for both bench.py invocations (durable
   r37.0.0 under /srv/data), SoC audit (GTV = MT8696 like the Fire TV; Bbox = Marvell Berlin/Arcadyan
   HMB9213NW), `rig.py` MAC target follower (Bbox on Wi-Fi .173 vs .10 — cable still out since CR-074),
-  CR-075 corrected (AppleTV6,2 2017 A10X) + attempt blocked (box off the LAN). Tests 1033.
+  CR-075: box = AppleTV6,2 (2017 A10X); AirPlay play_url dead on tvOS 18 → VLC via Companion; first rows
+  (n=2, VLC): H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W (+27 %) — third vendor for the penalty claim (🟡, screensaver
+  hit the baselines). Router reservations completed by Ben. Tests 1033.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

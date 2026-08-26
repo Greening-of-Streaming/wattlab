@@ -854,7 +854,16 @@ gone on tvOS 17+/18; no version fix. **Step 3(b) works:** Companion
 is up fails `RPErrorDomain 58809 Session not found`). Harness: `decode_bench/atv_probe.py` (home → baseline →
 launch → window, liveness = pyatv state + position advance, `confidence.py`), iso-bitrate 3-min clips under
 `streams/_atv/`; origin now serves `.m3u8`/`.ts`/`.m4s` with real mime types. Rows = **VLC on tvOS**, say so.
-Meter: the plug the box sat on (`Ben-Lab-X` .95) is fw 1.4.6 = ~2 s update; owner fitting a fw 1.3.1 plug.
+Meter: the plug the box sat on (`Ben-Lab-X` .95) is fw 1.4.6 = ~2 s update; owner fitted **Lab-F3** (`.1`, fw 1.3.1).
+
+**First rows (2026-08-26 17:40–18:10, n=2 × 4 codecs, iso-bitrate BBB 3-min cuts, 120 s windows, Settings-parked
+baselines):** device-total playing W — **H.264 5.10 (clean rep) · HEVC 5.12/5.02 · AV1 6.37/6.51 · VP9 6.36/6.59** →
+the hardware pair is flat, **AV1 and VP9 both +1.35 W (+27 %)**: software fallback for both codecs the A10X lacks
+(third vendor for the penalty half after Marvell; VP9 question answered for VLC). Liveness 12/12 every row. 🟡:
+baselines ramp 2.7→6 W within 45 s (tvOS **screensaver** — disable it, disclosed, before the next run); H.264 #1
+contaminated by post-boot activity. Raw `/srv/data/owl/atv/probe_2026-08-26.jsonl`; SMPTE digest
+`digests/2026-08-appletv-vlc.md` (C19). Remaining plan: screensaver off, n≥3, second content, `rig.py` device entry
+(pyatv power control) so it joins campaigns; then close.
 
 ### Plan (one on-site session + one desk session)
 

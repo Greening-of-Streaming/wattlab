@@ -14,7 +14,9 @@ Protocol (mirrors bench.py v3 as far as AirPlay allows): home screen →
 settle → baseline (1 s mW samples) → launch clip → settle → sampled window
 (1 s) with a liveness poll every ~10 s in a side thread (pyatv playback
 state + position advance; weaker than the in-clip marker, which cannot be
-injected through this path) → stop → home. confidence.py on the raw
+injected through this path) → stop → park. Baselines are taken with the box
+parked in tvOS Settings (`--park settings`, default): the home screen
+autoplays app previews and idles anywhere between 6 and 15 W. confidence.py on the raw
 samples, like every other OWL row.
 
 Usage:
@@ -78,6 +80,16 @@ def launch(url: str) -> str:
     return atv(f"launch_app=vlc-x-callback://x-callback-url/stream?url={url}")
 
 
+PARK = {   # where the box sits for baselines — disclosed in every row
+    # tvOS home screen autoplays app previews: 6–15 W wandering idle (2026-08-26
+    # trace). Settings is a static UI → the baseline state, like the Android
+    # keep-awake pins: a harness choice, stated, not the box's natural idle.
+    "settings": lambda: atv("launch_app=com.apple.TVSettings"),
+    "vlc": lambda: None,           # stay on VLC's library screen after stop
+    "home": lambda: atv("home"),
+}
+
+
 class Meter:
     """One P110, mW path (get_energy_usage.current_power / 1000), own loop."""
     def __init__(self, ip):
@@ -139,8 +151,8 @@ def liveness_summary(live: list) -> dict:
 
 def run_row(meter, codec, rep, a) -> dict:
     url = f"{ORIGIN}/{CLIPS[codec]}"
-    log(f"row {codec} #{rep}: home + settle {a.settle}s")
-    atv("stop"); atv("home")
+    log(f"row {codec} #{rep}: park={a.park} + settle {a.settle}s")
+    atv("stop"); PARK[a.park]()
     time.sleep(a.settle)
     base, _ = sample(meter, a.baseline)
     log(f"  baseline {statistics.mean(base):.3f} W (n={len(base)}) → launch {url}")
@@ -148,7 +160,7 @@ def run_row(meter, codec, rep, a) -> dict:
     launch(url)
     time.sleep(a.settle)
     task, live = sample(meter, a.window, live_every=10)
-    atv("stop"); atv("home")
+    atv("stop"); PARK[a.park]()
     w_base, w_task = statistics.mean(base), statistics.mean(task)
     delta = w_task - w_base
     conf = owl_confidence.confidence(delta, len(task), w_base,
@@ -156,7 +168,7 @@ def run_row(meter, codec, rep, a) -> dict:
     ls = liveness_summary(live)
     row = {"probe": "atv_probe.py", "device": "Apple TV 4K 1st gen (AppleTV6,2, A10X, tvOS 18.0 22J357)",
            "player": "VLC for tvOS (org.videolan.vlc-ios) via Companion launch_app x-callback",
-           "plug_ip": meter.ip, "codec": codec, "clip": CLIPS[codec], "rep": rep,
+           "plug_ip": meter.ip, "baseline_state": a.park, "codec": codec, "clip": CLIPS[codec], "rep": rep,
            "t_launch": t_launch, "window_s": a.window, "settle_s": a.settle,
            "w_base": round(w_base, 3), "w_task": round(w_task, 3), "delta_w": round(delta, 3),
            "n_base": len(base), "n_task": len(task),
@@ -180,6 +192,7 @@ def main():
     p.add_argument("--settle", type=int, default=20)
     p.add_argument("--baseline", type=int, default=40)
     p.add_argument("--clips", default="h264,h265,av1,vp9")
+    p.add_argument("--park", default="settings", choices=sorted(PARK))
     a = p.parse_args()
     codecs = [c.strip() for c in a.clips.split(",") if c.strip()]
     meter = Meter(a.plug)
