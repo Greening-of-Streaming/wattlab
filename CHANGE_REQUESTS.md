@@ -907,7 +907,21 @@ and a third of full-screen playback (**4.87 W**; quarter-screen unscaled 4.42 W)
 direction **pauses VLC**. So: **Apple TV rows are only valid with a display attached and stable before
 `prepare()`; headless Apple TV rows are not decode energy** (the section caveat says so). Remaining: the rig
 should refuse/flag `headless` for `atv` unless the operator asserts a display (a `display_attached` flag on the
-run, disclosed in the row); screensaver off (disclosed) + n≥3 + second content; then close.
+run, disclosed in the row); n≥3 + second content (night of 2026-08-26, `atv_night.py`); then close.
+
+**tvOS 26.6 (build 23L773), 2026-08-26 22:40:** owner updated the box (three attempts — the first two died in
+"preparing" after network interruptions; the plug trace tells the phases: ~10 W unpack, 5–7 W download, 1.5 W
+asleep). The update **invalidated both pyatv pairings**; re-pairing failed until *Settings › AirPlay and HomeKit ›
+Allow Access* was set to **Everyone** (AirPlay pair-setup → HTTP 403, Companion → "Non-home access not allowed"),
+then AirPlay + Companion re-paired with on-screen PINs; creds in `/srv/data/owl/atv/` (tvOS-18 copies kept as
+`*.tvos18.bak`). pyatv now runs from **`/srv/data/owl/pyatv-venv`** (git master, post-0.18.0 tvOS 26 fixes;
+0.18.0 is still the latest release) — rig.py/bench.py/probe/watch prefer it. VLC path verified on 26.6:
+`Playing`, 4.96 W (no audio after the update — irrelevant, clips are silent). **Native AirPlay is within reach:**
+with upstream **PR #2899** (play queue over `/command` instead of `POST /play`) the receiver actually *fetched
+the media* (origin 25 Range requests) — playback stopped only because `atvremote` exits after queueing and closes
+the session; a driver that holds the AirPlay session open for the window (Python API) would measure the **native
+tvOS player**, no VLC caveat. Venv at `/srv/data/owl/pyatv-pr2899`. Disclosed settings on the box (owner,
+2026-08-26): screensaver **off**, OS + app automatic updates **off**, AirPlay Allow Access = Everyone.
 
 ### Plan (one on-site session + one desk session)
 

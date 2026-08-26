@@ -30,7 +30,7 @@ from dotenv import dotenv_values
 sys.path.insert(0, "/home/gos/wattlab/wattlab_service")
 import confidence as owl_confidence   # noqa: E402
 
-ATVREMOTE = "/tmp/pyatv-venv/bin/atvremote"
+ATVREMOTE = next(b for b in ("/srv/data/owl/pyatv-venv/bin/atvremote", "/tmp/pyatv-venv/bin/atvremote") if __import__("pathlib").Path(b).is_file())
 ATV_IP = "192.168.1.152"
 CREDS = Path("/srv/data/owl/atv")
 ORIGIN = "http://192.168.1.62:8123"

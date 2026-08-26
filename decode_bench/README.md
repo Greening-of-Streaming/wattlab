@@ -226,8 +226,12 @@ baselines and **disable the tvOS screensaver first** (it ramps the parked floor 
 2026-08-26 rows). First result: H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W. **Never measure it headless:** with no
 display VLC still says `Playing` but the box draws 1.6–1.8 W (full-screen playback 4.9 W, quarter-screen
 unscaled 4.4 W) — not decode energy; and an HDMI hot-plug in either direction pauses VLC (frozen frame),
-so attach the display before the row and leave it. Asleep between rows is normal (`turn_on` wakes it). pyatv 0.18.0 venv is at `/tmp/pyatv-venv`
-(⚠ under /tmp — recreate with `python3 -m venv … && pip install pyatv==0.18.0` if it is gone). CR-075.
+so attach the display before the row and leave it. Asleep between rows is normal (`turn_on` wakes it). pyatv runs from **`/srv/data/owl/pyatv-venv`** (git master; 0.18.0 release is too old for tvOS 26 — the
+`/tmp/pyatv-venv` copy is a leftover). Box is on **tvOS 26.6 (23L773)** since 2026-08-26; re-pairing after an OS
+update needs *AirPlay and HomeKit › Allow Access = Everyone* first (else 403 / "Non-home access"), then
+`atvremote --scan-hosts 192.168.1.152 --protocol airplay|companion pair` with the on-screen PIN. Disclosed box
+settings: screensaver off, OS/app auto-updates off. Native AirPlay (`play_url`) works with upstream PR #2899 only
+while the sender holds the session (`/srv/data/owl/pyatv-pr2899`) — a future native-player driver. CR-075.
 
 **Origin:** Range-correct `origin.py` on `:8123`, a child of wattlab.service (`origin_control.py`,
 reboot-persistent; `sudo systemctl stop wattlab` kills it — restart, don't stop). CR-072 phase 2
