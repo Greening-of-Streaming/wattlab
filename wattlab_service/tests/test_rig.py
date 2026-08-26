@@ -803,3 +803,24 @@ def test_atv_poller_readiness_via_power_state(monkeypatch):
     d.update({"state": "booting", "boot_started": time.monotonic() - 5})
     _run(rig.poll_once())
     assert d["state"] == "ready" and d["detail"] == "pyatv ok"
+
+
+def test_atv_asleep_is_reported_not_stuck_and_on_wakes_it(monkeypatch):
+    calls = []
+
+    def fake(dev, *c, **k):
+        calls.append(c)
+        return "PowerState.Off\n" if c == ("power_state",) else ""
+    monkeypatch.setattr(rig, "atv_cmd", fake)
+    monkeypatch.setattr(rig, "probe_ready", lambda dev: _ORIG_PROBE_READY(dev) if dev["kind"] == "atv" else False)
+    _stub_plugs(monkeypatch, on=True, watts=1.5)
+    d = rig.rig_cache["devices"]["atv"]
+    d.update({"state": "booting", "boot_started": time.monotonic() - 500})
+    _run(rig.poll_once())
+    assert d["state"] == "booting" and "asleep" in d["detail"]     # never "stuck"
+
+    async def _set(ip, on, **kw):
+        pass
+    monkeypatch.setattr(rig, "plug_set", _set)
+    _run(rig.device_on("atv"))
+    assert ("turn_on",) in calls

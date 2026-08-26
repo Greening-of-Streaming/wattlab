@@ -633,12 +633,18 @@ async def _wait_ready(name: str, sub: dict, timeout_s: float) -> None:
     dev = rig.rig_cache["devices"][name]
     if dev["state"] == "off":
         await rig.device_on(name)
-    is_webos = rig.RIG["devices"][name].get("kind") == "webos"
+    kind = rig.RIG["devices"][name].get("kind")
+    is_webos = kind == "webos"
     t0 = time.monotonic()
     last_wake = 0.0
     while time.monotonic() - t0 < timeout_s:
         if dev["state"] == "ready":
             return
+        if kind == "atv" and time.monotonic() - last_wake > 8:
+            # tvOS sleeps within minutes when parked headless (2026-08-26);
+            # the poller reports it asleep and a job that wants it wakes it.
+            await asyncio.to_thread(rig.atv_wake, rig.RIG["devices"][name])
+            last_wake = time.monotonic()
         if is_webos and time.monotonic() - last_wake > 8:
             # The C2 drops into Always-Ready standby between queued jobs and
             # then rejects SSAP — the poller (rightly) never auto-wakes the

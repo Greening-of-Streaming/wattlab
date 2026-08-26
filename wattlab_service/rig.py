@@ -857,16 +857,32 @@ def atv_cmd(dev: dict, *cmds: str, timeout: int = 40) -> str:
     return (r.stdout or "") + (r.stderr or "")
 
 
+_ATV_LAST_POWER: dict = {}     # target → last "On"/"Off"/None seen by atv_power_state
+
+
 def atv_power_state(dev: dict) -> str | None:
-    """"On" / "Off" / None (unreachable) from `atvremote power_state`."""
+    """"On" / "Off" / None (unreachable) from `atvremote power_state`.
+    "Off" = tvOS asleep (mains still on) — with no HDMI attached the box
+    sleeps within minutes of being parked (2026-08-26)."""
+    state = None
     try:
         out = atv_cmd(dev, "power_state", timeout=25)
+        for line in out.splitlines():
+            if "PowerState." in line:
+                state = line.strip().rsplit(".", 1)[-1]
     except Exception:
-        return None
-    for line in out.splitlines():
-        if "PowerState." in line:
-            return line.strip().rsplit(".", 1)[-1]
-    return None
+        state = None
+    _ATV_LAST_POWER[dev.get("target")] = state
+    return state
+
+
+def atv_wake(dev: dict) -> None:
+    """Wake a sleeping Apple TV (pyatv turn_on). Best-effort; a cold-booting
+    box just ignores it."""
+    try:
+        atv_cmd(dev, "turn_on", timeout=25)
+    except Exception:
+        log.debug("atv_wake failed for %s", dev.get("label"), exc_info=True)
 
 
 def probe_ready(dev: dict) -> bool:
@@ -1153,6 +1169,14 @@ async def _step_device(name: str, master_off: bool) -> None:
                       "detail": "ADB not authorised — needs an on-site OK on the "
                                 "box's remote (Repair ADB)"})
             return
+        # A sleeping Apple TV answers pyatv with PowerState.Off: powered, not
+        # broken — like the C2's Always-Ready standby. Say so; the poller does
+        # not wake it (a run, or the On button, does).
+        if (dev_cfg["kind"] == "atv"
+                and _ATV_LAST_POWER.get(dev_cfg.get("target")) == "Off"):
+            d.update({"state": "booting", "boot_started": now, "elapsed_s": 0.0,
+                      "detail": "asleep (tvOS) — a run or On wakes it"})
+            return
         # Not answering on the configured address past its boot time: it may
         # be up on another lease (Ethernet↔Wi-Fi move) — follow it by MAC
         # before calling it stuck. Rate-limited; the sweep runs in a thread.
@@ -1267,6 +1291,9 @@ async def device_on(name: str) -> None:
         if m["configured"] and m.get("switchable") and m["on"] is False:
             raise RigError(409, "master is off — turn the rig on first")
         await plug_set(dev_cfg["plug_ip"], True)
+        if dev_cfg["kind"] == "atv":
+            # Relay already on + tvOS asleep is the common case — wake it.
+            await asyncio.to_thread(atv_wake, dev_cfg)
         d.update({"state": "powering", "boot_started": time.monotonic(),
                   "elapsed_s": 0.0, "detail": "relay on"})
 

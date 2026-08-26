@@ -466,6 +466,7 @@ class AtvDevice:
 
     def prepare(self, run):
         self.state_at_end = None
+        self.atv("turn_on")       # asleep between rows is normal headless (tvOS sleeps in minutes)
         self.park()
 
     def start(self, run):
