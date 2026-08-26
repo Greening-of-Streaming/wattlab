@@ -41,7 +41,7 @@ def job_state(job_id):
     try:
         j = json.load(urllib.request.urlopen(f"http://127.0.0.1:8000/decode/job/{job_id}", timeout=5))
         dev = (j.get("devices") or {}).get("atv") or {}
-        return {"status": j.get("status"), "detail": dev.get("detail"), "watts": dev.get("watts"),
+        return {"status": j.get("status"), "detail": dev.get("detail"), "watts": dev.get("live_w"),
                 "stage": dev.get("stage") or j.get("stage")}
     except Exception as e:
         return {"status": f"ERR {type(e).__name__}"}
