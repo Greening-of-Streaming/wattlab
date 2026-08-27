@@ -182,6 +182,27 @@ wattlab-side JOURNAL entries are still owed.*
   reopened as CR follow-ups per the no-new-followups rule). SMPTE digest fully rewritten with the campaign
   table, RESULTS_INDEX C19 and RUN_QUEUE updated and pushed (`feddac6`); wattlab CHANGE_REQUESTS.md/
   CHANGE_REQUESTS_CLOSED.md/CLAUDE.md updated (22 active CRs). Full pytest suite green throughout (1046).
+- **New `/findings` entry** `appletv-a10x-av1-vp9-software-fallback` (🟢, 8 cited result IDs from the
+  clean campaign) — the third silicon-coverage instance, cross-linked into
+  `codec-decode-energy-depends-on-silicon-and-regime` and `stb-decode-and-play-content-over-codec`
+  (13 slugs total). **Found and fixed a real gap while doing the final wrap-up check:** the
+  `min_settle_s`/`min_baseline_samples` fix (running in production all night) had never actually been
+  committed to git — `wattlab_service/rig.py`, `decode_run.py` and their test were edited but the
+  `git add` never happened. Committed late (`61e5949`) once `git status` caught it. Lab session ended
+  (`bin/lab-session-off`), five sanity devices off, Apple TV and the household C2 left as-is.
+- **Same-day follow-up (2026-08-27, ~12:45, Ben's own protocol): the post-update elevated-baseline
+  question from the overnight campaign is RESOLVED, not open.** Ben asked directly whether tvOS 26.6 has
+  a higher idle floor than 18 — a fair challenge, since the digest had only logged it as an unconfirmed
+  "Q3". The box had been off for hours (rig's 4 h idle auto-off caught it that morning) — ideal rested
+  conditions. Powered on fresh, parked in **tvOS Settings** (not VLC's library, at Ben's request — this
+  reproduced the earlier-seen "Settings spikes power" pattern as a **recurring** burst, 5.7–8.0 W in
+  ~20–40 s cycles for about 3 minutes post-boot, not a one-off launch transient), settled a full 4
+  minutes, then a clean 5-min/1 s window (n=290, HDMI/display attached throughout): **mean 2.567 W,
+  median 2.462 W, sd 0.238 W, 90% of samples under 3.0 W** — statistically the same as the tvOS 18 floor
+  (2.5–2.7 W). Conclusion: the overnight campaign's ~3.2–3.5 W plateau was this same post-boot burst
+  **re-triggering on the campaign's ~4-minute park/relaunch cycle**, not a permanent property of tvOS
+  26.6 — a genuinely rested box shows no elevation at all. Corrected in the SMPTE digest (§4 Q3 rewritten
+  as resolved), RESULTS_INDEX C19, and the wattlab CR-075 closed-archive entry; all three pushed.
 
 ## Session 66 — 2026-08-18 evening → 08-19 morning (overnight: CR-074 campaign + documentation sweep)
 
