@@ -12,7 +12,7 @@ source_result_ids:
   - decode/dec0de06
   - decode/dec0de05
   - decode/dec0de04
-related_findings: [hw-decoder-cuts-client-energy-4x, stb-decode-and-play-content-over-codec]
+related_findings: [hw-decoder-cuts-client-energy-4x, stb-decode-and-play-content-over-codec, appletv-a10x-av1-vp9-software-fallback]
 supersedes: null
 tags: [decode, codecs, client-device, hevc, av1, methodology]
 caveats:

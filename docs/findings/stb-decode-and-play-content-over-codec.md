@@ -19,7 +19,7 @@ source_result_ids:
   - decode/5e2c4daa
   - decode/b6b496f7
   - decode/d1be6ebe
-related_findings: [hw-decoder-cuts-client-energy-4x, codec-decode-energy-depends-on-silicon-and-regime]
+related_findings: [hw-decoder-cuts-client-energy-4x, codec-decode-energy-depends-on-silicon-and-regime, appletv-a10x-av1-vp9-software-fallback]
 supersedes: null
 tags: [decode, client-device, set-top-box, google-tv, fire-tv, content-dependence, long-window, protocol-v3, draft]
 caveats:

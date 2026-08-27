@@ -191,12 +191,13 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 
 ## Key Findings to Date
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real
-stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs (12):
+stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs (13):
 `abr-all-codecs-meridian-120s` · `av1-hw-sw-vmaf-tradeoff` ⭐ · `input-master-sensitivity` ·
 `llm-cold-inference-mwh-per-token` 🟡 · `rag-faithfulness-rem-question` 🟡 · `sd-turbo-cpu-image-first-run` ·
 `upscale-sweetspot-degraded-sources` · `gpu-boost-overclocks-fixed-function-nvenc` (v2, prior-art positioned) ·
 `hw-decoder-cuts-client-energy-4x` (3.7× rt / 4.6× sat, lab-reviewed) · `codec-decode-energy-depends-on-silicon-and-regime` 🟡 ·
-`streaming-box-plays-4-7x-cheaper-than-general-purpose` · `stb-decode-and-play-content-over-codec` (DRAFT).
+`streaming-box-plays-4-7x-cheaper-than-general-purpose` · `stb-decode-and-play-content-over-codec` (DRAFT) ·
+`appletv-a10x-av1-vp9-software-fallback` 🟢.
 Not catalogued (live on `/methodology`): French grid evolution (Eco2mix lifecycle series); CR-016 insight —
 Eco2mix `taux_co2` is combustion-only, never compare it to lifecycle means. VP9 stays a report
 (`docs/vp9_oneoff_2026-08.md`) until the discussion settles.
