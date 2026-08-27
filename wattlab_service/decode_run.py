@@ -397,6 +397,18 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
     if cadence_s is not None:
         cfg["cadence_s"] = float(cadence_s)   # per-run slider override
     cfg["window_s"] = base_window             # tester-set duration override
+    # Per-device settle/baseline floor (2026-08-27): the 5 s / 20-sample
+    # protocol default was tuned against the Android boxes' fast post-stop
+    # settle. The Apple TV's own draw keeps moving for 15-20+ s after `stop`
+    # (an atv_probe.py run with 20-30 s settle / 40-45 s baseline stayed
+    # clean all night; the campaign's default 5 s / 20 s produced base sd
+    # up to 2 W and rows that never should have flagged 🔴). `max()` so a
+    # tester's slider override can only raise it, never undercut the floor.
+    if dev_cfg.get("min_settle_s") is not None:
+        cfg["settle_s"] = max(cfg["settle_s"], int(dev_cfg["min_settle_s"]))
+    if dev_cfg.get("min_baseline_samples") is not None:
+        cfg["baseline_samples"] = max(cfg["baseline_samples"],
+                                      int(dev_cfg["min_baseline_samples"]))
     if proto["idle_guard"]:
         # Reference mode when the device's settled idle is known (rig
         # config) — same asymmetric floor semantics as GoS1's CR-070 guard.

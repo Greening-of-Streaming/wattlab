@@ -393,6 +393,29 @@ def test_materialize_apple_tv_uses_urls_and_pyatv_driver():
         p.unlink()
 
 
+def test_materialize_apple_tv_gets_a_longer_settle_and_baseline_floor(monkeypatch):
+    """2026-08-27: the generic 5 s / 20-sample protocol was tuned to the
+    Android boxes' fast post-stop settle and produced noisy Apple TV rows —
+    min_settle_s/min_baseline_samples raise the floor for this device only."""
+    import settings as cfg
+    monkeypatch.setattr(cfg, "load", lambda: {})
+    p = decode_run._materialize("tj-atv2", "loop_bbb_h264", "atv", "headless", False)
+    try:
+        c = json.loads(p.read_text())
+        assert c["settle_s"] == 25          # protocol default (5) < the floor
+        assert c["baseline_samples"] == 40  # protocol default (20) < the floor
+        assert c["idle_guard"]["reference_w"] == rig.RIG["devices"]["atv"]["idle_w"]
+    finally:
+        p.unlink()
+    # a tester's slider raising it further is respected; the floor never lowers it
+    p = decode_run._materialize("tj-atv3", "loop_bbb_h264", "pi5", "headless", False)
+    try:
+        c = json.loads(p.read_text())
+        assert c["settle_s"] == 5 and c["baseline_samples"] == 20   # unaffected device
+    finally:
+        p.unlink()
+
+
 def test_run_endpoint_refuses_screen_mode_for_uncabled_device():
     rig.apply_hdmi_assignments({})
     for dev in ("pi5", "atv"):

@@ -209,9 +209,21 @@ RIG: dict = {
             "hdmi_input": None,
             "expected_boot_s": 60, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 10,
-            # Parked in tvOS Settings the box sits at ~2.8 W (2026-08-26);
-            # the home screen autoplays previews (6–15 W) — never the idle.
+            # Parked (VLC stopped) the box sits at ~2.1-2.3 W; the home
+            # screen autoplays previews (6-15 W) and tvOS Settings spikes to
+            # ~5.7 W on 26.6 — neither is the idle. idle_w set a bit above
+            # the clean floor because `stop` sometimes leaves a slow-draining
+            # transient (see min_settle_s below).
             "idle_w": 2.8,
+            # 2026-08-27: found live during the first overnight campaign —
+            # the generic 5 s / 20-sample protocol is tuned to the Android
+            # boxes' fast post-stop settle. This box's draw kept moving for
+            # 15-20+ s after `stop` (idle_guard was passing on a transient
+            # 3 s window, then the fixed-length baseline caught the tail:
+            # base sd up to 2 W, several rows falsely 🔴). A direct
+            # atv_probe.py run with 20-30 s settle / 40-45 s baseline stayed
+            # clean all night — these floors reproduce that.
+            "min_settle_s": 25, "min_baseline_samples": 40,
         },
         "c2": {
             # The C2 as a native decoder (CR-071): its own α9 SoC decodes+
