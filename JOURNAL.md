@@ -151,8 +151,37 @@ wattlab-side JOURNAL entries are still owed.*
   major OS update should not be trusted for a baseline campaign without re-checking.
 - The five sanity devices (Pi 5/400, Fire TV, GTV, Bbox) powered down gracefully once their checks were
   done, to stop burning idle power during the stability wait; the shared C2/monitor left alone (household
-  TV, not the rig's to touch). *Continues past this entry — see the wrap-up note once the Apple TV data
-  set and final sanity pass are complete.*
+  TV, not the rig's to touch).
+- **Stability gate reached STABLE at 01:36 (~35 min wait)** and the clean campaign auto-launched — but the
+  first rows (base 8.3 W, 4–8 W) showed the box had NOT actually recovered: the gate's floor band (1.8–2.8 W,
+  carried over from tvOS 18) caught a brief lull inside a longer, bursty episode, not the episode ending.
+  Rather than re-chase the old floor, let the campaign run once the baseline settled into something CONSISTENT
+  (a new ~3.2–4.0 W plateau, gradually easing toward ~3.1–3.3 W over two hours) rather than wildly bursting —
+  task-level numbers matched known-clean values throughout regardless (e.g. AV1 5.69–5.71 W both before and
+  during the elevated-baseline period), so the codec comparison was never actually at risk; only the absolute
+  idle-W number is left open (see the digest's Q3 — post-update housekeeping vs. tvOS 26.6 having a
+  genuinely different resting idle footprint; can't distinguish without a longer quiet-night baseline).
+- **CR-077 validated live against two real rig devices** while waiting on the Apple TV: Pi 5 (ssh driver)
+  and GTV (adb driver). The Pi 5 run caught a real bug in the tool itself — rep 1, started right at
+  boot-ready, absorbed lingering post-boot settling and reported a false ~39 s "decay"; fixed with a
+  `boot_settle_s` warm-up buffer, +3 tests. GTV's recommendation (5 s/3 samples — essentially already covered
+  by the existing default) contrasted cleanly against the Apple TV's (25 s/40 samples), which is exactly the
+  discrimination the tool exists to make.
+- **One isolated playback failure** (Kranjska AV1, rep 1 of the clean campaign): `alive_at_window_end=False`,
+  task power never rose above ~3.3 W (expected ~4.1–4.6 W) — a one-off VLC hiccup; the very next row came back
+  clean without intervention and no other row that night repeated the pattern. Excluded from the final table
+  (n=2 for that one cell).
+- **Clean campaign completed 03:59, 36/36 rows (1 excluded), batch `9d39def85f1b`.** Final result — device-total
+  W, mean across BBB/Kranjska/Meridian: **H.264 4.098 · HEVC 4.065 · AV1 5.254 · VP9 5.284 W**. Hardware pair
+  (H.264+HEVC) 4.082 W vs software-fallback pair (AV1+VP9) 5.269 W → **+1.187 W (+29.1 %)**, closely reproducing
+  the pilot evening's n=2/one-content estimate (+1.35 W/+27 %) with 3× the reps across three contents — the
+  codec gap held steady per content (+1.01 to +1.31 W) despite the baseline-plateau caveat, because that
+  elevation is common-mode and cancels in the codec-to-codec comparison. **Upgraded to 🟢 Repeatable** (was 🟡).
+- **CR-075 closed** (SMPTE C19 now Repeatable; residual items — pyatv power/boot rig.py entry, a
+  native-AirPlay driver using upstream PR #2899, 4K/HDR — folded into the digest's open questions, not
+  reopened as CR follow-ups per the no-new-followups rule). SMPTE digest fully rewritten with the campaign
+  table, RESULTS_INDEX C19 and RUN_QUEUE updated and pushed (`feddac6`); wattlab CHANGE_REQUESTS.md/
+  CHANGE_REQUESTS_CLOSED.md/CLAUDE.md updated (22 active CRs). Full pytest suite green throughout (1046).
 
 ## Session 66 — 2026-08-18 evening → 08-19 morning (overnight: CR-074 campaign + documentation sweep)
 

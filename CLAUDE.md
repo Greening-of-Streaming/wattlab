@@ -15,7 +15,7 @@
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 23 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - CHANGE_REQUESTS.md — 22 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
 #   - TESTING.md — pytest suite (1027 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
@@ -146,7 +146,7 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 23 CRs** in CHANGE_REQUESTS.md (CR-077 captured 2026-08-27: device-onboarding idle-settle tool; CR-076 captured 2026-08-26: /decode topology from settings; CR-066–069 captured 2026-07-06 from the
+tour/credibility → RAG). **Active: 22 CRs** in CHANGE_REQUESTS.md (CR-075 closed 2026-08-27 — Apple TV Repeatable finding, SMPTE C19; CR-077 captured same night: device-onboarding idle-settle tool; CR-076 captured 2026-08-26: /decode topology from settings; CR-066–069 captured 2026-07-06 from the
 OWL_AUDIT.md triage; CR-024 closed same week — PR #5 `09480ec`); closed archive in CHANGE_REQUESTS_CLOSED.md.
 CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — owner-infra remainders keep them active.
 
