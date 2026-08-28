@@ -1,0 +1,218 @@
+# Consolidated encode dataset — what this is
+
+*Built 2026-08-28 for the SMPTE paper, extended same day with isolated Kranjska runs
+recovered from the live-app results store. Combines OWL's encode-power + VMAF campaigns
+into one tidy CSV (`consolidated_encode_dataset.csv`, 440 rows) so the analysis doesn't
+have to stitch six source locations by hand. Every row is traceable back to a stored
+result artifact — nothing here is a fresh measurement.*
+
+## The six datasets, concatenated (`dataset` column)
+
+| `dataset` value | What it answers | Codecs | Sequences | Rate control | Rows |
+|---|---|---|---|---|---|
+| `s53_iso_bitrate_sweep` | **Iso-bitrate**: at this target bitrate, what VMAF/energy? | H.264, H.265, AV1 | BBB, Meridian, Kranjska | fixed target, up to 11 points/codec | 168 |
+| `s53_abr_ladder_typical` | **Typical operational points**: real ABR-ladder rungs (720p/540p/480p/360p) at fixed per-resolution bitrates | H.264, H.265, AV1 | BBB, Meridian, Kranjska | fixed, per-rung | 72 |
+| `s53_iso_quality_interpolated` | **Iso-quality**: bitrate/energy needed to hit VMAF 88/90/92/94/96 | H.264, H.265, AV1 | BBB, Meridian, Kranjska | *interpolated*, not measured | 135 |
+| `frozen_amd_typical_use_2026-05-22` | Single typical-ABR point per codec, pre-GPU-swap hardware | H.264, H.265, AV1 | Meridian only | fixed, 1 point/codec | 6 |
+| `vp9_vs_trio_sweep_2026-08-17` | Iso-bitrate, 4th codec, two operating points each (OWL-default vs Jan Ozer's everything-slow) | H.264, H.265, AV1, **VP9** | BBB, Meridian | fixed target, 2 bitrates | 36 |
+| `kranjska_isolated_video_ui_runs_2026-06` | **Typical-use bitrate on Kranjska**, current NVENC hw — the sport-tier point `frozen_amd_typical_use` is missing, recovered from ad hoc live-app jobs, not a designed campaign | H.264, H.265, AV1 | Kranjska only (120s + full 6:40) | fixed, same 3 bitrates as the AMD finding | 23 |
+
+Every row also carries `hardware` and `vmaf_version` explicitly — **read those two columns
+before comparing rows across datasets.** They are not all the same.
+
+## Provenance, dataset by dataset
+
+### `s53_iso_bitrate_sweep` + `s53_abr_ladder_typical`
+Source: `results/calibration/encode_parity_nvenc_24c_2026-06-20_plus_ext.json` — the
+original S53 campaign **plus a 2026-08-28 supplemental run**, merged. Base: 207 rows
+(2026-06-20, GoS1: Ryzen 9 7900 / RTX 5080 NVENC, `ffmpeg N-124403`). Extension: 33 rows
+added 2026-08-28 to close the VMAF 94/96 iso-quality gaps that were still inside a
+defensible streaming bitrate range (see "The 2026-08-28 extension" below) — merged file
+is **240 rows, all 🟢**. `profile=cpu` rows are `libx264`/`libx265`/`libsvtav1`;
+`gpu_baseline`/`gpu_tuned` are NVENC (baseline = OWL's live args; tuned = + quality-knob
+bundle, see below). `rung=sweep` (168 rows, 1080p) is the iso-bitrate data; `rung=ladder`
+(72 rows, cpu + gpu_baseline only, unchanged by the extension) is the fixed lower-rung ABR
+ladder — the closest thing to a measured "typical operating point" table. Method write-up:
+`docs/encode_parity_calibration_2026-06.md` — **but read numbers from the CSV/JSON, not
+that doc's §9 prose tables**, which were written against an even earlier, smaller, 2-clip
+partial artifact (`..._2026-06-18.json`) before Kranjska was added. The original 06-20
+file (207 rows) and the 08-28-only extension (33 rows) are both kept on disk unmodified —
+`..._2026-06-20.json` and `_staging/..._2026-08-28_bitrate_ext.json` respectively — the
+`_plus_ext` file is the one to use; it's also what `/video/budget` now serves as "latest."
+
+#### The 2026-08-28 extension — what it added and a mid-run correction
+30 rows extending Meridian+BBB (H.264 →13/15 Mbps, H.265 →8.5/10 Mbps, AV1 →7.5 Mbps) plus
+3 optional rows extending Kranjska AV1 →13 Mbps — all chosen to stay inside a defensible
+"premium/live-tier" streaming bitrate ceiling (H.264/H.265) or AV1's realistic ~7-8 Mbps
+top (see chat: VMAF 96 for AV1 at 1080p was deliberately left unchased as unrealistic
+regardless of bitrate). Kranjska's H.264/H.265 ladder was deliberately left untouched —
+it already exceeds realistic streaming bitrates from the original campaign.
+**Mid-run correction:** the harness scores VMAF using the live service's current default,
+which has been **v1** since S55 (2026-07-17) — not the v0.6.1 the rest of this dataset
+uses. The first pass came back on the wrong scale. Fixed by re-encoding all 33 rows
+(same deterministic ffmpeg commands, no re-measurement needed) and rescoring under an
+**in-process** `vmaf_model=v0` override (`bin/rescore-bitrate-ext-v0.py`) that never
+touched the live `settings.json`, so it had zero effect on concurrent visitor scoring.
+Each extension row keeps both: `vmaf` is the v0.6.1 rescore (the number used everywhere
+in this file); `vmaf_v1_bonus` is the original v1 score, kept for reference only — do not
+mix it into any v0.6.1 comparison. **Result: 12 of the 33 targeted VMAF-94 gaps closed**
+(everything realistic to close, closed); the remaining gaps are VMAF-96 (an honest ceiling
+at realistic bitrates, not a data gap) plus Kranjska H.265-GPU's 94/96 (left alone by
+design). Scripts: `bin/run-bitrate-ceiling-ext.py`, `bin/rescore-bitrate-ext-v0.py`,
+`bin/merge-bitrate-ext.py` — all still on disk if this needs re-running or auditing.
+
+### `s53_iso_quality_interpolated`
+Source: `docs/smpte_2026/iso_vmaf_table.csv` (already built for this paper, generator
+`make_iso_vmaf_table.py`), derived from the merged `_plus_ext` artifact above. For each
+clip × codec × profile, the bitrate/Wh-per-minute **linearly interpolated** between the
+measured sweep points to hit VMAF targets 88/90/92/94/96. **Not an independent
+measurement** — see caveats. An empty `target_kbps`/`wh_per_min` means the target VMAF
+exceeded what the sweep reached (`notes` column states the max measured VMAF instead).
+**Post-extension: 21 of 135 cells empty** (down from 33 before the 08-28 extension) — all
+21 are VMAF-96 except Kranjska H.265-GPU, which is still short of 94 too (left alone; its
+ladder already exceeds realistic streaming bitrate — see the extension section above).
+
+### `frozen_amd_typical_use_2026-05-22`
+Source: `docs/findings/abr-all-codecs-meridian-120s.md`, stored result `video/e18a9d57`.
+One 120 s Meridian run, six encodes, each codec at **one** literature-typical ABR bitrate
+(H.264 4 Mbps / H.265 2 Mbps / AV1 1.5 Mbps) — n=1. **This predates the 2026-05-29 GPU swap**
+(AMD RX 7800 XT, not the RTX 5080) — frozen baseline, `docs/gpu_swap_amd_baseline.md`. Included
+because it's the only place OWL states single "typical" bitrates per codec with a citation,
+but it is a different GPU generation from every other row in this file — do not average
+it in with the NVENC rows.
+
+### `vp9_vs_trio_sweep_2026-08-17`
+Source: `results/diagnostics/encode_parity_nvenc_24c_2026-08-17.json` (108 raw rows, n=3
+reps per cell), transcribed here from the pre-aggregated, already-reviewed tables in
+`docs/vp9_oneoff_2026-08.md` §5.1 (mean of n=3, sd ≤5%, all 🟢). VP9 (`libvpx-vp9`) has no
+GPU path on this box (no NVENC/VAAPI VP9 on NVIDIA or AMD) — software-only, which is also
+true of the H.264/H.265/AV1 rows re-measured alongside it here (this campaign didn't touch
+NVENC). Two operating points per encoder: `medium`/`preset10_default` = OWL/S53's usual
+point; `slow`/`preset3`/`cpu-used1-2` = Jan Ozer's "everything-slow" set (see §4.2 of that
+doc). **VMAF v1** (`vmaf_v1.0.16_3d0h`) — not the v0.6.1 used everywhere else in this file.
+
+### `kranjska_isolated_video_ui_runs_2026-06`
+Not a designed campaign — five one-off jobs run through the live `/video` UI (2026-06-19
+through 06-29), found by grepping every stored result for "kranjska" and keeping the ones
+that are encodes (the great majority of Kranjska hits are decode/playback rows from the
+rig, out of scope here). Recovered because three of them land on **exactly the same fixed
+bitrates** as `frozen_amd_typical_use_2026-05-22` (H.264 4000 / H.265 2000 / AV1 1500
+kbps) — so this is that finding's missing sport-tier row, on current NVENC hardware:
+
+- **`2026-06-20_1efc7e0d`** (GPU-only), **`2026-06-20_62bf87ae`** and **`2026-06-29_c017beb2`**
+  (both `all_codecs`, CPU+GPU) — all read the **canonical** `kranjska_dh_120s.mp4`. VMAF and
+  achieved bitrate repeat exactly within a codec across these three jobs (fixed-CBR NVENC/x264
+  encodes are deterministic given identical input+settings) — only `delta_e_wh` differs, so
+  read these as **3 independent GPU-energy reps and 2 independent CPU-energy reps** at each
+  bitrate, not 3 independent quality measurements.
+- **`2026-06-19_f2c2ac40`** — **flagged, do not pool.** It reads a *different* source file,
+  `kranjska_dh_120s.webm` (a pre-canonicalisation master), not the `.mp4` every other row
+  uses. Same codec (H.264) and identical bitrate (4000 kbps) but VMAF lands at 46–47, a
+  ~23-point gap from the 69–70 the `.mp4`-sourced rows score at the same setting — almost
+  certainly the webm ancestor was already-lossy. Kept in the CSV (`notes` column marks it
+  `*** ANOMALOUS ***`) so it's visible rather than silently dropped, but exclude it from any
+  average.
+- **`2026-06-29_36879b34`** — the **full 6:40 clip**, not the 120s extract, at the same three
+  bitrates. Different content window (`clip=kranjska_full`), so don't average it in with the
+  120s reps above; it's its own row, useful mainly as a longer-duration sanity check.
+
+**The headline this recovers:** at the *same* "typical use" bitrates that produce VMAF 92–94
+on Meridian and BBB, Kranjska lands at **VMAF 47–70** — H.264 highest (~70), H.265 lowest
+(~50–58), AV1 in between (~50–54) at its comparatively starved 1500 kbps. That's the sport-tier
+content-complexity effect the S53 sweep's own methodology note already flags (`parity.py`:
+"ladder tops out BELOW the VMAF-92 target" for Kranjska) — this is the concrete number for it.
+**Caveat:** none of these rows went through the S53 harness's repeat-to-≥20s-window energy
+trick, so every GPU row here carries 🟡 confidence (short single-pass window), same underlying
+issue the harness was built to fix — treat energy numbers as indicative, not to the same
+standard as the `s53_*` datasets' 🟢 rows.
+
+## Caveats to carry into the paper
+
+1. **Two VMAF model versions in one file.** `s53_*` and `frozen_amd_*` rows are **VMAF
+   v0.6.1** (OWL's default model pre-S55). `vp9_vs_trio_sweep_2026-08-17` is **VMAF v1**.
+   Never compare a VMAF number across that boundary — compress/energy comparisons are fine,
+   quality-score comparisons are not.
+2. **Two GPU generations.** `frozen_amd_typical_use_2026-05-22` is AMD RX 7800 XT
+   (VAAPI). Every other GPU row is RTX 5080 (NVENC), measured after the 2026-05-29 swap.
+   AV1 in particular: the AMD `av1_vaapi` behaviour (from `av1-hw-sw-vmaf-tradeoff.md`) is
+   explicitly *not* the same encoder as NVENC AV1.
+3. **Iso-quality rows are interpolated, not measured.** `s53_iso_quality_interpolated`
+   bitrates/energy are linear interpolation between real sweep points (`notes` names the
+   two bracketing points as `sweep_points`). Treat as "expected," and if the paper needs a
+   truly-measured iso-quality point, that's an unshipped CR-045 V2 feature (see below) —
+   you'd need to run a targeted bitrate search, not read it off this table.
+4. **Achieved ≠ target bitrate.** `s53_*` rows report `achieved_kbps` from the actual
+   encoded output (one-pass ABR misses its target, especially on short clips) — use
+   `achieved_kbps` for rate-quality curves, `target_kbps` only to identify the sweep point.
+   The VP9 sweep also missed its targets by up to +46% (see `docs/vp9_oneoff_2026-08.md` §5.1
+   caveat 4) — `achieved_kbps` is given for those rows too, use it the same way.
+5. **Content-complexity labels were corrected 2026-06-19.** BBB is the *high*-complexity
+   clip (SI≈33/TI≈6), Meridian is *low* (SI≈13/TI≈2) — the opposite of their earlier
+   reputations, which is why some older OWL prose (and the `abr-all-codecs-meridian-120s`
+   finding's own caveats) call Meridian "high complexity." The `complexity` column here uses
+   the corrected, SI/TI-measured labels. Kranjska (see below) is the outlier: high on *both*
+   axes.
+6. **n and repeat structure differ by dataset.** `s53_*` rows are single measurement points
+   (n_encodes handles the repeat-to-20s-window energy trick within one row, not statistical
+   replication — `n=1` day-to-day). `vp9_vs_trio_sweep_2026-08-17` rows are genuine n=3
+   across separate reps (sd reported in the source doc, not carried into this CSV — pull it
+   from `docs/vp9_oneoff_2026-08.md` §5.1 if you need error bars on those rows specifically).
+   `frozen_amd_typical_use_2026-05-22` is n=1.
+7. **NVENC "tuned" profile is a rejected config, not a recommendation.** `gpu_tuned` rows
+   exist to show what a quality-knob bundle costs/buys (§9.3 of the methodology doc found it
+   mostly *not* worth it — lowers VMAF for H.264/AV1, only helps H.265 at low bitrate, costs
+   1.6–2.8× the energy). Don't read `gpu_tuned` as "the better GPU setting" — `gpu_baseline`
+   is what OWL's live `/video` page actually ships.
+8. **The Kranjska isolated runs are weaker evidence than everything else in this file.**
+   They're recovered ad hoc jobs, not a designed campaign: no repeat-to-window energy
+   protocol (GPU rows are 🟡, not 🟢), n=1–3 per point depending on how many of the five
+   jobs happen to cover it, and one of the five (`f2c2ac40`) reads a different source file
+   entirely — see its dataset section above before using it.
+
+## Is CR-045 blocking this?
+
+**No.** CR-045 is a UI feature — a radio toggle on OWL's live `/video` all-codecs comparison
+page so a visitor can pick "Same bitrate / Typical use / Constant quality" and get a
+framed, visitor-facing answer without touching raw data. It has not shipped, but the
+*data* it would toggle between already exists and is what this CSV assembles by hand:
+`s53_iso_bitrate_sweep` **is** "same bitrate" mode; `s53_iso_quality_interpolated` **is**
+the "constant quality" (V2, target-VMAF) mode's answer, just computed offline instead of
+through a live binary-search UI control.
+
+The one place CR-045 not shipping actually matters for the paper: its proposed "Typical
+use" bitrate set (H.264 6000 / H.265 3500 / AV1 2500 kbps) is explicitly **provisional** —
+"Tania to confirm against Bitmovin/Netflix tier guidance" is still open in
+`CHANGE_REQUESTS.md`. Treat those three numbers as a draft, not a citable OWL-confirmed
+figure. What *is* solidly measured for "typical operating points" is
+`s53_abr_ladder_typical` (72 rows above) and the single AMD-era point in
+`frozen_amd_typical_use_2026-05-22` — cite those instead, or state your own operating
+points explicitly (which is the house style anyway — see `docs/vp9_oneoff_2026-08.md`'s
+"operating points — state them, they are the result").
+
+## What is Kranjska?
+
+`kranjska_120s` is a 120 s extract of **downhill mountain-bike POV footage from Kranjska
+Gora** (a resort town in Slovenia — the clip is mountain biking, not skiing, despite the
+name association), sourced from Wikimedia Commons
+(`Downhill_bike_park_Kranjska_Gora.webm`, © Maks Berc, CC BY 3.0). 1920×1440, 30fps.
+
+It's OWL's **"sport" content tier** — measured SI≈101 / TI≈45 (ITU-T P.910), the highest
+spatial *and* temporal complexity source on the bench, well above BBB (SI≈33/TI≈6, spatial
+only) and Meridian (SI≈13/TI≈2, easy). It was added to the encode-parity campaign
+specifically so the 3-sequence sweep spans the full complexity range operators actually
+see — cinematic/talking-head (Meridian), animated/high-detail (BBB), and fast-motion
+handheld action (Kranjska) — rather than judging codec behaviour off one or two easy clips.
+It's also used on the decode side (`docs/vp9_oneoff_2026-08.md` §5.2, `decode_batch.py`)
+as the highest-motion of the three iso-bitrate decode test contents.
+
+## Files
+
+- `consolidated_encode_dataset.csv` — the 440-row combined table described above.
+- `iso_vmaf_table.csv` + `make_iso_vmaf_table.py` — pre-existing, feeds the
+  `s53_iso_quality_interpolated` rows.
+- Raw sources: `results/calibration/encode_parity_nvenc_24c_2026-06-20.json`,
+  `results/diagnostics/encode_parity_nvenc_24c_2026-08-17.json`,
+  `video/e18a9d57.json` (via `docs/findings/abr-all-codecs-meridian-120s.md`),
+  `results/video/2026-06-19_f2c2ac40.json`, `results/video/2026-06-20_1efc7e0d.json`,
+  `results/video/2026-06-20_62bf87ae.json`, `results/video/2026-06-29_36879b34.json`,
+  `results/video/2026-06-29_c017beb2.json`.

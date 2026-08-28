@@ -7,6 +7,41 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 70 — 2026-08-28 (Tania — SMPTE encode-parity gap closure)
+
+*Run by Tania, via Claude Code.*
+
+- **Consolidated encode dataset for the SMPTE paper.** Built `docs/smpte_2026/consolidated_encode_dataset.csv`
+  (440 rows) + companion `.md` — one tidy table merging six sources (S53 iso-bitrate sweep, ABR-ladder typical
+  points, iso-quality interpolation, the frozen AMD typical-use baseline, the VP9-vs-trio sweep, and five
+  recovered Kranjska one-off `/video`-UI jobs never previously catalogued), every row tagged with `hardware`
+  and `vmaf_version` so AMD/NVENC and v0.6.1/v1 scores can't get silently averaged together. One of the five
+  recovered Kranjska rows (`f2c2ac40`) flagged and excluded from pooling — it read a pre-canonicalisation
+  `.webm` source, not the `.mp4` every other row uses, and scores ~23 VMAF points lower as a result.
+- **Bitrate-realism review of the iso-quality gaps.** Of the 33 empty cells in `iso_vmaf_table.csv` (VMAF
+  94/96 not reached by the original S53 sweep), checked each against plausible real-world 1080p streaming
+  ceilings: closeable for H.264/H.265 on Meridian/BBB (still inside premium/live-tier bitrates); AV1 96
+  judged unreachable at any realistic bitrate and deliberately left unchased; Kranjska's H.264/H.265 already
+  exceed realistic streaming bitrate from the original campaign (up to 20 Mbps) and were left alone.
+- **Bitrate-ceiling extension campaign, run for real on GoS1.** `bin/run-bitrate-ceiling-ext.py` — 33 metered
+  rows (Meridian/BBB H.264 →13/15 Mbps, H.265 →8.5/10 Mbps, AV1 →7.5 Mbps; Kranjska AV1 →13 Mbps), self-
+  managed `/tmp/owl-paused` + `/tmp/owl-lab-session` + preflight-checked idle state, all 🟢, ~28 min. **Caught
+  mid-review:** the run scored under the live service's current default (VMAF v1) instead of the v0.6.1 the
+  rest of the S53 dataset uses — not mergeable as measured. Fixed without re-measuring: `bin/rescore-bitrate-
+  ext-v0.py` re-encoded all 33 rows from their stored `ffmpeg_cmd` (deterministic, bit-identical output) and
+  rescored under an **in-process** `vmaf_model=v0` override that never touched live `settings.json` (zero
+  effect on concurrent visitor scoring). Each row keeps both scores (`vmaf` = v0.6.1, `vmaf_v1_bonus` = v1).
+- **Merged into a new canonical artifact — now live.** `bin/merge-bitrate-ext.py` →
+  `encode_parity_nvenc_24c_2026-06-20_plus_ext.json` (207 original + 33 extension = 240 rows, all 🟢); the
+  original `_2026-06-20.json` kept untouched on disk. Gap count 33 → 21 (all remaining are the deliberately-
+  unchased VMAF-96 ceiling, plus one Kranjska H.265-GPU cell left alone by design). **Caught a live-site
+  regression before it mattered**: `/video/budget` picks its "latest" artifact by file mtime, and the
+  33-row-only extension file briefly became newest — served an incomplete calculator for a few minutes until
+  merged and the stray file moved to `results/calibration/_staging/`. Verified post-fix: `/video/budget`
+  HTTP 200, `data.csv` exports all 240 rows, no lock/pause flags left behind.
+
+---
+
 ## Session 69 — 2026-08-26 (SMPTE-desk handoff: adb path, SoC audit, MAC target follower, Apple TV probe)
 
 *Numbering: S67 (08-24, SMPTE gap-fill digests) and S68 (08-25, REM-digests R2 / dual capture C8) were
