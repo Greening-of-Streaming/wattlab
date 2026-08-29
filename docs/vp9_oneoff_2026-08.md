@@ -9,7 +9,7 @@ the decode side. Nothing here joins OWL's standing codec set.
 Scope: device layer only (GoS1 server / named client devices). Network, CDN and
 production excluded. Energy, not CO₂e.
 
-**Status (2026-08-18):** working document, still under discussion. **§5 adds the overnight re-run of 17→18 Aug (iso-bitrate, software vs software, n=2–3) that the discussion asked for; read §5.3 first.** Earlier text — it lives in the repo
+**Status (2026-08-29):** working document, still under discussion. **§6 adds a 2026-08-29 correction: fresh Roku + Apple TV runs do NOT support the "VP9 is cheaper in software" claim made in the LinkedIn thread — read §6 first.** §5 adds the overnight re-run of 17→18 Aug (iso-bitrate, software vs software, n=2–3) that the discussion asked for; read §5.3 next. Earlier text — it lives in the repo
 rather than on the OWL findings page for that reason. The LinkedIn post that summarised
 the 08-09 run drew substantive comments (Thierry Fautier, Jan Ozer, Murat Pisat); §4
 records what that discussion added and what it corrects, in particular that the
@@ -383,10 +383,61 @@ Still one server, five client devices, 1080p, one-pass ABR encode; a first indic
 repeats, not a lab-reviewed finding. Thanks to Thierry Fautier and Jan Ozer, whose comments
 set the design of this run.
 
+## 6. Correction, 2026-08-29 — Roku and Apple TV say AV1 and VP9 tie in software decode
+
+Direct response to §4.4 (Murat Pisat) and to a claim Ben made in the same LinkedIn thread: that
+*if* the Apple TV falls back to software decode, VP9 would at least be cheaper to decode than the
+other codecs there. Roku and Apple TV have since joined the rig (§3/§5.2 predate both), so this
+was testable directly rather than argued from the Pi 400 datum in §5.2 point 6. **It does not hold
+up — logged here as a correction, not a footnote.**
+
+Protocol: same iso-bitrate BBB 1080p60 @8 Mb/s clip family as §5.2 (x264 medium / x265 medium /
+SVT-AV1 preset 6 / libvpx-VP9 cpu-used 2, two-pass ABR) — no new encodes, two more client devices
+added to that dataset. Two device states, batch `c876cc890df2`, all rows 🟢:
+- **Roku Express 4K**, headless (`calibrate=false`), 150 s window, n=3 per codec, all four codecs.
+  Decoder path unconfirmed — Roku exposes no logcat-equivalent provenance (§3's standing gap).
+- **Apple TV HD** (AppleTV6,2, 2017 A10X, tvOS 26.6), screen mode (marker-calibrated, 165 s
+  window), n=3, AV1 and VP9 only, via VLC for tvOS over Companion (AirPlay `play_url` is dead on
+  tvOS 18+). This is a genuine software-decode reading for both codecs, not an assumption: the
+  A10X predates Apple's 2020-era hardware VP9 path and its 2023-era hardware AV1 path (§4.4), and
+  VLC does not use either platform decode block regardless.
+
+**ΔW above device idle (mean of reps, all rows 🟢):**
+
+| device | decode path | H.264 | HEVC | AV1 | VP9 |
+|---|---|---|---|---|---|
+| Roku Express 4K (headless) | unconfirmed | 0.381 (n=3) | 0.470 (n=3) | 0.476 (n=3) | 0.481 (n=3) |
+| Apple TV HD (screen, VLC) | software (silicon-confirmed) | — | — | **3.435** (n=3, 3.387–3.486) | **3.495** (n=3, 3.473–3.536) |
+
+**What these rows support:**
+
+8. **The claim doesn't hold on either device.** Apple TV: VP9 is +0.060 W *above* AV1 (+1.7%) —
+   smaller than the run-to-run spread inside either 3-run set (AV1 spans 0.10 W, VP9 spans 0.06 W).
+   Roku: the AV1/VP9 gap is +0.005 W. Both read as a tie; neither shows VP9 cheaper, and the one
+   lean that exists on the Apple TV points the wrong way for the claim.
+9. **This does not contradict §5.2's Pi 400 result — it complicates it.** On the Pi 400 (ARM,
+   software decode, §5.2 point 6), VP9 really was the cheapest of the four. On Roku and the Apple
+   TV's A10X, AV1 and VP9 tie instead. Read as: "VP9 cheapest in software" is not a codec property
+   that transfers across CPU architectures — it held on one device tested so far, not on three.
+   Treat as an open architecture-dependence question, not a resolved one either way.
+10. **The simpler, defensible statement:** AV1 and VP9 cost about the same to decode in software
+    on the two devices checked here. Roku's own H.264/HEVC pair sits ~0.09–0.10 W below the
+    AV1/VP9 pair — consistent with §5.2/§3's software ordering (newer codecs cost more), just
+    without VP9 breaking away from AV1 the way the LinkedIn claim asserted.
+
+Caveats: one content family (BBB, iso-bitrate); n=3 per cell; Roku decoder path unconfirmed;
+Apple TV `alive_at_window_end: False` on every atv row here — a known pyatv liveness
+false-negative (`playing` can misreport "Idle" mid-playback), not treated as invalidating since
+the raw traces and screen-context ΔW confirm real, varying playback throughout.
+
 ---
 *Sources: `results/diagnostics/encode_parity_nvenc_24c_2026-08-09.json` (VP9 encode rows,
 🟢), `results/calibration/encode_parity_nvenc_24c_2026-06-20.json` (S53 comparison rows),
 decode envelopes under `results/decode/` dated 2026-08-09 (session jsonl + job ids in
 `/srv/data/owl/campaign_2026-08-09_vp9/decode_results.jsonl`; WebM rescue jobs 833244a9,
 90ee8608; discarded GTV mp4 rows documented above), prep sweeps + NEG scores in
-`/srv/data/owl/campaign_2026-08-09_vp9/`.*
+`/srv/data/owl/campaign_2026-08-09_vp9/`; §6 rows from batch `c876cc890df2`,
+`results/decode/2026-08-29_{0ec0f05a,305561b2,97c47248,6ce7dc03,704959dc,e2a6de84,9114fb90,
+d6a6242e,b5f5bbb2,38b13c96,41c25f50,5fe6c26d}.json` (Roku, headless) and
+`results/decode/2026-08-29_{1f2c4f9e,c7479e15,b1d642f8,4728f8b8,f10c86a0,f5ecaf0a}.json`
+(Apple TV, screen).*
