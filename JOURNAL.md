@@ -42,6 +42,61 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 71 — 2026-08-28→29 (Tania — ReadySetGo: caveat-9's matched sport clip, sourced and swept)
+
+*Run by Tania, via Claude Code.*
+
+- **Sourced and converted the resolution/aspect/frame-rate-matched sport clip caveat 9
+  asked for.** `ReadySetGo` — horse-racing starting-gate footage, sequence 5/16 of the
+  **Ultra Video Group (UVG) dataset** (Tampere University; CC BY-NC, cite Mercat/Viitanen/
+  Vanne, ACM MMSys 2020) — arrived as `yuv420p10le`/3840×2160/**120fps**/limited-range, not
+  the "8bit"/implied-60fps guess it was handed under. Verified on raw bytes before touching
+  anything (same rigor as the KartingTime clip prepped alongside it, not wired into
+  anything here). Converted: exact 2:1 frame-drop to 60fps (no blending — matches BBB/
+  Meridian's frame rate and GOP duration), `zscale` limited→full range stretch, 8-bit
+  4:2:0, tagged bt709, looped to 35.0s so `ensure_clip()`'s 30s trim has margin.
+- **Self-contained sweep, zero live-service impact.** `docs/smpte_2026/run_sport_clip_sweep.py`
+  injects the clip into `parity.CLIPS` in-process only — never touches `parity.py`,
+  `/video/budget`, or any other serving path. Ran the *exact* matched BBB/Meridian bitrate
+  ladder (84 rows: 60 iso-bitrate sweep + 24 ABR-ladder), all 🟢, `complete=True`, 4596.7s.
+  Ran detached (`nohup`, reparented to init) specifically so it would survive a dropped SSH
+  session overnight — confirmed via process ancestry (PPID=1) before leaving it unattended;
+  its own `finally:` block self-released `/tmp/owl-paused`/`/tmp/owl-lab-session`/
+  `/tmp/gos-measure.lock` on completion with nobody watching.
+- **Caught the same VMAF v1/v0.6.1 mismatch bug as the S70 bitrate-ceiling extension.**
+  The sweep scored under the live default (`vmaf_model=v1`); re-encoded all 84 rows'
+  deterministic `ffmpeg_cmd` and rescored under an in-process `vmaf_model=v0` override
+  (`bin/rescore-readysetgo-v0.py`) — zero re-measurement, zero live-service effect. Field-
+  renamed to the file's v0.6.1-primary convention via `docs/smpte_2026/finalize_readysetgo_v0.py`.
+- **Answered caveat 9's real question: no extension campaign needed.** Built the standalone
+  iso-VMAF interpolation (`make_readysetgo_iso_vmaf_table.py`, reading the finalized
+  artifact directly, never the live canonical one) — **zero empty cells**: every one of the
+  9 codec×profile combinations reaches VMAF 96, let alone 92, inside the existing matched
+  ladder. Unlike BBB/Meridian, ReadySetGo needed no S70-style ceiling extension.
+- **Measured the content complexity instead of assuming it.** `pixop.probe_siti()` (the
+  `/enhance-run` ITU-T P.910 tool, terminal-only, no energy impact) on the 30s reference:
+  **SI≈38.5/TI≈40.4** — high-temporal, only moderate-spatial, a cleaner "sport" tier than
+  Kranjska (SI≈101/TI≈45, extreme on both axes) precisely because it isolates motion
+  without stacking spatial detail. This is what resolves caveat 9: ReadySetGo, not
+  Kranjska, is now the format-matched third leg of any "codec × content tier" claim.
+- **Merged into the paper's canonical table.** `consolidated_encode_dataset.csv`
+  440 → **569 rows** (+60 iso-bitrate, +24 ABR-ladder, +45 iso-quality-interpolated, three
+  new `dataset` values); `.md` updated with full provenance, the mid-run VMAF correction,
+  the SI/TI finding, caveat 9 marked resolved, and a new "What is ReadySetGo?" section
+  with the confirmed UVG citation/license.
+- **Caught a second live-site regression, same class as S70's.** The raw/rescored/final
+  JSON artifacts were first written straight to `results/calibration/`, matching every
+  other campaign's own convention — but `budget_data.latest_artifact_path()` picks
+  "newest complete `encode_parity_*.json` by mtime" with no clip-set filter, so
+  `/video/budget` and `data.csv` briefly served the 84-row ReadySetGo-only artifact
+  instead of the 240-row canonical one. Caught when Tania asked directly whether the main
+  site was affected — it was. Fixed by moving both files into
+  `results/calibration/_staging/` (out of the glob's reach, same fix S70 used for its own
+  stray file); verified `data.csv` back to 240 rows, zero readysetgo. All path references
+  in the new scripts/CSV/doc updated to the staged location.
+
+---
+
 ## Session 69 — 2026-08-26 (SMPTE-desk handoff: adb path, SoC audit, MAC target follower, Apple TV probe)
 
 *Numbering: S67 (08-24, SMPTE gap-fill digests) and S68 (08-25, REM-digests R2 / dual capture C8) were

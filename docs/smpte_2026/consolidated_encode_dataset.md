@@ -1,12 +1,14 @@
 # Consolidated encode dataset — what this is
 
 *Built 2026-08-28 for the SMPTE paper, extended same day with isolated Kranjska runs
-recovered from the live-app results store. Combines OWL's encode-power + VMAF campaigns
-into one tidy CSV (`consolidated_encode_dataset.csv`, 440 rows) so the analysis doesn't
-have to stitch six source locations by hand. Every row is traceable back to a stored
-result artifact — nothing here is a fresh measurement.*
+recovered from the live-app results store, extended again 2026-08-28/29 with a
+resolution/aspect/frame-rate-matched sport clip (ReadySetGo — see below and caveat 9).
+Combines OWL's encode-power + VMAF campaigns into one tidy CSV
+(`consolidated_encode_dataset.csv`, 569 rows) so the analysis doesn't have to stitch
+source locations by hand. Every row is traceable back to a stored result artifact —
+nothing here is a fresh measurement.*
 
-## The six datasets, concatenated (`dataset` column)
+## The nine datasets, concatenated (`dataset` column)
 
 | `dataset` value | What it answers | Codecs | Sequences | Rate control | Rows |
 |---|---|---|---|---|---|
@@ -16,6 +18,9 @@ result artifact — nothing here is a fresh measurement.*
 | `frozen_amd_typical_use_2026-05-22` | Single typical-ABR point per codec, pre-GPU-swap hardware | H.264, H.265, AV1 | Meridian only | fixed, 1 point/codec | 6 |
 | `vp9_vs_trio_sweep_2026-08-17` | Iso-bitrate, 4th codec, two operating points each (OWL-default vs Jan Ozer's everything-slow) | H.264, H.265, AV1, **VP9** | BBB, Meridian | fixed target, 2 bitrates | 36 |
 | `kranjska_isolated_video_ui_runs_2026-06` | **Typical-use bitrate on Kranjska**, current NVENC hw — the sport-tier point `frozen_amd_typical_use` is missing, recovered from ad hoc live-app jobs, not a designed campaign | H.264, H.265, AV1 | Kranjska only (120s + full 6:40) | fixed, same 3 bitrates as the AMD finding | 23 |
+| `readysetgo_iso_bitrate_sweep_2026-08-28` | **Iso-bitrate** on the resolution/aspect/frame-rate-matched sport clip — same bitrate points as `s53_iso_bitrate_sweep` | H.264, H.265, AV1 | ReadySetGo | fixed target, matches BBB/Meridian's ladder exactly | 60 |
+| `readysetgo_abr_ladder_typical_2026-08-28` | Typical ABR-ladder rungs on ReadySetGo | H.264, H.265, AV1 | ReadySetGo | fixed, per-rung | 24 |
+| `readysetgo_iso_quality_interpolated_2026-08-28` | Iso-quality on ReadySetGo — bitrate/energy for VMAF 88/90/92/94/96 | H.264, H.265, AV1 | ReadySetGo | *interpolated*, not measured | 45 |
 
 Every row also carries `hardware` and `vmaf_version` explicitly — **read those two columns
 before comparing rows across datasets.** They are not all the same.
@@ -126,6 +131,84 @@ trick, so every GPU row here carries 🟡 confidence (short single-pass window),
 issue the harness was built to fix — treat energy numbers as indicative, not to the same
 standard as the `s53_*` datasets' 🟢 rows.
 
+### `readysetgo_iso_bitrate_sweep_2026-08-28` + `readysetgo_abr_ladder_typical_2026-08-28` + `readysetgo_iso_quality_interpolated_2026-08-28`
+Source: `results/calibration/_staging/encode_parity_readysetgo_2026-08-28_final.json`
+(84 rows, GoS1: Ryzen 9 7900 / RTX 5080 NVENC, `ffmpeg N-124403`, same rig/software as
+every other 2026-08 row in this file). Run through `docs/smpte_2026/run_sport_clip_sweep.py`
+— a self-contained script that does not touch `wattlab_service/parity.py`, `/video/budget`,
+or any other live-serving *code path* (injects the clip into `parity.CLIPS` in-process
+only). **Uses the exact same per-codec bitrate ladder as
+`s53_iso_bitrate_sweep`/`s53_abr_ladder_typical`** (`MATCHED_BITRATES` in that script,
+frozen independently of `parity.FULL_BITRATES` so it can't drift). 84/84 rows, all 🟢,
+`complete=True`, 4596.7s wall-clock.
+
+**Caught a second live-site regression (2026-08-29, same class as the S70 one).** The
+sweep's raw/rescored/final JSON artifacts were first written straight to
+`results/calibration/` alongside the canonical `_plus_ext.json` file — matching every
+other campaign's own convention, but `budget_data.latest_artifact_path()` picks "newest
+complete `encode_parity_*.json` by mtime" for `/video/budget`, with no clip-set filter.
+For roughly the time between the sweep finishing and this being caught, `/video/budget`
+and `data.csv` were serving the 84-row ReadySetGo-only artifact instead of the 240-row
+canonical one. Fixed by moving both files into `results/calibration/_staging/` (out of
+`ARTIFACT_GLOB`'s reach, same fix S70 used for its own stray extension file) and
+verified: `latest_artifact_path()` back to the `_plus_ext.json` file, `data.csv` back to
+240 rows (84 bbb + 84 meridian + 72 kranjska, zero readysetgo). **Lesson for next time:**
+any encode-parity artifact that lands in `results/calibration/` directly is live-serving
+surface by construction of that glob, regardless of what the script that produced it
+touches — write new/experimental artifacts to `_staging/` from the start, not as an
+after-the-fact fix.
+
+**Mid-run correction (same bug class as the 2026-08-28 bitrate-ceiling extension, see
+above).** The sweep scored VMAF under the live service's then-current default
+(`vmaf_model=v1`), not the v0.6.1 every other row in this file uses. Fixed the same way:
+re-encoded all 84 rows' stored `ffmpeg_cmd` (deterministic CBR encode, no re-measurement)
+and rescored under an in-process `vmaf_model=v0` override
+(`bin/rescore-readysetgo-v0.py`) that never touched the live `settings.json`. `vmaf` in
+the CSV is the v0.6.1 rescore; the original v1 score is kept in the artifact under
+`vmaf_v1_bonus` (not carried into the CSV — no other row in this file carries it either).
+Field-renaming step: `docs/smpte_2026/finalize_readysetgo_v0.py`.
+
+**The result this campaign was run to get: does the matched ladder need extending to
+reach VMAF 92, the way BBB/Meridian needed the 08-28 ceiling extension for 94/96?**
+**No.** `docs/smpte_2026/readysetgo_iso_vmaf_table.csv` (generated by
+`make_readysetgo_iso_vmaf_table.py`, the standalone analogue of `make_iso_vmaf_table.py`)
+has **zero empty cells** — every one of the 9 codec×profile combinations reaches VMAF 96,
+let alone 92, within the existing matched ladder (e.g. h264/cpu hits 93.98 at 6000 kbps,
+already past the 4500 kbps rung below it; av1/cpu hits 92.46 at 4000 kbps). No extension
+campaign is needed for this content — unlike BBB/Meridian, ReadySetGo's ladder already
+brackets the full 88–96 target range for every codec and profile.
+
+**Content characterisation — measured, not assumed.** Ran `pixop.probe_siti()` (the same
+ITU-T P.910 SI/TI tool `/enhance-run` uses, terminal-only, no energy impact) on the
+30s reference clip: **SI≈38.5, TI≈40.4** (full-clip pass). That's a genuinely different
+complexity profile from Kranjska (SI≈101/TI≈45 — extreme on *both* axes): ReadySetGo is
+high-*temporal* (fast horse-race motion, comparable TI to Kranjska) but only
+moderate-*spatial* (SI close to BBB's 33, well below Kranjska's 101). Read this as a
+cleaner, less confounded "sport" tier than Kranjska for a content-complexity axis, precisely
+*because* it isolates high motion without also stacking extreme spatial detail — see caveat 9.
+
+**Clip preparation** (2026-08-28, see chat log): sourced as `ReadySetGo_3840x2160_120fps_
+420_10bit_YUV.yuv` — decoded and verified as genuine `yuv420p10le`, 3840×2160, 120fps
+(not the "8bit"/implied-60fps guess it arrived under), 600 frames = 5.0s, confirmed
+limited/TV-range (10-bit legal-white ceiling pinned at 944 across the whole clip, opposite
+of KartingTime's full-range master — see below). Converted with:
+`select='not(mod(n\,2))',setpts=N/(60*TB)` for an exact 2:1 frame-drop to 60fps (no
+blending — matches BBB/Meridian's frame rate and halves `parity.py`'s fixed-120-frame GOP
+back to the same 2.0s GOP duration the other clips get), `zscale=in_range=limited:
+range=full` to stretch to full range (Tania's call, matching how BBB/Meridian/KartingTime
+are treated), `format=yuv420p` for the 10-bit→8-bit reduction (chroma was already 4:2:0),
+tagged `bt709` (Tania's call on primaries — genuinely unresolvable from pixel stats alone).
+Looped to 2100 frames/35.0s so `ensure_clip()`'s `-t 30` trims to an exact 30.000s window
+with margin. Final master: `test_content/readysetgo_30s_looped.mp4` (CRF14, ~205 Mbps,
+`yuvj420p`/`color_range=pc`/bt709 — the `yuvj420p` tag is ffmpeg's canonicalisation of
+"8-bit 4:2:0 + full range," not a different format from BBB/Meridian's plain `yuv420p`).
+**Content, confirmed (Tania, 2026-08-29):** the horse-racing starting-gate scene under
+"Türkiye Jokey Kulübü" signage is `ReadySetGo`, sequence 5 of 16 in the **Ultra Video
+Group (UVG) dataset** (Tampere University) — see full citation and license below.
+A second candidate clip, KartingTime (also sourced 2026-08-28, converted full-range /
+8-bit / 60fps-native / bt709), was prepped alongside this one but is **not** wired into
+any dataset here — see chat log 2026-08-28 if it's needed later.
+
 ## Caveats to carry into the paper
 
 1. **Two VMAF model versions in one file.** `s53_*` and `frozen_amd_*` rows are **VMAF
@@ -168,6 +251,30 @@ standard as the `s53_*` datasets' 🟢 rows.
    protocol (GPU rows are 🟡, not 🟢), n=1–3 per point depending on how many of the five
    jobs happen to cover it, and one of the five (`f2c2ac40`) reads a different source file
    entirely — see its dataset section above before using it.
+9. **Kranjska is not resolution/aspect/frame-rate-matched to BBB/Meridian — flagged by
+   Tania 2026-08-28, resolved same day/next day with ReadySetGo.** Every `s53_*` dataset
+   lists Kranjska as a "sequence" alongside BBB/Meridian, but it runs at its native
+   1920×1440 (4:3), 30fps, while BBB/Meridian are 3840×2160 (16:9), 59.94/60fps. That's
+   three axes differing at once — pixel count (~1/3), aspect ratio (not a crop, a
+   different frame), and frame rate — not just "lower res." OWL's own encode energy is
+   pixel-throughput-bound (`docs/input_sensitivity_findings.md`), and VMAF-at-fixed-bitrate
+   is resolution-sensitive too, so any bitrate/VMAF/energy gap between Kranjska and
+   BBB/Meridian in the `s53_*` tables is confounded — some of it is content complexity,
+   some is format. **Do not present Kranjska as a resolution-matched third leg of a
+   controlled content-complexity comparison.** It stands on its own as the native-format
+   complexity extreme (SI≈101/TI≈45).
+   **ReadySetGo (`readysetgo_*_2026-08-28` datasets, above) is the matched clip this
+   caveat asked for:** 3840×2160 (16:9), 60fps (decimated 2:1 from a 120fps native master,
+   not a native 60fps capture — see its provenance section for why that's still a fair
+   match: same displayed frame rate and GOP duration as BBB/Meridian, no blended frames),
+   8-bit 4:2:0, full-range, bt709 — same format axes as BBB/Meridian on every axis that
+   matters for pixel-throughput-bound energy and VMAF-at-fixed-bitrate comparisons. Its
+   measured SI≈38.5/TI≈40.4 is a cleaner "sport" tier than Kranjska for a controlled
+   content-complexity comparison specifically because it isolates high temporal motion
+   without also stacking Kranjska's extreme spatial detail. **Use ReadySetGo, not
+   Kranjska, as the third leg of any format-matched "codec × content tier" claim; keep
+   Kranjska as a separate, additional complexity-extreme data point, not part of that
+   controlled comparison.**
 
 ## Is CR-045 blocking this?
 
@@ -205,14 +312,46 @@ handheld action (Kranjska) — rather than judging codec behaviour off one or tw
 It's also used on the decode side (`docs/vp9_oneoff_2026-08.md` §5.2, `decode_batch.py`)
 as the highest-motion of the three iso-bitrate decode test contents.
 
+## What is ReadySetGo?
+
+`readysetgo_30s` is a 30 s (looped from a 5 s master, see its provenance section above)
+extract of `ReadySetGo` — horse-racing starting-gate footage (Türkiye Jokey Kulübü),
+sequence 5 of 16 in the **Ultra Video Group (UVG) dataset**, Tampere University,
+native 3840×2160/120fps/10-bit/4:2:0/limited-range, converted here to match BBB/Meridian's
+format (60fps, 8-bit, full-range, bt709 — see conversion details above). **License:
+Creative Commons BY-NC (non-commercial, attribution required)** — narrower than
+Kranjska's CC BY 3.0 (which permits commercial use); fine for this research paper, but
+don't redistribute the source video itself outside a non-commercial context. **Citation:**
+A. Mercat, M. Viitanen, and J. Vanne, "UVG dataset: 50/120fps 4K sequences for video codec
+analysis and development," in *Proc. ACM Multimedia Syst. Conf.*, Istanbul, Turkey,
+Jun. 2020. Dataset page: `ultravideo.fi/dataset.html`.
+
+Measured SI≈38.5/TI≈40.4 (ITU-T P.910, `pixop.probe_siti()`) — OWL's format-matched
+**sport tier**: high temporal motion (fast horse-race panning, TI comparable to
+Kranjska's 45) without Kranjska's extreme spatial detail (SI 38.5 vs 101, closer to
+BBB's 33). It's the clip caveat 9 (below) asks for: same resolution/aspect/frame-rate as
+BBB/Meridian, so any bitrate/VMAF/energy gap against them is real content-complexity
+signal, not confounded by format differences the way Kranjska's comparisons are.
+
 ## Files
 
-- `consolidated_encode_dataset.csv` — the 440-row combined table described above.
+- `consolidated_encode_dataset.csv` — the 569-row combined table described above.
 - `iso_vmaf_table.csv` + `make_iso_vmaf_table.py` — pre-existing, feeds the
-  `s53_iso_quality_interpolated` rows.
+  `s53_iso_quality_interpolated` rows (BBB/Meridian/Kranjska, from the live canonical
+  artifact — do not point this at ReadySetGo, see below).
+- `readysetgo_iso_vmaf_table.csv` + `make_readysetgo_iso_vmaf_table.py` — the standalone
+  ReadySetGo analogue, reading `encode_parity_readysetgo_2026-08-28_final.json` directly
+  (never the live `/video/budget` artifact). Feeds `readysetgo_iso_quality_interpolated_2026-08-28`.
+- `run_sport_clip_sweep.py` — the self-contained campaign script that produced the raw
+  ReadySetGo sweep. `finalize_readysetgo_v0.py` — the vmaf v1→v0.6.1 field-rename step
+  (mirrors `bin/merge-bitrate-ext.py`). `append_readysetgo_to_consolidated.py` — the
+  one-shot script that appended the three `readysetgo_*` dataset blocks into the CSV.
 - Raw sources: `results/calibration/encode_parity_nvenc_24c_2026-06-20.json`,
   `results/diagnostics/encode_parity_nvenc_24c_2026-08-17.json`,
   `video/e18a9d57.json` (via `docs/findings/abr-all-codecs-meridian-120s.md`),
   `results/video/2026-06-19_f2c2ac40.json`, `results/video/2026-06-20_1efc7e0d.json`,
   `results/video/2026-06-20_62bf87ae.json`, `results/video/2026-06-29_36879b34.json`,
-  `results/video/2026-06-29_c017beb2.json`.
+  `results/video/2026-06-29_c017beb2.json`,
+  `results/calibration/_staging/encode_parity_readysetgo_2026-08-28.json` (raw, v1-scored) →
+  `..._final.json` (v0.6.1-rescored, the one the CSV rows above cite). **Both in
+  `_staging/`, not `results/calibration/` directly** — see the regression note above.
