@@ -317,6 +317,12 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         # VLC's x-callback stream scheme — bench.py AtvDevice, CR-075).
         row["url"] = f"{STREAM_BASE_URL}/{clip}{q}"
         return row
+    if dev_cfg["kind"] == "roku":
+        # Roku: Media Assistant fetches the URL itself (ECP app-launch —
+        # bench.py RokuDevice, 2026-08-29 onboarding; UNVALIDATED mechanism,
+        # see roku_probe.py's docstring for the research trail).
+        row["url"] = f"{STREAM_BASE_URL}/{clip}{q}"
+        return row
     if dev_cfg["kind"] == "adb":
         if delivery == "local":
             # July delivery-decomposition arm — clip staged by adb push.
@@ -417,6 +423,31 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
         cfg["idle_guard"] = dict(proto["idle_guard"])
         if dev_cfg.get("idle_w") is not None:
             cfg["idle_guard"]["reference_w"] = dev_cfg["idle_w"]
+        # Per-device max_wait_s floor (2026-08-29): the Apple TV's guard was
+        # seen hitting the global 30 s ceiling still unsettled (5.28 W final,
+        # its known screensaver/Settings-app contamination range, not its
+        # ~2.1-2.3 W clean floor) — it needed longer to wait the excursion
+        # out, not a shorter fuse. Same max()-floor semantics as settle_s
+        # above; a settings-side increase can still raise it further.
+        if dev_cfg.get("min_idle_max_wait_s") is not None:
+            cfg["idle_guard"]["max_wait_s"] = max(
+                cfg["idle_guard"]["max_wait_s"], int(dev_cfg["min_idle_max_wait_s"]))
+        # Per-device tolerance_w floor (2026-08-29, same day as the max_wait_s
+        # floor above — turned out to be the wrong half of the fix). Live
+        # power-watches on the Apple TV show frequent BRIEF single-sample
+        # spikes (6.1 W AirPlay-overlay, 8.2 W on a "Welcome to Apple TV"
+        # screen) against a genuinely noisy ~2.9-3.8 W floor — a permanent,
+        # recurring feature of this box's idle state, not a one-time
+        # contamination event that eventually clears. Against the global
+        # 0.5 W tolerance, settle_polls likely NEVER succeeds, so max_wait_s
+        # just burns its full ceiling every single run before giving up
+        # anyway — raising it to 90 s made runs slower without making them
+        # more reliable. A wider tolerance lets normal jitter read as
+        # "settled" quickly, while max_wait_s reverts to being the rare-case
+        # circuit breaker it was meant to be.
+        if dev_cfg.get("min_idle_tolerance_w") is not None:
+            cfg["idle_guard"]["tolerance_w"] = max(
+                cfg["idle_guard"]["tolerance_w"], float(dev_cfg["min_idle_tolerance_w"]))
     if marked:
         cfg["startup_skip_s"] = proto["screen_startup_skip_s"]
     cfg["name"] = f"ui-{tpl_key}-{job_id}-{dev_name}"
@@ -432,6 +463,8 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
         cfg["device"] = {"type": "webos", "host": dev_cfg["target"]}
     elif dev_cfg["kind"] == "atv":
         cfg["device"] = {"type": "atv", "host": dev_cfg["target"]}
+    elif dev_cfg["kind"] == "roku":
+        cfg["device"] = {"type": "roku", "host": dev_cfg["target"]}
     else:
         user, host = dev_cfg["target"].split("@", 1)
         # ssh_host_override: reach the same box on another interface (Pi 400
@@ -562,13 +595,37 @@ def _needed_clips(tpl: dict, mode: str, calibrate: bool) -> list:
 
 
 _FFMPEG = "/usr/local/bin/ffmpeg-master"
-_NVENC = {"h264": "h264_nvenc", "hevc": "hevc_nvenc", "av1": "av1_nvenc"}
+# hevc: libx265, NOT hevc_nvenc (2026-08-29 — see below). h264/av1 stay NVENC.
+# vp9: libvpx-vp9 (2026-08-29, added to unblock a screen-mode Apple TV/Roku
+# comparison) — NVIDIA has no VP9 NVENC path at all (see docs/vp9_oneoff
+# report §1), so there was never an nvenc option here. Checked before adding
+# it, learning from the hevc case: libvpx-vp9's output matches this
+# project's VP9 source content's coded dimensions exactly (clean 1080, no
+# padding) — same class of bug is not expected, but this specific codec path
+# is NOT yet confirmed live on real hardware the way hevc's fix was.
+_NVENC = {"h264": "h264_nvenc", "hevc": "libx265", "av1": "av1_nvenc", "vp9": "libvpx-vp9"}
 
 
 def _ensure_marked_clips_sync(clips: list) -> None:
     """Build `marked_<clip>` (5 s black·white·black head + stream-copied
     content) for any clip missing its marked variant. Marker segments are
-    codec/res/fps-matched NVENC encodes, cached in streams/marked_segments/."""
+    codec/res/fps-matched encodes, cached in streams/marked_segments/.
+
+    hevc uses libx265, not hevc_nvenc (2026-08-29, Roku HEVC onboarding):
+    found live that hevc_nvenc pads its coded height to the next CTU-aligned
+    multiple of 64 (1080 -> 1088) while this project's source HEVC content is
+    coded at a clean 1080 — concatenating NVENC-padded marker segments onto
+    unpadded content via stream-copy spliced a real coded-buffer-size
+    discontinuity mid-stream. Roku's Realtek hardware HEVC decoder froze on
+    the last marker frame for the rest of the window (confirmed live via the
+    screen's own power trace: flat at the marker's black level for the full
+    ~165 s task window, never transitioning to real content); VLC on Apple TV
+    tolerated the same file fine (software decoders reallocate on the fly).
+    libx265 encodes a clean, unpadded 1080 matching the source — confirmed
+    live on the actual Roku hardware that this produces normal, varying
+    playback power (65-94 W) instead of the flat ~37 W failure signature.
+    Only regenerates cached segments — delete streams/marked_segments/hevc_*
+    once to pick this up for existing content."""
     ff = _FFMPEG if Path(_FFMPEG).exists() else "ffmpeg"
     seg_dir = STREAMS / "marked_segments"
     seg_dir.mkdir(exist_ok=True)
@@ -585,10 +642,22 @@ def _ensure_marked_clips_sync(clips: list) -> None:
         enc = _NVENC.get(codec)
         if enc is None:
             raise RuntimeError(f"no marker encoder for codec {codec!r}")
+        # Segment container matches the SOURCE clip's own extension (2026-08-29,
+        # VP9 onboarding) — was hardcoded to .mp4 for every codec. h264/hevc/av1
+        # sources are already .mp4 so this never showed up; VP9 sources are
+        # .webm (documented elsewhere: VP9-in-MP4 already stalls the GTV
+        # player). Found live: a VP9 marker built as .mp4 then concatenated
+        # onto .webm content produced the exact same flat-black stuck-decoder
+        # failure as the earlier hevc_nvenc coded-height bug, despite matching
+        # profile/pix_fmt/color exactly — confirmed the container mismatch was
+        # the cause by rebuilding the marker segments as .webm and confirming
+        # live on Roku that playback becomes normal (65-94 W varying) instead
+        # of flat ~37 W.
+        seg_ext = Path(clip).suffix
         seg_paths = []
         for seg, color in (("black", "black"), ("white", "white"),
                            ("black2", "black")):
-            seg_p = seg_dir / f"{codec}_{w}x{h}_{fps.split('/')[0]}_{seg}.mp4"
+            seg_p = seg_dir / f"{codec}_{w}x{h}_{fps.split('/')[0]}_{seg}{seg_ext}"
             if not seg_p.exists():
                 subprocess.run(
                     [ff, "-loglevel", "error", "-f", "lavfi",
@@ -789,7 +858,23 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
             section["display_caveat"] = (
                 "Android renders regardless of the shared monitor; headless "
                 "here means the screen was not claimed — rows are indicative "
-                "vs the Pis' true null-sink decode (July 2026 convention).")
+                "vs the Pis' true null-sink decode (July 2026 convention)."
+                + (" This box has NO HDMI cable attached at all (not just "
+                   "unclaimed) — unverified whether it decodes/renders the "
+                   "same way with zero display sink; confirm with a live "
+                   "smoke test before trusting this row (2026-08-29)."
+                   if not dev_cfg.get("hdmi_input") else ""))
+        if dev_cfg["kind"] == "roku":
+            section["display_caveat"] = (
+                "Roku rows play through Dom's own 'Greening of Streaming' "
+                "channel (app 775528, playlist-driven — see bench.py's "
+                "RokuDevice), liveness = /query/media-player state + "
+                "position advancing; screen-mode marker segmentation works "
+                "normally. Still no logcat-equivalent decoder provenance — "
+                "no way to confirm which decoder block actually ran, unlike "
+                "the Android boxes' CCodec allocations." +
+                (" Headless: the screen was not claimed, the box renders "
+                 "regardless" if mode == "headless" else ""))
         sub.update({"stage": "done", "detail": ""})
         return section
     except Exception as e:

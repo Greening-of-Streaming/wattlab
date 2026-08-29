@@ -83,6 +83,7 @@ RIG: dict = {
             # also runs Pi-hole (LAN DNS) — a small always-on background
             # load, disclosed per campaign; do NOT stop it (LAN infra).
             "label": "Pi 5", "plug_name": "lab-F2",
+            "os": "Raspberry Pi OS", "chip_vendor": "Broadcom",
             # Headless since 2026-08-19 (own P110, no HDMI cable) — not on any
             # of the C2's four inputs; the screen map (rig_hdmi_inputs) can
             # put it on one when it is physically re-cabled.
@@ -104,6 +105,7 @@ RIG: dict = {
             # Lab-B, displacing the Fire TV Stick (parked below). To switch the
             # bench back: move "parked": True from firestick to here.
             "label": "Pi 400", "plug_name": "Lab-B",
+            "os": "Raspberry Pi OS", "chip_vendor": "Broadcom",
             "plug_ip": "192.168.1.31",
             "kind": "ssh", "target": "nebul2@192.168.1.108",
             "device_class": "sbc",
@@ -112,7 +114,10 @@ RIG: dict = {
             "shutdown_wait_s": 22,
             "idle_w": 3.0,
             "network": "ethernet",
-            "hdmi_input": "HDMI_3",   # kept on the bench (owner) — spare port
+            # HDMI_3 physically re-cabled to the Roku 2026-08-29 (Ben,
+            # on-site, during the switch install) — the Pi 400 runs headless
+            # fine over SSH (decode-to-null never touches a display anyway).
+            "hdmi_input": None,
         },
         "firestick": {
             # Back on the bench 2026-08-15 on Lab-A + HDMI_4 (Pi 5 now on its
@@ -132,9 +137,22 @@ RIG: dict = {
             "kind": "adb", "target": "192.168.1.200:5555",
             "macs": ["ec:31:5f:6d:7c:a7"],          # wlan0 (Wi-Fi only)
             "device_class": "stb",
+            # Render-only override (2026-08-29): the physical form factor is an
+            # HDMI dongle, not a set-top box — device_class stays "stb" (same
+            # categorisation/filtering as every other STB on the rig).
+            "shape": "stick",
+            "os": "Fire OS 8", "chip_vendor": "MediaTek",
             "silicon": "MediaTek MT8696 · hw H.264/HEVC/VP9/AV1",
             "network": "wifi",
-            "hdmi_input": "HDMI_4",
+            # HDMI_4 physically re-cabled to the Apple TV 2026-08-29 (Ben,
+            # on-site, during the switch install). Fire TV now has NO HDMI
+            # cable at all (not just "unclaimed") — unlike the Pi boards,
+            # this is Android app-launch playback, and it's genuinely
+            # untested whether that still decodes/renders correctly with
+            # zero display sink attached. Confirm with a live smoke test
+            # before trusting any headless row from this box (2026-08-29,
+            # Ben's catch — see the matching note on Xiaomi below).
+            "hdmi_input": None,
             "expected_boot_s": 40, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
             # Awake-home idle measured 2026-07-31: ~1.3–2.2 W (Amazon autoplay
@@ -157,6 +175,7 @@ RIG: dict = {
             # `adb shell ip link` if the follower stops finding it on Wi-Fi.
             "macs": ["b4:23:a2:af:e4:a4", "0e:03:41:ca:06:29"],
             "device_class": "stb",
+            "os": "Google TV (Android 14)", "chip_vendor": "MediaTek",
             "silicon": "MediaTek MT8696 · hw H.264/HEVC/AV1",   # getprop ro.soc.model, R3a 2026-08-26
             "hdmi_input": "HDMI_2",
             "expected_boot_s": 90, "boot_threshold_w": 0.4,
@@ -180,6 +199,7 @@ RIG: dict = {
             "kind": "adb", "target": "192.168.1.10:5555",
             "macs": ["ec:6c:9a:ef:73:a1", "70:f7:54:37:4f:e4"],   # eth0 (.10), wlan0 (.173)
             "device_class": "stb",
+            "os": "Android 11 (operator CPE)", "chip_vendor": "Marvell",
             "silicon": "Marvell Berlin (Arcadyan HMB9213NW) · Android 11 · hw H.264/HEVC, no AV1 block",
             "hdmi_input": "HDMI_1",
             "expected_boot_s": 45, "boot_threshold_w": 4.0,
@@ -204,17 +224,34 @@ RIG: dict = {
             "kind": "atv", "target": "192.168.1.152",
             "macs": ["90:dd:5d:ab:70:8e"],
             "device_class": "stb",
+            # tvOS 26.6 since the 2026-08-27 update (was 18.0 at CR-075's
+            # original measurement — see JOURNAL for the idle-floor recheck
+            # this triggered).
+            "os": "tvOS 26.6", "chip_vendor": "Apple",
             "silicon": "Apple A10X Fusion (2017) · hw H.264/HEVC · no AV1/VP9 block",
             "network": "ethernet",
-            "hdmi_input": None,
+            # HDMI_4 (2026-08-29, physically re-cabled from the Fire TV's old
+            # socket — Ben's actual on-site wiring; Roku took the Pi 400's old
+            # HDMI_3 instead). The only device on the rig that structurally
+            # CANNOT be measured headless — VLC pauses on HDMI loss. CR-075
+            # still owes n≥3.
+            "hdmi_input": "HDMI_4",
             "expected_boot_s": 60, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 10,
-            # Parked (VLC stopped) the box sits at ~2.1-2.3 W; the home
-            # screen autoplays previews (6-15 W) and tvOS Settings spikes to
-            # ~5.7 W on 26.6 — neither is the idle. idle_w set a bit above
-            # the clean floor because `stop` sometimes leaves a slow-draining
-            # transient (see min_settle_s below).
-            "idle_w": 2.8,
+            # RE-CHARACTERIZED 2026-08-29 on tvOS 26.6 (the 2.1-2.3 W figure
+            # below was tvOS 18-era and is now stale — this answers the
+            # "does 26 have a higher floor than 18" question raised earlier
+            # this session): 148 s of live-watched parked (VLC stopped) power
+            # sat consistently at ~2.9-3.1 W, with occasional brief bumps to
+            # 3.6-3.8 W and one real spike to 6.1 W correlated with a moving
+            # AirPlay promotional overlay. Confirmed NOT fixable via
+            # Screensaver/Reduce Motion/Auto-Play Video Previews — all three
+            # were checked/changed live and none moved the sustained floor;
+            # this looks like a genuine tvOS-version floor increase, not a
+            # settings problem. (Old note, now superseded: "Parked sits at
+            # ~2.1-2.3 W; home screen autoplays previews (6-15 W) and tvOS
+            # Settings spikes to ~5.7 W on 26.6 — neither is the idle.")
+            "idle_w": 3.0,
             # 2026-08-27: found live during the first overnight campaign —
             # the generic 5 s / 20-sample protocol is tuned to the Android
             # boxes' fast post-stop settle. This box's draw kept moving for
@@ -224,6 +261,101 @@ RIG: dict = {
             # atv_probe.py run with 20-30 s settle / 40-45 s baseline stayed
             # clean all night — these floors reproduce that.
             "min_settle_s": 25, "min_baseline_samples": 40,
+            # 2026-08-29, corrected same day: first tried raising max_wait_s
+            # alone (to 90 s) to let the guard wait out contamination — WRONG
+            # half of the fix. The box's idle state has frequent BRIEF
+            # single-sample spikes (6.1 W AirPlay overlay, 8.2 W on a
+            # "Welcome to Apple TV" screen) against a genuinely noisy
+            # ~2.9-3.8 W floor — a permanent recurring feature, not a
+            # one-time event that clears. Against the global 0.5 W tolerance
+            # settle_polls likely never succeeds, so a bigger max_wait_s just
+            # burned its full ceiling every run (Ben: "settle and baseline
+            # still seem overly long") without ever actually settling faster.
+            # Widening tolerance_w lets normal jitter read as settled
+            # quickly; max_wait_s is dialed back down since it should now
+            # rarely be needed — it stays as the circuit breaker for a
+            # genuinely sustained excursion (the campaign's 5.3+ W case),
+            # not the routine path.
+            "min_idle_tolerance_w": 1.0, "min_idle_max_wait_s": 45,
+        },
+        "xiaomi": {
+            # Xiaomi TV Box (Gen 2), ADB authorised + SoC-audited 2026-08-29 —
+            # unparked at the time. Google TV under the hood, the SAME "adb"
+            # driver as gtv/bbox, no new bench.py code needed. idle_w/
+            # expected_boot_s below are STILL UNMEASURED GUESSES —
+            # onboard_device.py never ran.
+            #
+            # PARKED 2026-08-29, same day, after the switch-install physical
+            # relocation: box stopped powering on entirely (no video, no
+            # boot). Tapo meter + cable/PSU reasoning inconclusive (DOA
+            # hardware vs. PSU fault not distinguishable without a confirmed-
+            # matching spare PSU or a second unit — not attempted, real risk
+            # of further damage). Owner sourcing a replacement (2nd Gen again,
+            # or the newer 3rd Gen / Amlogic S905X5). Kept here, not deleted,
+            # so the SoC audit and config below aren't lost — un-park and
+            # replace the UNMEASURED guesses once a working unit is on hand.
+            "parked": True,
+            #
+            # ⚠ This box has NO HDMI cable at all (never was cabled) and runs
+            # the same Android VIEW-intent/Just Player mechanism as the Fire
+            # TV — genuinely unverified whether it decodes/renders the same
+            # way with zero display sink attached. Confirm with a live smoke
+            # test (watch logcat CCodec allocation + playback_state) before
+            # trusting any row from this box, same caveat as the Fire TV
+            # above (2026-08-29, Ben's catch).
+            "label": "Xiaomi TV Box", "plug_name": "Lab-F4",
+            "plug_ip": "192.168.1.33",
+            "kind": "adb", "target": "192.168.1.151:5555",
+            "macs": ["32:6c:9f:c5:c1:fd"],   # wlan0 — no Ethernet port on this box
+            "device_class": "stb",
+            # SoC audit 2026-08-29: ro.soc.* is empty (same gap as the Bbox) —
+            # identified instead via ro.hardware=amlogic + ro.board.platform=sc2
+            # (Amlogic's own codename for the S905X4, confirmed via web search;
+            # model MiTV_AFKR0, codename "jaws", Android 11 confirmed live).
+            "os": "Google TV (Android 11)", "chip_vendor": "Amlogic",
+            "silicon": "Amlogic S905X4 (sc2) · Android 11 · hw H.264/HEVC/VP9/AV1 per spec"
+                       " — unconfirmed on THIS box until a real job's logcat CCodec"
+                       " allocations are checked (spec sheets have been wrong before here)",
+            "network": "wifi",
+            "hdmi_input": None,
+            "expected_boot_s": 60, "boot_threshold_w": 0.4,   # UNMEASURED guess
+            "shutdown_wait_s": 15,
+            "idle_w": 1.5,   # UNMEASURED guess — replace via onboard_device.py
+        },
+        "roku": {
+            # Roku Express 4K, onboarded 2026-08-29. No ADB/logcat equivalent
+            # — control + liveness are both ECP (port 8060, "Control by
+            # mobile apps" set to Permissive on the box, confirmed working
+            # live). Playback (bench.py RokuDevice) uses Dom's own
+            # pre-installed "Greening of Streaming" channel (app id 775528,
+            # built for hackathons) — NOT the Media Assistant community hack
+            # first attempted; that path is abandoned (see JOURNAL/memory
+            # roku-gos-channel-2026-08-29 for the full story).
+            #
+            # ⚠ ONE-TIME MANUAL SETTING, required for this to work at all:
+            # in the app's own on-screen settings, its playlist URL must be
+            # set to http://192.168.1.62:8123/gos_local_test.m3u — the app's
+            # own default (one of Dom's personal domains) is dead, which is
+            # why every attempt 404s until this is set. If this box is ever
+            # factory-reset or the app reinstalled, re-enter this URL by hand
+            # before anything will play. RokuDevice.PLAYLIST_URL/PATH in
+            # bench.py hold the same values — keep both in sync if it moves.
+            "label": "Roku Express 4K", "plug_name": "Lab-F5",
+            "plug_ip": "192.168.1.113",
+            "kind": "roku", "target": "192.168.1.13",
+            "macs": ["d4:e2:2f:e2:39:bb"],   # Wi-Fi only, no Ethernet port
+            "device_class": "stb",
+            "os": "Roku OS 14.0.4", "chip_vendor": "Realtek",
+            "silicon": "Realtek RTD1315 · hw H.264/HEVC/VP9/AV1 per spec"
+                       " — unconfirmed (Roku has no decoder-provenance signal"
+                       " of any kind, unlike the Android boxes' logcat)",
+            "network": "wifi",
+            # HDMI_3, physically re-cabled 2026-08-29 (took the Pi 400's old
+            # socket, on-site during the switch install).
+            "hdmi_input": "HDMI_3",
+            "expected_boot_s": 30, "boot_threshold_w": 0.5,   # UNMEASURED guess
+            "shutdown_wait_s": 10,
+            "idle_w": 2.0,   # UNMEASURED guess — replace via onboard_device.py
         },
         "c2": {
             # The C2 as a native decoder (CR-071): its own α9 SoC decodes+
@@ -239,8 +371,9 @@ RIG: dict = {
             # differential carry the measurement).
             "label": "LG C2 (native)", "plug_name": "Lab-E",
             "plug_ip": "192.168.1.71",
-            "kind": "webos", "target": "192.168.1.25",
+            "kind": "webos", "target": "192.168.1.26",   # moved from .25, 2026-08-29 (see monitor.lg_host note)
             "device_class": "tv",
+            "os": "webOS 22", "chip_vendor": "LG",
             "silicon": "LG α9 Gen5 · hw H.264/HEVC/VP9/AV1",
             "network": "ethernet",   # (also on Wi-Fi .109 — we use Ethernet)
             "expected_boot_s": 15, "boot_threshold_w": 5.0,
@@ -259,13 +392,26 @@ RIG: dict = {
         "hdmi_inputs": ["HDMI_1", "HDMI_2", "HDMI_3", "HDMI_4"],
         # webOS control (CR-071): lg_host set ⇒ claim_screen is an explicit
         # HDMI input-select, not the auto-switch/DPMS dance. Client key at
-        # lg.CLIENT_KEY_PATH. `.25` (Ethernet); the C2 is also on Wi-Fi `.109`.
-        "lg_host": "192.168.1.25",
+        # lg.CLIENT_KEY_PATH. Moved `.25` → `.26` 2026-08-29 (the switch-
+        # install reservation drift that broke every claim-screen attempt —
+        # confirmed via `paired: True` at the new address, same physical TV,
+        # same stored key). The C2 is also on Wi-Fi `.109`. ⚠ webOS has no
+        # MAC-follower support (unlike the adb/atv devices) — if this drifts
+        # again, it has to be found and fixed by hand like this, not
+        # automatically. Worth a router-side reservation recheck for `.26`
+        # so it doesn't drift again on the next lease renewal.
+        "lg_host": "192.168.1.26",
         # Above this draw the panel is showing a picture — could be Ben's Mac
         # extension, so the Off button asks for confirmation client-side.
         "in_use_threshold_w": 15.0,
     },
-    # Shelly on the Lab-A/B/D strip. None ⇒ master tile absent. Settings key
+    # Shelly on the new 8-way strip (2026-08-29 switch install) — every
+    # device plug EXCEPT the C2/monitor (Lab-E) now runs through it: all 8
+    # rig.py devices (pi5, pi400, firestick, gtv, bbox, atv, xiaomi, roku).
+    # Useful sanity check (Ben, 2026-08-29): with all 8 running, sum of the
+    # 8 individual P110 readings should track the Shelly's own apower_w —
+    # a live cross-check against meter drift, independent of the individual
+    # per-device Tapo readings. None ⇒ master tile absent. Settings key
     # rig_shelly_ip overrides. Generation AND capability are auto-detected:
     # the installed unit (2026-07-29) is a Plug PM Gen3 (S3PL-30116EU) — a
     # 16 A pass-through METER with no relay (RPC exposes PM1.*, no Switch.*),
@@ -276,8 +422,8 @@ RIG: dict = {
 }
 
 _STOPPED_STATES = ("off", "unpowered", "unreachable")
-_READY_DETAIL = {"ssh": "ssh ok", "adb": "adb ok", "atv": "pyatv ok"}
-_WAIT_LABEL = {"ssh": "SSH", "adb": "ADB", "atv": "pyatv"}
+_READY_DETAIL = {"ssh": "ssh ok", "adb": "adb ok", "atv": "pyatv ok", "roku": "ECP ok"}
+_WAIT_LABEL = {"ssh": "SSH", "adb": "ADB", "atv": "pyatv", "roku": "ECP"}
 
 # --- Idle auto-off ---------------------------------------------------------
 #
@@ -908,6 +1054,10 @@ def probe_ready(dev: dict) -> bool:
             return _run(["ssh"] + _SSH_OPTS + [dev["target"], "true"]).returncode == 0
         if dev["kind"] == "atv":
             return atv_power_state(dev) == "On"
+        if dev["kind"] == "roku":
+            with urllib.request.urlopen(
+                    f"http://{dev['target']}:8060/query/device-info", timeout=6) as r:
+                return r.status == 200
         serial = dev["target"]
         _run([ADB_BIN, "connect", serial], timeout=10)
         out = _run([ADB_BIN, "-s", serial, "shell", "getprop",
@@ -982,8 +1132,8 @@ def set_signal(dev: dict, on: bool) -> None:
       output is already enabled — no fresh hot-plug, the panel never re-scans.
     - GTV wake/sleep must retry + verify mWakefulness: a single keyevent
       frequently doesn't stick (same finding as bench.py's prepare())."""
-    if dev["kind"] == "atv":
-        return      # no signal control over pyatv; the C2 input-select path does the arbitration
+    if dev["kind"] in ("atv", "roku"):
+        return      # no per-input signal control over pyatv/ECP; the C2 input-select path does the arbitration
     if dev["kind"] == "ssh":
         # DPMS via wlopm, NOT output disable via wlr-randr: labwc auto-revives
         # a session's only output when disabled (seen live 2026-07-29 as the
@@ -1048,6 +1198,11 @@ def send_shutdown(dev: dict) -> None:
             _run(["ssh"] + _SSH_OPTS + [dev["target"], "sudo -n shutdown -h now"])
         elif dev["kind"] == "atv":
             atv_cmd(dev, "turn_off", timeout=30)     # tvOS sleep; the relay cut follows
+        elif dev["kind"] == "roku":
+            # No documented/reliable ECP "power off" — best-effort return to
+            # Home before the relay does the real cut (same shape as atv).
+            urllib.request.urlopen(urllib.request.Request(
+                f"http://{dev['target']}:8060/keypress/Home", method="POST"), timeout=10)
         else:
             serial = dev["target"]
             _run([ADB_BIN, "connect", serial], timeout=10)
@@ -1553,7 +1708,10 @@ def status_payload() -> dict:
         devices[name] = {
             "label": cfg_d["label"], "plug_name": cfg_d["plug_name"],
             "device_class": cfg_d.get("device_class", "stb"),
+            "shape": cfg_d.get("shape"),   # render override — device_class stays the behavioural tag
             "silicon": cfg_d.get("silicon", ""),
+            "os": cfg_d.get("os", ""),
+            "chip_vendor": cfg_d.get("chip_vendor", ""),
             "network": cfg_d.get("network", "ethernet"),
             "conn": cfg_d["kind"],
             "state": d["state"], "watts": d["watts"], "busy": d["busy"],

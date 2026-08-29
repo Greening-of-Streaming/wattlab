@@ -123,8 +123,12 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | `.91` | P110 `GoS1b-server` (inner bench meter, `TAPO_P110_IP`) | `bc:07:1d:a2:d2:a1` | pre-existing reservation, unchanged |
 | `.1` | **Lab-F3 P110 — Apple TV meter** (fw 1.3.1, added 2026-08-26) | `b8:fb:b3:ef:27:26` | reserved 2026-08-26 (kept at `.1`; `atv_probe.py --plug 192.168.1.1`) |
 | `.152` | Apple TV 4K "TV Room" (`AppleTV6,2`, 2017 A10X, tvOS 18.0) | `90:dd:5d:ab:70:8e` | pyatv target (`ATV_IP` in `atv_probe.py`); reserved 2026-08-26 |
-| `.17` | Shelly Plug PM Gen3 (Lab-A/B/D strip meter, `shelly_ip`) | `90:70:69:5b:7c:78` | reserved 2026-08-26 |
+| `.17` | Shelly Plug PM Gen3 (8-way strip meter, `shelly_ip` — new strip 2026-08-29: every device plug except the C2/monitor, i.e. all 8 rig.py devices) | `90:70:69:5b:7c:78` | reserved 2026-08-26; sum of the 8 individual P110 readings vs this meter's apower_w is a live sanity check for meter drift when all 8 run together |
 | `.184` | lab-F2 P110 — Pi 5 meter (2026-08-19) | `b8:fb:b3:ef:0e:df` | fw 1.3.1 |
+| `.33` | Lab-F4 P110 — Xiaomi TV Box meter (2026-08-29) | — | fw 1.3.1 |
+| `.151` | Xiaomi TV Box (Wi-Fi, no Ethernet port) | `32:6c:9f:c5:c1:fd` | Amlogic S905X4 (`ro.board.platform=sc2`), Android 11, model `MiTV_AFKR0` codename `jaws`; reserved 2026-08-29 |
+| `.113` | Lab-F5 P110 — Roku meter (2026-08-29) | — | fw 1.3.1 |
+| `.13` | Roku Express 4K (Wi-Fi, no Ethernet port) | `d4:e2:2f:e2:39:bb` | Realtek RTD1315; ECP control (port 8060, "Control by mobile apps" set to Permissive); reserved 2026-08-29. Playback = Dom's pre-installed "Greening of Streaming" channel (id 775528) — its playlist-URL setting must be `http://192.168.1.62:8123/gos_local_test.m3u` (one-time, on-device; its old default pointed at a dead personal domain) — validated end-to-end live 2026-08-29, see `bench.py`'s `RokuDevice` docstring for the exact (non-obvious) nav sequence |
 | `.95` / `.132` / `.199` | Ben's desk P110s: `Ben-Lab-X` · `Ben HD LCD monitor (Pi)` · `Ben1-4k-monitor` | `ec:75:0c:96:dd:a5` · `ec:75:0c:96:db:03` · `48:22:54:64:15:b6` | all fw 1.4.6 (~2 s update — not for 1 s rows); not rig plugs |
 
 Full reservation list handed to the owner 2026-08-26 (S69) and **applied the same evening** in the Bbox admin UI: everything above plus the
@@ -205,7 +209,11 @@ standby rejects SSAP with WS 1008 → wake with raw Wake-on-LAN first (`lg.wake(
 poller never auto-wakes it (household TV); SIMPLINK/CEC turned OFF by the owner 2026-08-15 (input
 hopping was contaminating baselines).
 
-**HDMI port map (rig.py):** Bbox → HDMI_1 · GTV → HDMI_2 · Pi 400 → HDMI_3 · Fire TV → HDMI_4 (Pi 5 parked).
+**HDMI port map (rig.py, 2026-08-29 switch-install reshuffle):** Bbox → HDMI_1 · GTV → HDMI_2 ·
+Roku → HDMI_3 (took the Pi 400's old socket) · Apple TV → HDMI_4 (took the Fire TV's old socket).
+Pi 5, Pi 400, Fire TV and Xiaomi are headless-only (no HDMI cable at all). Fire TV and Xiaomi still
+owe a live no-HDMI-sink smoke test — Android app-launch playback with zero display attached is
+unverified, unlike the Pi boards' display-independent decode-to-null.
 
 **Bbox (Bouygtel4K, operator CPE — Marvell Berlin, Arcadyan HMB9213NW, `ro.soc.*` empty; R3a 2026-08-26):** ADB authorised (Android 11), Ethernet `.10` since 2026-07-31 (on Wi-Fi `.173` since the CR-074 cable pull),
 plug Lab-F `.155`, `idle_w` 6.6 W (drifts 6.3–6.8 → its H.264/HEVC ΔW sits inside its own noise; AV1

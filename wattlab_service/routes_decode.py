@@ -773,6 +773,12 @@ _BODY = """
       <div class="rig-gos1">GoS1<br><span>(control)</span></div>
       <div id="rail-links"></div>
     </div>
+    <div class="rig-runrow" id="rig-filters" style="margin-bottom:0.5rem;display:none;font-size:0.8rem">
+      <span class="rig-detail">filter</span>
+      <select id="filter-os" onchange="filtersChanged()" style="max-width:11rem"></select>
+      <select id="filter-vendor" onchange="filtersChanged()" style="max-width:11rem"></select>
+      <span id="filter-count" class="rig-detail"></span>
+    </div>
     <div class="rig-tiles" id="rig-tiles"></div>
     <div class="rig-screenzone">
       <div class="rig-tile rig-screen" id="tile-monitor">
@@ -869,18 +875,30 @@ _BODY = """
   </div>
 
   <div class="rig-run" style="margin-top:1rem">
-    <h3>Open items <span class="rig-badge">2026-08-26</span></h3>
+    <h3>Open items <span class="rig-badge">2026-08-29</span></h3>
     <div class="rig-note" style="margin-top:0.2rem">
     <b>Landed this month:</b> campaigns = batches with self-service stamping, filter and paging
     (CR-073) · rig follows a box that changes address by MAC (Ethernet↔Wi-Fi moves, forgotten
     leases) · <b>Apple TV 4K</b> on the rig (pyatv power/readiness; playback = VLC via Companion —
     AirPlay <code>play_url</code> is dead on tvOS 18; liveness = playback state, no marker; rows are
-    “VLC on tvOS”) · <b>screen map</b>: the C2 has four HDMI sockets and the rig seven external
-    devices — which four are cabled is set in <a href="/settings#s-decode">/settings › Rig › HDMI
-    inputs</a>; uncabled boxes are headless-only (no <i>Claim screen</i>, no screen-mode rows) ·
-    silicon audited per box (both streamers = MediaTek MT8696, Bbox = Marvell Berlin, Apple TV = A10X) ·
-    every rig address reserved on the router.<br>
+    “VLC on tvOS”) · <b>Xiaomi TV Box</b> (Amlogic S905X4, Android 11, adb driver) and
+    <b>Roku Express 4K</b> (Realtek RTD1315, ECP driver — playback via an undocumented app-launch,
+    unvalidated end to end) join the rig, now nine devices · OS/chipset filter bar above the tiles ·
+    <b>screen map</b>: the C2 has four HDMI sockets — which four are cabled is set in
+    <a href="/settings#s-decode">/settings › Rig › HDMI inputs</a>; uncabled boxes are headless-only
+    (no <i>Claim screen</i>, no screen-mode rows) · silicon audited per box (both Android streamers =
+    MediaTek MT8696, Bbox = Marvell Berlin, Apple TV = A10X, Xiaomi = Amlogic S905X4, Roku = Realtek
+    RTD1315) · every rig address reserved on the router.<br>
     <b>Still open:</b><br>
+    · Fire TV and Xiaomi now have NO HDMI cable at all (not just unclaimed, after the 2026-08-29
+      screen-map reshuffle) — unconfirmed whether Android app-launch playback still decodes/renders
+      the same way with zero display sink; needs a live smoke test before either box's headless rows
+      are trusted<br>
+    · Roku: playback mechanism (Dom's "Greening of Streaming" channel via ECP, NOT the
+      <code>roku_probe.py</code>-documented Media Assistant path, which is dead on this firmware) is
+      validated end-to-end (🟢, real jobs) — its idle_w/expected_boot_s/startup_skip_s are still
+      unmeasured guesses pending an <code>onboard_device.py</code> run (CR-077) · Xiaomi is parked
+      (bricked after the switch-install relocation; replacement being sourced)<br>
     · Apple TV: tvOS screensaver contaminates parked baselines (disable it — a disclosed harness
       setting — before the next rows); headless-vs-display power still to pin down; n≥3 owed (CR-075)<br>
     · Fire TV <code>alive_at_window_end</code> false negative on flat traces (instrumented via
@@ -906,12 +924,13 @@ _BODY = """
     expectations: Pi 5 ≈ 29 s; Pi 400 and Google TV get measured on first use.
   </div>
   <div class="rig-note">
-    <b>Connectivity (transparency).</b> Every device is on Ethernet via the bench
-    switch except the <b>Fire TV Stick, which is Wi-Fi only</b> (no Ethernet port).
-    Link quality is not the concern — the Bbox Wi-Fi 7 access point sits a few metres
-    away, likely better than the bench Ethernet — but the stick powers its own radio,
-    so its device-total W includes a Wi-Fi share the Ethernet boxes don't carry. That
-    share is not separately measurable on this rig; treat it as a stated caveat on any
+    <b>Connectivity (transparency).</b> Most devices are on Ethernet via the bench
+    switch; the <b>Fire TV Stick, Xiaomi TV Box and Roku Express 4K are Wi-Fi
+    only</b> (none has an Ethernet port). Link quality is not the concern — the
+    Bbox Wi-Fi 7 access point sits a few metres away, likely better than the bench
+    Ethernet — but each Wi-Fi device powers its own radio, so its device-total W
+    includes a Wi-Fi share the Ethernet boxes don't carry. That share is not
+    separately measurable on this rig; treat it as a stated caveat on any
     cross-device comparison, not a correction we apply.
   </div>
 </div>
@@ -968,7 +987,15 @@ var SHAPES = {
      + '<line x1="10" y1="22" x2="10" y2="26"/><line x1="42" y1="22" x2="42" y2="26"/></svg>',
   tv:  '<svg width="52" height="30" viewBox="0 0 52 30" fill="none" stroke="currentColor" stroke-width="1.3">'
      + '<rect x="4" y="2" width="44" height="21" rx="1.5"/>'
-     + '<line x1="20" y1="26" x2="32" y2="26"/><line x1="26" y1="23" x2="26" y2="26"/></svg>'
+     + '<line x1="20" y1="26" x2="32" y2="26"/><line x1="26" y1="23" x2="26" y2="26"/></svg>',
+  // HDMI-stick form factor (device_class stays "stb" for behaviour/filtering —
+  // this is a pure render override via dev.shape, 2026-08-29 Ben: the Fire TV
+  // Stick is categorised right but drawn wrong, it's a dongle, not a box).
+  stick: '<svg width="52" height="30" viewBox="0 0 52 30" fill="none" stroke="currentColor" stroke-width="1.3">'
+     + '<rect x="2" y="10" width="8" height="10" rx="1.5"/>'
+     + '<rect x="10" y="11.5" width="30" height="7" rx="2"/>'
+     + '<path d="M40 12 L48 9 V21 L40 18 Z"/>'
+     + '<line x1="4" y1="7" x2="4" y2="4"/><line x1="8" y1="7" x2="8" y2="4"/></svg>'
 };
 var SCREEN_SHAPE =
     '<svg width="132" height="88" viewBox="0 0 132 88" fill="none" stroke="currentColor" stroke-width="1.5">'
@@ -1003,14 +1030,14 @@ function deviceTile(name, dev, screenOwner, screenSettling) {
     ? ' <span class="rig-badge' + (screenSettling ? ' blink' : '') + '">📺 screen'
       + (screenSettling ? '…' : '') + '</span>' : '';
   var h = '<div class="rig-tile" id="devcard-' + name + '">'
-        + '<span class="rig-devshape">' + (SHAPES[dev.device_class] || SHAPES.stb) + '</span>'
+        + '<span class="rig-devshape">' + (SHAPES[dev.shape || dev.device_class] || SHAPES.stb) + '</span>'
         + '<h3><span class="rig-dot ' + dotClass(dev) + '"></span>'
         + dev.label + busy + stuck + screen + '</h3>'
-        + '<div class="rig-silicon">' + (dev.silicon || '')
+        + '<div class="rig-silicon">' + (dev.os ? dev.os + ' · ' : '') + (dev.silicon || '')
         + (dev.network === 'wifi'
-           ? ' · <span title="The only Wi-Fi-only device on the rig (no Ethernet port). '
-             + 'Its device-total W includes powering its own radio — the Ethernet boxes '
-             + 'carry no such share. State this next to any cross-device comparison.">📶 Wi-Fi only</span>'
+           ? ' · <span title="This device has no Ethernet port. Its device-total W '
+             + 'includes powering its own radio — the Ethernet boxes carry no such '
+             + 'share. State this next to any cross-device comparison.">📶 Wi-Fi only</span>'
            : '') + '</div>'
         + '<div class="rig-w">⚡ ' + fmtW(dev.watts)
         + ' <span class="rig-badge">🔌 ' + dev.plug_name + '</span>' + hdmiBadge(dev) + '</div>';
@@ -1068,8 +1095,11 @@ function render(s) {
   // Strip bar (replaces the old master tile) — plugs list + Shelly meter +
   // the master/All-off button with unchanged semantics.
   var m = s.master;
+  // The C2/monitor (webos) is on its own separate wall socket, not the
+  // 8-way strip (2026-08-29) — exclude it here (matches hdmiBadge()'s same
+  // webos carve-out).
   var plugNames = [];
-  for (var dn0 in s.devices) plugNames.push(s.devices[dn0].plug_name);
+  for (var dn0 in s.devices) if (s.devices[dn0].conn !== 'webos') plugNames.push(s.devices[dn0].plug_name);
   document.getElementById('strip-plugs').textContent = plugNames.join(' · ');
   var meterEl = document.getElementById('strip-meter');
   var btn = document.getElementById('btn-master');
@@ -1127,18 +1157,60 @@ function render(s) {
   mb.disabled = !mon.reachable;
 
   buildDevPicks(s.devices);
+  buildFilters(s.devices);
 
-  // Device cards + control rail
+  // Device cards + control rail — filtered by the OS/chipset pickers (2026-08-29,
+  // Ben: 9 devices is too many to scan as a flat list). Filtering only hides
+  // tiles/wires; the Run device-picker above stays unfiltered (choosing devices
+  // for a job is a separate concern from browsing the bench).
+  var osSel = document.getElementById('filter-os').value;
+  var vSel = document.getElementById('filter-vendor').value;
+  var shown = 0;
   var tiles = '', rail = '';
   for (var name in s.devices) {
-    tiles += deviceTile(name, s.devices[name], s.screen_owner, s.screen_settling);
+    var dv = s.devices[name];
+    if (osSel !== 'all' && dv.os !== osSel) continue;
+    if (vSel !== 'all' && dv.chip_vendor !== vSel) continue;
+    shown++;
+    tiles += deviceTile(name, dv, s.screen_owner, s.screen_settling);
     rail += '<div class="rail-conn" id="rail-' + name + '">──' +
-            (s.devices[name].conn || '?') + '─▸</div>';
+            (dv.conn || '?') + '─▸</div>';
   }
   document.getElementById('rig-tiles').innerHTML = tiles;
   document.getElementById('rail-links').innerHTML = rail;
+  var fc = document.getElementById('filter-count');
+  var total = Object.keys(s.devices).length;
+  fc.textContent = (osSel !== 'all' || vSel !== 'all') ? shown + ' / ' + total + ' shown' : '';
   drawWires(s);
 }
+
+// Filter dropdowns — options rebuilt only when the device set's distinct
+// os/chip_vendor values change (same "unchanged → skip" guard as buildDevPicks).
+var FILTER_OPTS_KEY = '';
+function buildFilters(devices) {
+  var names = Object.keys(devices);
+  document.getElementById('rig-filters').style.display = names.length > 4 ? '' : 'none';
+  var oses = [], vendors = [];
+  names.forEach(function(n) {
+    var d = devices[n];
+    if (d.os && oses.indexOf(d.os) < 0) oses.push(d.os);
+    if (d.chip_vendor && vendors.indexOf(d.chip_vendor) < 0) vendors.push(d.chip_vendor);
+  });
+  oses.sort(); vendors.sort();
+  var key = oses.join()+ '|' + vendors.join();
+  if (key === FILTER_OPTS_KEY) return;
+  FILTER_OPTS_KEY = key;
+  var fillSelect = function(id, label, opts, keep) {
+    var sel = document.getElementById(id);
+    var prev = keep && sel.value;
+    sel.innerHTML = '<option value="all">' + label + ': all</option>'
+      + opts.map(function(o){ return '<option value="' + o + '">' + o + '</option>'; }).join('');
+    if (prev && opts.indexOf(prev) >= 0) sel.value = prev;
+  };
+  fillSelect('filter-os', 'OS', oses, true);
+  fillSelect('filter-vendor', 'chipset', vendors, true);
+}
+function filtersChanged() { if (RIG_LAST) render(RIG_LAST); }
 
 // ── Wire overlay ──────────────────────────────────────────────────
 // Recomputed from live card positions every render/resize: HDMI wire per

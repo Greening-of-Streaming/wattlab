@@ -7,6 +7,150 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 72 — 2026-08-29 (nine devices: Xiaomi bricked, Roku onboarded, two marker-encoder bugs
+fixed, LinkedIn VP9 claim corrected with data)
+
+*Numbering: S70 (08-28) and S71 (08-28→29) were Tania's SMPTE encode-parity / ReadySetGo sessions,
+already fully journaled below — unrelated to this session's content, just interleaved in git history.
+This session continues directly from S69's tail (`ba97a89`).*
+
+Two quick support items first: a subagent asked to preview OWL's 3-month login count overreached into
+decoding auth tokens for PII it wasn't asked for — refused to propagate the output, filed via
+SendFeedback, reported conservatively. Separately, the owner's SSH access broke; traced to this
+session's own earlier ACL work (`setfacl`) narrowing the group-read mask on `/home/gos` past what
+sshd's `StrictModes` will accept — fixed with `setfacl -m mask::rx` (+ `-d` default).
+
+**Xiaomi TV Box (Gen 2) — onboarded, then bricked.** Arrived with no Ethernet port (USB port only;
+advised against a USB-Ethernet adapter, Wi-Fi is simpler and this box has no Ethernet driver story
+worth trusting). ADB-authorised and SoC-audited: `ro.soc.*` empty (same gap as the Bbox), identified
+via `ro.hardware=amlogic` + `ro.board.platform=sc2` → **Amlogic S905X4**, model `MiTV_AFKR0` codename
+"jaws", Android 11 (Google TV). Added to `rig.py` as `"xiaomi"` on the existing `"adb"` driver (no new
+`bench.py` code — same mechanism as gtv/bbox). Then, after being physically relocated during the
+switch-install work below, it stopped powering on entirely — no video, no boot, at any point.
+Troubleshot via the Tapo meter's draw pattern and by reasoning through cable/connector type and
+voltage/polarity match for the power supply; stopped short of trying an unconfirmed spare PSU (real
+risk of further damage without a confirmed match). No root cause established (DOA hardware vs. PSU
+fault, not distinguishable without a second unit or a confirmed-matching PSU). Owner is sourcing a
+replacement — either another 2nd Gen unit or the newer 3rd Gen (Amlogic S905X5, recommended when
+asked to check). `rig.py`'s `xiaomi` entry marked `"parked": True` (kept, not deleted, so the SoC
+audit and config aren't lost) pending the replacement.
+
+**Roku Express 4K — onboarded, playback mechanism reverse-engineered live.** No ADB/logcat
+equivalent — control and liveness are both ECP (port 8060; needs "Control by mobile apps" set to
+Permissive on the box, confirmed live: Default/Disabled 403s a plain keypress). Researched the
+community `PlayOnRoku` app-launch trick first (`decode_bench/roku_probe.py` documents the research
+trail) — confirmed dead on this box's current firmware (Roku disabled app 15985 for third parties on
+OS 11.5+, matching a known Home Assistant integration issue). The box already carried a real,
+working answer: `/query/apps` showed a dormant channel, id `775528`, "Greening of Streaming" — built
+by Dom for a past hackathon, unmaintained ~1 year. It's a simple `.m3u` playlist player whose
+playlist-URL setting pointed at one of Dom's own personal domains, dead for about a year — the root
+cause of every earlier 404, not a wrong ECP call. Fixed by repointing it (one-time, on-device) at
+`http://192.168.1.62:8123/gos_local_test.m3u`; `bench.py`'s new `RokuDevice` rewrites that file's
+single entry before each launch, so the on-device setting never needs touching again. Exact nav
+sequence found live, none of it guessable: launch → wait ~2s (early keypresses silently dropped) →
+four `Down` (default focus sits 4 rows above the first playable item regardless of playlist length)
+→ `Select` (track view) → a second `Select` (actually starts playback) → `Right` to leave the
+windowed player for full-screen (state-path-dependent — a different windowed state earlier needed
+`Left`). Confirmed end-to-end via a real `/decode` job, screen mode: 🟢, `alive_at_window_end: true`,
+screen-mode marker segmentation working normally. Roku's SoC: **Realtek RTD1315** — no
+decoder-provenance signal exists on this device (no logcat equivalent), same evidentiary tier as the
+Apple TV.
+
+**Switch-install re-cabling (Ben, on-site) — new topology.** New 16-port TP-Link switch and a new
+8-way Shelly Plug PM Gen3 strip covering every rig device plug except the C2/monitor (all 8 non-parked
+devices now on it — sum of the 8 individual P110 readings vs. the Shelly's own `apower_w` is a live
+sanity check for meter drift, going forward). HDMI reshuffle: Roku → **HDMI_3** (took the Pi 400's old
+socket), Apple TV → **HDMI_4** (took the Fire TV's old socket); Pi 5, Pi 400, Fire TV and Xiaomi are
+now headless-only (no HDMI cable at all) — Fire TV and Xiaomi both still owe a live no-HDMI-sink smoke
+test (Android app-launch playback with zero display attached is unverified, unlike the Pi boards'
+display-independent decode-to-null). Incidentally broke the LG C2's address (`.25` → `.26`, a lease
+drift from the switch swap) — found and fixed by hand (webOS has no MAC-follower support, unlike the
+adb/atv devices; worth a router-side reservation recheck so it doesn't drift again).
+
+**Two marker-encoder bugs found and fixed, same stuck-black symptom, different causes.** Both surfaced
+building Roku's screen-mode path (the black/white/black calibration head spliced onto each clip).
+1. **HEVC:** a real 4-codec screen-mode sweep showed Roku's H.265 row reporting
+   `alive_at_window_end: true` while the raw screen-context trace sat flat at ~37 W (the marker's own
+   black level) for essentially the whole 165 s window — never transitioning to content. Root cause:
+   `hevc_nvenc` pads its coded height to the next CTU-aligned multiple of 64 (1080→1088) when
+   generating marker segments, while this project's HEVC source content is a clean, unpadded 1080 —
+   stream-copy concatenation spliced a real coded-buffer-size discontinuity into the file. Roku's
+   Realtek hardware HEVC decoder froze on it; VLC on the Apple TV (software decode) played the
+   identical file fine — a hardware-vs-software decoder robustness gap, not a Roku-specific defect.
+   Fixed: HEVC marker segments now use `libx265` (clean, unpadded 1080) instead of `hevc_nvenc`;
+   h264/av1 stay on NVENC. Confirmed live, twice.
+2. **VP9:** adding a VP9 marker encoder at all (`libvpx-vp9` — NVIDIA has no VP9 NVENC path,
+   needed to unblock a screen-mode Apple TV/Roku comparison) reproduced the identical flat-~37W
+   failure on the first attempt. Ruled out the HEVC-style cause first (profile/pix_fmt/color matched
+   exactly between source and marker segments) — genuinely different root cause: the intermediate
+   marker-segment container was hardcoded to `.mp4` for every codec regardless of the source clip's
+   own container. h264/hevc/av1 sources are all `.mp4` already, so this never surfaced; VP9 sources
+   are `.webm` (this project's own convention — VP9-in-MP4 already stalls the GTV player). Fixed:
+   segment container now matches the source clip's own extension (`Path(clip).suffix`). Confirmed
+   live, twice — the marker segmentation algorithm worked cleanly here too (unlike HEVC's one
+   remaining minor loose end: its black plateau was short enough that the edge-detector still missed
+   it, doesn't affect ΔW/context-ΔW validity, low-priority). **finding-draft skill** gained a new
+   guardrail from the same onboarding: `startup_skip_s` is device-specific (Roku's real UI navigation
+   costs more real time than a near-instant Android VIEW intent) — never quote "time to first frame"
+   or startup-energy figures across devices without naming this asymmetry.
+
+**CR-078 / CR-079 captured (owner, 2026-08-29).** CR-078 = device × codec reliability survey
+(including VP9) — the Roku/H.265 instance above is one resolved case, and same-day the VP9
+marker-encoder gap that blocked half of CR-078's own scope closed too; the systematic per-device ×
+per-codec matrix this CR actually asks for is still not done. CR-079 = an 18-content-variant
+bitrate-ladder × resolution decode-energy sweep (HD/4K, 3 codecs — VP9 excluded pending CR-078,
+though that exclusion's premise is now stale since the marker gap closed same day — scope decision
+left to the owner), 8 working devices, dry run first. Neither executed yet.
+
+**UI: nine devices.** OS/chipset filter bar above the `/decode` tiles; a "stick" shape icon for the
+Fire TV Stick (was rendered as a box); a 📶 Wi-Fi-only badge + tooltip on Fire TV/Xiaomi/Roku (none has
+an Ethernet port — their device-total W carries a radio share the Ethernet boxes don't, not
+separately measurable on this rig, stated as a caveat); Open items panel refreshed for the new
+topology and silicon roster (both Android streamers = MediaTek MT8696, Bbox = Marvell Berlin, Apple
+TV = A10X, Xiaomi = Amlogic S905X4, Roku = Realtek RTD1315).
+
+**LinkedIn correction: AV1 and VP9 tie, on two devices, not VP9 winning.** Prompted by revisiting the
+VP9 report (`docs/vp9_oneoff_2026-08.md`) for a possible update with the new Roku/Apple TV data — which
+surfaced a specific problem: the owner had told a commenter (Murat Pisat) on that LinkedIn thread that
+*if* Apple TV decode falls back to software, VP9 would at least be cheaper to decode there than the
+other codecs. Checked directly. Two independent readings say no:
+1. **Re-reading CR-075/C19's own already-closed table by codec, not by pair:** AV1 5.254 W mean vs.
+   VP9 5.284 W mean across three content families (0.030 W / 0.6 % apart) — a tie was already latent
+   in the closed data; C19's framing only ever asserted the H.264/HEVC-vs-AV1/VP9 pair gap, never
+   AV1-vs-VP9 specifically.
+2. **A fresh, independent n=3 confirmation** (batch `c876cc890df2`, after the `stop`→`home` and
+   idle-tolerance fixes below): Apple TV, screen mode, 165 s windows — **AV1 3.435 W (3.387–3.486),
+   VP9 3.495 W (3.473–3.536)**, a 0.060 W / 1.7 % gap smaller than either set's own run-to-run
+   spread, and pointing the wrong way for the claim if anything. Same-day **Roku headless 4-codec
+   sweep** (n=3 each, 150 s windows): **H.264 0.381 W, HEVC 0.470 W, AV1 0.476 W, VP9 0.481 W** — the
+   AV1/VP9 gap (0.005 W) reproduces the same tie independently on a second, unrelated device.
+   **Conclusion:** no evidence VP9 is cheaper than AV1 in software/unconfirmed decode on either device
+   tested — corrects the LinkedIn claim. Does not contradict the existing Pi 400 finding in
+   `docs/vp9_oneoff_2026-08.md` §5.2 (VP9 genuinely *was* the cheapest of four there, ARM CPU) — read
+   as architecture-dependent, not a universal codec property, open question either way.
+
+Getting the fresh Apple TV run right needed two more live-discovered fixes along the way: `AtvDevice.
+park()` used `atv("stop")`, confirmed live (twice, Ben watching) to NOT reliably halt VLC — playback
+kept visibly running for minutes after a job's results were already computed; fixed to use `atv
+("home")` instead. And `rig.py`'s per-device `min_idle_max_wait_s: 90` (added earlier for this box)
+turned out to be the wrong half of a fix — the box's noisy ~2.9–3.8 W idle floor with periodic
+single-sample spikes is a permanent feature, not a one-time contamination event `settle_polls` would
+ever converge past at the global 0.5 W tolerance, so a bigger `max_wait_s` just burned its ceiling
+every run without settling any faster. Corrected to `min_idle_tolerance_w: 1.0` + `min_idle_max_wait_s`
+back down to 45.
+
+Added `docs/vp9_oneoff_2026-08.md` §6 with the full write-up and pushed (`23b3cfb`, public repo) so
+the correction has an externally linkable home; drafted a short LinkedIn-reply version for the owner
+to post directly. Also updated the SMPTE paper's own repo (`~/dev/smpte-4951`, "the writing desk" —
+the owner's MacBook clone of the same GitHub remote; discovered/confirmed this workflow this session,
+see memory) — C19 gained an **F6 addendum** and a new **C20** digest (Roku) with the same
+correction, `RUN_QUEUE.md` got a dated status note on the Xiaomi brick (R3 stays open, unfilled), and
+a stray `RESULTS_INDEX.md`/`RUN_QUEUE.md` conflict from Tania's concurrent restructuring push merged
+clean. Pushed (`4877b8d`).
+
+Tests: 1046 passed (was 1044 at S69's close) — net +2 from this session's HDMI-topology/screen-map
+test rewrites (Roku/Apple TV/Bbox/GTV socket assignments, `xiaomi`/`roku` device-shape additions).
+
 ## Session 70 — 2026-08-28 (Tania — SMPTE encode-parity gap closure)
 
 *Run by Tania, via Claude Code.*

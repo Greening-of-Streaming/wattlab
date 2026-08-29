@@ -16,6 +16,8 @@ Usage:  python3 bench.py <config.json>
 Resumable: per-row checkpoint to results/<config name>.json; completed rows skip.
 """
 import asyncio, json, shlex, statistics, subprocess, sys, threading, time
+import urllib.parse, urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from dotenv import dotenv_values
 
@@ -419,11 +421,29 @@ class AtvDevice:
     Companion protocol with VLC's x-callback stream scheme; VLC fetches the
     clip URL from the origin with Range requests. One-time on-screen "Open
     VLC?" confirmation on the remote the first time (already accepted on the
-    rig box). No screenshot/logcat: liveness = pyatv playback state, position
-    advancing. Baseline state = VLC stopped on its library screen (the home
-    screen autoplays previews, 6–15 W; the Settings app spikes to ~5.7 W on
-    tvOS 26.6) — a harness choice, recorded in provenance.
-    Rows are "VLC on tvOS", not the native player — say so when quoting."""
+    rig box).
+
+    ⚠ Companion command reliability, 2026-08-29 (real, live-confirmed, not
+    guessed): `atv("stop")` does NOT reliably halt VLC playback — confirmed
+    twice live, with direct visual confirmation the video kept playing
+    minutes after `stop` was sent. `park()` now uses `atv("home")` instead,
+    which DID reliably stop it in the same test. Separately (and more
+    seriously): pyatv's own `playing` query reported "Idle" BOTH times while
+    the video was actually still playing — so `still_running()`'s liveness
+    check (below) may give false NEGATIVES (reporting a row dead when it was
+    genuinely still playing), not just miss genuine failures. No better
+    liveness signal is currently known for this device — no
+    screenshot/logcat equivalent exists, unlike the Android boxes. Treat any
+    `alive_at_window_end: False` on this device with real skepticism, not as
+    settled fact, until a more reliable signal is found.
+
+    Baseline state is the tvOS Home Screen (via `home`, not "VLC's library
+    screen" as originally assumed — that assumption predates the `stop`→
+    `home` fix and hasn't been re-verified against the new park() behaviour).
+    The home screen can itself show elevated states (ambient previews 6-15 W,
+    an occasional AirPlay promotional overlay to ~6 W) — a harness choice,
+    recorded in provenance. Rows are "VLC on tvOS", not the native player —
+    say so when quoting."""
 
     ATVREMOTE = ("/srv/data/owl/pyatv-venv/bin/atvremote", "/tmp/pyatv-venv/bin/atvremote")
     CREDS = Path("/srv/data/owl/atv")
@@ -462,13 +482,25 @@ class AtvDevice:
         return d
 
     def park(self):
-        # Baseline state = VLC stopped on its (static) library screen. NOT the
-        # tvOS Settings app: on tvOS 26.6 launching Settings pushes the box
-        # from ~2.2 W to ~5.7 W for tens of seconds (it goes off checking
-        # things) — that was the "screensaver ramp" of 2026-08-26, caught
-        # live in the inter-row gap capture at 23:34. VLC-stopped is 2.15–2.3 W
-        # flat and is where the box sits between rows anyway.
-        self.atv("stop")
+        # 2026-08-29: switched from `atv("stop")` to `atv("home")` — CONFIRMED
+        # LIVE that `stop` does not reliably halt VLC playback (twice, with
+        # direct visual confirmation both times: video kept playing minutes
+        # after `stop` was sent, with pyatv's OWN `playing` query wrongly
+        # reporting "Idle" throughout — so `still_running()`'s liveness check
+        # may also be unreliable, not just this). `home` DID reliably stop it
+        # in the same live test. Baseline state is therefore the tvOS Home
+        # Screen now, not "VLC stopped on its library screen" (the old
+        # rationale below, kept for the wattage figures which are still
+        # believed accurate for a clean idle floor — not re-verified against
+        # this specific park() change yet).
+        #
+        # Old rationale (VLC-stopped baseline): NOT the tvOS Settings app —
+        # on tvOS 26.6 launching Settings pushes the box from ~2.2 W to
+        # ~5.7 W for tens of seconds (it goes off checking things) — that was
+        # the "screensaver ramp" of 2026-08-26. VLC-stopped was 2.15–2.3 W
+        # flat. (2026-08-29 re-characterization found the REAL floor sits
+        # ~2.9-3.1 W on tvOS 26.6 regardless — see rig.py's atv idle_w note.)
+        self.atv("home")
 
     def prepare(self, run):
         self.state_at_end = None
@@ -492,7 +524,114 @@ class AtvDevice:
         self.park()
 
 
-DRIVERS = {"adb": AdbDevice, "ssh": SshDevice, "webos": WebosDevice, "atv": AtvDevice}
+class RokuDevice:
+    """Roku over ECP (2026-08-29 onboarding). No ADB/logcat equivalent — the
+    only remote-control surface is ECP (port 8060), which needs "Control by
+    mobile apps" set to Permissive on the box (confirmed live, 2026-08-29:
+    Default/Disabled 403s a plain keypress).
+
+    Playback is Dom's own "Greening of Streaming" Roku channel (app id
+    775528, already installed, built for hackathons, dormant ~1 year) — NOT
+    the Media Assistant community hack this class used before. Dom's app is
+    a simple .m3u playlist player: its playlist-URL setting must be pointed
+    at a LOCAL playlist ONE TIME (its old default, one of Dom's personal
+    domains, is dead — that's what caused every earlier attempt here to
+    404) — set in the app's own on-screen settings to PLAYLIST_URL below;
+    ECP has no known way to change that setting itself, so re-pointing it is
+    a manual on-device step if it's ever lost. From then on this driver
+    rewrites PLAYLIST_PATH's CONTENT to a single-entry playlist for each
+    row's clip before every launch — the app re-fetches its (unchanged) URL
+    fresh each launch, so the file swap is enough; no per-row on-device
+    action needed.
+
+    Menu navigation (all found live, 2026-08-29, and NOT obviously
+    guessable): after launch the app needs ~2s before input lands — too
+    early and keypresses are silently dropped. Default focus sits 4 rows
+    above the first playable item regardless of playlist length (a
+    single-item playlist does NOT start pre-focused on that item). One
+    Select then enters the track view; a SECOND Select is what actually
+    launches playback — structural, still required even with only one
+    entry. Playback then starts WINDOWED, not full-screen; one more
+    keypress expands it — confirmed "Right" from this exact nav path (an
+    earlier, differently-reached windowed state needed "Left" instead, so
+    this is state-path-dependent, not a fixed toggle — re-verify if the nav
+    sequence above ever changes). No ECP parameter was found to jump
+    straight to a track or skip any of this.
+    Liveness = /query/media-player state + position — no screenshot/logcat
+    equivalent, same evidentiary tier as the Apple TV (AtvDevice)."""
+
+    APP_ID = "775528"   # Dom's "Greening of Streaming" channel
+    PLAYLIST_PATH = Path("/srv/data/owl/decode-bench/streams/gos_local_test.m3u")
+    PLAYLIST_URL = "http://192.168.1.62:8123/gos_local_test.m3u"   # set ONCE in the app's settings
+
+    def __init__(self, cfg):
+        self.host = cfg["host"]
+        self.state_at_end = None
+
+    def _ecp(self, method, path, params=None, timeout=10):
+        qs = ("?" + urllib.parse.urlencode(params)) if params else ""
+        req = urllib.request.Request(f"http://{self.host}:8060{path}{qs}", method=method)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read()
+
+    def _key(self, name):
+        self._ecp("POST", f"/keypress/{name}")
+
+    def _state(self):
+        try:
+            root = ET.fromstring(self._ecp("GET", "/query/media-player"))
+        except Exception as e:
+            return {"state": f"ERR {type(e).__name__}"}
+        d = {"state": root.get("state"), "error": root.get("error")}
+        pos = root.find("position")
+        if pos is not None and pos.text:
+            try:
+                d["position_s"] = int(pos.text.strip().rstrip("ms").strip()) / 1000.0
+            except ValueError:
+                pass
+        return d
+
+    def prepare(self, run):
+        self.state_at_end = None
+        self._key("Home")
+
+    def start(self, run):
+        # No known launch-time override for the app's playlist URL itself —
+        # instead, rewrite the (already-configured) playlist's CONTENT to a
+        # single entry for THIS row's clip; the app re-fetches its URL fresh
+        # on every launch, so this is enough to steer which clip plays
+        # without ever touching the app's on-screen settings again.
+        self.PLAYLIST_PATH.write_text(
+            f"#EXTM3U\n#EXTINF:-1,{run['name']}\n{run['url']}\n")
+        self._ecp("POST", f"/launch/{self.APP_ID}")
+        time.sleep(3)          # app is ready in ~2s (found live, 2026-08-29); small margin
+        for _ in range(4):     # default focus sits 4 rows above the first playable
+            self._key("Down")  # item (found live, 2026-08-29, physical remote) — NOT
+            time.sleep(0.5)    # item 0 of the playlist; a single-item .m3u still needs this
+        self._key("Select")   # enters the track list (still true with only 1 entry)
+        time.sleep(2)
+        self._key("Select")   # a SECOND confirm actually launches it (found live, 2026-08-29 —
+        time.sleep(2)          # structural, not about list size: still needed with 1 item)
+        self._key("Right")    # windowed -> full-screen (found live, 2026-08-29; NOT "Left" —
+                               # that was true for a different nav path reached manually earlier)
+
+    def provenance(self, run, results_dir):
+        return {"url": run["url"],
+                "player": f"Dom's Greening-of-Streaming channel (ECP launch/{self.APP_ID}, "
+                          "playlist-driven — see class docstring)",
+                "playback_state_midwindow": self._state()}
+
+    def still_running(self, run):
+        st = self._state()
+        self.state_at_end = st
+        return st.get("state") == "play"
+
+    def stop(self, run):
+        self._key("Home")
+
+
+DRIVERS = {"adb": AdbDevice, "ssh": SshDevice, "webos": WebosDevice, "atv": AtvDevice,
+           "roku": RokuDevice}
 
 
 def wait_for_stable_idle(meters, ig, cadence):

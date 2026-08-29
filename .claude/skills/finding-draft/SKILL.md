@@ -45,6 +45,12 @@ score 0–3 on actionability; **0 = park it, don't publish**.
 - Scope statement separates layers explicitly ("Device layer only … Network, CDN excluded").
 - Energy (W/Wh) is the result; CO₂e is reference-only context — keep it out of claims.
 - Caveats carry every known limit (single board, one rung, n, display path excluded, …).
+- **Startup-skip asymmetry is not comparable across devices** (found 2026-08-29, Roku onboarding):
+  `startup_skip_s` exists to exclude the launch/buffering transient from steady-state ΔW, but
+  devices needing real UI navigation before playback starts (e.g. Roku's menu select) skip
+  proportionally more real time than a near-instant launch (e.g. Android's VIEW intent). Sustained
+  ΔW claims are unaffected by this — but never quote "time to first frame," startup energy cost, or
+  any latency figure across devices without naming this asymmetry explicitly; see CR-077.
 
 ## 5. Validate, cross-link, register
 

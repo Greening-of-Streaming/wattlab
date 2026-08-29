@@ -418,7 +418,10 @@ def test_materialize_apple_tv_gets_a_longer_settle_and_baseline_floor(monkeypatc
 
 def test_run_endpoint_refuses_screen_mode_for_uncabled_device():
     rig.apply_hdmi_assignments({})
-    for dev in ("pi5", "atv"):
+    # 2026-08-29 screen-map reshuffle: atv now holds HDMI_3 (it structurally
+    # cannot be measured headless); pi400 and firestick are the ones freed to
+    # headless-only. pi5 stays the deliberately-headless SBC reference.
+    for dev in ("pi5", "pi400"):
         r = client.post("/decode/run", headers=_LAB, json={
             "template": "bbb_h264_rt", "devices": [dev], "mode": "screen"})
         assert r.status_code == 400 and "HDMI inputs" in r.json()["error"]

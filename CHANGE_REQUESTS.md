@@ -864,6 +864,9 @@ its first real campaign, and that answers, with data rather than a guess:
    converges early — needs a floor"), and the concrete `idle_w` / `min_settle_s` /
    `min_baseline_samples` / `idle_guard` tolerance to put in the device's config. Advisory only — it
    proposes, a human commits the values (never auto-writes `rig.py` or the CR-076 settings table).
+4. **Startup-skip calibration** (added 2026-08-29, Roku onboarding — see the dated finding below):
+   `startup_skip_s` needs the same empirical, per-device treatment as settle/baseline, not a shared
+   default. Same shape as item 3 — measure, don't guess, output a concrete number per device.
 
 ### Generalize the tool, not just the rig
 
@@ -913,6 +916,21 @@ Run against two real devices with different driver kinds while waiting on the Ap
   for: it should say "fine as-is" for a well-behaved device and "needs a floor" for a problematic one,
   without a human having to already know which is which.
 
+### Third finding (2026-08-29, Roku onboarding): the playback-startup skip is also device-specific
+
+Found while onboarding the Roku's own playback path (Dom's "Greening of Streaming" channel):
+`startup_skip_s` exists to exclude the launch/buffering transient from the steady-state ΔW window, and
+the global default (5-10 s depending on mode) was tuned against devices that launch content near-
+instantly (an Android VIEW intent, an AirPlay/Companion launch). Roku's actual launch needs real UI
+navigation first — 4× Down, Select, Select, Right for fullscreen, each a real ECP round-trip — so its
+launch-to-steady-state time is structurally longer than the other devices', not a tuning gap in the
+existing default. Sustained ΔW itself is unaffected (task sampling only starts after `dev.start()`
+fully returns, which is after the navigation completes, by construction — verified against the actual
+code, not assumed), but the *asymmetry* means cross-device timing/latency claims (e.g. "time to first
+frame") are not comparable without saying so — see the `finding-draft` skill's guardrails, updated same
+day. **Folds into the onboarding tool's scope** (Ask item 4, above): a device's own `startup_skip_s`
+should be a measured onboarding output, the same as its `idle_w`/`min_settle_s`, not a shared assumption.
+
 ### Not in scope
 
 Auto-applying recommendations without review; changing `idle_wait.py`'s algorithm; a UI (a CLI script +
@@ -946,7 +964,7 @@ no service restart.
 
 Two pieces already moved to settings: `rig_target_overrides` (CR-074) and `rig_hdmi_inputs` (screen map, with
 `rig.screen_claimable()` as the single rule the UI consumes). `rig.RIG` is still the device list in code
-(seven devices), `decode_run.TEMPLATES` names devices by key for a few device-specific templates, and the
+(nine devices as of S72 — Xiaomi and Roku added in code, not settings), `decode_run.TEMPLATES` names devices by key for a few device-specific templates, and the
 `/decode` page carries no device-specific logic beyond `device_class` shapes.
 
 ### Sketch
@@ -964,6 +982,74 @@ Two pieces already moved to settings: `rig_target_overrides` (CR-074) and `rig_h
 
 New device kinds (each still needs a bench.py driver + rig.py probe/shutdown branch); meter firmware
 checks; the C2 monitor block (stays code — it is the household TV).
+
+
+## CR-078 · Device × codec reliability analysis (including VP9)
+
+**Status:** captured 2026-08-29 (owner, less urgent than CR-079). **The Roku/H.265 instance below is
+RESOLVED, same day** — root-caused and fixed in `decode_run.py`'s marker-segment encoder (`hevc_nvenc`
+padded its coded height to 1088 vs the source's clean 1080 — a hardware-vs-software decoder robustness
+gap, not Roku-specific code; switched hevc markers to `libx265`, confirmed live twice). **The VP9
+marker-encoder gap mentioned below is ALSO now resolved, same day** — a different root cause (marker
+segments hardcoded to `.mp4` regardless of the source's own container; VP9 sources are `.webm`), fixed
+by matching the segment container to the source clip's extension, confirmed live twice. Both known
+screen-mode blockers are closed; the general survey this CR asks for is still open — these were two
+instances found and fixed, not the systematic pass.
+
+### Why it matters
+
+Real, concrete evidence from a single afternoon's screen-mode sweep: Roku's H.265 row reported
+`alive_at_window_end: True` (Roku's own `state=play` query said everything was fine) while the raw
+screen-context trace showed the panel stuck at a flat ~37 W (the marker's own black level) for
+essentially the entire 165 s window — no transition to content ever happened. The row's device-level ΔW
+still came back positive and 🟢. Separately, VP9 hit a hard, unrelated wall in the same sweep: no marker
+encoder exists for it at all in screen mode, so it can't currently be tested with calibration on any
+device, not just Roku. And this is the second device (after the Apple TV's `stop`/`playing` unreliability,
+found the same day) where "the device's own liveness query says it's fine" turned out not to be
+sufficient proof of a valid row.
+
+### Ask
+
+A deliberate pass, not another live-discovered surprise: systematically exercise every device against
+every codec it's expected to support (including VP9, once CR-078's marker-encoder gap or an
+un-calibrated headless path unblocks it) and characterize the failure modes — which combinations produce
+clean rows, which produce a liveness-says-fine-but-screen-context-says-otherwise mismatch (the marker
+segmentation output and the raw context trace are the tell — no marker segments where one is expected is
+itself a red flag, not just a missing nice-to-have), and which fail outright. Output a per-device ×
+per-codec matrix (working / suspect / broken), not just a pass/fail count.
+
+### Not in scope
+
+Fixing every failure found — this CR is the survey; each real failure it turns up (like the VP9 marker
+gap) likely earns its own follow-up once understood.
+
+
+## CR-079 · Bitrate-ladder × resolution decode-energy sweep (HD/4K, 3 codecs, 8 devices)
+
+**Status:** captured 2026-08-29 (owner, more important than CR-078).
+
+### Ask
+
+Isolate bitrate's and resolution's *separate* contributions to client-side decode energy, not just their
+combined effect:
+
+1. **18 content variants** of the same source: for H.264, HEVC and AV1 (3 codecs — VP9 excluded, pending
+   CR-078's marker-encoder gap), encode at 3 commercially-representative bitrate points each — lowest,
+   the existing iso-bitrate reference point already used elsewhere in this project ("the average"), and
+   highest (e.g. ~10 Mbps HEVC at HD) — at **both HD and 4K** (4K's own low/high points sit lower/higher,
+   e.g. ~5 Mbps to ~20 Mbps). 3 codecs × 3 bitrates × 2 resolutions = 18.
+2. **VMAF for all 18** — the quality anchor each decode-energy number sits against.
+3. **Run all 18 against all 8 working decode devices** (pi5, pi400, firestick, gtv, bbox, atv, roku, c2 —
+   Xiaomi excluded, still bricked) — ideally with each content item's 8 devices running in parallel
+   (already validated the same day: parallel execution doesn't corrupt individual device readings for
+   the devices that behave — see the solo-vs-parallel campaign), to see whether bitrate or resolution
+   dominates the decode-side energy cost, independent of the other.
+4. **Dry run first, before committing to the full encode:** one codec, one short clip, validate the
+   bitrate ladder actually lands on the intended targets before encoding all 18 full-length variants.
+
+### Not in scope
+
+VP9 (folds in once CR-078 unblocks it); anything beyond the 8 working devices.
 
 
 ## Backlog notes recovered from session memory (2026-08-19, not CRs yet)

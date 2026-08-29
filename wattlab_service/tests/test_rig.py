@@ -266,11 +266,11 @@ def test_claim_screen_webos_sets_input(monkeypatch):
     monkeypatch.setitem(rig.RIG["monitor"], "lg_host", "10.0.0.9")
     monkeypatch.setattr(rig.lg, "set_input",
                         lambda host, hdmi: calls.append((host, hdmi)))
-    rig.rig_cache["devices"]["pi400"]["state"] = "ready"
+    rig.rig_cache["devices"]["bbox"]["state"] = "ready"
     rig.rig_cache["devices"]["gtv"]["state"] = "ready"
-    _run(rig.claim_screen("pi400"))
-    assert calls == [("10.0.0.9", rig.RIG["devices"]["pi400"]["hdmi_input"])]
-    assert rig.rig_cache["screen_owner"] == "pi400"
+    _run(rig.claim_screen("bbox"))
+    assert calls == [("10.0.0.9", rig.RIG["devices"]["bbox"]["hdmi_input"])]
+    assert rig.rig_cache["screen_owner"] == "bbox"
 
 
 def test_claim_screen_webos_refuses_unmapped_device(monkeypatch):
@@ -370,15 +370,21 @@ def test_status_payload_shape():
                       "screen_settling", "total_w", "saving_note", "age_s",
                       "idle_off"}
     for name, d in p["devices"].items():
-        assert set(d) == {"label", "plug_name", "device_class", "silicon", "target", "target_source", "hdmi_input", "screen_claimable",
-                          "conn", "state", "watts", "busy",
+        assert set(d) == {"label", "plug_name", "device_class", "shape", "silicon",
+                          "os", "chip_vendor", "target", "target_source", "hdmi_input",
+                          "screen_claimable", "conn", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s", "adb_auth",
                           "network"}
         assert d["device_class"] in ("sbc", "stb", "tv")
-        assert d["conn"] in ("ssh", "adb", "webos", "atv")
+        assert d["conn"] in ("ssh", "adb", "webos", "atv", "roku")
         assert d["network"] in ("ethernet", "wifi")
-    # Transparency: the Fire TV Stick is the ONLY Wi-Fi device on the rig.
-    assert [n for n, d in p["devices"].items() if d["network"] == "wifi"] == ["firestick"]
+    # Transparency: which devices are Wi-Fi (2026-08-29: no longer just the
+    # Fire TV Stick — Roku has no Ethernet port either; Xiaomi also has none
+    # but is `parked` (bricked pending a replacement unit) so it's hidden
+    # from this payload entirely, same as any other parked device).
+    assert [n for n, d in p["devices"].items() if d["network"] == "wifi"] == \
+        ["firestick", "roku"]
+    assert "xiaomi" not in p["devices"]   # parked — hidden from the console
     assert p["monitor"]["panel"]          # bench schematic display identity
     assert p["monitor"]["plug_name"] == "Lab-E"
 
@@ -704,27 +710,36 @@ def test_poller_does_not_sweep_before_the_box_has_had_time_to_boot(monkeypatch):
 
 # --- Screen map: four HDMI sockets, seven devices (2026-08-26) ----------------
 
-def test_hdmi_defaults_leave_pi5_and_apple_tv_headless():
+def test_hdmi_defaults_leave_pi5_pi400_and_firestick_headless():
+    # 2026-08-29 reshuffle (Ben's actual on-site cabling during the switch
+    # install): Roku took HDMI_3 from the Pi 400; Apple TV took HDMI_4 from
+    # the Fire TV (it cannot be measured headless at all — VLC pauses on
+    # HDMI loss). Both Pi boards and the Fire TV are fully valid headless
+    # (ADB/SSH prove decode without a screen) — though the Fire TV and the
+    # (never-cabled) Xiaomi still owe a live no-HDMI-sink smoke test before
+    # their headless rows can be trusted (Ben's catch, same date).
     m = rig.apply_hdmi_assignments({})
     assert set(m) == {"HDMI_1", "HDMI_2", "HDMI_3", "HDMI_4"}
     assert m["HDMI_1"] == "bbox" and m["HDMI_2"] == "gtv"
-    assert m["HDMI_3"] == "pi400" and m["HDMI_4"] == "firestick"
+    assert m["HDMI_3"] == "roku" and m["HDMI_4"] == "atv"
     assert rig.RIG["devices"]["pi5"]["hdmi_input"] is None
-    assert rig.RIG["devices"]["atv"]["hdmi_input"] is None
+    assert rig.RIG["devices"]["pi400"]["hdmi_input"] is None
+    assert rig.RIG["devices"]["firestick"]["hdmi_input"] is None
+    assert rig.RIG["devices"]["xiaomi"]["hdmi_input"] is None
     assert rig.RIG["devices"]["c2"]["hdmi_input"] is None
     assert rig.hdmi_map() == m
 
 
 def test_hdmi_assignment_recables_a_socket_and_unplugs_the_previous_device():
-    # Apple TV takes the Pi 400's socket; "" unplugs the Pi 400 explicitly.
-    m = rig.apply_hdmi_assignments({"atv": "HDMI_3", "pi400": ""})
-    assert m["HDMI_3"] == "atv"
-    assert rig.RIG["devices"]["atv"]["hdmi_input"] == "HDMI_3"
-    assert rig.RIG["devices"]["pi400"]["hdmi_input"] is None
+    # Fire TV takes the Bbox's socket; "" unplugs the Bbox explicitly.
+    m = rig.apply_hdmi_assignments({"firestick": "HDMI_1", "bbox": ""})
+    assert m["HDMI_1"] == "firestick"
+    assert rig.RIG["devices"]["firestick"]["hdmi_input"] == "HDMI_1"
+    assert rig.RIG["devices"]["bbox"]["hdmi_input"] is None
     # devices not mentioned keep their rig.py default
     assert rig.RIG["devices"]["gtv"]["hdmi_input"] == "HDMI_2"
     rig.apply_hdmi_assignments({})
-    assert rig.RIG["devices"]["pi400"]["hdmi_input"] == "HDMI_3"
+    assert rig.RIG["devices"]["bbox"]["hdmi_input"] == "HDMI_1"
 
 
 def test_hdmi_assignment_one_device_per_socket_and_ignores_junk():
@@ -740,7 +755,7 @@ def test_hdmi_assignment_one_device_per_socket_and_ignores_junk():
 def test_claim_screen_refused_for_headless_devices_with_a_pointer(monkeypatch):
     monkeypatch.setitem(rig.RIG["monitor"], "lg_host", "10.0.0.9")
     monkeypatch.setattr(rig.lg, "set_input", lambda host, hdmi: None)
-    for name in ("pi5", "atv"):
+    for name in ("pi5", "pi400"):
         rig.rig_cache["devices"][name]["state"] = "ready"
         with pytest.raises(rig.RigError) as e:
             _run(rig.claim_screen(name))
@@ -749,17 +764,20 @@ def test_claim_screen_refused_for_headless_devices_with_a_pointer(monkeypatch):
 
 
 def test_status_payload_carries_the_screen_map():
+    rig.apply_hdmi_assignments({})
     p = rig.status_payload()
     assert p["monitor"]["hdmi_inputs"] == rig.hdmi_map()
-    assert p["devices"]["atv"]["hdmi_input"] is None
+    # 2026-08-29: atv now holds HDMI_4 by default (see the reshuffle note on
+    # test_hdmi_defaults_leave_pi5_pi400_and_firestick_headless).
+    assert p["devices"]["atv"]["hdmi_input"] == "HDMI_4"
     assert p["devices"]["gtv"]["hdmi_input"] == "HDMI_2"
     assert p["devices"]["atv"]["conn"] == "atv"
-    assert p["devices"]["atv"]["screen_claimable"] is False
+    assert p["devices"]["atv"]["screen_claimable"] is True
     assert p["devices"]["gtv"]["screen_claimable"] is True
     assert p["devices"]["c2"]["screen_claimable"] is True     # the panel itself
-    rig.apply_hdmi_assignments({"atv": "HDMI_3", "pi400": ""})
+    rig.apply_hdmi_assignments({"pi400": "HDMI_4", "atv": ""})
     p = rig.status_payload()
-    assert p["devices"]["atv"]["screen_claimable"] is True and p["devices"]["pi400"]["screen_claimable"] is False
+    assert p["devices"]["pi400"]["screen_claimable"] is True and p["devices"]["atv"]["screen_claimable"] is False
 
 
 # --- Apple TV device kind (pyatv) -------------------------------------------

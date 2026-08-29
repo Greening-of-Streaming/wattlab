@@ -297,7 +297,7 @@ async def settings_page(request: Request):
         inputs = list(rig.RIG["monitor"].get("hdmi_inputs") or [])
         current = rig.hdmi_map()
         cands = [(n, d["label"]) for n, d in rig.RIG["devices"].items()
-                 if d.get("kind") != "webos"]
+                 if d.get("kind") != "webos" and not d.get("parked")]
         rows = []
         for inp in inputs:
             opts = ['<option value="">— nothing cabled —</option>'] + [
@@ -308,7 +308,8 @@ async def settings_page(request: Request):
         return "\n".join(rows)
 
     import json as _json
-    hdmi_devices_json = _json.dumps([n for n, d in rig.RIG["devices"].items() if d.get("kind") != "webos"])
+    hdmi_devices_json = _json.dumps([n for n, d in rig.RIG["devices"].items()
+                                     if d.get("kind") != "webos" and not d.get("parked")])
     hdmi_inputs_json = _json.dumps(list(rig.RIG["monitor"].get("hdmi_inputs") or []))
 
     def toggle_field(fid, val, hint="", onchange=""):

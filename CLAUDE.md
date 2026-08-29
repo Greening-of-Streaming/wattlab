@@ -1,22 +1,20 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-08-26 (S69: SMPTE-desk handoff — adb path made invocation-proof, SoC audit (GTV MT8696,
+# Last updated: 2026-08-29 (S72: nine devices — Xiaomi bricked, Roku onboarded, two marker-encoder
+#   bugs fixed (HEVC coded-height padding, VP9 container mismatch), LinkedIn VP9-cheaper claim
+#   corrected with fresh Apple TV + Roku data (AV1/VP9 tie on both). See JOURNAL S72.)
+# Previous: 2026-08-28→29 (S70–S71, Tania: SMPTE encode-parity gap closure + ReadySetGo matched-
+#   content leg — consolidated 240-row dataset, caveat-9 resolved. See JOURNAL S70/S71.)
+# Previous: 2026-08-26 (S69: SMPTE-desk handoff — adb path made invocation-proof, SoC audit (GTV MT8696,
 #   Bbox Marvell Berlin), rig follows adb boxes by MAC across DHCP/interface moves, CR-075 corrected to the
 #   2017 A10X box + blocked attempt. See JOURNAL S69.)
-# Previous: 2026-08-19 (S66 overnight: connection-method campaign CR-074 running on the rig; documentation
-#   sweep — JOURNAL back-filled 07-31→08-14, CRs tidied (071/073 closed, 059/074/075 added), memory pruned,
-#   /methodology-vs-code inconsistency journal at docs/methodology_vs_code_2026-08-19.md. See JOURNAL S66.)
-# Previous: S65 (08-17→18) VP9 re-run for the LinkedIn thread — report §5 (iso-bitrate, sw-vs-sw, n=2–3), Tania
-#   checked, Ben posting. Standing rules from that arc: state the operating point of every encoder; software vs
-#   software is the VOD market frame; "no VP9 hw path on NVIDIA/AMD", never "none exists"; WebM for VP9 on Android
-#   boxes and frame-index alignment (settb/setpts=N) when scoring WebM.
 
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
 #   - CHANGE_REQUESTS.md — 22 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (1027 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - TESTING.md — pytest suite (1046 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - OWL_AUDIT.md — 2026-07-05 nine-dimension re-audit → CR-066–069 + CR-031/008 updates; disposition in AUDIT_RESPONSE.md
@@ -146,7 +144,10 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 22 CRs** in CHANGE_REQUESTS.md (CR-075 closed 2026-08-27 — Apple TV Repeatable finding, SMPTE C19; CR-077 captured same night: device-onboarding idle-settle tool; CR-076 captured 2026-08-26: /decode topology from settings; CR-066–069 captured 2026-07-06 from the
+tour/credibility → RAG). **Active: 24 CRs** in CHANGE_REQUESTS.md (CR-078/079 captured 2026-08-29 — device×codec
+reliability survey incl. VP9, and an HD/4K bitrate-ladder × resolution decode-energy sweep; CR-075 closed
+2026-08-27 — Apple TV Repeatable finding, SMPTE C19; CR-077 captured same night: device-onboarding idle-settle
+tool; CR-076 captured 2026-08-26: /decode topology from settings; CR-066–069 captured 2026-07-06 from the
 OWL_AUDIT.md triage; CR-024 closed same week — PR #5 `09480ec`); closed archive in CHANGE_REQUESTS_CLOSED.md.
 CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — owner-infra remainders keep them active.
 
@@ -168,7 +169,20 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
   (n=2, VLC): H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W (+27 %) — third vendor for the penalty claim (🟡, screensaver
   hit the baselines). Router reservations completed by Ben. Then: Apple TV on /decode (`atv` kind, pyatv) +
   **screen map** — C2 has 4 HDMI inputs for 7 devices, assignable in /settings, claim/screen-mode refused
-  when uncabled (Pi 5, Apple TV). Tests 1044.
+  when uncabled (Pi 5, Apple TV). Tests 1044. Tail (through 08-27, journaled same session): CR-077
+  onboarding tool validated live on two more devices, CR-075 closed 🟢 Repeatable (n=3×3 contents,
+  H.264≈HEVC 4.08 W, AV1/VP9 5.27 W/+29%), tvOS 26.6 idle-floor question resolved (rested re-check
+  2.57 W matches tvOS 18 — was recurring post-boot housekeeping, not a permanent floor change).
+- S70–S71 (08-28→29, Tania): SMPTE encode-parity gap closure (consolidated 240-row dataset, bitrate-ceiling
+  extension, VMAF v0/v1 mismatch caught+fixed) + ReadySetGo matched-content leg (caveat-9 resolved —
+  format/motion-matched third content tier, not Kranjska); caught a second live-site /video/budget
+  regression, same class as the first.
+- S72 (08-29): nine devices — Xiaomi onboarded then bricked (Amlogic S905X4; replacement being sourced),
+  Roku onboarded (ECP, Dom's dormant channel resurrected, RokuDevice); switch-install re-cabling
+  (Roku→HDMI_3, Apple TV→HDMI_4, LG C2 IP fixed); two marker-encoder bugs found+fixed (HEVC coded-height
+  padding, VP9 container mismatch) unblocking VP9 screen-mode entirely; CR-078/079 captured; corrected a
+  public LinkedIn claim with fresh data — AV1/VP9 tie on both Apple TV (3.435 vs 3.495 W) and Roku
+  (0.476 vs 0.481 W), doc §6 + SMPTE-desk digests pushed. Tests 1046.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -187,7 +201,12 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
   accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard ·
   Bbox Ethernet cable back in since 2026-08-26 evening (both its addresses reserved; MAC follower covers either) ·
   Apple TV: never headless (1.6 W "Playing" ≠ decode; hot-plug pauses VLC) — display attached + screensaver off
-  before rows; `display_attached` flag for atv runs still to add (CR-075).
+  before rows; `display_attached` flag for atv runs still to add (CR-075). **S72 additions:** Xiaomi TV Box
+  bricked after the 2026-08-29 switch-install relocation, no root cause established, `rig.py` entry `parked`
+  pending a replacement unit · Roku's `idle_w`/`expected_boot_s`/`startup_skip_s` are still unmeasured
+  guesses pending an `onboard_device.py` run (playback mechanism itself is validated, CR-077) · Fire TV and
+  Xiaomi both now have zero HDMI cable (not just unclaimed) — a live no-HDMI-sink smoke test is still owed
+  before trusting either box's headless rows.
 
 ## Key Findings to Date
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real
