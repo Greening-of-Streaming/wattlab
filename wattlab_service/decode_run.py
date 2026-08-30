@@ -129,6 +129,22 @@ TEMPLATES: dict = {
         "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
+    "bbb_h264_1080_upscale4k": {
+        "label": "BBB H.264 1080p, device-upscaled to 4K — 90 s · Pi 5 only (R15 Leg A)",
+        "clips": {"bbb_h264_upscale4k": "bbb_h264_6min.mp4"},
+        # Same 1080p source and bench window as bbb_h264_4k, so the three-way
+        # comparison is clean: native 1080p (bbb_h264_rt) vs native 4K
+        # (bbb_h264_4k, server-upscaled at encode) vs THIS (1080p source,
+        # device-side ffmpeg -vf scale to 4K during decode). Isolates the
+        # scale step itself as the added variable over native-1080p decode.
+        # RUN_QUEUE R15 Leg A (2026-08-30) — headless only, Pi 5 has no HDMI
+        # attached (unplugged since 2026-08-19), so this is decode-only, not
+        # decode+present; that's the same scoping bbb_h264_4k already uses.
+        "output_scale": "3840x2160",
+        "devices": ["pi5"],
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
+                  "startup_skip_s": 8, "window_s": 90, "gap_s": 10},
+    },
     "bbb_codecs_rt": {
         "label": "BBB codec panel — H.264 / HEVC / AV1, realtime 150 s each",
         "clips": {"bbb_h264_rt": "bbb_h264_6min.mp4",
@@ -294,11 +310,19 @@ _SAMPLE_RE = re.compile(r"\] sample ([0-9.]+)W(?: ctx=([0-9.]+)W)?")
 def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
              window_s: int | None = None, decoder: str | None = None,
              delivery: str = "http", pacing: str = "realtime",
-             url_query: str = "", ssh_source: str = "shm") -> dict:
+             url_query: str = "", ssh_source: str = "shm",
+             output_scale: str | None = None) -> dict:
     """url_query (2026-08-18, network-path arms): appended to every HTTP clip
     URL, e.g. "pace_kbps=10000" — the origin caps that response's rate.
     ssh_source: "shm" (default: clip staged in /dev/shm) or "http" (ffmpeg
-    reads the origin URL, so the Pi's network path is inside the window)."""
+    reads the origin URL, so the Pi's network path is inside the window).
+    output_scale (2026-08-30, R15 Leg A): "WIDTHxHEIGHT" (e.g. "3840x2160")
+    — adds an ffmpeg -vf scale filter to the headless decode-only path, so a
+    1080p source is decoded AND upscaled, isolating the scale step's own
+    cost from native-4K decode (RUN_QUEUE R15). Headless (ssh, non-screen)
+    only for now — screen-mode mpv scaling is a separate, unimplemented leg;
+    ignored for every non-ssh device kind (webos/atv/roku/adb play via their
+    own app and never reach this branch)."""
     row: dict = {"name": name}
     if window_s:
         row["window_s"] = window_s
@@ -353,8 +377,9 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
         pace = "-re " if pacing == "realtime" else "-stream_loop -1 "
         src = (f"{STREAM_BASE_URL}/{clip}{q}" if ssh_source == "http"
                else f"/dev/shm/decode/{shm}")
+        vf = f"-vf scale={output_scale.replace('x', ':')} " if output_scale else ""
         row["cmd"] = (f"ffmpeg -nostdin {pace}{dec}-i '{src}' "
-                      f"-an -f null - ")
+                      f"-an {vf}-f null - ")
         row["stop_cmd"] = f"pkill -f 'ffmpeg.*{stem}'"
     return row
 
@@ -375,8 +400,11 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
                    or (tpl.get("decoder_by_device") or {}).get(dev_name))
         delivery = tpl.get("delivery", "http")
         pacing = tpl.get("pacing", "realtime")
+        output_scale = (tpl.get("output_scale")
+                        or (tpl.get("output_scale_by_device") or {}).get(dev_name))
         extra = {"url_query": tpl.get("url_query", ""),
-                 "ssh_source": tpl.get("ssh_source", "shm")}
+                 "ssh_source": tpl.get("ssh_source", "shm"),
+                 "output_scale": output_scale}
         if marked:
             # Marker-headed variant: window extends over the 15 s head; the
             # skip shrinks so the head lands inside the sampled window.
