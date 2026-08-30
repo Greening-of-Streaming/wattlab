@@ -206,18 +206,45 @@ def screen_on(host: str) -> None:
 
 
 def set_brightness(host: str, pct: int) -> None:
-    """OLED backlight 0–100 (luna picture setting). A recipe dimension."""
+    """OLED backlight 0–100 (luna picture setting). A recipe dimension.
+
+    2026-08-30 bugfix: this called c.luna_request(...), a method the
+    installed aiowebostv version (0.7.x here) doesn't have — only
+    c.request(...) — so this had never actually worked (never exercised
+    before tonight's OLED brightness sweep, R9). Verified live against
+    the C2: get_brightness() before/after now shows the value actually
+    changing."""
     key = _key()
     if not key:
         raise RuntimeError("LG client key missing")
     pct = max(0, min(100, int(pct)))
 
     async def _do(c):
-        # aiowebostv exposes luna calls; backlight is the OLED energy knob.
-        await c.luna_request(
+        await c.request(
             "luna://com.webos.settingsservice/setSystemSettings",
             {"category": "picture", "settings": {"backlight": str(pct)}})
     asyncio.run(_with_client(host, key, _do))
+
+
+def get_brightness(host: str) -> int | None:
+    """Current OLED backlight 0-100, or None on any failure. Added
+    2026-08-30 alongside the set_brightness fix — a sweep needs to
+    record (and restore) the starting value."""
+    key = _key()
+    if not key:
+        return None
+
+    async def _do(c):
+        r = await c.request(
+            "luna://com.webos.settingsservice/getSystemSettings",
+            {"category": "picture", "keys": ["backlight"]})
+        return r
+    try:
+        r = asyncio.run(_with_client(host, key, _do))
+        val = (r or {}).get("settings", {}).get("backlight")
+        return int(val) if val is not None else None
+    except Exception:
+        return None
 
 
 def status(host: str) -> dict:
