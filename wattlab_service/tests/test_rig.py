@@ -379,12 +379,15 @@ def test_status_payload_shape():
         assert d["conn"] in ("ssh", "adb", "webos", "atv", "roku")
         assert d["network"] in ("ethernet", "wifi")
     # Transparency: which devices are Wi-Fi (2026-08-29: no longer just the
-    # Fire TV Stick — Roku has no Ethernet port either; Xiaomi also has none
-    # but is `parked` (bricked pending a replacement unit) so it's hidden
-    # from this payload entirely, same as any other parked device).
+    # Fire TV Stick — Roku has no Ethernet port either; the Xiaomi Gen 2 was
+    # briefly `parked` here — bricked pending a replacement — but a new PSU
+    # revived it 2026-09-02 and it's back in the roster, alongside the new
+    # Gen 3 unit onboarded the same day for an A/B comparison).
+    # 2026-09-03: the Google TV joins them — moved to Wi-Fi so the Fire TV vs
+    # Google TV axis (same MT8696 silicon) compares like with like instead of
+    # confounding the OS difference with Ethernet-vs-Wi-Fi (CR-074: +0.21 W).
     assert [n for n, d in p["devices"].items() if d["network"] == "wifi"] == \
-        ["firestick", "roku"]
-    assert "xiaomi" not in p["devices"]   # parked — hidden from the console
+        ["firestick", "gtv", "xiaomi", "xiaomi3", "roku"]
     assert p["monitor"]["panel"]          # bench schematic display identity
     assert p["monitor"]["plug_name"] == "Lab-E"
 
@@ -763,7 +766,11 @@ def test_claim_screen_refused_for_headless_devices_with_a_pointer(monkeypatch):
     assert rig.rig_cache["screen_owner"] is None
 
 
-def test_status_payload_carries_the_screen_map():
+def test_status_payload_carries_the_screen_map(monkeypatch):
+    # atv is physically `parked` 2026-09-02 (Gen 2 Xiaomi A/B, see JOURNAL S73)
+    # — unpark it just for this test so its enduring default-screen-map
+    # behaviour stays covered independent of tonight's temporary rig state.
+    monkeypatch.setitem(rig.RIG["devices"]["atv"], "parked", False)
     rig.apply_hdmi_assignments({})
     p = rig.status_payload()
     assert p["monitor"]["hdmi_inputs"] == rig.hdmi_map()
@@ -815,6 +822,9 @@ def test_atv_is_followed_by_mac_as_a_bare_ip(monkeypatch):
 
 
 def test_atv_poller_readiness_via_power_state(monkeypatch):
+    # atv is physically `parked` 2026-09-02 (Gen 2 Xiaomi A/B, see JOURNAL S73)
+    # — unpark it just for this test so poll_once() still exercises it.
+    monkeypatch.setitem(rig.RIG["devices"]["atv"], "parked", False)
     _stub_plugs(monkeypatch, on=True, watts=3.0)
     monkeypatch.setattr(rig, "probe_ready", lambda dev: dev["kind"] == "atv")
     d = rig.rig_cache["devices"]["atv"]
@@ -824,6 +834,9 @@ def test_atv_poller_readiness_via_power_state(monkeypatch):
 
 
 def test_atv_asleep_is_reported_not_stuck_and_on_wakes_it(monkeypatch):
+    # atv is physically `parked` 2026-09-02 (Gen 2 Xiaomi A/B, see JOURNAL S73)
+    # — unpark it just for this test so poll_once() still exercises it.
+    monkeypatch.setitem(rig.RIG["devices"]["atv"], "parked", False)
     calls = []
 
     def fake(dev, *c, **k):

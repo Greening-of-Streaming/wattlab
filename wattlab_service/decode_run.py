@@ -28,11 +28,13 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 import statistics
 import subprocess
 import time
 from pathlib import Path
 
+import decode_sync
 import rig
 from persist import save_result
 from runtime import jobs
@@ -256,6 +258,117 @@ MARKER_HEAD_S = 15
 _MARKER_PATTERN = "black5-white5-black5"
 
 
+def looped_marked_name(clip: str, loops: int, marker: bool = True) -> str:
+    """`loopmarked_x{N}_<clip>` — N repetitions of [marker head + content] in
+    one file, subdir-safe like marked_name(). `marker=False` gives the
+    marker-FREE variant (`loopplain_x{N}_…`) used where a codec/colour-matched
+    marker cannot be built safely — see _ensure_looped_marked_clips_sync."""
+    p = Path(clip)
+    stem = f"{'loopmarked' if marker else 'loopplain'}_x{loops}_{p.name}"
+    return str(p.parent / stem) if p.parent != Path(".") else stem
+
+
+# --- Synchronised intra-content family (2026-09-03, JOURNAL S73) --------------
+#
+# One clip, several boxes, every power sample tagged with the CONTENT TIME the
+# box was decoding — so per-scene decode power can be compared across silicon
+# (Fire TV vs GTV = same MT8696, different OS; Xiaomi Gen 2 vs Gen 3 = same
+# vendor, different Amlogic generation) instead of just comparing window means.
+# Three mechanisms, all opt-in via the flags below:
+#   · `looped_marker` — the clip is N × [5 s black · 5 s white · 5 s black +
+#     content], so every loop re-states the black/white/black head. On the box
+#     that holds the shared screen the head is a hard electrical timestamp on
+#     the panel meter (see decode_sync.marker_edges_from_clock), which is what
+#     validates the software clock against physically displayed frames.
+#   · `sync_start` — the per-device bench.py PROCESSES meet at a file barrier
+#     right before launch (decode_sync.rendezvous), so they start within a
+#     couple of seconds instead of drifting apart by each box's own settle,
+#     idle-guard and baseline duration.
+#   · `content_clock` — bench.py polls the player's own position beside the
+#     meter loop; the analysis maps power samples onto content time from that.
+# Window: 6 loops of the 6-min clips ≈ 2251 s; cap at 2185 s so the window
+# always ends INSIDE the file (Just Player hits EOF → STOPPED → a false
+# alive_at_window_end False, the same trap the loop_* caps document above).
+SYNC_LOOPS = 6
+
+
+def _sync_template(key: str, label: str, src: str, loops: int,
+                   max_window_s: int, marker: bool = True) -> None:
+    TEMPLATES[key] = {
+        "label": label,
+        "clips": {key.replace("loop_", ""):
+                  looped_marked_name(src, loops, marker)},
+        "looped_marker": {"source": src, "loops": loops, "marker": marker},
+        "content_clock": {"every_s": 2.0,
+                          "head_s": MARKER_HEAD_S if marker else 0},
+        "sync_start": True,
+        "max_window_s": max_window_s,
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+                  "startup_skip_s": 5, "window_s": max_window_s, "gap_s": 10},
+    }
+
+
+for _cod in ("h264", "h265", "av1"):
+    _sync_template(f"loop_bbb_{_cod}_sync",
+                   f"Sync — BBB {_cod.upper()} ×{SYNC_LOOPS} looped marker, "
+                   f"content clock (video-only)",
+                   f"bbb_{_cod}_6min.mp4", SYNC_LOOPS, 2185)
+
+# Resolution and HDR arms (2026-09-03). Short sources on purpose: a 2-min 4K
+# clip loops 15× inside the same ~33 min, so each content bin carries n=15
+# instead of n=6 — the intra-content signal is a per-bin mean, and more
+# repetitions of the same scene is exactly what tightens it.
+#   4K: the existing matched-corpus 3840×2160@60 encode (`bbb_h264_4k`'s clip).
+#   HDR: the only true HDR10 4K on the rig (HEVC Main 10, bt2020/PQ, 59.94 fps)
+#     — a Pixop proto output upscaled from dirty SD, so the CONTENT provenance
+#     is weaker than BBB; it is here to exercise the 10-bit/PQ decode path,
+#     not to make a content claim. MARKER-FREE (marker=False): a matched
+#     marker could not be built safely for it — see the builder's docstring.
+_sync_template("loop_bbb4k_h264_sync",
+               "Sync 4K — BBB H.264 3840×2160 ×15 looped marker, content clock",
+               "bbb_h264_4k_2min.mp4", 15, 1955)
+# 4K60 in HEVC (2026-09-03): the H.264 4K60 arm launched on the Google TV only
+# — both Amlogic boxes' players went to ERROR (their AVC blocks are
+# 4K30-class) and the Fire TV never left BUFFERING. Every box on the bench
+# decodes 4K60 HEVC in hardware, so this is the resolution arm that covers
+# all four at fixed codec and frame rate. Same source, same NVENC CBR rate
+# class (20 Mbps), 2-min clip looped 15×; hevc_nvenc heads match the
+# content's CTU-padded coded height by the _marker_encoder rule.
+_sync_template("loop_bbb4k_h265_sync",
+               "Sync 4K — BBB HEVC 3840×2160@60 ×15 looped marker, content clock",
+               "bbb_h265_4k_2min.mp4", 15, 1955)
+# Bitrate ladder (2026-09-03, owner's request at the end of the night; also
+# CR-079's HD rung): the same BBB at seven CBR rates, 0.25 → 32 Mbps, so
+# bitrate becomes the CONTROLLED variable — the corpus' own encodes are
+# near-constant-rate (7.7-8.1 Mbps in every 20 s bin), which is why bits was
+# unusable as a content-hardness descriptor on the sync runs. Seven rows per
+# box in one job, four boxes in parallel with the start barrier, 90 s windows.
+# Rungs are 2-min NVENC CBR encodes of the 4K master scaled to 1080p60, 2 s
+# GOP, video-only (built by the session's build_ladder.sh — a decode-load
+# probe, NOT matched-VMAF corpus encodes; the corpus operating point is the
+# 8 Mbps rung, VMAF ≈ 92). Four boxes × 32 Mbps ≈ 130 Mbps on one Wi-Fi AP:
+# the top rungs may rebuffer — the content clock's rate check records it.
+LADDER_KBPS = (250, 500, 1500, 4000, 8000, 16000, 32000)
+TEMPLATES["ladder_bbb_h264"] = {
+    "label": "Bitrate ladder — BBB H.264 1080p60, 0.25→32 Mbps, 90 s each "
+             "(video-only, sync start)",
+    "clips": {f"bbb_h264_{k}k": f"bbbladder_h264_{k}k_2min.mp4"
+              for k in LADDER_KBPS},
+    "content_clock": {"every_s": 2.0, "head_s": 0},
+    "sync_start": True,
+    "max_window_s": 100,
+    "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+              "startup_skip_s": 8, "window_s": 90, "gap_s": 10},
+}
+
+# 30 × 45.011 s = 1350 s of clip (no 15 s head — marker-free), so the window
+# has to fit inside THAT, not inside 30 × 60 s.
+_sync_template("loop_hdrmeridian_h265_sync",
+               "Sync HDR — Meridian HEVC Main10 4K bt2020/PQ ×30 looped, "
+               "content clock (no marker head: see builder docstring)",
+               "hdrmeridian_h265_4k_45s.mp4", 30, 1290, marker=False)
+
+
 def protocol_settings() -> dict:
     """The decode protocol knobs — /settings wins over template defaults
     (owner directive 2026-07-30: all parameters in /settings; same machinery
@@ -303,6 +416,12 @@ _PHASE_PATTERNS = [
 ]
 # bench.py's live sample feed (added 2026-07-29): "] sample 4.958W ctx=30.66W"
 _SAMPLE_RE = re.compile(r"\] sample ([0-9.]+)W(?: ctx=([0-9.]+)W)?")
+# Content-clock + start-barrier feed (2026-09-03): "] clock pos=12.3 state=PLAYING"
+# and "…: sync waiting for 3 peers" / "…: sync go at …". Both are consumed like
+# the sample line (continue) so they never reach _PHASE_PATTERNS — a stray
+# ": settle "-shaped line would advance the row counter.
+_CLOCK_RE = re.compile(r"\] clock pos=(-?[0-9.]+|None) state=(\S+)")
+_SYNC_RE = re.compile(r": sync (.+)$")
 
 
 # --- Materialisation ---------------------------------------------------------
@@ -387,10 +506,16 @@ def _row_for(dev_cfg: dict, name: str, clip: str, mode: str,
 def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
                  calibrate: bool, upload_name: str | None = None,
                  cadence_s: float | None = None,
-                 window_s: int | None = None) -> Path:
+                 window_s: int | None = None,
+                 sync_peers: list | None = None,
+                 context_meter: bool = False) -> Path:
     tpl = resolve_template(tpl_key, upload_name)
     dev_cfg = rig.RIG["devices"][dev_name]
-    marked = mode == "screen" and calibrate
+    # `not looped_marker`: the sync family's clip ALREADY carries a marker head
+    # per loop. Marking it again would build a second 2 GB file and shift every
+    # content position by 15 s — the content clock would silently disagree with
+    # the file (2026-09-03).
+    marked = mode == "screen" and calibrate and not tpl.get("looped_marker")
     base_window = int(window_s) if window_s is not None else tpl["bench"]["window_s"]
     if tpl.get("max_window_s"):
         base_window = min(base_window, int(tpl["max_window_s"]))
@@ -482,7 +607,10 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
     cfg["meter_ip"] = dev_cfg["plug_ip"]
     # The C2's device plug IS the monitor plug (Lab-E) — no separate screen
     # meter, so skip the context meter (it would just duplicate meter_ip).
-    if mode == "screen" and dev_cfg["kind"] != "webos":
+    # context_meter (2026-09-03): a headless multi-box run can still park the
+    # panel on ONE device (`screen_device`) so its marker heads are verified
+    # electrically. Exactly one process may own Lab-E — KLAP is single-session.
+    if (mode == "screen" or context_meter) and dev_cfg["kind"] != "webos":
         cfg["monitor_meter_ip"] = rig.RIG["monitor"]["plug_ip"]
     if dev_cfg["kind"] == "adb":
         cfg["device"] = {"type": "adb", "serial": dev_cfg["target"],
@@ -500,6 +628,19 @@ def _materialize(job_id: str, tpl_key: str, dev_name: str, mode: str,
         host = tpl.get("ssh_host_override") or host
         cfg["device"] = {"type": "ssh", "host": host, "user": user}
     cfg["runs"] = runs
+    # Content clock + cross-process start barrier (2026-09-03) — both opt-in
+    # from the template, so every existing template materialises byte-identical
+    # configs. loop_len_s is DERIVED (ffprobe / loops), never assumed: the
+    # h264 6-min head+content is 375.137 s, not 375.
+    if tpl.get("content_clock"):
+        loops = int((tpl.get("looped_marker") or {}).get("loops", 1))
+        clip0 = list(tpl["clips"].values())[0]
+        cfg["content_clock"] = {**tpl["content_clock"], "loops": loops,
+                                "loop_len_s": round(_loop_len_s(clip0, loops), 3)}
+    if tpl.get("sync_start") and sync_peers and len(sync_peers) > 1:
+        cfg["sync"] = {"dir": f"/tmp/owl-sync-{job_id}", "self": dev_name,
+                       "peers": list(sync_peers), "lead_s": 3.0,
+                       "max_wait_s": 120}
     path = Path(f"/tmp/owl-decode-{job_id}-{dev_name}.json")
     path.write_text(json.dumps(cfg, indent=1))
     return path
@@ -597,6 +738,19 @@ def _clip_duration_s(clip: str) -> float:
     return float(out)
 
 
+_LOOP_LEN_CACHE: dict = {}
+
+
+def _loop_len_s(clip: str, loops: int) -> float:
+    """One loop of a looped-marker clip = (head + content). Measured off the
+    built file so it matches what the player actually advances through, and
+    cached — four devices materialise the same clip within a second."""
+    key = (clip, loops)
+    if key not in _LOOP_LEN_CACHE:
+        _LOOP_LEN_CACHE[key] = _clip_duration_s(clip) / max(1, loops)
+    return _LOOP_LEN_CACHE[key]
+
+
 def resolve_template(tpl_key: str, upload_name: str | None) -> dict:
     """TEMPLATES[key], or a dynamic single-row template for an uploaded clip
     (key 'upload'). Upload window fits the clip: min(150 s, duration − 15 s),
@@ -617,7 +771,7 @@ def resolve_template(tpl_key: str, upload_name: str | None) -> dict:
 
 def _needed_clips(tpl: dict, mode: str, calibrate: bool) -> list:
     clips = list(tpl["clips"].values())
-    if mode == "screen" and calibrate:
+    if mode == "screen" and calibrate and not tpl.get("looped_marker"):
         return [marked_name(c) for c in clips]
     return clips
 
@@ -632,6 +786,25 @@ _FFMPEG = "/usr/local/bin/ffmpeg-master"
 # padding) — same class of bug is not expected, but this specific codec path
 # is NOT yet confirmed live on real hardware the way hevc's fix was.
 _NVENC = {"h264": "h264_nvenc", "hevc": "libx265", "av1": "av1_nvenc", "vp9": "libvpx-vp9"}
+
+
+def _marker_encoder(codec: str, height: int, coded_height: int) -> str | None:
+    """Encoder for a marker segment. The rule that generalises the 2026-08-29
+    Roku fix (2026-09-03, caught on the HEVC sync run): a stream-copy concat
+    must not change the CODED picture size mid-stream, so the segment's
+    encoder is chosen to reproduce the CONTENT's padding, whatever it is.
+      · HEVC content coded at a clean 1080 (libx265, the iso family) →
+        libx265 segments (the S72 fix);
+      · HEVC content CTU-padded to 1088 (hevc_nvenc, bbb_h265_6min) →
+        hevc_nvenc segments, which pad identically. libx265 heads on that
+        content froze the decoder on all four Android boxes at the first
+        head→content splice: position kept advancing at 1× while every box
+        sat at idle power for 36 min and the panel showed one frozen frame.
+    h264_nvenc/av1_nvenc/libvpx-vp9 already match their sources."""
+    enc = _NVENC.get(codec)
+    if codec == "hevc" and coded_height != height:
+        return "hevc_nvenc"
+    return enc
 
 
 def _ensure_marked_clips_sync(clips: list) -> None:
@@ -653,57 +826,162 @@ def _ensure_marked_clips_sync(clips: list) -> None:
     live on the actual Roku hardware that this produces normal, varying
     playback power (65-94 W) instead of the flat ~37 W failure signature.
     Only regenerates cached segments — delete streams/marked_segments/hevc_*
-    once to pick this up for existing content."""
-    ff = _FFMPEG if Path(_FFMPEG).exists() else "ffmpeg"
-    seg_dir = STREAMS / "marked_segments"
-    seg_dir.mkdir(exist_ok=True)
+    once to pick this up for existing content.
+
+    2026-09-03 — that fix was content-specific, not a rule: bbb_h265_6min is
+    hevc_nvenc content coded at 1088, and libx265 heads on it produced the
+    same freeze on every Android box. The rule is "match the content's coded
+    height" — see _marker_encoder(), which now chooses per clip."""
     for clip in clips:
         dst = STREAMS / marked_name(clip)
         if dst.exists():
             continue
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=codec_name,width,height,r_frame_rate,pix_fmt",
-             "-of", "csv=p=0", str(STREAMS / clip)],
-            capture_output=True, text=True, check=True, timeout=30).stdout.strip()
-        codec, w, h, pix, fps = probe.split(",")
-        enc = _NVENC.get(codec)
-        if enc is None:
-            raise RuntimeError(f"no marker encoder for codec {codec!r}")
-        # Segment container matches the SOURCE clip's own extension (2026-08-29,
-        # VP9 onboarding) — was hardcoded to .mp4 for every codec. h264/hevc/av1
-        # sources are already .mp4 so this never showed up; VP9 sources are
-        # .webm (documented elsewhere: VP9-in-MP4 already stalls the GTV
-        # player). Found live: a VP9 marker built as .mp4 then concatenated
-        # onto .webm content produced the exact same flat-black stuck-decoder
-        # failure as the earlier hevc_nvenc coded-height bug, despite matching
-        # profile/pix_fmt/color exactly — confirmed the container mismatch was
-        # the cause by rebuilding the marker segments as .webm and confirming
-        # live on Roku that playback becomes normal (65-94 W varying) instead
-        # of flat ~37 W.
-        seg_ext = Path(clip).suffix
-        seg_paths = []
-        for seg, color in (("black", "black"), ("white", "white"),
-                           ("black2", "black")):
-            seg_p = seg_dir / f"{codec}_{w}x{h}_{fps.split('/')[0]}_{seg}{seg_ext}"
-            if not seg_p.exists():
-                subprocess.run(
-                    [ff, "-loglevel", "error", "-f", "lavfi",
-                     "-i", f"color=c={color}:s={w}x{h}:r={fps}", "-t", "5",
-                     "-pix_fmt", pix, "-c:v", enc, "-y", str(seg_p)],
-                    check=True, timeout=120)
-            seg_paths.append(seg_p)
-        listing = "".join(f"file '{p}'\n" for p in seg_paths
-                          + [STREAMS / clip])
-        list_path = Path(f"/tmp/owl-marked-{Path(clip).name}.txt")
-        list_path.write_text(listing)
-        try:
+        seg_paths = _marker_segments_for(clip)
+        _concat_copy(seg_paths + [STREAMS / clip], dst,
+                     f"/tmp/owl-marked-{Path(clip).name}.txt", timeout=600)
+
+
+def _marker_segments_for(clip: str) -> list:
+    """The three codec/res/fps-matched marker segments for `clip`, built and
+    cached in streams/marked_segments/ on first use. Shared by the single-head
+    (marked_) and looped (loopmarked_) builders."""
+    ff = _FFMPEG if Path(_FFMPEG).exists() else "ffmpeg"
+    seg_dir = STREAMS / "marked_segments"
+    seg_dir.mkdir(exist_ok=True)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_name,width,height,r_frame_rate,pix_fmt",
+         "-of", "csv=p=0", str(STREAMS / clip)],
+        capture_output=True, text=True, check=True, timeout=30).stdout.strip()
+    codec, w, h, pix, fps = probe.split(",")
+    coded_h = int(subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=coded_height", "-of", "csv=p=0",
+         str(STREAMS / clip)],
+        capture_output=True, text=True, check=True, timeout=30).stdout.strip() or h)
+    enc = _marker_encoder(codec, int(h), coded_h)
+    if enc is None:
+        raise RuntimeError(f"no marker encoder for codec {codec!r}")
+    # Segments for padded content are a distinct cache entry.
+    pad_tag = f"_c{coded_h}" if coded_h != int(h) else ""
+    # Colour metadata has to be carried onto the marker segments too
+    # (2026-09-03, HDR onboarding). Same failure class as the hevc coded-height
+    # and VP9 container bugs above: stream-copy concat splices the segments in
+    # untouched, so an untagged SDR black next to bt2020/PQ content is a real
+    # mid-stream discontinuity for the decoder AND flips the panel out of HDR.
+    # Empty/unknown fields are simply not passed (SDR clips are unaffected —
+    # they build byte-identical segments to before, so the existing cache and
+    # every existing marked_ clip stay valid).
+    # key=value, NOT positional csv: ffprobe emits these in its own struct
+    # order (color_space, color_transfer, color_primaries), not the order they
+    # are requested in — reading them positionally silently swaps primaries
+    # and matrix (caught live 2026-09-03: libx265 rejected "bt2020nc" as a
+    # color_primaries value). Same trap the pix_fmt/r_frame_rate note above
+    # records for the geometry probe.
+    cprobe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=color_primaries,color_transfer,color_space",
+         "-of", "default=noprint_wrappers=1", str(STREAMS / clip)],
+        capture_output=True, text=True, check=True, timeout=30).stdout
+    cvals = dict(l.split("=", 1) for l in cprobe.strip().splitlines() if "=" in l)
+    prim = cvals.get("color_primaries", "")
+    trc = cvals.get("color_transfer", "")
+    spc = cvals.get("color_space", "")
+    color_args, color_tag = [], ""
+    for flag, val in (("-color_primaries", prim), ("-color_trc", trc),
+                      ("-colorspace", spc)):
+        if val and val != "unknown":
+            color_args += [flag, val]
+    if color_args:
+        color_tag = "_" + "-".join(v for v in (prim, trc, spc)
+                                   if v and v != "unknown")
+    # Segment container matches the SOURCE clip's own extension (2026-08-29,
+    # VP9 onboarding) — was hardcoded to .mp4 for every codec. h264/hevc/av1
+    # sources are already .mp4 so this never showed up; VP9 sources are
+    # .webm (documented elsewhere: VP9-in-MP4 already stalls the GTV
+    # player). Found live: a VP9 marker built as .mp4 then concatenated
+    # onto .webm content produced the exact same flat-black stuck-decoder
+    # failure as the earlier hevc_nvenc coded-height bug, despite matching
+    # profile/pix_fmt/color exactly — confirmed the container mismatch was
+    # the cause by rebuilding the marker segments as .webm and confirming
+    # live on Roku that playback becomes normal (65-94 W varying) instead
+    # of flat ~37 W.
+    seg_ext = Path(clip).suffix
+    seg_paths = []
+    for seg, color in (("black", "black"), ("white", "white"),
+                       ("black2", "black")):
+        seg_p = (seg_dir /
+                 f"{codec}_{w}x{h}_{fps.split('/')[0]}{pad_tag}{color_tag}_{seg}{seg_ext}")
+        if not seg_p.exists():
             subprocess.run(
-                [ff, "-loglevel", "error", "-f", "concat", "-safe", "0",
-                 "-i", str(list_path), "-c", "copy", "-y", str(dst)],
-                check=True, timeout=600)
-        finally:
-            list_path.unlink(missing_ok=True)
+                [ff, "-loglevel", "error", "-f", "lavfi",
+                 "-i", f"color=c={color}:s={w}x{h}:r={fps}", "-t", "5",
+                 "-pix_fmt", pix, "-c:v", enc, *color_args, "-y", str(seg_p)],
+                check=True, timeout=300)
+        seg_paths.append(seg_p)
+    return seg_paths
+
+
+def _concat_copy(parts: list, dst: Path, list_path: str, timeout: int) -> None:
+    """concat demuxer + stream copy — never re-encodes (re-encoding the content
+    would change the very decode workload being measured)."""
+    ff = _FFMPEG if Path(_FFMPEG).exists() else "ffmpeg"
+    lp = Path(list_path)
+    lp.write_text("".join(f"file '{p}'\n" for p in parts))
+    try:
+        subprocess.run(
+            [ff, "-loglevel", "error", "-f", "concat", "-safe", "0",
+             "-i", str(lp), "-c", "copy", "-y", str(dst)],
+            check=True, timeout=timeout)
+    finally:
+        lp.unlink(missing_ok=True)
+
+
+def _ensure_looped_marked_clips_sync(specs: list) -> None:
+    """Build `loopmarked_x{N}_<clip>` = N × [marker head + content] for each
+    (source clip, loops) pair that is missing (2026-09-03, sync family).
+
+    Why a pre-built file rather than player-side looping: it gives every box
+    ONE monotonic content timeline for the whole run (Just Player's position
+    would reset to 0 on each loop, and mpv/--loop=inf hides the wrap entirely),
+    and it re-states the black·white·black head every loop so the panel meter
+    can timestamp the loop boundary electrically on whichever box holds the
+    screen. Same stream-copy discipline and the same cached, codec-matched
+    segments as the single-head builder — including the HEVC coded-height and
+    VP9 container fixes documented there, which apply verbatim here.
+
+    NOTE the output is video-only (marker segments carry no audio track, so
+    concat drops the source AAC/Opus): a different regime from the audio-
+    bearing loop_* rows. Stated on the envelope, not just here.
+
+    `marker=False` builds N × content with NO head. That is the honest
+    fallback where a matched marker cannot be built: for the HDR 4K source
+    (2026-09-03) libx265 would not write the PQ transfer into the VUI, and its
+    segments code at a clean 2160 while the source is CTU-padded to 2176 — the
+    exact coded-height discontinuity that froze Roku's decoder in S72. The
+    content clock does not need the marker (it is the player's own position);
+    what is lost is the on-screen electrical validation and the head-dip
+    alignment check, which the analysis then reports as unavailable."""
+    for spec in specs:
+        src, loops = spec[0], spec[1]
+        marker = spec[2] if len(spec) > 2 else True
+        dst = STREAMS / looped_marked_name(src, loops, marker)
+        if dst.exists():
+            continue
+        seg_paths = _marker_segments_for(src) if marker else []
+        parts = (seg_paths + [STREAMS / src]) * int(loops)
+        _concat_copy(parts, dst,
+                     f"/tmp/owl-loopmarked-{Path(src).name}.txt", timeout=1800)
+        # A short concat (a dropped repetition) would silently halve the loop
+        # length and mis-map every content bin — check before anything runs.
+        head = MARKER_HEAD_S if marker else 0
+        want = int(loops) * (head + _clip_duration_s(src))
+        got = _clip_duration_s(looped_marked_name(src, loops, marker))
+        if abs(got - want) > 1.5:
+            dst.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"looped marker clip {dst.name} is {got:.1f}s, expected "
+                f"{want:.1f}s — concat incomplete, removed")
 
 
 def _stage_clips_sync(dev_cfg: dict, clips: list) -> None:
@@ -772,7 +1050,9 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                          mode: str, calibrate: bool, sub: dict,
                          upload_name: str | None = None,
                          cadence_s: float | None = None,
-                         window_s: int | None = None) -> dict:
+                         window_s: int | None = None,
+                         sync_peers: list | None = None,
+                         context_meter: bool = False) -> dict:
     """Full per-device pipeline: ready → stage → bench.py → rows. Updates
     `sub` (the job's per-device progress dict) as it goes; returns the
     device section of the combined envelope. Raises on failure."""
@@ -796,7 +1076,9 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                                     _needed_clips(tpl, mode, calibrate))
 
         cfg_path = _materialize(job_id, tpl_key, name, mode, calibrate,
-                                upload_name, cadence_s, window_s)
+                                upload_name, cadence_s, window_s,
+                                sync_peers=sync_peers,
+                                context_meter=context_meter)
         cfg = json.loads(cfg_path.read_text())
         result_path = BENCH_DIR / "results" / f"{cfg['name']}.json"
 
@@ -842,6 +1124,15 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                 if m.group(2):
                     sub["monitor_w"] = float(m.group(2))
                 continue
+            m = _CLOCK_RE.search(line)
+            if m:
+                sub["pos_s"] = None if m.group(1) == "None" else float(m.group(1))
+                sub["play_state"] = m.group(2)
+                continue
+            m = _SYNC_RE.search(line)
+            if m:
+                sub["detail"] = f"sync {m.group(1)}"[:120]
+                continue
             lines.append(line)
             for pat, phase in _PHASE_PATTERNS:
                 if pat.search(line):
@@ -866,6 +1157,21 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                 seg = segment_marker_trace(row.get(marker_key) or [])
                 if seg:
                     row["screen_marker_segments"] = seg
+        # Looped-marker + panel meter (2026-09-03): every loop's white onset is
+        # predicted from the box's own content clock and looked for on Lab-E.
+        # The residuals are the software clock's error vs the frames actually
+        # on the glass — the calibration that makes the other boxes' clocks
+        # trustworthy for content-time binning.
+        loop_len = (cfg.get("content_clock") or {}).get("loop_len_s")
+        if loop_len:
+            for row in bench_out.get("rows", []):
+                if row.get("raw_context_w") and row.get("raw_content_clock"):
+                    ml = decode_sync.marker_edges_from_clock(
+                        row["raw_context_w"], row.get("raw_context_t") or [],
+                        row["raw_content_clock"], loop_len,
+                        head_s=cfg["content_clock"].get("head_s", MARKER_HEAD_S))
+                    if ml.get("loops"):
+                        row["screen_marker_loops"] = ml
         section = {
             "label": dev_cfg["label"], "kind": dev_cfg["kind"],
             "meter": {"model": "Tapo P110", "ip": cfg["meter_ip"],
@@ -907,6 +1213,14 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
         return section
     except Exception as e:
         sub.update({"stage": "error", "detail": str(e)[:200]})
+        if sync_peers:
+            # Release peers waiting at the start barrier (covers failures
+            # BEFORE bench.py exists — e.g. _wait_ready timing out).
+            try:
+                Path(f"/tmp/owl-sync-{job_id}").mkdir(parents=True, exist_ok=True)
+                Path(f"/tmp/owl-sync-{job_id}", f"{name}.abort").touch()
+            except OSError:
+                pass
         raise
     finally:
         d["busy"] = False
@@ -921,7 +1235,8 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                          upload_name: str | None = None,
                          cadence_s: float | None = None,
                          window_s: int | None = None,
-                         batch_id: str | None = None) -> None:
+                         batch_id: str | None = None,
+                         screen_device: str | None = None) -> None:
     tpl = resolve_template(tpl_key, upload_name)
     job = jobs[job_id]
     phases = template_phases(tpl, window_s, cadence_s)
@@ -932,11 +1247,26 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                 "devices": {name: {"stage": "queued", "row": None,
                                    "detail": "", "phase_started": None}
                             for name in devices}})
+    sync_dir = Path(f"/tmp/owl-sync-{job_id}")
     try:
-        if mode == "screen" and calibrate:
+        if mode == "screen" and calibrate and not tpl.get("looped_marker"):
             job["stage"] = "preparing marker clips"
             await asyncio.to_thread(_ensure_marked_clips_sync,
                                     list(tpl["clips"].values()))
+        if tpl.get("looped_marker"):
+            lm = tpl["looped_marker"]
+            job["stage"] = "preparing looped marker clip"
+            await asyncio.to_thread(_ensure_looped_marked_clips_sync,
+                                    [(lm["source"], lm["loops"],
+                                      lm.get("marker", True))])
+        if screen_device and mode != "screen":
+            # Headless run, but one box keeps the panel so its marker heads
+            # land on Lab-E. Claim BEFORE the gather: claim_screen refuses
+            # (409) once any device is marked busy by _run_bench_for.
+            await _wait_ready(screen_device, job["devices"][screen_device],
+                              3 * rig.RIG["devices"][screen_device]["expected_boot_s"] + 45)
+            job["devices"][screen_device]["detail"] = "claiming screen"
+            await rig.claim_screen(screen_device)
         if mode == "screen":
             # Exclusive: power/ready first, then hand it the monitor.
             name = devices[0]
@@ -954,10 +1284,15 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                 job["devices"][name]["detail"] = "claiming screen"
                 await rig.claim_screen(name)
 
+        sync_peers = (list(devices)
+                      if tpl.get("sync_start") and len(devices) > 1 else None)
+        if sync_peers:
+            sync_dir.mkdir(parents=True, exist_ok=True)
         outcomes = await asyncio.gather(
             *[_run_bench_for(job_id, tpl_key, tpl, name, mode, calibrate,
                              job["devices"][name], upload_name, cadence_s,
-                             window_s)
+                             window_s, sync_peers=sync_peers,
+                             context_meter=(name == screen_device))
               for name in devices],
             return_exceptions=True)
 
@@ -999,6 +1334,20 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
                                              "note": "in-window; segment via "
                                                      "raw-sample edge detection"}}
                             if mode == "screen" and calibrate else {}),
+                         **({"sync_start": bool(sync_peers),
+                             "content_clock": tpl.get("content_clock"),
+                             "looped_marker": tpl.get("looped_marker"),
+                             "screen_device": screen_device,
+                             "marker_head": {"pattern": _MARKER_PATTERN,
+                                             "seconds": MARKER_HEAD_S,
+                                             "note": "repeated once per loop"},
+                             "regime_note":
+                                 "looped marker-headed clip, VIDEO-ONLY (the "
+                                 "marker segments carry no audio track, so the "
+                                 "concat drops the source AAC/Opus) — not "
+                                 "comparable with the audio-bearing loop_* "
+                                 "rows; compare only within this template"}
+                            if tpl.get("looped_marker") else {}),
                          **{**protocol_settings(),
                             **({"cadence_s": float(cadence_s)}
                                if cadence_s is not None else {})}},
@@ -1011,6 +1360,7 @@ async def run_decode_job(job_id: str, tpl_key: str, devices: list,
         log.warning("decode job %s failed: %s", job_id, e)
         job.update({"status": "error", "stage": "error", "error": str(e)})
     finally:
+        shutil.rmtree(sync_dir, ignore_errors=True)
         if upload_name:
             # Same retention rules as /enhance-run: evict-class uploads are
             # deleted at run end, proc/keep follow uploads.py's sweep. The

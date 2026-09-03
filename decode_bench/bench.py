@@ -15,7 +15,7 @@ Device drivers:
 Usage:  python3 bench.py <config.json>
 Resumable: per-row checkpoint to results/<config name>.json; completed rows skip.
 """
-import asyncio, json, shlex, statistics, subprocess, sys, threading, time
+import asyncio, json, re, shlex, statistics, subprocess, sys, threading, time
 import urllib.parse, urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -23,6 +23,7 @@ from dotenv import dotenv_values
 
 sys.path.insert(0, "/home/gos/wattlab/wattlab_service")
 import confidence as owl_confidence
+import decode_sync
 
 HERE = Path(__file__).parent
 
@@ -49,8 +50,16 @@ ADB_BIN = _find_adb()
 ENV = dotenv_values("/home/gos/wattlab/.env")
 
 
+_LOG_LOCK = threading.Lock()
+
+
 def log(msg):
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    # One write under a lock (2026-09-03): the content-clock thread logs too,
+    # and print()'s two writes could interleave a "] clock" line into a
+    # "] sample" line — which the service's _SAMPLE_RE would then miss.
+    with _LOG_LOCK:
+        sys.stdout.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+        sys.stdout.flush()
 
 
 class Meters:
@@ -117,11 +126,26 @@ def sample_window(meters, seconds, cadence):
 
 
 class AdbDevice:
+    # Just Player version is a controlled variable, not a detail. Installed
+    # 2026-09-02: Fire TV 0.196, Xiaomi Gen 2 + Gen 3 0.196 (pinned to match
+    # the Fire TV), GTV 0.212-legacy (its July/Aug campaigns ran on this).
+    # Onboarding the Xiaomi pair on the then-latest v0.216, the first screen-
+    # mode launch sat on the app's "Choose a video to play" empty-state
+    # screen while media_session reported PLAYING and decoders were genuinely
+    # allocated (decode ran invisibly behind the UI, no error anywhere). It
+    # reproduced once on v0.196 too, so it's an intermittent cold-start
+    # glitch rather than a version regression (JOURNAL S73) — but pinning
+    # the version across boxes is still the right call for any cross-device
+    # comparison. Re-onboarding: install a version the fleet already runs
+    # (github.com/moneytoo/Player/releases), never "latest", and take a mid-
+    # window screenshot / marker row before trusting the first row.
     def __init__(self, cfg):
         self.serial = cfg["serial"]
         self.adb = [ADB_BIN, "-s", cfg["serial"]]
         self.player = cfg.get("player", "com.brouken.player")
         self.state_at_end = None
+        self.start_cmd_epoch = None     # wall time of the launch intent
+        self.playing_epoch = None       # first PLAYING seen after it
         subprocess.run(self.adb[:1] + ["connect", cfg["serial"]],
                        capture_output=True, text=True, timeout=15)
 
@@ -189,6 +213,28 @@ class AdbDevice:
                 best = best or st
         return best
 
+    def content_position(self):
+        """Content clock sample (2026-09-03): the player's media-session
+        position, extrapolated with the box's own uptime read in the SAME
+        shell call (media3 freezes `position` between state changes — see
+        decode_sync). One short-timeout call; never reconnects adb (that is
+        still_running()'s job). None when there is no session/uptime."""
+        t0 = time.time()
+        try:
+            out = self.sh("dumpsys media_session; echo "
+                          f"{decode_sync.UPTIME_MARK}; cat /proc/uptime",
+                          timeout=10)
+        except subprocess.TimeoutExpired:
+            return None
+        t1 = time.time()
+        ps = decode_sync.parse_media_session(out, self.player)
+        up = decode_sync.parse_uptime_ms(out)
+        if not ps or up is None:
+            return None
+        return {"t": (t0 + t1) / 2, "dt": t1 - t0,
+                "pos_s": decode_sync.extrapolate_position_s(ps, up),
+                "state": ps["state"], "speed": ps["speed"]}
+
     def prepare(self, run):
         # wake first — an Asleep box takes the intent but stays in ~0.6 W standby
         for _ in range(3):
@@ -213,9 +259,18 @@ class AdbDevice:
             time.sleep(float(run["pre_wait_s"]))
 
     def start(self, run):
+        # Grow the ring buffer before clearing it: a Xiaomi logs ~5k lines a
+        # minute, so on the 30-min looped-clip windows the decoder allocation
+        # had scrolled out long before the mid-window provenance read (every
+        # 4K HEVC row came back with decoders_allocated=[] on 2026-09-03).
+        # 32 MB holds well over an hour; boxes that cap the size just keep
+        # their default (the call is best-effort).
+        subprocess.run(self.adb + ["logcat", "-G", "32M"], capture_output=True, timeout=20)
         subprocess.run(self.adb + ["logcat", "-c"], capture_output=True, timeout=20)
         # --ei position 0: Just Player honours a `position` extra (ms) — defeats
         # its remembered-position resume so every row starts at the head.
+        self.start_cmd_epoch = time.time()
+        self.playing_epoch = None
         self.sh("am", "start", "-a", "android.intent.action.VIEW", "-d", run["url"],
                 "-t", "video/mp4", "--ei", "position", "0",
                 f"{self.player}/.PlayerActivity")
@@ -229,6 +284,7 @@ class AdbDevice:
         while time.time() < deadline:
             st = self.playback_state()
             if st == "PLAYING":
+                self.playing_epoch = time.time()
                 return
             if st in ("PAUSED", "NONE", "STOPPED") and self.play_presses < 2:
                 self.sh("input", "keyevent",
@@ -242,6 +298,7 @@ class AdbDevice:
             time.sleep(1)
         st = self.playback_state()          # one last look before failing the row
         if st == "PLAYING":
+            self.playing_epoch = time.time()
             return
         raise RuntimeError(f"player not PLAYING after launch (state={st})")
 
@@ -250,8 +307,26 @@ class AdbDevice:
         # default strict decode killed a finished 1 h row (2026-08-15).
         out = subprocess.run(self.adb + ["logcat", "-d"], capture_output=True,
                              text=True, errors="replace", timeout=25).stdout
+        # Codec2 (CCodec) devices log "allocate(c2.foo.bar)"; older Amlogic
+        # boxes on Android 11 (Gen 2 Xiaomi, confirmed 2026-09-02) still run
+        # the legacy OMX IL HAL instead and never emit a CCodec line at all —
+        # missing this made a genuinely hw-decoding box look like it had no
+        # video decoder allocated (only the audio c2 line showed). Codec name
+        # itself (e.g. OMX.amlogic.avc.decoder.awesome2) still proves hw
+        # decode; caught via any "OMX.<vendor>...." token in an OmxComponent
+        # line, same dedup treatment as the c2 names.
+        # OMX.google.android.index.* are extension-index names logged by the
+        # same HAL, not decoders — drop them (they buried the real component
+        # in a 14-item list on the first rows, 2026-09-03).
+        # The OMX name is not always on an OmxComponent line: Gen 2's AV1
+        # decoder only ever appeared as "MediaCodec: [OMX.amlogic.av1.decoder
+        # .awesome2] setting surface generation" (60 s probe, 2026-09-03), so
+        # MediaCodec-tagged lines are scanned too.
         codecs = sorted({l.split("allocate(")[1].split(")")[0] for l in out.splitlines()
-                         if "CCodec" in l and "allocate(c2." in l})
+                         if "CCodec" in l and "allocate(c2." in l}
+                        | {m for l in out.splitlines()
+                           if "OmxComponent" in l or "MediaCodec" in l
+                           for m in re.findall(r"OMX\.(?!google\.android\.index\.)[\w.]+", l)})
         # Per-device filename: three adb boxes in one parallel run used to
         # overwrite each other's `<run>_midwindow.png` (2026-08-15).
         tag = self.adb[-1].replace(":", "_").replace(".", "-")
@@ -591,6 +666,19 @@ class RokuDevice:
                 pass
         return d
 
+    def content_position(self):
+        """Content clock sample (2026-09-03): ECP reports the live player
+        position directly — no extrapolation needed."""
+        t0 = time.time()
+        st = self._state()
+        t1 = time.time()
+        if st.get("position_s") is None:
+            return None
+        return {"t": (t0 + t1) / 2, "dt": t1 - t0, "pos_s": st["position_s"],
+                "state": "PLAYING" if st.get("state") == "play"
+                         else str(st.get("state")).upper(),
+                "speed": 1.0}
+
     def prepare(self, run):
         self.state_at_end = None
         self._key("Home")
@@ -657,6 +745,27 @@ def wait_for_stable_idle(meters, ig, cadence):
         poll_interval_s=cadence))            # semantics); else self-stability
 
 
+def _clock_loop(poll, every_s, stop, out, run_name):
+    """Content-clock thread (2026-09-03; shape from roku_probe.py's liveness
+    thread): call the driver's content_position() every `every_s` and append
+    [t, pos_s, state, dt]. Runs beside the meter loop — they share nothing but
+    stdout (log() is locked). Never raises; a failed poll is a None row."""
+    while not stop.is_set():
+        try:
+            s = poll()
+        except Exception:
+            s = None
+        if s:
+            out.append([round(s["t"], 2),
+                        round(s["pos_s"], 3) if s.get("pos_s") is not None else None,
+                        s.get("state"), round(s.get("dt") or 0, 2)])
+            log(f"clock pos={out[-1][1]} state={s.get('state')}")
+        else:
+            out.append([round(time.time(), 2), None, None, None])
+            log("clock pos=None state=None")
+        stop.wait(every_s)
+
+
 def one_run(dev, meters, run, cfg, results_dir):
     cadence = cfg.get("cadence_s", 1.5)
     dev.prepare(run)
@@ -674,7 +783,28 @@ def one_run(dev, meters, run, cfg, results_dir):
     log(f"{run['name']}: baseline {cfg.get('baseline_samples', 20)} samples @{cadence}s")
     base_p, base_c, base_pt, base_ct = sample_window(
         meters, cfg.get("baseline_samples", 20) * cadence, cadence)
+    # Synchronised start (2026-09-03): the other devices of this job are
+    # separate processes — meet them at a file barrier right before launch.
+    # Log wording must avoid the service's phase tokens (": settle ",
+    # ": baseline ", ": started", ": base=").
+    sync = None
+    if cfg.get("sync"):
+        log(f"{run['name']}: sync waiting for "
+            f"{len(cfg['sync'].get('peers', [])) - 1} peers")
+        sync = decode_sync.rendezvous(cfg["sync"], run["name"], log=log)
     dev.start(run)
+    # Content clock (2026-09-03): poll the player's position beside the meter
+    # loop so every power sample can be mapped to content time afterwards.
+    clock, stop_clock, clock_th = [], threading.Event(), None
+    cc = cfg.get("content_clock")
+    poll = getattr(dev, "content_position", None)
+    if cc and poll:
+        clock_th = threading.Thread(
+            target=_clock_loop,
+            args=(poll, float(cc.get("every_s", 2.0)), stop_clock, clock,
+                  run["name"]),
+            daemon=True)
+        clock_th.start()
     time.sleep(cfg.get("startup_skip_s", 10))
     window = run.get("window_s", cfg["window_s"])
     log(f"{run['name']}: started — sampling {window}s")
@@ -686,6 +816,9 @@ def one_run(dev, meters, run, cfg, results_dir):
     task_c += c2
     task_pt += pt2
     task_ct += ct2
+    if clock_th:
+        stop_clock.set()          # before still_running(): it may adb-reconnect
+        clock_th.join(timeout=15)
     alive_at_end = dev.still_running(run)
     dev.stop(run)
 
@@ -726,6 +859,15 @@ def one_run(dev, meters, run, cfg, results_dir):
         "raw_context_t": task_ct or None,
         "raw_context_baseline_t": base_ct or None,
         "idle_guard": guard,
+        # Synchronised-start + content-clock record (2026-09-03). The clock
+        # list gets the raw_ prefix on purpose: the service single-stores
+        # raw_* arrays in runs[] and keeps only the summary in devices[].rows.
+        "sync": sync,
+        "start_cmd_epoch": getattr(dev, "start_cmd_epoch", None),
+        "playing_epoch": getattr(dev, "playing_epoch", None),
+        "raw_content_clock": clock or None,
+        "content_clock": ({**cc, **decode_sync.clock_summary(clock)}
+                          if cc and clock_th else None),
     }
     log(f"{run['name']}: base={w_base:.2f}W task={w_task:.2f}W dW={delta_w:+.2f}W "
         f"({conf.get('flag', '?')}) alive_at_end={alive_at_end}")
@@ -778,6 +920,12 @@ def main():
                 dev.stop(run)
             except Exception:
                 pass
+            if cfg.get("sync"):
+                # Tell the peers at the start barrier not to wait for us.
+                try:
+                    Path(cfg["sync"]["dir"], f"{cfg['sync']['self']}.abort").touch()
+                except OSError:
+                    pass
             rows.append({"run": run["name"], "error": repr(e),
                          "error_where": where,
                          "error_at": time.strftime("%Y-%m-%d %H:%M:%S")})

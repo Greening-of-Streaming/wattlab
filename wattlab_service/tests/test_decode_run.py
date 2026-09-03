@@ -129,6 +129,154 @@ def test_phase_patterns_match_bench_output():
         assert hit == expected, line
 
 
+def test_clock_and_sync_lines_never_advance_the_phase_counter():
+    """The content-clock thread and the start barrier log ~1100 extra lines per
+    row (2026-09-03). If any of them matched a phase pattern the /decode tile
+    would jump stage — and a ": settle "-shaped one would count a fresh row."""
+    chatter = ["[12:00:50] clock pos=12.3 state=PLAYING",
+               "[12:00:52] clock pos=None state=None",
+               "[12:00:40] bbb_h264_sync: sync waiting for 3 peers",
+               "[12:00:44] bbb_h264_sync: sync go at 1756.25 (waited 4.1s, "
+               "peers ['gtv', 'xiaomi'], gone [], timed_out=False)"]
+    for line in chatter:
+        assert not any(pat.search(line) for pat, _ in decode_run._PHASE_PATTERNS), line
+    m = decode_run._CLOCK_RE.search(chatter[0])
+    assert m and m.group(1) == "12.3" and m.group(2) == "PLAYING"
+    assert decode_run._CLOCK_RE.search(chatter[1]).group(1) == "None"
+    assert decode_run._SYNC_RE.search(chatter[2]).group(1) == "waiting for 3 peers"
+
+
+def test_sync_family_templates_and_materialize_opt_in(monkeypatch):
+    """The sync family is opt-in end to end: only its templates get a content
+    clock and a start barrier, and only when it actually has peers."""
+    for cod in ("h264", "h265", "av1"):
+        t = decode_run.TEMPLATES[f"loop_bbb_{cod}_sync"]
+        assert t["clips"] == {f"bbb_{cod}_sync":
+                              f"loopmarked_x6_bbb_{cod}_6min.mp4"}
+        assert t["looped_marker"] == {"source": f"bbb_{cod}_6min.mp4",
+                                      "loops": 6, "marker": True}
+        assert t["sync_start"] is True and t["max_window_s"] == 2185
+    # The HDR arm is marker-FREE (no codec/colour-matched head can be built for
+    # it — see the builder docstring) but still carries a content clock, and
+    # head_s must be 0 so the analysis doesn't look for a head that isn't there.
+    hdr = decode_run.TEMPLATES["loop_hdrmeridian_h265_sync"]
+    assert hdr["looped_marker"]["marker"] is False
+    assert hdr["content_clock"]["head_s"] == 0
+    assert list(hdr["clips"].values()) == \
+        ["loopplain_x30_hdrmeridian_h265_4k_45s.mp4"]
+    assert decode_run.TEMPLATES["loop_bbb4k_h264_sync"]["clips"] == \
+        {"bbb4k_h264_sync": "loopmarked_x15_bbb_h264_4k_2min.mp4"}
+    assert decode_run.TEMPLATES["loop_bbb4k_h265_sync"]["clips"] == \
+        {"bbb4k_h265_sync": "loopmarked_x15_bbb_h265_4k_2min.mp4"}
+    # 6 loops of (15 s head + 360.137 s content) — loop_len is DERIVED, not 375.
+    monkeypatch.setattr(decode_run, "_clip_duration_s", lambda clip: 2250.82)
+    decode_run._LOOP_LEN_CACHE.clear()
+    p = decode_run._materialize("sj1", "loop_bbb_h264_sync", "gtv", "headless",
+                                False, sync_peers=["gtv", "xiaomi"])
+    try:
+        cfg = json.loads(p.read_text())
+        assert cfg["content_clock"] == {"every_s": 2.0, "head_s": 15,
+                                        "loops": 6, "loop_len_s": 375.137}
+        assert cfg["sync"] == {"dir": "/tmp/owl-sync-sj1", "self": "gtv",
+                               "peers": ["gtv", "xiaomi"], "lead_s": 3.0,
+                               "max_wait_s": 120}
+        assert cfg["window_s"] == 2185 and cfg["startup_skip_s"] == 5
+    finally:
+        p.unlink()
+    # A solo run keeps the clock but has nobody to rendezvous with.
+    decode_run._LOOP_LEN_CACHE.clear()
+    p = decode_run._materialize("sj2", "loop_bbb_h264_sync", "gtv", "headless",
+                                False, sync_peers=["gtv"])
+    try:
+        cfg = json.loads(p.read_text())
+        assert "sync" not in cfg and cfg["content_clock"]["loops"] == 6
+    finally:
+        p.unlink()
+    # Every other template is untouched.
+    p = decode_run._materialize("sj3", "bbb_h264_rt", "gtv", "headless", False,
+                                sync_peers=["gtv", "xiaomi"])
+    try:
+        cfg = json.loads(p.read_text())
+        assert "sync" not in cfg and "content_clock" not in cfg
+    finally:
+        p.unlink()
+
+
+def test_marker_encoder_matches_the_content_coded_height():
+    """A stream-copy concat must not change the coded picture size
+    mid-stream. HEVC content CTU-padded to 1088 (hevc_nvenc) needs hevc_nvenc
+    heads; clean-1080 HEVC (libx265, the iso family) needs libx265 heads. The
+    2026-08-29 Roku fix hard-coded libx265; the 2026-09-03 HEVC sync run froze
+    every Android box because bbb_h265_6min is the padded kind."""
+    assert decode_run._marker_encoder("hevc", 1080, 1088) == "hevc_nvenc"
+    assert decode_run._marker_encoder("hevc", 1080, 1080) == "libx265"
+    assert decode_run._marker_encoder("h264", 1080, 1080) == "h264_nvenc"
+    assert decode_run._marker_encoder("av1", 1080, 1080) == "av1_nvenc"
+    assert decode_run._marker_encoder("vp9", 1080, 1080) == "libvpx-vp9"
+    assert decode_run._marker_encoder("mpeg2video", 1080, 1080) is None
+
+
+def test_bitrate_ladder_template(monkeypatch):
+    """Seven rungs in ONE job per box, started together, with a content clock
+    (loops=1, no marker head) so rebuffering on the top rungs is recorded."""
+    t = decode_run.TEMPLATES["ladder_bbb_h264"]
+    assert [int(k.rsplit("_", 1)[1][:-1]) for k in t["clips"]] == \
+        list(decode_run.LADDER_KBPS) == [250, 500, 1500, 4000, 8000, 16000, 32000]
+    assert all(v == f"bbbladder_h264_{k}k_2min.mp4"
+               for k, v in zip(decode_run.LADDER_KBPS, t["clips"].values()))
+    assert "looped_marker" not in t and t["content_clock"]["head_s"] == 0
+    monkeypatch.setattr(decode_run, "_clip_duration_s", lambda clip: 120.0)
+    decode_run._LOOP_LEN_CACHE.clear()
+    p = decode_run._materialize("lj1", "ladder_bbb_h264", "gtv", "headless",
+                                False, sync_peers=["gtv", "xiaomi"])
+    try:
+        cfg = json.loads(p.read_text())
+        assert len(cfg["runs"]) == 7 and cfg["window_s"] == 90
+        assert cfg["content_clock"]["loops"] == 1
+        assert cfg["content_clock"]["loop_len_s"] == 120.0
+        assert cfg["sync"]["peers"] == ["gtv", "xiaomi"]
+        assert "monitor_meter_ip" not in cfg
+    finally:
+        p.unlink()
+
+
+def test_sync_clip_is_never_double_marked(monkeypatch):
+    """Screen mode + calibrate marks a clip. The sync clip already carries a
+    head per loop — marking it again would build a second file AND shift every
+    content position by 15 s, silently breaking the clock↔file mapping."""
+    monkeypatch.setattr(decode_run, "_clip_duration_s", lambda clip: 2250.82)
+    decode_run._LOOP_LEN_CACHE.clear()
+    p = decode_run._materialize("sj4", "loop_bbb_h264_sync", "gtv", "screen", True)
+    try:
+        cfg = json.loads(p.read_text())
+        url = cfg["runs"][0]["url"]
+        assert "marked_loopmarked" not in url
+        assert url.endswith("loopmarked_x6_bbb_h264_6min.mp4")
+    finally:
+        p.unlink()
+    tpl = decode_run.TEMPLATES["loop_bbb_h264_sync"]
+    assert decode_run._needed_clips(tpl, "screen", True) == \
+        ["loopmarked_x6_bbb_h264_6min.mp4"]
+
+
+def test_screen_device_adds_the_panel_meter_to_one_device_only(monkeypatch):
+    """Headless multi-box run, one box on the panel: only that box's config
+    gets Lab-E (KLAP is single-session — two owners would fight)."""
+    monkeypatch.setattr(decode_run, "_clip_duration_s", lambda clip: 2250.82)
+    decode_run._LOOP_LEN_CACHE.clear()
+    watched = decode_run._materialize("sj5", "loop_bbb_h264_sync", "gtv",
+                                      "headless", False, context_meter=True)
+    other = decode_run._materialize("sj5", "loop_bbb_h264_sync", "xiaomi",
+                                    "headless", False, context_meter=False)
+    try:
+        assert json.loads(watched.read_text())["monitor_meter_ip"] == \
+            rig.RIG["monitor"]["plug_ip"]
+        assert "monitor_meter_ip" not in json.loads(other.read_text())
+    finally:
+        watched.unlink()
+        other.unlink()
+
+
 def test_run_endpoint_validations():
     assert client.post("/decode/run", headers=_LAB, json={
         "template": "nope", "devices": ["pi5"], "mode": "headless"

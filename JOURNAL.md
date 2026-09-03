@@ -7,6 +7,155 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Session 73 — 2026-09-02 (Xiaomi Gen 2 revived, Gen 3 onboarded, Just Player version pin lesson,
+four-way silicon/vendor axis campaign planned)
+
+**Same-day addendum (continued into the night):** Fire TV moved onto Roku's old HDMI_3 (Roku freed,
+uncabled again for now — a live plan for a two-axis STB comparison took shape: Fire TV vs Google TV
+holds the MediaTek MT8696 silicon constant across OS/vendor/form-factor, Xiaomi Gen 2 vs Gen 3 holds
+vendor/OS/form-factor constant across an Amlogic silicon generation (sc2/OMX vs s7d/Codec2). GTV was
+physically re-cabled onto HDMI_1 (displacing the Bbox) at the same time as the Fire TV move — **missed
+in `rig_hdmi_inputs` for a while** (a real config/physical-reality gap caught only when the owner asked
+for a visual switch-through check before the full campaign; fixed same session, `gtv: "HDMI_1", bbox:
+""`). Plan captured in `docs/stb_axes_campaign_2026-09-02.md` before any of it runs — four open
+decisions (GTV's screen slot now resolved; Just Player version alignment 0.196 vs GTV's 0.212-legacy;
+n=2 vs n=3; whether to run a Wi-Fi control leg for Axis A, bracketed against CR-074's existing network
+term either way) held for the owner rather than guessed at. A 4-wide parallel headless probe
+(`bbb_codecs_rt` across all four boxes in one job) queued as the reliability gate before committing to
+the full matrix — if parallel ΔW lands inside the existing serial rows' rep spread, the whole campaign
+runs 4× faster. The Xiaomi Gen2-vs-Gen3 comparison batch (`a9f06c58ab09`, n=2, headless, all four
+codecs incl. VP9) ran to completion in the background throughout — both boxes clean, all 🟢, Gen 3
+showing a consistently lower HEVC/AV1/VP9 increment (~0.5 W) than Gen 2 (~0.76–0.90 W) at n=1–2 per
+cell, H.264 comparable — a hint, not yet a finding (needs n≥3 before anything is asserted).
+
+**Overnight (02→03 Sep): synchronised playback + per-box content clock — intra-content decode
+power becomes measurable.** Full write-up in `docs/intra_content_sync_2026-09-03.md`; the short
+version: (1) the four boxes are driven from one pre-built looped clip (N × [5 s black · 5 s white ·
+5 s black + content], stream-copied, so one monotonic timeline — `decode_run.looped_marked_name`);
+(2) their separate `bench.py` processes meet at a file barrier before launch
+(`decode_sync.rendezvous`, per-run-name `.ready` files, `start_at = max + 3 s` computed identically
+in every process); (3) — the part that carries the analysis — every 2 s each box reports its own
+player position, extrapolated as `position + (uptime − updated) × speed` because media3 FREEZES the
+session's position between state changes (Gen 2 read `position=0` 45 min in), both read in one
+adb call; power samples are then binned by content time, never wall time; (4) the marker head is
+the physical check: on the box holding the panel, each loop's white onset is predicted from the
+software clock and found on the panel meter — **median residual +1.05 s, MAD 0.07 s** (Fire TV,
+n=4 loops), i.e. a constant, known offset. Sync quality: 0.35 s apart after 35 min; clock coverage
+1055/1055 polls; 0 unaligned samples. HLS live was considered and rejected (player-chosen live
+latency makes skew larger, and it changes the delivery regime). The analysis
+(`decode_bench/content_profile.py`, `content_descriptors.py`) found that **no single box resolves
+intra-content structure from its own trace (SNR < 1 at n=6), but three independent boxes on three
+independent meters agree on the shape (r ≈ 0.8 at 20–30 s bins, t ≈ 5)** — real, small,
+recoverable through cross-device agreement; the marker head reads lower than content on every box
+(positive control); loop-to-loop drift nil. Against content descriptors the variable part of decode
+power tracks **spatial texture, not motion** (the corpus is near-CBR, so bits can't be the driver),
+and it tracks it hardest on the newest silicon (Gen 3 R² 0.46–0.58 vs Gen 2 0.23–0.29) — a
+hypothesis for Tania, not a claim. Along the way: GTV moved to Wi-Fi (its Wi-Fi MAC had rotated —
+`rig.py` macs + `rig_target_overrides`), Fire TV's CEC found still enabled and disabled after it
+auto-paused mid-run, an HDR marker segment attempt rejected on evidence (libx265 won't write PQ
+into the VUI; coded 2160 vs the source's CTU-padded 2176 — the S72 Roku failure class) so the HDR
+arm runs marker-free, and a 7-rung NVENC CBR bitrate ladder (0.25→32 Mbps) built for the last leg.
+**The S72 HEVC marker fix turned out to be content-specific, not a rule:** the first HEVC sync run
+froze all four Android boxes at the first head→content splice (idle power for 36 min with the
+position clock still advancing at 1×, panel flat on one frozen frame) because `bbb_h265_6min` is
+hevc_nvenc content coded 1088 and the libx265 heads are coded 1080 — the mirror of the Roku case.
+Rule now in code (`_marker_encoder`, tested): match the CONTENT's coded height, choosing the head's
+encoder per clip. Clip rebuilt; the failed batch is kept as the failure signature. **4K:** H.264 4K60
+launched on the GTV only — both Amlogic AVC decoders reject it (codec tables: 972,000 / 1,036,800
+blocks/s ⇒ 4K@30–32 max) and the Fire TV never left BUFFERING at ≥ 20 Mbps (twice, incl. the HDR arm —
+a Wi-Fi delivery limit on the stick, most likely); GTV alone: +0.43 W (+62 %) for 4× the pixels. **HDR
+4K60 HEVC Main 10** (marker-free, 30 loops): Gen 2 1.41 / Gen 3 1.03 / GTV 1.29 W, Axis B −0.38 W
+holding under PQ 10-bit; three boxes agree on the 9-bin profile at r 0.75–0.93 with n=29 loops.
+**What did not run, and why (own fault):** the bitrate ladder, the HEVC re-run and a 4K HEVC arm were
+gated behind a post-queue orchestration script that I hot-patched three times; a process running an
+earlier version survived the restarts and polled a never-true condition for six hours. Clips built,
+templates and tests in, batch ids reserved — ~2 h of rig time to run. Lesson: replace an orchestration
+script via a state file and verify the old PID is gone; never edit it live.
+Tests 1071. Results land in `/decode` batches (ids in the doc); the morning summary carries the
+axis numbers.
+
+**Morning, 03 Sep 10:05–12:30 — the three missing arms, run and analysed (owner freed the rig).**
+(1) **HEVC sync re-run on the rebuilt clip** (`d9a03bf3`): the coded-height rule holds — all four
+boxes to the end, head dip on every one (−0.08 W ×3, GTV −0.02), Axis B −0.357 ±0.009 W per bin
+inside one run, same content through HEVC vs H.264 keeps part of its shape (r 0.39–0.66 per box).
+`content_profile.head_dip` now skips loop 0 like the marker residual (the Fire TV's loop-0 head is
+its +0.58 W cold-start spike). (2) **Bitrate ladder**, 7 NVENC CBR rungs 0.25→32 Mbps, four boxes
+rendezvous-started, n=2 (`bae281b52f90`, 56/56 rows): decode power is **linear in delivered bitrate
+over two decades** on every box (r ≥ 0.92) at 10.0 ±2.3 (Fire TV) / 12.9 ±3.4 (GTV) / 17.1 ±2.8
+(Gen 2) / 13.1 ±6.5 (Gen 3) mW per Mbps — the whole 128× span moves playback draw 16–25 %;
+32 Mbps is where Wi-Fi delivery starts to stall (Gen 2 85–90 % PLAYING), and the Fire TV sustains
+32 Mbps 1080p fine, so its 4K stall was not raw Wi-Fi throughput. Measurement lesson: the Fire TV's
+per-rung ΔW is *negative* because its foregrounded player UI (the 20 s baseline state between
+rungs) draws more than playing video — `ladder_report.py` leads with absolute watts and its
+PLAYING share is now clipped to the sampled span (it read 110 % before). (3) **4K60 HEVC on all
+four** (`70351d846a8a`, 15 loops): the strongest intra-content signal of the session — the swing is
+~0.3 W and three boxes cross SNR 1 on their own trace (Fire TV/GTV 2.3–3.0 at 10–30 s), r 0.92–1.00
+at 20–30 s bins; 4K costs both MT8696 boxes +0.37 W over 1080p HEVC and the Amlogic boxes nothing
+(Gen 3 −0.11); on both Xiaomis the white marker head costs *more* than content at 4K (+0.3 W with a
+~10 s decay — head segments verified bit-identical in coded parameters, so it is post-decode
+processing, not the decoder); Gen 3 shows a bimodal ~0.2 W loop-level state at 4K only. With a
+corpus that finally varies bitrate (8–22 Mbps across bins), bits are *negative* within a clip and
+positive across the ladder — NVENC spends bits on motion, and motion is cheap; texture positive /
+motion negative now holds on three regimes and four boxes. (4) **Gen 2 AV1 = hardware**
+(`OMX.amlogic.av1.decoder.awesome2`, `ammvdec_av1_v4l`, `av1_mmu` firmware) — it was logged under
+the `MediaCodec` tag, which the provenance filter didn't scan; fixed, and the long-row provenance gap
+(every 30-min row returned `decoders_allocated: []` because the Xiaomi's ~5k lines/min scrolled the
+allocation out of the default logcat buffer before the mid-window read) fixed with `logcat -G 32M`
+before the clear. TV switched off 12:20. Tests 1072. Full numbers §5b/§5f/§5g of the doc.
+
+**Risk of manual visual checks, caught live:** switching the C2's HDMI input by hand (remote OK
+button) is sometimes unresponsive on the first press; a second press can land as a play/pause toggle
+on whichever box is active instead of an input-select — a real, reproducible way for a human doing a
+manual reliability check to inject a false pause into a running measurement. At least one of tonight's
+"box randomly paused" observations (Fire TV, mid-HEVC-row during the parallel test) may be this rather
+than a device/app fault. Automating the input switch via the C2's own webOS SSAP control (`lg.py`,
+already used by `claim_screen`) rather than the physical remote avoids this path entirely — worth
+preferring for any future watch-and-verify session.
+
+**Gen 2 Xiaomi revived — 2026-08-29's "parked: DOA" was actually a PSU fault.** A new power supply
+brought the S72-bricked unit straight back to life at its old address/MAC, still ADB-trusted from
+before. Un-parked in `rig.py`, moved onto the Apple TV's old plug (Lab-F3) while the Apple TV sits
+aside decommissioned for a Gen2-vs-Gen3 A/B. **Gen 3 Xiaomi onboarded** on the box's own plug
+(Lab-F4) as a new `rig.py` entry (`xiaomi3`) — different SoC generation (Amlogic s7d vs Gen 2's sc2),
+Android 14. Screen map for the A/B is carried live via `/settings` `rig_hdmi_inputs` (Gen2→HDMI_2,
+Gen3→HDMI_4, GTV/Apple TV's stale claims freed with `""`) rather than hardcoded in `rig.py`, so it
+reverts cleanly once the comparison is done. Gen 3 setup notes: CEC disabled on-device; Ethernet via
+USB adapter looked "Connected" but silently self-assigned a 169.254.x APIPA address once Wi-Fi was
+disabled (DHCP never actually completed over it) — abandoned in favour of Wi-Fi; ADB needs both stock
+"Network debugging" AND a Gen-3-specific, reboot-gated "MiTV ADB debugging" toggle that Gen 2 doesn't
+have.
+
+**Neither Xiaomi had Just Player installed; a version gap and a separate cold-start glitch got
+tangled together while chasing this.** Every other `adb`-driven box (GTV/Bbox/Fire TV) already has
+`com.brouken.player` installed, and `bench.py`'s intent-launch driver assumes it — neither new box
+did. First install grabbed the then-latest GitHub release (v0.216) for both, without checking what
+the working fleet actually runs (Fire TV: v0.196, a full 20 releases behind) — downgraded both to
+v0.196 to match (Gen 2 took `-d` cleanly; Gen 3's Android 14 build refused the downgrade install and
+needed an uninstall-then-install first).
+
+That looked at first like it fixed a real bug: the v0.216/Gen3 screen-mode dry run showed
+`playback_state_midwindow: PLAYING` and real decoders allocated (`c2.amlogic.avc.decoder` +
+`c2.android.aac.decoder`, genuine decode happening) while the physical screen — confirmed via the
+harness's own mid-window screenshot — sat on Just Player's "Choose a video to play" empty-state
+screen instead of showing the clip, no error anywhere. But re-testing on v0.196 **reproduced the
+identical empty-state screen on Gen 2's very first launch too**, and even Gen 3 hit it once more on
+v0.196 before a clean run — so this is NOT simply a version regression fixed by pinning to v0.196.
+The actual pattern across both boxes: the first launch (or two) of Just Player via ADB intent can
+land on the empty-state screen with decode running invisibly behind it; a subsequent relaunch
+resolves it and it doesn't recur. Root cause not established (candidate: a cold-start Z-order/surface
+race between the video's hardware overlay plane and the app's own UI layer) — noted, not chased
+further tonight.
+
+**Two takeaways that stand regardless of the root cause:** (1) a dependency app's version is still
+worth pinning to what the validated fleet runs (v0.196, in `bench.py`'s `AdbDevice` docstring) simply
+so it's a controlled variable, even though it wasn't the actual fix here; (2) don't trust a box's
+*first* screen-mode launch after a fresh Just Player install as proof of working playback — retry
+once and check the mid-window screenshot before believing it. Also: this glitch is screen-mode-only
+by construction — headless campaign rows have no physical display to be confused about, and every
+affected row's underlying telemetry (decoders allocated, media-session PLAYING, plausible delta_w)
+looked legitimate throughout, so it doesn't appear to contaminate headless energy numbers. Comparison
+campaign itself still pending as of this entry.
+
 ## Session 72 — 2026-08-29 (nine devices: Xiaomi bricked, Roku onboarded, two marker-encoder bugs
 fixed, LinkedIn VP9 claim corrected with data)
 

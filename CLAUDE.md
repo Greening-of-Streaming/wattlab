@@ -1,6 +1,10 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-08-29 (S72: nine devices — Xiaomi bricked, Roku onboarded, two marker-encoder
+# Last updated: 2026-09-03 (S73: Xiaomi Gen 2 revived (PSU) + Gen 3 onboarded; two-axis STB
+#   campaign at n=3; synchronised four-box playback with a per-box content clock → intra-content
+#   decode power measurable; bitrate ladder; 4K/HDR arms. See JOURNAL S73 +
+#   docs/intra_content_sync_2026-09-03.md.)
+# Previous: 2026-08-29 (S72: nine devices — Xiaomi bricked, Roku onboarded, two marker-encoder
 #   bugs fixed (HEVC coded-height padding, VP9 container mismatch), LinkedIn VP9-cheaper claim
 #   corrected with fresh Apple TV + Roku data (AV1/VP9 tie on both). See JOURNAL S72.)
 # Previous: 2026-08-28→29 (S70–S71, Tania: SMPTE encode-parity gap closure + ReadySetGo matched-
@@ -14,7 +18,7 @@
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
 #   - CHANGE_REQUESTS.md — 22 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (1046 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - TESTING.md — pytest suite (1072 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - OWL_AUDIT.md — 2026-07-05 nine-dimension re-audit → CR-066–069 + CR-031/008 updates; disposition in AUDIT_RESPONSE.md
@@ -183,6 +187,15 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
   padding, VP9 container mismatch) unblocking VP9 screen-mode entirely; CR-078/079 captured; corrected a
   public LinkedIn claim with fresh data — AV1/VP9 tie on both Apple TV (3.435 vs 3.495 W) and Roku
   (0.476 vs 0.481 W), doc §6 + SMPTE-desk digests pushed. Tests 1046.
+- S73 (09-02→03): Xiaomi Gen 2 revived (PSU fault, not bricked) + Gen 3 (Amlogic s7d, Codec2)
+  onboarded; Just Player pinned 0.196; two-axis STB campaign at n=3 all 🟢 (Axis A: GTV +0.26–0.43 W
+  over Fire TV per stream on the same MT8696; Axis B: Gen 3 −0.30…−0.37 W on HEVC/AV1/VP9); **sync
+  mechanism** — looped marker-headed clip + file rendezvous + media3 content clock (`decode_sync.py`,
+  `content_profile.py`) → intra-content power real but below single-box noise at 1080p (cross-box
+  r≈0.8), resolvable single-box at 4K (SNR 2–3); texture ↑ / motion ↓ on four boxes × three regimes;
+  bitrate ladder linear 10–17 mW/Mbps; 4K costs MT8696 +0.37 W, Amlogic ~0; HEVC coded-height rule
+  generalised (`_marker_encoder`); Gen 2 AV1 = hw OMX; Fire TV foreground UI draws more than playback.
+  Tests 1072. Doc: docs/intra_content_sync_2026-09-03.md.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -202,8 +215,9 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
   Bbox Ethernet cable back in since 2026-08-26 evening (both its addresses reserved; MAC follower covers either) ·
   Apple TV: never headless (1.6 W "Playing" ≠ decode; hot-plug pauses VLC) — display attached + screensaver off
   before rows; `display_attached` flag for atv runs still to add (CR-075). **S72 additions:** Xiaomi TV Box
-  bricked after the 2026-08-29 switch-install relocation, no root cause established, `rig.py` entry `parked`
-  pending a replacement unit · Roku's `idle_w`/`expected_boot_s`/`startup_skip_s` are still unmeasured
+  "bricked" 2026-08-29 turned out to be a PSU fault — revived S73 on a new supply, unparked (Lab-F3,
+  HDMI_2 via `rig_hdmi_inputs`), Gen 3 added as `xiaomi3` (Lab-F4, HDMI_4); Apple TV `parked`
+  (no plug) · Roku's `idle_w`/`expected_boot_s`/`startup_skip_s` are still unmeasured
   guesses pending an `onboard_device.py` run (playback mechanism itself is validated, CR-077) · Fire TV and
   Xiaomi both now have zero HDMI cable (not just unclaimed) — a live no-HDMI-sink smoke test is still owed
   before trusting either box's headless rows.

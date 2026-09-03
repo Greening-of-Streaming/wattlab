@@ -205,6 +205,23 @@ async def decode_run_start(request: Request, payload: dict):
     if batch_id is not None and not re.fullmatch(r"[0-9a-f]{6,32}", str(batch_id)):
         return JSONResponse({"error": "batch_id must be 6–32 hex chars"},
                             status_code=400)
+    # screen_device (2026-09-03, sync family): a HEADLESS multi-box run may
+    # still park the shared panel on one of its boxes, so that box's marker
+    # heads are timestamped electrically on the screen meter while the others
+    # run unwatched. Exactly one box — Lab-E's KLAP session is single-owner.
+    screen_device = p.get("screen_device") or None
+    if screen_device is not None:
+        if mode == "screen":
+            return JSONResponse({"error": "screen_device is for headless runs "
+                                          "— screen mode already claims it"},
+                                status_code=400)
+        if screen_device not in devices:
+            return JSONResponse({"error": "screen_device must be one of the "
+                                          "run's devices"}, status_code=400)
+        dc = rig.RIG["devices"][screen_device]
+        if not rig.screen_claimable(dc):
+            return JSONResponse({"error": rig.not_claimable_reason(dc)},
+                                status_code=400)
     try:
         tpl = decode_run.resolve_template(tpl_key, upload_name)
     except Exception as e:
@@ -216,7 +233,8 @@ async def decode_run_start(request: Request, payload: dict):
     async def coro(job_id=job_id):
         await decode_run.run_decode_job(job_id, tpl_key, devices, mode,
                                         calibrate, upload_name, cadence_s,
-                                        window_s, batch_id)
+                                        window_s, batch_id,
+                                        screen_device=screen_device)
 
     rig.touch_activity(f"decode job {job_id} queued")
     position = queue_control.enqueue(job_id, "decode", label, coro,
