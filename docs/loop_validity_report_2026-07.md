@@ -1,5 +1,10 @@
 # Measuring a too-short clip: is "loop it to reach a green flag" valid?
 
+> **Note (2026-09-03).** The scratchpad harness and data files cited below (`scratchpad/loop_validity.py`,
+> `scratchpad/loop_validity_results.json`) were not retained; the tables in this report are the record.
+> This is the **encode-side** loop question — the decode-side one is the 2026-09-03 finding
+> `looped-excerpt-measures-as-continuous`.
+
 **Bench experiment, 2026-07-07.** Standalone harness (`scratchpad/loop_validity.py`) — drives
 ffmpeg directly + polls the `.91` P110 at 1 Hz, imports only `confidence.confidence()` so the
 flag matches OWL exactly. **No OWL code touched.** Data: `scratchpad/loop_validity_results.json`

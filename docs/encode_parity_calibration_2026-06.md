@@ -223,6 +223,8 @@ to an illustrative fixture only when no *complete* measured artifact exists):
 
 ## 9. Results — first full run (2026-06-19)
 
+> **2026-09-03:** results in §9 superseded by `smpte_2026/consolidated_encode_dataset.md` (240 rows + bitrate-ceiling extension) and `smpte_2026/CLEAN_SWEEP.md`; §1–8 method remains the live reference.
+
 90 encodes, all 🟢 confidence (the repeat-to-20s sampling worked — 20–27 power
 samples per row). GoS1: AMD Ryzen 9 7900 (24c) + RTX 5080 (NVENC), ffmpeg
 `N-124403`. Artifact: `results/calibration/encode_parity_nvenc_24c_2026-06-18.json`.

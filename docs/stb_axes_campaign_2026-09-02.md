@@ -1,5 +1,7 @@
 # STB two-axis decode campaign — same silicon vs same vendor (2026-09-02, DRAFT plan)
 
+> **Superseded 2026-09-03.** This is the pre-launch plan; the campaign ran the same night and every decision here was taken and reported in `intra_content_sync_2026-09-03.md` (§4 axes at n=3, §5 caveats). The HDMI map, device parking and 'headless' definition below are as of 2026-09-02 and no longer current (headless rows are now a no-sink regime; Apple TV is back on HDMI_2, Roku on HDMI_3). Kept as the design record.
+
 Status: **plan only — nothing beyond the two probes below has run.** Owner review before launch.
 Executor: any model with the rig context (this file + `decode_bench/README.md` + `/decode-campaign` skill).
 
@@ -136,7 +138,7 @@ the device number.
 - Axis A per codec: GTV − Fire TV (ΔW and total), bracketed by the CR-074 network term. Axis B per codec:
   Gen 3 − Gen 2. Parallel-vs-serial: per box, parallel ΔW vs serial mean — inside the rep spread or not.
 - Idle floors from Leg 1 (Xiaomi) and `rig.py` (Fire TV, GTV), each with the method that produced it.
-- Output: `docs/stb_axes_2026-09.md` (tables + caveats + affirmations). Findings only through
+- Output: `docs/intra_content_sync_2026-09-03.md` (tables + caveats + affirmations). Findings only through
   `/finding-draft`, only for claims that clear the bar (n ≥ 3, CI excludes zero, regime and operating
   point named). Publication rule applies: a few affirmations, Tania checks, critics credited.
 

@@ -1,6 +1,6 @@
 # OWL Parameters — Arbitrary, Empirical, Calibrated
 
-> **Note (2026-06-11):** values below are a 2026-05-07 snapshot and several have since drifted (e.g. `baseline_polls`, `video_cooldown_s`); `settings.json` is the live truth. The Arbitrary/Empirical/Calibrated/Constrained classification is the durable content here.
+> **Note (2026-06-11):** values below are a 2026-05-07 snapshot and several have since drifted (e.g. `baseline_polls`, `video_cooldown_s`); `settings.json` is the live truth. The Arbitrary/Empirical/Calibrated/Constrained classification is the durable content here. The "longer overnight n=24 run" landed as the 2026-06-10 recalibration (n=20), and §9 of the traffic-light spec has since been implemented (`confidence.py`, CR-028 Phase 2) — the "§9 proposes to rework / retires" phrasing below is historical.
 
 Generated: 2026-05-07 (post-CR-022 resolution).
 

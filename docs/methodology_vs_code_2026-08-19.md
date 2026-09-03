@@ -83,3 +83,9 @@ distances (precalibration.py:43).
 - **Code decisions the owner should make:** 1 (focus mode for LLM/RAG — implement or disclose), 15 (per-device
   drift calibration for decode confidence), 25 (make the liveness gates part of the importer/collator, not
   analysis practice), 31 (finding-level confidence derivation), 19 (inter-row idle guard in parity).
+
+## 2026-09-03 delta
+
+- Item 27: the Pi 5 is unparked (on its own plug) and the decode roster is 10 devices (Pi 5, Pi 400, Apple TV, Xiaomi Gen 2 + Gen 3, Roku, Fire TV, GTV, Bbox, LG C2).
+- Item 18: `vmaf_model` is `v1` in live settings (DEFAULTS still `v0`).
+- Item 33: the /methodology page footer is still "0.7 · 2026-08-15" and now also predates the synchronised-playback work (`decode_sync.py`), the bitrate ladder, the loop-validity finding (`looped-excerpt-measures-as-continuous`) and the no-sink (headless) regime. §E dispositions remain unapplied.

@@ -2,70 +2,18 @@
 
 **CR-011** — captured 2026-05-01, shipped 2026-05-02.
 
-## What this is
+Operating procedure (stage-on/stage-off, watchdog, bypass paths) lives in [`bin/README.md`](bin/README.md) and
+[`systemd/README.md`](systemd/README.md) — this file keeps only the CR-011 design rationale and the one-time nginx install recipe.
+
+## Design rationale
 
 A way for the owner to swap OWL onto a feature branch, test it live with all the production wiring (nginx, cert, systemd, P110, GPU), then swap back — without public visitors hitting a 502 during the restart window.
 
 There's only one OWL process and one Tapo P110, so a parallel staging instance isn't viable (the two would corrupt each other's measurements). Instead we accept short downtime windows and put up a friendly maintenance page during them.
 
-## Workflow
-
-```bash
-# Switch to a feature branch, restart wattlab, raise the maintenance flag.
-~/wattlab/bin/stage-on --branch <feature-branch>
-
-# …test on http://192.168.1.62:8000 (LAN) or via SSH tunnel…
-
-# Switch back to main, restart wattlab, lower the flag.
-~/wattlab/bin/stage-off --main
-```
-
-You can also run `stage-on` without `--branch` (just raises the flag, e.g. for a planned cert-renewal restart) and `stage-off` without `--main` (e.g. you're staying on the staged branch because you've decided to ship it directly).
-
-## Owner access during staging
-
-Public visitors hit nginx at `wattlab.greeningofstreaming.org` and see the maintenance page. The owner bypasses nginx via either:
-
-- **LAN**: `http://192.168.1.62:8000` — direct to FastAPI.
-- **SSH tunnel**: `ssh -p 2222 -L 8000:localhost:8000 user@gos1.duckdns.org`, then `http://localhost:8000`.
-
-## What `stage-on` does (and the queue trade-off)
-
-1. **Drain the queue, best-effort, with a 60s timeout.** If a visitor's job is in flight when you stage, the script waits up to 60s for it to finish. After that it warns and proceeds; any pending jobs are *lost* (visitors must re-submit).
-2. **Touch `/tmp/owl-maintenance`** — the file nginx watches.
-3. **(Optional) `git checkout <branch>`**.
-4. **`sudo systemctl restart wattlab`**.
-
-We deliberately did **not** implement snapshot+restore for pending jobs. That would require refactoring every `enqueue()` call site (video / llm / image / rag) to pass a serialisable `(type, params)` tuple instead of a coroutine closure, plus a factory registry to rebuild the coroutine on the other side — roughly half a day of work touching four modules. The drain-with-timeout approach is ~10 lines of bash and acceptable given GoS1's typical queue depth (≈0 outside active demos). For pre-conference demos, the owner can request CR-001b demo-mode well in advance to let the queue settle naturally; if the queue is unexpectedly deep, restart the whole machine and set demo-mode on boot.
+`stage-on` drains the queue best-effort with a 60s timeout before raising the flag; any jobs still pending after that are *lost* (visitors must re-submit). We deliberately did **not** implement snapshot+restore for pending jobs. That would require refactoring every `enqueue()` call site (video / llm / image / rag) to pass a serialisable `(type, params)` tuple instead of a coroutine closure, plus a factory registry to rebuild the coroutine on the other side — roughly half a day of work touching four modules. The drain-with-timeout approach is ~10 lines of bash and acceptable given GoS1's typical queue depth (≈0 outside active demos). For pre-conference demos, the owner can request CR-001b demo-mode well in advance to let the queue settle naturally; if the queue is unexpectedly deep, restart the whole machine and set demo-mode on boot.
 
 If conference traffic ever makes this trade-off bite, the captured follow-up is "snapshot + coro registry refactor" — search this repo for `CR-011` to find the spot.
-
-## What `stage-off` does
-
-1. **(Optional) `git checkout main`**.
-2. **`sudo systemctl restart wattlab`**.
-3. **Wait for `/live` to respond OK** (up to 30s) — prevents a brief 502 between flag-removal and FastAPI being ready.
-4. **Remove `/tmp/owl-maintenance`**.
-
-If the service fails to come up, the flag is *not* removed and `stage-off` exits non-zero. Public visitors keep seeing the maintenance page until the next successful `stage-off`.
-
-## Auto-lower on inactivity (CR-015)
-
-A systemd timer (`owl-maintenance-watchdog.timer`) fires every minute and lowers the flag automatically once it goes stale. Stale = mtime older than `max_idle_mins` (default 30, in `settings.json`). The Lab-tier middleware in `main.py` touches the flag on every request, so the window stays open as long as the operator is using the LAN URL or SSH tunnel — no manual heartbeat required. Manual `touch /tmp/owl-maintenance` also extends the window.
-
-See `bin/README.md` (`## owl-maintenance-watchdog`) and `systemd/README.md` for install + tuning.
-
-## Files
-
-| Path | What | Owner |
-|---|---|---|
-| `bin/stage-on` | Raise flag + restart on (optionally) a feature branch | gos (repo) |
-| `bin/stage-off` | Wait-for-up + lower flag + restart on (optionally) main | gos (repo) |
-| `bin/owl-maintenance-watchdog` | One-shot CR-015 auto-lower watchdog | gos (repo) |
-| `systemd/owl-maintenance-watchdog.{service,timer}` | Timer + service that drive the watchdog | gos (repo) |
-| `wattlab_service/static/maintenance.html` | The page nginx serves while flag is up | gos (repo) |
-| `/etc/nginx/sites-available/wattlab` | Vhost with maintenance-flag block (see below) | root |
-| `/tmp/owl-maintenance` | The flag itself — touched by stage-on, removed by stage-off | gos |
 
 ## nginx config (one-time install)
 
@@ -117,12 +65,4 @@ Reload nginx:
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## Rollback
-
-The CR-011 surface is intentionally narrow:
-
-- **OWL repo:** `bin/stage-on`, `bin/stage-off`, `wattlab_service/static/maintenance.html`, this file. No Python changes. `git revert` on the staging commit reverts everything.
-- **System config:** the nginx vhost edit. To revert, remove the `error_page 503`, `@maintenance` location, `/static/` location override, and the two `if (-f /tmp/owl-maintenance)` stanzas.
-- **Filesystem state:** `/tmp/owl-maintenance` (ephemeral, cleared on reboot). If accidentally left up, `rm /tmp/owl-maintenance` lowers it without restarting anything.
-
-If the whole approach turns out to be the wrong call, the rollback is a `git revert` and a one-block nginx edit. No data migrations, no compat shims.
+To revert the vhost edit: remove the `error_page 503`, `@maintenance` location, `/static/` location override, and the two `if (-f /tmp/owl-maintenance)` stanzas, then reload. `/tmp/owl-maintenance` itself is ephemeral (cleared on reboot); `rm /tmp/owl-maintenance` lowers it without restarting anything.

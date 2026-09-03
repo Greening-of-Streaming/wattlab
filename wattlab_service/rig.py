@@ -242,15 +242,19 @@ RIG: dict = {
             # is the pyatv playback state. Not cabled to the C2 (no HDMI
             # input) until the screen map says otherwise.
             #
-            # PARKED 2026-09-02: fully unplugged (power + HDMI both) so the
-            # revived Gen 2 Xiaomi could take its plug (Lab-F3) and HDMI_4 for
-            # the Gen2-vs-Gen3 A/B (see "xiaomi"). Kept here, not deleted, so
-            # CR-075's config isn't lost — un-park once the Apple TV goes back
-            # in its spot. `plug_name`/`plug_ip`/`hdmi_input` below are stale
-            # while parked (both now genuinely owned by "xiaomi").
-            "parked": True,
-            "label": "Apple TV 4K", "plug_name": "Lab-F3",
-            "plug_ip": "192.168.1.1",
+            # Parked 2026-09-02 (unplugged so the revived Gen 2 Xiaomi could
+            # take Lab-F3 and its HDMI for the Gen2-vs-Gen3 A/B); BACK 2026-09-03
+            # evening on its own NEW plug Lab-F6 (.170, MAC c0:3a:55:58:92:68,
+            # read 3.1 W = the tvOS 26.6 idle floor below on first contact) and
+            # on HDMI_2 via the /settings screen map (gtv 1 · atv 2 · roku 3 ·
+            # xiaomi3 4; Fire TV and Gen 2 headless). Visual check on the
+            # football clip passed the same evening (VLC via Companion).
+            # Lab-F6 is NOT on the Shelly-metered 8-way strip (own socket):
+            # the Shelly sum excludes this box and the master switch does
+            # not cut it — device power is this plug alone.
+            "parked": False,
+            "label": "Apple TV 4K", "plug_name": "Lab-F6",
+            "plug_ip": "192.168.1.170",
             "kind": "atv", "target": "192.168.1.152",
             "macs": ["90:dd:5d:ab:70:8e"],
             "device_class": "stb",

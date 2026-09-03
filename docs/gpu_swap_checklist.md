@@ -1,6 +1,7 @@
 # GPU swap checklist — RX 7800 XT → RTX 5080 (CR-060)
 
 **Status:** swap completed 2026-05-29 (S36). Kept for the rollback procedure (exact ROCm wheel pins + Mesa hold).
+**2026-09-03:** the bring-up section ("After the 5080 is in") is done (2026-05-29 → 2026-06); the ROLLBACK section is the live content; the torch pin is now `2.11.0+cu128`.
 
 **Written:** 2026-05-29, immediately before power-down for the swap.
 **Why this exists:** the code side (CR-060 `gpu.py`) auto-detects the card at

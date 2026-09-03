@@ -77,6 +77,5 @@ Audience lens: CTOs / operators / infra players. OWL = a **bench** that measures
 
 ## Pre-demo checklist
 - [ ] `/enhance-run` actually enabled (`ENHANCE_RUN` flag + Lab tier) and rendering — no mid-demo 404
-- [ ] Service restarted if showing `/image` or `/llm` compare progress strips live (S39 cooldown-label fix is stale until restart)
 - [ ] REM screenshot ready to flash
 - [ ] On LAN / Lab tier so all pages are reachable

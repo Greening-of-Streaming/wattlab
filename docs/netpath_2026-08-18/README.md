@@ -110,7 +110,9 @@ delivery? Stand-alone experiment on the OWL decode rig; not part of the codec pa
 ## Open
 
 - Replicate with a second content (Meridian/Kranjska iso clips exist) and with the Fire TV on a wired adapter, if
-  we want a device-level claim; add a managed switch so the STB Ethernet↔Wi-Fi arm is scriptable.
+  we want a device-level claim; ~~add a managed switch so the STB Ethernet↔Wi-Fi arm is scriptable~~ —
+  **done: managed switch installed 2026-08-29.** Note (2026-09-03): the Bbox is now a headless/no-sink box
+  (no HDMI cable) — its rows since then are the no-sink regime.
 - The Bbox's ~1 W Wi-Fi premium deserves its own look (radio power-save off? 2.4 vs 5 GHz? the box's own
   network stack) before it is quoted as an operator-CPE property.
 - Fold the Wi-Fi share into the decode findings' disclosure: a Wi-Fi-only client's decode rows carry it.

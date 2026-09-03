@@ -5,18 +5,31 @@ Nothing here is served by OWL; these are frozen citation artifacts.
 
 ## Contents
 
-- `make_iso_vmaf_table.py` — generator; re-run to rebuild the CSV from the
-  latest complete calibration artifact.
-- `iso_vmaf_table.csv` — iso-quality (matched-VMAF) view of the encode-parity
-  campaign: per clip × codec × profile, the interpolated bitrate needed to hit
+- `consolidated_encode_dataset.md` / `.csv` — the canonical consolidated encode dataset
+  (schema, provenance rules, nine `dataset` values; 569 rows incl. the ReadySetGo leg).
+- `CLEAN_SWEEP.md` — plan/rationale/status for the clean-protocol re-run; documents three
+  measurement-integrity gaps in the harness (flat 10 s wait-for-idle, dropped contamination
+  flag, no cache mitigation).
+- `run_clean_sweep.py` — the self-contained clean-protocol re-run (Meridian, BBB, ReadySetGo).
+- `run_sport_clip_sweep.py` — SMPTE-only encode-parity campaign for the ReadySetGo sport clip
+  (caveat-9 matched content; does not touch `parity.py`).
+- `finalize_readysetgo_v0.py` — rescores the ReadySetGo sweep to VMAF v0.6.1 (v1 kept as `vmaf_v1_bonus`).
+- `append_readysetgo_to_consolidated.py` — one-shot fold of the ReadySetGo rows into the consolidated CSV.
+- `make_iso_vmaf_table.py` / `iso_vmaf_table.csv` — iso-quality (matched-VMAF) view of the
+  encode-parity campaign: per clip × codec × profile, the interpolated bitrate needed to hit
   each VMAF target (88/90/92/94/96) and the Wh/min at that bitrate.
+- `make_readysetgo_iso_vmaf_table.py` / `readysetgo_iso_vmaf_table.csv` — the same iso-VMAF
+  interpolation, standalone for the ReadySetGo sweep.
+- `SMPTE_2026_paper_skeleton.docx`, `SMPTE_2026_paper_skeleton_section3.docx` — paper skeleton drafts (Tania).
 
 ## Provenance
 
-- Source dataset: `results/calibration/encode_parity_nvenc_24c_2026-06-20.json`
-  (207 rows, complete, all 🟢) — the S53 encode-parity campaign, measured
-  2026-06-20 on GoS1 (Ryzen 9 7900 / RTX 5080), Tapo P110 dual-meter protocol.
-  Raw sweep also downloadable at `/video/budget/data.csv`.
+- Source dataset: the canonical 240-row consolidated encode dataset plus its bitrate-ceiling
+  extension (and the 2026-08-28/29 ReadySetGo leg) — see `consolidated_encode_dataset.md`.
+  All rows measured on GoS1 (Ryzen 9 7900 / RTX 5080), Tapo P110 dual-meter protocol; the
+  original S53 artifact (`results/calibration/encode_parity_nvenc_24c_2026-06-20.json`, 207 rows)
+  is one of its inputs. `CLEAN_SWEEP.md` documents three measurement-integrity gaps in the
+  harness that produced these rows. Raw sweep also downloadable at `/video/budget/data.csv`.
 - Only the 1080p sweep rows feed the curves (ladder rungs are fixed-bitrate and
   excluded), matching the live `/video/budget` derivation
   (`/methodology#energy-budget`).

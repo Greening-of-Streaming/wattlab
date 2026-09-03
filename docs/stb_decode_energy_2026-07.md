@@ -1,7 +1,8 @@
 # Set-top-box decode energy: codec, content and delivery mode
 
-**Draft finding report — 2026-07-27** (untracked; interactive version with charts:
+**Draft finding report — 2026-07-27** (tracked in the repo; its results were promoted to the three published/DRAFT findings `codec-decode-energy-depends-on-silicon-and-regime`, `streaming-box-plays-4-7x-cheaper-than-general-purpose` and `stb-decode-and-play-content-over-codec`; interactive version with charts:
 `/srv/data/owl/stb-decode-2026-07/results/stb_decode_report.html`, raw data + harnesses alongside).
+New sports-tier decode campaigns use the `football` content family (CR-081); the Kranjska rows in this report remain valid history.
 
 **Rig:** Google TV Streamer ("Office TV", 192.168.1.126) on a dedicated Tapo P110 (mW API path,
 fw 1.4.6 → 1.5 s cadence) · Just Player (media3) via ADB, one pipeline for all codecs, hardware

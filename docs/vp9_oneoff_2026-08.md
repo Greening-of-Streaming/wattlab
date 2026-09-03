@@ -9,8 +9,8 @@ the decode side. Nothing here joins OWL's standing codec set.
 Scope: device layer only (GoS1 server / named client devices). Network, CDN and
 production excluded. Energy, not CO₂e.
 
-**Status (2026-08-29):** working document, still under discussion. **§6 adds a 2026-08-29 correction: fresh Roku + Apple TV runs do NOT support the "VP9 is cheaper in software" claim made in the LinkedIn thread — read §6 first.** §5 adds the overnight re-run of 17→18 Aug (iso-bitrate, software vs software, n=2–3) that the discussion asked for; read §5.3 next. Earlier text — it lives in the repo
-rather than on the OWL findings page for that reason. The LinkedIn post that summarised
+**Status (2026-08-29):** working document, still under discussion. **§6 adds a 2026-08-29 correction: fresh Roku + Apple TV runs do NOT support the "VP9 is cheaper in software" claim made in the LinkedIn thread — read §6 first.** §5 adds the overnight re-run of 17→18 Aug (iso-bitrate, software vs software, n=2–3) that the discussion asked for; read §5.3 next. The VP9 result stays a report in the repo rather than an entry on the OWL findings
+page until the discussion settles. The LinkedIn post that summarised
 the 08-09 run drew substantive comments (Thierry Fautier, Jan Ozer, Murat Pisat); §4
 records what that discussion added and what it corrects, in particular that the
 software-vs-hardware encode ratio in the original headline is a statement about NVIDIA/AMD
@@ -396,7 +396,7 @@ SVT-AV1 preset 6 / libvpx-VP9 cpu-used 2, two-pass ABR) — no new encodes, two 
 added to that dataset. Two device states, batch `c876cc890df2`, all rows 🟢:
 - **Roku Express 4K**, headless (`calibrate=false`), 150 s window, n=3 per codec, all four codecs.
   Decoder path unconfirmed — Roku exposes no logcat-equivalent provenance (§3's standing gap).
-- **Apple TV HD** (AppleTV6,2, 2017 A10X, tvOS 26.6), screen mode (marker-calibrated, 165 s
+- **Apple TV 4K** (AppleTV6,2, 2017 A10X, tvOS 26.6), screen mode (marker-calibrated, 165 s
   window), n=3, AV1 and VP9 only, via VLC for tvOS over Companion (AirPlay `play_url` is dead on
   tvOS 18+). This is a genuine software-decode reading for both codecs, not an assumption: the
   A10X predates Apple's 2020-era hardware VP9 path and its 2023-era hardware AV1 path (§4.4), and
@@ -407,7 +407,7 @@ added to that dataset. Two device states, batch `c876cc890df2`, all rows 🟢:
 | device | decode path | H.264 | HEVC | AV1 | VP9 |
 |---|---|---|---|---|---|
 | Roku Express 4K (headless) | unconfirmed | 0.381 (n=3) | 0.470 (n=3) | 0.476 (n=3) | 0.481 (n=3) |
-| Apple TV HD (screen, VLC) | software (silicon-confirmed) | — | — | **3.435** (n=3, 3.387–3.486) | **3.495** (n=3, 3.473–3.536) |
+| Apple TV 4K (screen, VLC) | software (silicon-confirmed) | — | — | **3.435** (n=3, 3.387–3.486) | **3.495** (n=3, 3.473–3.536) |
 
 **What these rows support:**
 

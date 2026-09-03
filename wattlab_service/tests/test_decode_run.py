@@ -240,6 +240,39 @@ def test_bitrate_ladder_template(monkeypatch):
         p.unlink()
 
 
+def test_football_family_templates():
+    """CR-081: the sports family is wired like bbb — rt panel + loop family +
+    iso family — so decode_batch cells it by (family, codec) unchanged."""
+    assert "football" in decode_run.LOOP_FAMILIES and "footballiso" in decode_run.ISO_FAMILIES
+    rt = decode_run.TEMPLATES["football_codecs_rt"]
+    assert list(rt["clips"].values()) == ["football_h264_6min.mp4", "football_h265_6min.mp4", "football_av1_6min.mp4"]
+    assert rt["bench"]["window_s"] == 150
+    assert decode_run.TEMPLATES["loop_football_h264"]["clips"] == {"football_h264_loop": "football_h264_60min.mp4"}
+    assert decode_run.TEMPLATES["loop_footballiso_vp9"]["clips"] == {"footballiso_vp9_loop": "footballiso_vp9_20min.webm"}
+    q = decode_run.TEMPLATES["football_h264_45s"]
+    assert q["clips"] == {"football_h264_45s": "football_h264_6min.mp4"} and q["bench"]["window_s"] == 45
+
+
+def test_loop_validity_template(monkeypatch):
+    """Three arms of the SAME 600 s encode in one job per box: continuous,
+    120 s ×5, 30 s ×20 — same window, sync start, clock without a head."""
+    t = decode_run.TEMPLATES["bbbloopcheck_h264"]
+    assert list(t["clips"]) == ["cont_600s", "loop120_x5", "loop30_x20"]
+    assert all(v.endswith("_h264_600s.mp4") for v in t["clips"].values())
+    assert "looped_marker" not in t and t["content_clock"]["head_s"] == 0
+    monkeypatch.setattr(decode_run, "_clip_duration_s", lambda clip: 600.0)
+    decode_run._LOOP_LEN_CACHE.clear()
+    p = decode_run._materialize("lv1", "bbbloopcheck_h264", "gtv", "headless",
+                                False, sync_peers=["gtv", "xiaomi"])
+    try:
+        cfg = json.loads(p.read_text())
+        assert len(cfg["runs"]) == 3 and cfg["window_s"] == 600
+        assert cfg["content_clock"]["loops"] == 1
+        assert cfg["sync"]["peers"] == ["gtv", "xiaomi"]
+    finally:
+        p.unlink()
+
+
 def test_sync_clip_is_never_double_marked(monkeypatch):
     """Screen mode + calibrate marks a clip. The sync clip already carries a
     head per loop — marking it again would build a second file AND shift every

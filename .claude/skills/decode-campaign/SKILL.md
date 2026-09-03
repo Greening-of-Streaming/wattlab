@@ -1,32 +1,36 @@
 ---
 name: decode-campaign
-description: Run and import a decode-bench campaign (Google TV / Raspberry Pi client-decode energy) — wake-check, July-comparable protocol, contamination screen, idempotent import into OWL decode envelopes, regime-labelled reporting. Use when running decode/playback energy rows on the portable rig, or when the user says "decode campaign", "run the decode bench", "import decode results", or types /decode-campaign.
+description: Run and import a decode-bench campaign (the 10-device decode rig, client-decode energy) — wake-check, July-comparable protocol, contamination screen, idempotent import into OWL decode envelopes, regime-labelled reporting. Use when running decode/playback energy rows on the portable rig, or when the user says "decode campaign", "run the decode bench", "import decode results", or types /decode-campaign.
 argument-hint: [device/config or "import <files>"]
 ---
 
 # Decode-bench campaign (WattLab / OWL)
 
-Rig lives at `/srv/data/owl/decode-bench/` (bench.py + JSON device configs; full protocol in its
-README and `docs/pi_decode_energy_2026-07.md`). Target: $ARGUMENTS
+Rig code: `decode_bench/` in the repo (`bench.py` + drivers, `origin.py`, JSON device configs);
+deployed bench home `/srv/data/owl/decode-bench/`. Full protocol + device/plug/IP table:
+`decode_bench/README.md`. Target: $ARGUMENTS
 
 ## 1. Before running (on top of /bench-preflight)
 
-- **Wake-check the Google TV** — the box sleeps and locks out adb (standby ≈0.64 W); wake via the
-  raw-WoL path first. Devices: GTV `.126` (plug Lab-D `.36`, monitor `.199`); Pis over ssh
-  (BatchMode keys, ethernet or wlan power-save off).
-- Streams: `streams/` symlink → the 27 matched-VMAF (~92–93, v1) 1080p NVENC encodes, served from
-  GoS1 `:8123`. ⚠ That server **ignores Range requests** — prime suspect for the media3 2.1×
-  over-fetch; don't attribute network-fetch anomalies to the player without remembering this.
-- Pi tmpfs staging: purge `/dev/shm` first (clips accumulate on the Pi 5).
+- **Rig = 10 devices across five drivers** — adb: Fire TV, Google TV Streamer, Bbox, Xiaomi Gen 2,
+  Xiaomi Gen 3 · ssh: Pi 400, Pi 5 · atv: Apple TV · roku: Roku · webos: LG C2. Fire TV, Xiaomi
+  Gen 2 and Bbox run headless. Registry + plugs: `rig.py` `RIG`; addresses: `decode_bench/README.md`.
+- **Shared screen = the LG C2** (SSAP host `.26`, panel plug Lab-E `.71`); its 4 HDMI inputs are
+  mapped in `/settings` (`rig_hdmi_inputs`: gtv HDMI_1, atv HDMI_2, roku HDMI_3, xiaomi3 HDMI_4) —
+  claim-screen / screen-mode is refused for an uncabled device.
+- **Wake-check the adb boxes** — they sleep and lock out adb; wake via the WoL path first. Pis over
+  ssh (BatchMode keys, ethernet or wlan power-save off); purge `/dev/shm` on the Pi 5 first.
+- **Streams** = the matched-VMAF loop families `bbb` / `meridian` / `kranjska` / `football`, their
+  iso-bitrate families (`bbbiso` / `meridianiso` / `kranjskaiso` / `footballiso`), the `bbbnet`
+  network arms and the sync clips — served from GoS1 `:8123` by `origin.py` (Range-correct since
+  2026-07-31, CR-072).
 
 ## 2. Run
 
-- `python3 bench.py <config>.json` — protocol per row: settle → baseline → start → startup-skip →
-  sample window → stop → OWL `confidence.py` → per-row checkpoint. Results in
-  `results/<config>.json` (raw 1.5 s samples included, resumable).
-- Two arms, never mixed in one comparison: **realtime** (mpv on KMS / `-re`; device-total W is
-  meaningful) vs **full-speed pure decode** (`ffmpeg -f null`; decode outruns realtime — report
-  Wh per file, never bare W).
+- `python3 bench.py <config>.json` — settle → baseline → start → startup-skip → sample window →
+  stop → `confidence.py` → per-row checkpoint, resumable (details: `decode_bench/README.md`).
+- Two arms, never mixed in one comparison: **realtime** playback (device-total W) vs **full-speed
+  pure decode** (`ffmpeg -f null` — Wh per file, never bare W) (details: `decode_bench/README.md`).
 - The adb driver deliberately never runs `pm clear` (the July tooltip-overlay contamination);
   the mid-window screenshot is the proof — keep it.
 

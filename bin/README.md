@@ -77,7 +77,7 @@ If FastAPI fails to come up within 30s, the flag is **not** removed and the scri
 
 ### Things to know
 
-- **The maintenance flag does NOT auto-disable.** Once `stage-on` raises `/tmp/owl-maintenance`, the public site stays on the maintenance page until you explicitly run `stage-off`, manually `rm /tmp/owl-maintenance`, or the server reboots (which clears `/tmp` — implicit safety net, don't rely on it). If you walk away from the desk after running `stage-on`, public visitors will see "Brief maintenance" for as long as you're gone. A future CR could add an auto-lower cron after N hours; for now, just remember to run `stage-off` when you're done.
+- **The maintenance flag auto-lowers** after `max_idle_mins` of idle via the CR-015 watchdog (see below); `stage-off` lowers it immediately.
 - **Owner bypass paths during staging:** LAN `http://192.168.1.62:8000` (direct to FastAPI, skips nginx) or SSH tunnel `ssh -p 2222 -L 8000:localhost:8000 user@gos1.duckdns.org`. Both reach the live site with zero maintenance page in the way.
 - **Loopback `/live` needs no cookie.** Since CR-001 task #10 retired `WATTLAB_GATE_PASSWORD`, audience.tier resolves loopback IP → Lab and the request passes capability checks directly.
 - **Both call `sudo systemctl restart wattlab`** — your shell's sudo cache will be prompted if it's expired.
@@ -154,7 +154,7 @@ Shipped as part of **CR-022 / CR-023** investigation in S21. Captured in `CHANGE
 
 - **Holds visitor-protection flags.** Touches `/tmp/owl-paused` (queue worker stops dispatching new jobs) and `/tmp/gos-measure.lock` (system-busy marker). Both released on clean exit and Ctrl-C. Visitors can still browse and queue jobs during the run; nothing executes until the probe finishes.
 - **Aborts at startup if `LOCK_FILE` already exists.** Wait for any in-flight measurement to finish, or `rm /tmp/gos-measure.lock` if it's stale.
-- **CPU and GPU use different inputs.** CPU runs `variance_cpu_cmd` (setting removed 2026-06; the probe now takes its command from the video presets) on the full `meridian_4k.mp4` (172s heavy thermal load — what variance calibration uses). GPU runs the variance template against `meridian_120s.mp4` so CR-022's `-t 30` cap (which `transcode()` applies automatically) keeps the encode cleanly bounded. Asymmetric but representative.
+- **CPU and GPU use different inputs.** CPU probe command comes from the video presets and runs on the full `meridian_4k.mp4` (172s heavy thermal load — what variance calibration uses). GPU runs the variance template against `meridian_120s.mp4` so CR-022's `-t 30` cap (which `transcode()` applies automatically) keeps the encode cleanly bounded. Asymmetric but representative.
 - **~65 min wall time** for the default 12-distance sweep. The script's own estimate is printed at startup before it begins.
 - **Focus mode** stops 8 timer units (sysstat-collect, anacron, fwupd, apt-daily etc.) for the duration. Restored in `finally` — including on Ctrl-C.
 
@@ -321,4 +321,14 @@ owner (Lab) — historically accurate, it was all bench work then.
   default, refuses backfill into another batch. The UI equivalent is the "Add to campaign" control on `/decode`.
 - **`import-decode-bench-results`** — imports CLI `decode_bench/results/*.json` rows into `results/decode/` envelopes
   (idempotent; discards the documented July contamination).
+- **`run-bitrate-ceiling-ext.py`** — supplemental encode-parity campaign (2026-08-28): adds a thin high-bitrate
+  H.264/H.265 (+ one AV1) layer on top of the 06-20 sweep to close the iso-VMAF 94/96 gaps; writes its own artifact,
+  never touches the 207 canonical rows; `--print-only` / `--run`; sets and restores `/tmp/owl-paused` (+ lab-session) itself.
+- **`rescore-bitrate-ext-v0.py`** — fixes that extension's VMAF-model mismatch (ran under v1, canonical is v0.6.1):
+  re-runs each row's stored deterministic `ffmpeg_cmd` and scores it under v0.6.1 via an in-process override (no
+  `settings.json` touch, no power measurement), adding `vmaf_v0` per row.
+- **`rescore-readysetgo-v0.py`** — the same v0.6.1 rescoring for the 2026-08-28 ReadySetGo sport-clip sweep; its artifact
+  lives under `results/calibration/_staging/` so `/video/budget`'s newest-artifact pickup never serves it.
+- **`merge-bitrate-ext.py`** — merges the rescored extension into the 06-20 canonical rows as a new complete 240-row
+  artifact (`…_2026-06-20_plus_ext.json`) that becomes `/video/budget`'s live dataset; the 06-20 file is left untouched.
 

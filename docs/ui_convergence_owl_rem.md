@@ -1,5 +1,9 @@
 # UI Convergence — OWL × REM
 
+> **Superseded (noted 2026-09-03).** Pre-refactor (2026-05) scratch: every code pointer below moved in the
+> S41–42 refactor (`_BASE_STYLES` now lives in `ui.py`, not `main.py`); the "not eco-warriors" framing it
+> quotes is retired from public copy; its §13 steps were not actioned. Kept as history.
+
 > **Purpose:** propose a common look-and-feel for OWL (public-facing 3-tier
 > energy lab) and REM (member-only fleet meter that must demo well to mixed
 > audiences). Audit-then-plan; no code changes in this pass.

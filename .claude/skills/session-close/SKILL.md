@@ -54,6 +54,6 @@ Show the user the drafts (at minimum a→c, plus any d/e). Only after they appro
 - Stage the session's files (`git add -A`, or the specific paths if the working tree has unrelated changes).
 - Commit on the **current branch**, matching the project's established practice (recent `S<NN>:` commits land directly on `main`). Subject line in the house style: `S<NN>: <headline>`.
 - End the commit message with the trailer:
-  `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>`
+  `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
 - Show the staged diff and the proposed message and get a final go-ahead before committing.
 - **Never `git push`** unless the user explicitly asks in this turn.

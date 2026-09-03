@@ -1,5 +1,7 @@
 # Client decode energy: what a missing hardware decoder costs
 
+> **Status (2026-09-03).** The 3.6× / 4.1× hardware-decoder figures in this report were superseded by the R6 reconciliation of 2026-08-09 — **3.7× realtime / 4.6× saturated** — as published in the finding `hw-decoder-cuts-client-energy-4x`; the body numbers below are left as measured. The idle-floor guard this report says `bench.py` lacks shipped as protocol v3 (`decode_idle_guard`). `bin/probe-p110-fw` was run: all Lab P110s are fw 1.3.1. Both decode findings (`hw-decoder-cuts-client-energy-4x`, `codec-decode-energy-depends-on-silicon-and-regime`) are published. Remaining "Next" items: the mpv/KMS player-with-display arm and the GStreamer 1.24 hw-HEVC trial.
+
 **Draft report — 2026-07-29** (overnight bench run 2026-07-28/29; raw per-row JSON with 1.5 s
 samples under `/srv/data/owl/decode-bench/results/`, harness `bench.py` alongside).
 

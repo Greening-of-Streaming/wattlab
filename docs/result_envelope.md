@@ -111,6 +111,11 @@ cross-page embeds (findings, /demo's pinned Video-Enhancement step).
 | `ui_headless` / `ui_screen` | `template, template_label, calibrate, batch_id?, devices{name: {label, kind, meter{}, rows[scalars only since v1], display_caveat?, log_tail?}}, runs[{...row, device}], protocol{harness, launched_from, parallel, window_s (actually run), pacing, marker_head?, protocol_version, cadence_s, …}` — each `runs[]` row: `w_base, w_task, delta_w, window_s, n_base, n_task, confidence{}, provenance{decoders_allocated, screenshot, playback_state_midwindow, play_presses_after_launch, keep_awake}, alive_at_window_end, context_* (screen mode), raw_baseline_w/t[], raw_task_w/t[], raw_context_*[], idle_guard, error?/error_where?` | `_sum_decode_panel` (fallback) | `/decode` inline `renderJob`; `wlRenderDecodeCard` (findings) |
 | `decode_panel` | `device{}, power_hardware{}, protocol{}, runs[{name, codec, decode_path: sw\|hw, regime: realtime\|full_speed, content, player, energy{}}], discarded[]?, measured_on, report` | `_sum_decode_panel` | `wlRenderDecodeCard` |
 
+**2026-09-03 addendum** (`decode_run.py` / `bench.py` / `decode_sync.py`) — `ui_*` `runs[]` rows may also carry:
+`sync` (rendezvous record) · `start_cmd_epoch` · `playing_epoch` · `raw_content_clock` (per-poll `[t, pos_s, state, dt]`) ·
+`content_clock` (summary) · `screen_marker_segments` · `screen_marker_loops` · `hdmi_input` (screen-map slot, or `null` = no sink).
+`protocol{}` gains `sync_start`, `content_clock`, `looped_marker`, `screen_device`, `regime_note`.
+
 **v0 → v1 (2026-08-17):** pre-v1 `ui_*` files carry the raw sample arrays twice (`devices[].rows`
 AND `runs[]`); v1 stores them once in `runs[]`. Readers (`lem.csv`, `decode_batch`) read `runs[]`
 first and fall back to `devices[].rows`. Pre-v1 `protocol.window_s` is the template default (150) —

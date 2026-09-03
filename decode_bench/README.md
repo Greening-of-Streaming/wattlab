@@ -19,18 +19,28 @@ Results (CLI) land in `results/<config name>.json` (raw samples included, resuma
 Streams: `streams/` (→ `/srv/data/owl/stb-decode-2026-07/streams`, ~40 GB): the matched-VMAF
 (~92–93, v1) 1080p NVENC loop families (`<fam>_<codec>_{20,60}min.mp4`, fams bbb/meridian/kranjska),
 the **iso-bitrate software-encoded family** `<fam>iso_<codec>_20min.{mp4|webm}` (2026-08-17, VP9 as
-WebM+Opus — MP4/vp09 stalls the GTV player) and the `bbbnet_h264_{1500,20000}k_20min.mp4` network arms;
+WebM+Opus — MP4/vp09 stalls the GTV player), the `bbbnet_h264_{1500,20000}k_20min.mp4` network arms,
+the S73 sync/ladder/loop-validity clips (`loopmarked_*`, `loopplain_*`, `bbbladder_*`, `bbbcont_*`,
+`bbbloop*`), and the **`football` sports family** (CR-081, 2026-09-03: Panasonic's Barcelona football demo from a
+YouTube re-upload, 4K60 SDR, **lab-internal only, no citable licence** — built by `prep_family.py`,
+manifest `football_manifest.json`);
 served by the Range-correct `origin.py` on GoS1 `:8123` (CR-072; `?pace_kbps=` caps a response for the
 paced/live-like arm).
 
 ## Devices
 
-| driver | box | start | provenance |
+| driver | box (plug · HDMI · network) | start | provenance |
 |---|---|---|---|
-| `atv` (pyatv) | Apple TV 4K 1st gen `.152` (Lab-F3 `.1`, **no HDMI input** unless assigned in /settings › Rig › HDMI inputs) | Companion `launch_app` → VLC x-callback stream URL; baseline parked in tvOS Settings; power = plug + `turn_off` | `playing` state + position (no screenshot/logcat/marker) — `playback_state_midwindow`/`_at_end` |
-| `adb` | Google TV Streamer `.126` (Lab-D `.36`, HDMI_2) · Fire TV Stick 4K `.200` (Lab-A `.146`, HDMI_4, **Wi-Fi only**, no logcat decoder names, loses ADB auth after a mains cycle) · Bbox 4K operator CPE `.10` eth / `.173` Wi-Fi, MAC-followed (Lab-F `.155`, HDMI_1, Android 11, Marvell Berlin) | VIEW intent → Just Player, `--ei position 0`, PLAYING verified (≤2 presses), keep-awake pins + CEC rule applied in `prepare()` | logcat `CCodec allocate(c2.*)` + mid-window screenshot + `playback_state_midwindow`/`_at_end`, `alive_at_window_end` |
-| `ssh` | Raspberry Pi 400 `.108` (Lab-B `.31`, HDMI_3; Wi-Fi `.110` for the CR-074 arms) · Pi 5 `.102` (**parked**, shares Lab-A) | per-run `cmd` over SSH (`ffmpeg -re … -f null -` headless, `mpv` screen mode); `pre_cmd`/`post_cmd` hooks | the command + `ifaces_midwindow` |
-| `webos` | LG C2 55" `.25` (Lab-E `.71` = the panel plug; native decode via the built-in browser, `lg.py` SSAP + Wake-on-LAN) | `launch_url` | `current_app` only (no state/screenshot); rows are panel-dominated (picture term) — differential only |
+| `adb` | Google TV Streamer `.127` Wi-Fi (Lab-D `.36`, **HDMI_1**) · Xiaomi TV Box Gen 3 `.192` Wi-Fi (Lab-F4 `.33`, **HDMI_4**, Amlogic s7d, Codec2) · Xiaomi TV Box Gen 2 `.151` Wi-Fi (Lab-F3 `.1`, headless, Amlogic S905X4, OMX) · Fire TV Stick 4K `.200` Wi-Fi only (Lab-A `.146`, headless; no logcat decoder names; loses ADB auth after a mains cycle) · Bbox 4K operator CPE `.10` eth / `.173` Wi-Fi, MAC-followed (Lab-F `.155`, headless, Marvell Berlin) | VIEW intent → Just Player 0.196 (GTV 0.212-legacy), `--ei position 0`, PLAYING verified (≤2 presses), keep-awake pins + CEC rule in `prepare()` | logcat decoder names (`CCodec allocate(c2.*)` / `OMX.*`) + mid-window screenshot + `playback_state_midwindow`/`_at_end`, content clock |
+| `atv` (pyatv) | Apple TV 4K 1st gen `.152` (Lab-F6 `.170`, **HDMI_2** — never headless) | Companion `launch_app` → VLC x-callback stream URL; baseline = tvOS Home; power = plug + `turn_off` | `playing` state + position (no screenshot/logcat) |
+| `roku` (ECP) | Roku Express 4K `.13` Wi-Fi (Lab-F5 `.113`, **HDMI_3**) | Dom's GoS channel via ECP launch + playlist rewrite (see `RokuDevice`) | ECP media-player state + position |
+| `ssh` | Raspberry Pi 400 `.108` (Lab-B `.31`, headless; Wi-Fi `.110` for the CR-074 arms) · Pi 5 `.102` (lab-F2 `.184`, headless) | per-run `cmd` over SSH (`ffmpeg -re … -f null -` pure decode; `mpv` for a display arm) | the command + `ifaces_midwindow` |
+| `webos` | LG C2 55" `.26` (Lab-E `.71` = the panel plug; native decode via the built-in browser, `lg.py` SSAP + Wake-on-LAN) | `launch_url` | `current_app` only; rows are panel-dominated — differential only |
+
+**Headless = no HDMI sink = a different regime** (2026-09-03: Fire TV plays 0.77 W lower, Gen 2 0.42 W lower
+than screen-attached; rows carry `hdmi_input`, null = no sink). HDMI dummy plugs are on order for the headless
+STBs; until fitted, their rows do not pool with screen-attached ones. The HDMI map lives in /settings › Rig ›
+HDMI inputs (`rig_hdmi_inputs`), not in `rig.py`.
 
 Authoritative registry (IPs, plugs, `idle_w`, boot thresholds, HDMI ports): `wattlab_service/rig.py` `RIG`.
 The table above is a reading aid; when it disagrees with `rig.py`, `rig.py` wins.
@@ -47,9 +57,8 @@ mid-window screenshot proves it.
 | HEVC  | **hw** ≤4Kp60 (rpivid, V4L2 stateless) + sw | **hw** ≤4Kp60 (HEVC block) + sw |
 | AV1   | sw only (dav1d; 1080p60 marginal) | sw only (dav1d; 1080p60 OK) |
 
-The Pi 5's dropped-H.264-hw is the headline hypothesis: **the first consumer-relevant case
-where a NEWER device must software-decode the OLDEST codec** — the inverse of the
-`input-master-sensitivity` story, on the same three-codec panel as the Google TV round.
+The Pi 5's dropped-H.264-hw was the headline hypothesis — measured and published as
+`hw-decoder-cuts-client-energy-4x` (3.7× realtime / 4.6× saturated).
 
 Two arms per condition, don't mix them:
 - **Realtime playback** (`mpv --fs --hwdec=no|auto` on the KMS console, HDMI to the metered
@@ -57,19 +66,8 @@ Two arms per condition, don't mix them:
 - **Pure decode** (`ffmpeg -f null -`) — no display path; decode outruns realtime, so either
   pace with `-re` (then W is meaningful) or report **Wh per file**, never bare W.
 
-### Pi setup checklist (owner)
-1. Flash Raspberry Pi OS **Bookworm 64-bit** (ships the patched ffmpeg/mpv with the V4L2
-   hw-decode paths), enable SSH, put Ben's key on it (`BatchMode=yes` — no password prompts).
-2. Ethernet preferred (Wi-Fi power management would pollute the numbers; else
-   `iwconfig wlan0 power off`).
-3. Power the Pi from a **spare Tapo P110** (official USB-C PSU on the plug). Before trusting
-   it: `bin/probe-p110-fw` for cadence/dup-rate (fw ≥1.4 ⇒ 1.5 s, matches `cadence_s`).
-   Pi 4 idles ~2.7 W, Pi 5 ~3 W, decode loads 5–10 W — well inside the mW path's resolution.
-4. Verify hw paths before a round: `mpv --hwdec=auto ...` then check its log for
-   `v4l2` / `drm` vs `sw`; on Pi 5 confirm H.264 actually falls back to software.
-5. Disable desktop compositing / run from the console (`mpv --vo=gpu` on KMS); no browser,
-   no auto-updates during runs (`sudo systemctl stop apt-daily.timer` etc. — Pi-side
-   focus-mode equivalent, manual for now).
+### Pi setup
+Both Pis have been in service since 2026-07; the flash/SSH/plug checklist moved to JOURNAL.md (Addenda, 2026-09-03).
 
 ## Known infra caveats
 - **adb** (2026-08-26): Android platform-tools **r37.0.0** (adb 1.0.41, build 37.0.0-14910828) lives at
@@ -99,8 +97,7 @@ Two arms per condition, don't mix them:
 
 All bench devices and lab plugs have router reservations. GTV, Bbox, Pi 400 and the C2 are on
 **Ethernet** via the bench switch (the Fire TV Stick is Wi-Fi only; Bbox re-onboarded on `.10` 2026-07-31) (parallel throughput verified 178–582 Mbps,
-2026-07-29). Pi 5 Wi-Fi is **soft-blocked** (rfkill, persistent) since 2026-07-29 — eth0 only. Pi 400
-still has Wi-Fi up; apply the same sudo rfkill block wifi next time it is powered.
+2026-07-29). Pi 5 Wi-Fi is **soft-blocked** (rfkill, persistent) since 2026-07-29 — eth0 only.
 Pi 5 PSU replaced 2026-07-29 (old one under-voltage-throttled; throttled=0x0 verified —
 re-validate one July decode row before comparing new Pi 5 numbers against the July panel).
 
@@ -110,7 +107,7 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | `.126` | Google TV Streamer (eth0) | `b4:23:a2:af:e4:a4` (wlan0 `0e:03:41:ca:06:29`, per-SSID randomised) | rebound from Wi-Fi MAC → returns to its July address after lease renewal (was `.189` on 2026-07-29); MediaTek MT8696 (`ro.soc.model`) |
 | `.102` | Raspberry Pi 5 (eth0) | `88:a2:9e:27:40:ed` | user `admin` |
 | `.108` | Raspberry Pi 400 (eth0) | `d8:3a:dd:76:f8:5b` | user `nebul2` |
-| `.146` | Lab-A P110 — Fire TV Stick meter (Pi 5 parked on the same plug — never power both) | `bc:07:1d:a2:d3:11` | fw 1.3.1 |
+| `.146` | Lab-A P110 — Fire TV Stick meter | `bc:07:1d:a2:d3:11` | fw 1.3.1 |
 | `.31` | Lab-B P110 — Pi 400 meter | `bc:07:1d:a2:df:66` | fw 1.3.1 |
 | `.35` | Lab-C P110 — ⚠ POWERS THE BOUYGUES ROUTER (as of 2026-07-29) | `bc:07:1d:a2:e2:6a` | fw 1.3.1 — **NEVER SWITCH OFF**: relay-off kills the whole LAN including the path to switch it back on (unrecoverable remotely). Move router to a dumb socket; until then Lab-C is read-only and must never appear in any control UI. |
 | `.36` | Lab-D P110 — GTV meter | `bc:07:1d:a2:da:48` | fw 1.3.1; replaced `.94` (fw 1.4.6) on 2026-07-29; moved off its first lease `.1` (router pool constraint: `.36`, not `.147`) |
@@ -118,15 +115,17 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 | `.155` | Lab-F P110 — Bbox 4K meter | — | fw 1.3.1 (re-plugged 2026-07-30; the earlier `.22` unit was fw 1.4.0) |
 | `.10` | Bbox 4K (eth0) | `ec:6c:9a:ef:73:a1` (wlan0 `70:f7:54:37:4f:e4` → `.173`, reserved 2026-08-26) | operator CPE, ADB authorised; Ethernet cable pulled for CR-074 2026-08-19 and **back in 2026-08-26 evening**; whenever it is out the box sits at `.173` and the rig follows it by MAC |
 | `.200` | Fire TV Stick 4K (Wi-Fi) | `ec:31:5f:6d:7c:a7` | AFTKRT; ADB re-auth needed after a mains power cycle (came back authorised on 2026-08-26) |
-| `.25` | LG C2 (eth0; also `.109` Wi-Fi) | — | webOS SSAP + WoL (`lg.C2_MAC`) |
+| `.26` | LG C2 (eth0; also `.109` Wi-Fi) — moved from `.25` 2026-08-29 | — | webOS SSAP + WoL (`lg.C2_MAC`) |
 | `.159` | P110 `gos1-server` (outer bench meter, `TAPO_P110_IP_2`) | `40:ae:30:83:4f:ee` | pre-existing reservation, unchanged |
 | `.91` | P110 `GoS1b-server` (inner bench meter, `TAPO_P110_IP`) | `bc:07:1d:a2:d2:a1` | pre-existing reservation, unchanged |
-| `.1` | **Lab-F3 P110 — Apple TV meter** (fw 1.3.1, added 2026-08-26) | `b8:fb:b3:ef:27:26` | reserved 2026-08-26 (kept at `.1`; `atv_probe.py --plug 192.168.1.1`) |
+| `.1` | **Lab-F3 P110 — Xiaomi Gen 2 meter** since 2026-09-02 (was the Apple TV's, added 2026-08-26) | `b8:fb:b3:ef:27:26` | reserved 2026-08-26 (kept at `.1`) |
+| `.170` | **Lab-F6 P110 — Apple TV meter** (added 2026-09-03 when the Apple TV came back) — **NOT on the Shelly strip** (own socket): the strip's sanity-check sum and the master switch exclude it | `c0:3a:55:58:92:68` | **reservation still to set** in the Bbox admin (owner) |
 | `.152` | Apple TV 4K "TV Room" (`AppleTV6,2`, 2017 A10X, tvOS 18.0) | `90:dd:5d:ab:70:8e` | pyatv target (`ATV_IP` in `atv_probe.py`); reserved 2026-08-26 |
-| `.17` | Shelly Plug PM Gen3 (8-way strip meter, `shelly_ip` — new strip 2026-08-29: every device plug except the C2/monitor, i.e. all 8 rig.py devices) | `90:70:69:5b:7c:78` | reserved 2026-08-26; sum of the 8 individual P110 readings vs this meter's apower_w is a live sanity check for meter drift when all 8 run together |
+| `.17` | Shelly Plug PM Gen3 (8-way strip meter, `shelly_ip` — new strip 2026-08-29: the eight device plugs on the strip; the C2/monitor and the Apple TV's Lab-F6 are on their own sockets) | `90:70:69:5b:7c:78` | reserved 2026-08-26; sum of the 8 individual P110 readings vs this meter's apower_w is a live sanity check for meter drift when all 8 run together |
 | `.184` | lab-F2 P110 — Pi 5 meter (2026-08-19) | `b8:fb:b3:ef:0e:df` | fw 1.3.1 |
-| `.33` | Lab-F4 P110 — Xiaomi TV Box meter (2026-08-29) | — | fw 1.3.1 |
-| `.151` | Xiaomi TV Box (Wi-Fi, no Ethernet port) | `32:6c:9f:c5:c1:fd` | Amlogic S905X4 (`ro.board.platform=sc2`), Android 11, model `MiTV_AFKR0` codename `jaws`; reserved 2026-08-29 |
+| `.33` | Lab-F4 P110 — Xiaomi TV Box **Gen 3** meter (2026-08-29; Gen 3 arrived 2026-09-02) | `b8:fb:b3:ef:3c:47` | fw 1.3.1 |
+| `.192` | Xiaomi TV Box **Gen 3** (Wi-Fi) | — | Amlogic s7d, Android 14, Codec2 (`c2.amlogic.*`); needs both "Network debugging" and "MiTV ADB debugging" on |
+| `.151` | Xiaomi TV Box **Gen 2** (Wi-Fi, no Ethernet port) | `32:6c:9f:c5:c1:fd` | Amlogic S905X4 (`ro.board.platform=sc2`), Android 11, model `MiTV_AFKR0` codename `jaws`; reserved 2026-08-29 |
 | `.113` | Lab-F5 P110 — Roku meter (2026-08-29) | — | fw 1.3.1 |
 | `.13` | Roku Express 4K (Wi-Fi, no Ethernet port) | `d4:e2:2f:e2:39:bb` | Realtek RTD1315; ECP control (port 8060, "Control by mobile apps" set to Permissive); reserved 2026-08-29. Playback = Dom's pre-installed "Greening of Streaming" channel (id 775528) — its playlist-URL setting must be `http://192.168.1.62:8123/gos_local_test.m3u` (one-time, on-device; its old default pointed at a dead personal domain) — validated end-to-end live 2026-08-29, see `bench.py`'s `RokuDevice` docstring for the exact (non-obvious) nav sequence |
 | `.95` / `.132` / `.199` | Ben's desk P110s: `Ben-Lab-X` · `Ben HD LCD monitor (Pi)` · `Ben1-4k-monitor` | `ec:75:0c:96:dd:a5` · `ec:75:0c:96:db:03` · `48:22:54:64:15:b6` | all fw 1.4.6 (~2 s update — not for 1 s rows); not rig plugs |
@@ -134,31 +133,11 @@ re-validate one July decode row before comparing new Pi 5 numbers against the Ju
 Full reservation list handed to the owner 2026-08-26 (S69) and **applied the same evening** in the Bbox admin UI: everything above plus the
 Bbox's **wlan0** `70:f7:54:37:4f:e4` (→ `.173`, where it lives whenever its cable is out) and the C2's Wi-Fi `.109`.
 
-All six Lab plugs (A–F) are on fw **1.3.1** (mW local API, 1–2 s effective cadence).
+All Lab plugs (A–F, F2–F6) are on fw **1.3.1** (mW local API, 1–2 s effective cadence).
 Configs written before 2026-07-29 that reference STB plug `.94` are historical — new
 GTV rows meter via **Lab-D `.36`**.
 
-## Display path (2026-07-29)
-
-Only the **Google TV** is connected to a screen: HDMI to the 4K monitor metered by
-**Lab-E**. Decode rows on the GTV can therefore include display/brightness arms
-(device + monitor metered separately, both mW-class). Panel caveat for the record:
-it is an **LCD 4K HDR** panel — not very responsive to content luminance (unlike OLED),
-so luminance-driven display effects will be muted; acceptable now that the meter is
-mW-class. Both Pis remain headless (pure-decode rows only).
-
-### Monitor auto-switch behaviour (verified by eye + Lab-E draw, 2026-07-29)
-
-All three boxes share the monitor on separate HDMI inputs. Verified:
-1. **Fresh monitor power-on** -> scans and locks the only live signal.
-2. **New signal appears** -> steals the input from a currently displayed source
-   (Pi 400 boot took the screen from an actively playing Pi 5).
-3. **Active signal lost** -> falls back to a remaining live signal
-   (Pi 400 shutdown returned the screen to the Pi 5 mid-playback).
-
-Consequence: with the boxes **off by default**, the screen deterministically follows
-whichever single device is powered — no physical input-button presses needed for
-remote/Tania operation. Do not run display arms on two boxes at once.
+## Display path — see "Downstairs rig — LG C2" below (the 2026-07-29 PA329C-monitor notes moved to JOURNAL Addenda 2026-09-03)
 
 ### Pi display arm (proven 2026-07-29, Pi 5)
 
@@ -204,16 +183,15 @@ LCD (now upstairs). Dumb switch (no IGMP snooping) — fine for discovery.
 
 **Display control — webOS (CR-071, closed 2026-08-19):** the C2 does NOT auto-switch inputs;
 arbitration is an explicit `set_input(HDMI_n)` via aiowebostv (`/tmp/pyatv-venv`), client key at
-`/srv/data/owl/lg/client_key`, host `192.168.1.25` (Ethernet; `.109` is its Wi-Fi). Always-Ready
+`/srv/data/owl/lg/client_key`, host `192.168.1.26` (Ethernet, moved from `.25` 2026-08-29; `.109` is its Wi-Fi). Always-Ready
 standby rejects SSAP with WS 1008 → wake with raw Wake-on-LAN first (`lg.wake()`, 2026-08-01). The
 poller never auto-wakes it (household TV); SIMPLINK/CEC turned OFF by the owner 2026-08-15 (input
 hopping was contaminating baselines).
 
-**HDMI port map (rig.py, 2026-08-29 switch-install reshuffle):** Bbox → HDMI_1 · GTV → HDMI_2 ·
-Roku → HDMI_3 (took the Pi 400's old socket) · Apple TV → HDMI_4 (took the Fire TV's old socket).
-Pi 5, Pi 400, Fire TV and Xiaomi are headless-only (no HDMI cable at all). Fire TV and Xiaomi still
-owe a live no-HDMI-sink smoke test — Android app-launch playback with zero display attached is
-unverified, unlike the Pi boards' display-independent decode-to-null.
+**HDMI port map (2026-09-03, in /settings `rig_hdmi_inputs`):** GTV → HDMI_1 · Apple TV → HDMI_2 ·
+Roku → HDMI_3 · Xiaomi Gen 3 → HDMI_4. Fire TV, Xiaomi Gen 2, Bbox and both Pis are headless. The no-sink
+smoke test is answered (2026-09-03): a headless Android STB is a different regime (Fire TV −0.77 W playback,
+Gen 2 −0.42 W), hence the HDMI dummy plugs on order — see the Devices table above.
 
 **Bbox (Bouygtel4K, operator CPE — Marvell Berlin, Arcadyan HMB9213NW, `ro.soc.*` empty; R3a 2026-08-26):** ADB authorised (Android 11), Ethernet `.10` since 2026-07-31 (on Wi-Fi `.173` since the CR-074 cable pull),
 plug Lab-F `.155`, `idle_w` 6.6 W (drifts 6.3–6.8 → its H.264/HEVC ΔW sits inside its own noise; AV1
@@ -229,7 +207,7 @@ AirPlay info endpoint by the desk 2026-08-26; NOT the A15 3rd gen CR-075 first a
 any Apple silicon before A17 Pro/M3):** Companion + AirPlay paired (creds `/srv/data/owl/atv/`); power/keys
 work; AirPlay `play_url` is **dead on tvOS 18** (receiver 500 on `/playback-info`, pyatv #2403) — **use VLC
 via Companion**: `launch_app=vlc-x-callback://x-callback-url/stream?url=<origin URL>` (one-time "Open VLC?"
-on the remote). Harness `atv_probe.py` / `atv_summary.py`; meter Lab-F3 `.1`; park the box in Settings for
+on the remote). Harness `atv_probe.py` / `atv_summary.py`; meter Lab-F6 `.170` (Lab-F3 `.1` until 2026-09-02); park the box in Settings for
 baselines and **disable the tvOS screensaver first** (it ramps the parked floor 2.7→6 W within a minute —
 2026-08-26 rows). First result: H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W. **Never measure it headless:** with no
 display VLC still says `Playing` but the box draws 1.6–1.8 W (full-screen playback 4.9 W, quarter-screen

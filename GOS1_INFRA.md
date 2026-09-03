@@ -204,11 +204,10 @@ sudo sed -i 's|/var/log/wattlab-backup.log|/home/gos/.cache/wattlab-backup.log|'
 
 ## Decode-rig plugs (2026-07-29 → ; authoritative table = `wattlab_service/rig.py` `RIG`)
 
-Six Tapo P110 "Lab" plugs feed the client rig downstairs (LG C2 room), fixed IPs on the Bbox:
-Lab-A `.146` (Fire TV Stick 4K; shared with the parked Pi 5 — never power both) · Lab-B `.31` (Pi 400) ·
-Lab-C `.35` (⚠ see rig.py hazard comment) · Lab-D `.36` (Google TV Streamer) · Lab-E `.71` (the C2 panel =
-monitor plug) · Lab-F `.155` (Bbox 4K operator CPE, fw 1.3.1). Plus a Shelly (`rig_shelly_ip`) and the rig
-master switch (`rig_master_tapo_ip`). KLAP sessions are exclusive per plug: the rig poller pauses a plug while
+Eleven Tapo P110 "Lab" plugs (A–F, F2–F6, all fw 1.3.1) feed the ten-device client rig downstairs (LG C2
+room), fixed IPs on the Bbox — the authoritative table is `decode_bench/README.md` §Network (one row per
+plug and box; Lab-C `.35` powers the router — ⚠ see the rig.py hazard comment). Plus the Shelly strip meter
+(`rig_shelly_ip`; the Apple TV's Lab-F6 sits off the strip) and the rig master switch (`rig_master_tapo_ip`). KLAP sessions are exclusive per plug: the rig poller pauses a plug while
 a bench process samples it (`rig.PAUSED_PLUGS`); never poll a Lab plug out-of-band while `/decode` is busy.
 Idle auto-off (S60) cuts the rig after `rig_idle_off_hours` (4 h) of no activity; CLI campaigns keep it alive
 via `/tmp/owl-rig-hold`. The Fire TV loses ADB authorisation after a mains power cycle (on-site accept).
@@ -222,8 +221,9 @@ via `/tmp/owl-rig-hold`. The Fire TV loses ADB authorisation after a mains power
   in a `systemctl edit ollama` drop-in (sudo).
 - **Backup scope** (CR-067 item 5): the Nextcloud/rclone manifest predates `/srv/data/owl/{decode-bench,campaign_*}`
   and `results/decode/` — confirm they are inside the backup set.
-- **Managed switch for the rig's Ethernet drop** (CR-074 enabler): per-port disable would make the STB
-  Ethernet↔Wi-Fi arm scriptable; unrooted Android TV cannot drop Ethernet from the shell.
+- **Managed switch for the rig's Ethernet drop** — installed 2026-08-29 (S72 re-cabling); the CR-074
+  Ethernet↔Wi-Fi arm was measured by cable pull on 2026-08-19 before it arrived. Per-port disable is
+  available if that arm is ever re-run (unrooted Android TV cannot drop Ethernet from the shell).
 - **DuckDNS** updater lives on GoS1 (`/home/gos/duckdns/duck.sh`, gos crontab, 5 min, forces IPv4) — kept as
   portability insurance although the public IP is now fixed (see External Access section).
 

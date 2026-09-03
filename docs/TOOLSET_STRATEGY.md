@@ -262,3 +262,5 @@ today).
 | Multi-LEM untested at scale; CR-004 confirmed 2026-07-24 | `rem/CHANGE_REQUESTS.md`; REM_AUDIT |
 
 > **Status note (2026-08-19):** the three future-work items named above — a baseline-floor guard in `bench.py`, a device registry, and publication of the two draft decode findings — have all shipped (`decode_idle_guard` protocol v3, `rig.RIG`, `ff7fd9f` de-DRAFT). This document is a decision record; the live state is CLAUDE.md + JOURNAL.
+>
+> **2026-09-03:** tests 1074; both decode findings published. The 3.6× / 4.1× figures in §3's "paper-grade and non-obvious" findings list (and the sources table above) are superseded by **3.7× / 4.6×** (R6 reconciliation, finding `hw-decoder-cuts-client-energy-4x`). `VERSION` still 1.0.0 (the `v1.0.0` tag ~190 commits behind).

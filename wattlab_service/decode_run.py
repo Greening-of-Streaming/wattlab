@@ -155,6 +155,33 @@ TEMPLATES: dict = {
         "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
                   "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
     },
+    # Sports tier (CR-081, 2026-09-03, owner's pick): broadcast-style football
+    # coverage — Panasonic's "Barcelona Football" 4K demo as uploaded to
+    # YouTube by The 4K Media Group (-gXGcLDIjPI): 3840×2160 **60 fps** SDR
+    # AV1 (a 30 fps re-upload of the same demo, PVwUSv0eMzM, was rejected).
+    # © Panasonic, re-uploaded by a third party — LAB-INTERNAL ONLY: no
+    # licence to cite, never shown or redistributed outside the lab;
+    # measurements on it are fine, the pictures are not. Replaces Kranjska
+    # (1440×1080p30 mountain bike) as the sports family per Tania's call;
+    # kranjska* families stay for the rows pooled on them. Built by
+    # decode_bench/prep_family.py (family key "football").
+    "football_codecs_rt": {
+        "label": "Football codec panel — H.264 / HEVC / AV1, realtime 150 s each "
+                 "(Panasonic Barcelona demo, 1080p60, lab-internal source)",
+        "clips": {"football_h264_rt": "football_h264_6min.mp4",
+                  "football_hevc_rt": "football_h265_6min.mp4",
+                  "football_av1_rt": "football_av1_6min.mp4"},
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
+                  "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+    },
+    # 45 s quick check on the sports tier (owner ask, 2026-09-03 22:20): the
+    # bbb_h264_smoke shape on the football clip — one short row per box.
+    "football_h264_45s": {
+        "label": "Football H.264 — 45 s quick check (1080p60, lab-internal source)",
+        "clips": {"football_h264_45s": "football_h264_6min.mp4"},
+        "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+                  "startup_skip_s": 8, "window_s": 45, "gap_s": 5},
+    },
 }
 
 # Parametric loop templates (2026-07-31): family × codec, tester-set duration
@@ -166,7 +193,7 @@ TEMPLATES: dict = {
 # (8 s): a 3600 s / 1100 s window ends AFTER the clip → alive_at_window_end
 # False on an otherwise perfect row (2026-08-17). Caps below clamp the
 # override so the window always ends inside the clip.
-LOOP_FAMILIES = ("bbb", "meridian", "kranjska")
+LOOP_FAMILIES = ("bbb", "meridian", "kranjska", "football")
 LOOP_CODECS = ("h264", "h265", "av1")
 for _fam in LOOP_FAMILIES:
     for _cod in LOOP_CODECS:
@@ -185,7 +212,7 @@ for _fam in LOOP_FAMILIES:
 # loops built by concat — see /srv/data/owl/campaign_2026-08-17_vp9b/
 # iso_family_manifest.json for bitrates, VMAF at that bitrate and encoder points.
 # VP9 ships as WebM: MP4/vp09 stalls the Google TV player (2026-08-09, 3/3).
-ISO_FAMILIES = ("bbbiso", "kranjskaiso", "meridianiso")
+ISO_FAMILIES = ("bbbiso", "kranjskaiso", "meridianiso", "footballiso")
 ISO_CODECS = ("h264", "h265", "av1", "vp9")
 for _fam in ISO_FAMILIES:
     for _cod in ISO_CODECS:
@@ -359,6 +386,28 @@ TEMPLATES["ladder_bbb_h264"] = {
     "max_window_s": 100,
     "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
               "startup_skip_s": 8, "window_s": 90, "gap_s": 10},
+}
+
+# Loop-validity check (owner ask, WattLab call 2026-09-03): does a looped
+# excerpt measure the same as the continuous original? Every rig loop family
+# is a concat of one 2-min excerpt (bbb_h264_20min = ×10), so this is the
+# assumption under all of them. One NVENC encode of 600 s of BBB (corpus
+# recipe, keyframes forced every 30 s so the stream-copy cuts are exact):
+# A the continuous 600 s · B its 120–240 s excerpt ×5 · C its 120–150 s
+# excerpt ×20 (Tania's caveat: very short loops add artificial cuts — and the
+# ReadySetGo sports source is only ~30 s, so C is the go/no-go for CR-081).
+# Family key `bbbloopcheck` keeps decode_batch's family/codec cell parsing.
+TEMPLATES["bbbloopcheck_h264"] = {
+    "label": "Loop validity — BBB H.264 1080p60 8 Mbps: continuous 600 s vs "
+             "120 s ×5 vs 30 s ×20 (video-only, sync start)",
+    "clips": {"cont_600s": "bbbcont_h264_600s.mp4",
+              "loop120_x5": "bbbloop120x5_h264_600s.mp4",
+              "loop30_x20": "bbbloop30x20_h264_600s.mp4"},
+    "content_clock": {"every_s": 2.0, "head_s": 0},
+    "sync_start": True,
+    "max_window_s": 610,
+    "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+              "startup_skip_s": 8, "window_s": 600, "gap_s": 10},
 }
 
 # 30 × 45.011 s = 1350 s of clip (no 15 s head — marker-free), so the window
@@ -1172,8 +1221,17 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                         head_s=cfg["content_clock"].get("head_s", MARKER_HEAD_S))
                     if ml.get("loops"):
                         row["screen_marker_loops"] = ml
+        # HDMI sink provenance (2026-09-03): a box with no HDMI input is a
+        # different regime — the Fire TV plays 0.77 W lower and its ΔW drops
+        # to a third with no sink, Gen 2 0.42 W lower (JOURNAL S73). The
+        # screen-map slot (settings › rig_hdmi_inputs, applied into RIG) is
+        # the best proxy the rig has for "had a sink"; null = headless/no sink.
+        hdmi_in = dev_cfg.get("hdmi_input") or None
+        for row in bench_out.get("rows", []):
+            row.setdefault("hdmi_input", hdmi_in)
         section = {
             "label": dev_cfg["label"], "kind": dev_cfg["kind"],
+            "hdmi_input": hdmi_in,
             "meter": {"model": "Tapo P110", "ip": cfg["meter_ip"],
                       "fw": "1.3.1", "cadence_s": cfg["cadence_s"]},
             "rows": bench_out.get("rows", []),

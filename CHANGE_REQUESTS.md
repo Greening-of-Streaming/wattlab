@@ -648,7 +648,7 @@ CR-012 closed (`history.jsonl` pattern) · CR-031 (logging convention + volume e
 
 ### Problem
 
-(a) Nothing gates deploys — no CI, no hooks, `stage-on`/`stage-off` run no tests ("run as a habit, not as a gate" is documented policy). (b) ~5–7% of the 770 tests pass only on GoS1 (hardcoded `/srv` paths, GPU detection, live production results, real media) with no skip markers; collection from the repo root aborts on a cwd-relative `StaticFiles` mount. (c) The energy formula `delta_e_wh = round(delta_w * (delta_t/3600), 4)` is duplicated inline **eight** times (`llm.py` ×2, `rag.py`, `image_gen.py`, `video.py`, `pixop.py`, `parity.py`, `rem_prep.py`) plus two JS re-implementations — none unit-tested; `llm`/`rag`/`image_gen` have no module tests at all. (d) Non-Lab route behaviour is under-tested (TestClient = Lab; the CR-026 anonymous invariants live only in the manual checklist — the known-worst regression class, already bitten in S37). (e) `findings.list_all()` silently drops broken findings and the test iterates its output, so silent unpublication stays green; its docstring cites a test file that doesn't exist. (f) ~5,100 lines of page JS in f-strings are parsed by no checker — the S38 bug class, still open for per-page JS.
+(a) Nothing gates deploys — no CI, no hooks, `stage-on`/`stage-off` run no tests ("run as a habit, not as a gate" is documented policy). (b) ~5–7% of the tests (1074 as of 2026-09-03) pass only on GoS1 (hardcoded `/srv` paths, GPU detection, live production results, real media) with no skip markers; collection from the repo root aborts on a cwd-relative `StaticFiles` mount. (c) The energy formula `delta_e_wh = round(delta_w * (delta_t/3600), 4)` is duplicated inline **eight** times (`llm.py` ×2, `rag.py`, `image_gen.py`, `video.py`, `pixop.py`, `parity.py`, `rem_prep.py`) plus two JS re-implementations — none unit-tested; `llm`/`rag`/`image_gen` have no module tests at all. (d) Non-Lab route behaviour is under-tested (TestClient = Lab; the CR-026 anonymous invariants live only in the manual checklist — the known-worst regression class, already bitten in S37). (e) `findings.list_all()` silently drops broken findings and the test iterates its output, so silent unpublication stays green; its docstring cites a test file that doesn't exist. (f) ~5,100 lines of page JS in f-strings are parsed by no checker — the S38 bug class, still open for per-page JS.
 
 ### Agreed direction
 
@@ -827,7 +827,8 @@ the player fetches in bursts (VoD, buffer-ahead) or is paced by the source (live
 ## CR-077 · Device-onboarding idle-settle characterization tool
 
 **Status:** captured 2026-08-27 (owner, mid-overnight session, triggered by the Apple TV settle-time
-incident of the same night — see JOURNAL S69/S70).
+incident of the same night — see JOURNAL S69/S70); **items 1–3 shipped the same day** (`decode_bench/
+onboard_device.py` + tests, validated live on two devices — see below); item 4 (`startup_skip_s`) remains.
 
 ### Why it matters
 
@@ -964,7 +965,7 @@ no service restart.
 
 Two pieces already moved to settings: `rig_target_overrides` (CR-074) and `rig_hdmi_inputs` (screen map, with
 `rig.screen_claimable()` as the single rule the UI consumes). `rig.RIG` is still the device list in code
-(nine devices as of S72 — Xiaomi and Roku added in code, not settings), `decode_run.TEMPLATES` names devices by key for a few device-specific templates, and the
+(ten devices as of S73 — Xiaomi Gen 2/Gen 3, Roku and the Apple TV's return all landed in code, not settings), `decode_run.TEMPLATES` names devices by key for a few device-specific templates, and the
 `/decode` page carries no device-specific logic beyond `device_class` shapes.
 
 ### Sketch
@@ -995,6 +996,11 @@ segments hardcoded to `.mp4` regardless of the source's own container; VP9 sourc
 by matching the segment container to the source clip's extension, confirmed live twice. Both known
 screen-mode blockers are closed; the general survey this CR asks for is still open — these were two
 instances found and fixed, not the systematic pass.
+**2026-09-03 addendum — the owed "no HDMI sink" smoke test is answered, and it is not a pass:** with no
+HDMI cable the Fire TV plays 0.77 W lower and its decode increment drops to a third; Xiaomi Gen 2 plays
+0.42 W lower (BBB, same clips, vs their n=3 screen-attached rows; JOURNAL S73). Both still report
+PLAYING. Headless STB rows are a separate regime; rows now carry `hdmi_input` (null = no sink). Any
+box measured without a real input needs an HDMI dummy (EDID) plug before its rows can pool.
 
 ### Why it matters
 
@@ -1011,8 +1017,7 @@ sufficient proof of a valid row.
 ### Ask
 
 A deliberate pass, not another live-discovered surprise: systematically exercise every device against
-every codec it's expected to support (including VP9, once CR-078's marker-encoder gap or an
-un-calibrated headless path unblocks it) and characterize the failure modes — which combinations produce
+every codec it's expected to support (including VP9 — its marker-encoder gap is resolved, see Status) and characterize the failure modes — which combinations produce
 clean rows, which produce a liveness-says-fine-but-screen-context-says-otherwise mismatch (the marker
 segmentation output and the raw context trace are the tell — no marker segments where one is expected is
 itself a red flag, not just a missing nice-to-have), and which fail outright. Output a per-device ×
@@ -1024,7 +1029,7 @@ Fixing every failure found — this CR is the survey; each real failure it turns
 gap) likely earns its own follow-up once understood.
 
 
-## CR-079 · Bitrate-ladder × resolution decode-energy sweep (HD/4K, 3 codecs, 8 devices)
+## CR-079 · Bitrate-ladder × resolution decode-energy sweep (HD/4K, 3 codecs, 10 devices)
 
 **Status:** captured 2026-08-29 (owner, more important than CR-078).
 
@@ -1033,14 +1038,14 @@ gap) likely earns its own follow-up once understood.
 Isolate bitrate's and resolution's *separate* contributions to client-side decode energy, not just their
 combined effect:
 
-1. **18 content variants** of the same source: for H.264, HEVC and AV1 (3 codecs — VP9 excluded, pending
-   CR-078's marker-encoder gap), encode at 3 commercially-representative bitrate points each — lowest,
+1. **18 content variants** of the same source: for H.264, HEVC and AV1 (3 codecs; VP9 can join now that
+   CR-078's marker-encoder gap is resolved), encode at 3 commercially-representative bitrate points each — lowest,
    the existing iso-bitrate reference point already used elsewhere in this project ("the average"), and
    highest (e.g. ~10 Mbps HEVC at HD) — at **both HD and 4K** (4K's own low/high points sit lower/higher,
    e.g. ~5 Mbps to ~20 Mbps). 3 codecs × 3 bitrates × 2 resolutions = 18.
 2. **VMAF for all 18** — the quality anchor each decode-energy number sits against.
-3. **Run all 18 against all 8 working decode devices** (pi5, pi400, firestick, gtv, bbox, atv, roku, c2 —
-   Xiaomi excluded, still bricked) — ideally with each content item's 8 devices running in parallel
+3. **Run all 18 against all 10 rig devices** (pi5, pi400, firestick, gtv, bbox, atv, xiaomi, xiaomi3, roku,
+   c2) — ideally with each content item's devices running in parallel
    (already validated the same day: parallel execution doesn't corrupt individual device readings for
    the devices that behave — see the solo-vs-parallel campaign), to see whether bitrate or resolution
    dominates the decode-side energy cost, independent of the other.
@@ -1049,7 +1054,193 @@ combined effect:
 
 ### Not in scope
 
-VP9 (folds in once CR-078 unblocks it); anything beyond the 8 working devices.
+VP9 as a fourth codec (unblocked 2026-08-29, but 24 variants instead of 18); anything beyond the rig's 10 devices.
+
+### Notes (2026-09-03)
+
+- Device set is 10 (both Xiaomis back, Apple TV back on Lab-F6 — JOURNAL S73).
+- **Content: the sports tier is now the `football` family (CR-081)**, not Kranjska; new campaigns under this
+  CR use it. Headless boxes (Fire TV, Gen 2, Bbox) are a no-sink regime until the HDMI dummy plugs are fitted
+  (CR-078 addendum) — sequence this sweep after that.
+- The S73 sync work already delivered part of this CR's question ahead of schedule: a 7-rung H.264
+  1080p ladder (0.25–32 Mbps, n=2, four boxes: linear, 10–17 mW/Mbps) and 1080p-vs-4K HEVC on the
+  same four boxes (+0.37 W on MT8696, ~0 on Amlogic). See `docs/intra_content_sync_2026-09-03.md`
+  §5f/§5g — the 18-variant matrix with VMAF is still the CR.
+
+
+## CR-080 · Decode-pipeline provenance survey — does the implementation dwarf the codec?
+
+**Status:** captured 2026-09-03 from the WattLab monthly call (Ben's hypothesis, Arian's method
+suggestion). Not scheduled.
+
+### Ask
+
+Ben's working hypothesis for the SMPTE papers: the *decode pipeline* (HAL, player framework, vendor
+SDK) moves client energy by more than the codec choice does — same silicon, same codec, different
+stack = many percentage points. Axis A of the S73 campaign is the first controlled instance (Fire TV
+vs Google TV Streamer on one MT8696: the vendor stack doubles the marginal cost of a stream while
+absolute playback watts stay within 0.1 W). To test it as a rule rather than an anecdote:
+
+1. **Establish each rig device's decode stack** by on-box exploration where possible (logcat
+   provenance already gives HAL = OMX vs Codec2 and the decoder component names; add player
+   framework (media3/ExoPlayer version, native player), vendor SDK / middleware, OS build, and the
+   output path — surface/overlay plane vs composed) and by literature review where not (Roku, Apple
+   TV, C2). Record it in `rig.py` `silicon`/`stack` fields so every result row carries it.
+2. **Group the nine devices by stack** and run grouped comparisons on the four axes the rig now
+   supports in parallel: codec × bitrate (the S73 ladder) × resolution (1080p/4K) × content (BBB,
+   ReadySetGo, Meridian) — order of 20 runs per box, nine boxes, one night with the four-wide (or
+   wider) rendezvous start.
+3. **Report** whether the between-stack spread exceeds the between-codec spread at matched operating
+   points, with n ≥ 3 and CIs; use the synchronised intra-content profiles to say *where* a stack
+   pays (complex content only? high bitrate only?).
+
+### Why it matters
+
+If the implementation dominates, the industry recommendation changes from "pick codec X" to "build
+the decode path well" — Stan's point on the call (efficient coding, framework choice) and the
+missing half of the encode-heavy literature. Arian's suggestion: the SDK/framework a decoder is
+built on can be identified (and framework efficiency is documented), which gives a prior to test
+against real measurements.
+
+### Not in scope
+
+Fixing anything on the boxes; quality/compliance bugs in vendor SDKs (Arian's experience) — energy
+only.
+
+
+## CR-081 · ReadySetGo as the decode rig's sports tier — source, encodes, templates, one all-night campaign
+
+**Status:** captured 2026-09-03 (owner: "evaluate the work, schedule an all-nighter"). **Loop-validity
+result in the same evening (doc §5h): multi-minute loops are neutral, but a 30 s loop costs the
+Google TV +0.012 W and Xiaomi Gen 3 +0.10 W (+3.8 %) — so the 5 s ReadySetGo on GoS1 is a NO-GO
+as the sports tier by looping alone.** **Source, third attempt the same evening — settled:** (1) CableLabs "Moment of Intensity"
+(skateboarding, 4K59.94 ProRes, CC BY-NC-ND 4.0) was downloaded, cut and **rejected on viewing by the
+owner** — slow-motion, some shots not really 4K, no broadcast-style coverage; deleted. (2) The owner's own
+pick, Panasonic's "Barcelona Football" 4K demo on YouTube (PVwUSv0eMzM) turned out to be served at
+**30 fps** — rejected in favour of (3) the **same demo from another upload (-gXGcLDIjPI, The 4K Media
+Group): 3840×2160 60 fps SDR AV1, 193 s**, kept as `test_content/panasonic_football_barcelona_4k60.mkv`.
+**Lab-internal only** (© Panasonic, third-party re-upload, no licence to cite; the owner's call: it is
+never shown outside the lab — measurements on it are fine, the pictures are not). Excerpt 50–170 s
+(clear of the intro card at 10 s and the outro fade from 180 s). Family key **`football`**
+(`football_codecs_rt`, `loop_football_<codec>`, `loop_footballiso_<codec>` in `decode_run.py`, tests in);
+built by the new `decode_bench/prep_family.py`. Also learned: broadcast-style sport at true 4K60 under
+an open licence does not exist publicly (Netflix Open Content has no sport; UVG/Xiph/EBU/JVET clips are
+5–10 s; Commons/stock sites have nothing); the CC-BY YouTube pool at real 2160p60 is race/POV footage.; the encodes/templates/all-nighter below follow once it is on disk.
+
+### Ask
+
+Tania's call (WattLab call 2026-09-03): retire the mountain-bike (Kranjska, 1440×1080p30 downhill)
+sequence as the sports content tier — "very different character" from the rest of the corpus — and
+use the ReadySetGo 4K60 sports clip the encode side already adopted (S71, caveat-9). Bring the decode
+rig's content tiers back in line with the encode side's (Meridian · BBB · ReadySetGo), then run the
+device × codec matrix on it at n=3 in one night.
+
+### What it takes (evaluated 2026-09-03)
+
+1. **Source length was the problem — resolved with the Panasonic football demo (above).** For the record,
+   the ReadySetGo that started this: the only copy on GoS1 is `test_content/readysetgo_30s_looped.mp4`
+   (35 s, 3840×2160p60, H.264 — seven repeats of the **5 s** original: UVG dataset sequence
+   ReadySetGo, 600 frames at 120 fps, JOURNAL S71; the parity leg's 30 s trim is six of those repeats.
+   KartingTime, prepped alongside it, is a 7 s source looped to 30 s — same problem). The decode rig's protocols need 150 s (rt) and 20 min (loop families) of content,
+   i.e. ×5 and ×80 concatenations — dozens of artificial cuts, exactly Tania's "5 s loop" caveat.
+   **Go/no-go = arm C of the loop-validity job** (30 s excerpt ×20 vs the continuous original on
+   four boxes). If C measures the same as A, ReadySetGo ×N is a valid tier; if not, find a
+   longer source before encoding anything (UVG sequences are all 5 s).
+2. **Encodes** — `decode_bench/prep_family.py --master … --family football --start 50`: 120 s excerpt →
+   1080p ProRes ref → matched-VMAF (target 92.5, v1) NVENC `football_{h264,h265,av1}.mp4` with the
+   source audio as AAC → `_6min/_20min/_60min` loops → iso software family `footballiso_*_20min`
+   (`.webm` for VP9), all VMAF-scored into `streams/football_manifest.json`. **DONE 2026-09-03 21:35**
+   (31 min): H.264 9.2 Mbps / VMAF 92.7, HEVC 6.9 / 92.0, AV1 6.2 / 92.5; iso @ 9.2 Mbps x264 93.0,
+   x265 94.0, SVT-AV1 94.3, VP9 94.0 (re-scored; the shared scorer's WebM timebase trap read 80.4).
+3. **Templates**: `football` in `LOOP_FAMILIES`, `footballiso` in `ISO_FAMILIES`, `football_codecs_rt` —
+   DONE (tests in). Kranjska families stay for the pooled rows already on them (do not delete streams).
+4. **The all-nighter — next step, needs the owner's go and the re-cabled rig** (≈ 6 h of rig time, boxes in
+   parallel; the four HDMI boxes on their inputs, Apple TV on HDMI_2 for every row; **Fire TV, Gen 2 and
+   Bbox are no-sink rows until the HDMI dummy plugs ordered 2026-09-03 are fitted** — run them anyway and
+   tag, or wait for the plugs, owner's call):
+   4 codecs × {rt 150 s, iso loop 20 min} × n=3 = 24 jobs on every rig device that plays the codec
+   (Fire TV, GTV, Xiaomi Gen 2/3, Bbox, Roku, Pi 400, Pi 5, Apple TV; C2 for one arm). ≈ 4 codecs × 3 reps × 22 min for the loop family ≈ 4.4 h + ≈ 45 min for the rt family.
+   Fresh `batch_id` per template family. Morning: `decode_batch` cells + the S73 profile tooling for
+   intra-content (the sports clip is the one where texture/motion should separate most).
+5. **Not in scope**: re-running the existing Kranjska rows; 4K/HDR variants of ReadySetGo (CR-079's
+   resolution axis covers that once the 1080p tier exists).
+
+### Why it matters
+
+The SMPTE papers pair encode and decode measurements on the same three contents; the decode rig's
+sports tier is currently a different clip (and a different frame rate/aspect) from the encode side's,
+so the "content over codec" story cannot be told end-to-end on one corpus until this lands.
+
+
+## CR-082 · "Demo Content" — a page that shows the test corpus in small players
+
+**Status:** captured 2026-09-03 (owner). Sequenced **after CR-081** ("once the new sports content is
+up"). Not urgent.
+
+### Ask
+
+A button on `/video` labelled along the lines of **"Demo Content"** that opens a dedicated page with
+small player windows showing each piece of test content OWL measures with (Meridian, Big Buck Bunny,
+the sports tier, and the 4K/HDR variants where they exist), each with
+its one-line provenance: source, duration, resolution/frame rate, the encodes derived from it, and
+which measurements use it.
+
+- **V1** does exactly that and nothing more: a catalogue page, thumbnails or muted autoplay-on-hover,
+  click to play in a small window, no upload, no editing.
+- **Later** (not this CR's scope, but the reason for a dedicated page): the same page becomes the
+  place content is managed — upload, trim to the 30 s / 120 s excerpts, build the loop families,
+  retire a clip — so the corpus stops being a set of hand-run scripts on GoS1.
+
+### Notes
+
+- Serving: reuse CR-064's browser-playable normalised-stream proxy and visitor-scoped serving
+  (`/enhance-run` already plays kept outputs); CR-043 (`/video` result-card previews) shares the
+  same player component — build one, use it in both.
+- **Tier:** Big Buck Bunny and Meridian are freely licensed; Kranjska's terms are not on file, and the
+  `football` family (CR-081) is **lab-internal only — its pictures must not be shown at all**, so the page
+  lists it by provenance line only (no player). Default the page to Member/Lab and open it to Anonymous
+  per clip only when the licence is confirmed (policy in `capabilities.py`,
+  never in the route).
+- Lab look & feel constraint: one compact grid, monospace provenance lines, no hero, no autoplay with
+  sound; the button on `/video` is a plain link in the existing header row.
+
+
+## CR-083 · Reserve a Lab session in advance from the Queue page
+
+**Status:** captured 2026-09-03 (owner). Not urgent.
+
+### Ask
+
+Today `/queue-status` has one Lab-tier control: **start a Lab session** now (raises the flag that
+tells non-Lab submissions "GoS1 is reserved for hands-on measurement", `bin/lab-session-on`,
+`queue_control.LAB_SESSION_FLAG`). Keep that exactly as it is, and add **Reserve a Lab session**:
+a start time, an expected duration and a very short comment ("Tania — encode sweep re-run",
+"Ben — decode all-nighter"). So that Ben and Tania — and later other lab members — stop stepping
+on each other's toes on the box and the rig.
+
+### Behaviour
+
+- A reservation shows on `/queue-status` (and, since the rig is the usual contention, on `/decode`)
+  from the moment it is made: who, when, how long, the comment.
+- When the start time arrives the reservation becomes the active Lab session automatically (same
+  flag, same "reserved for hands-on measurement" refusal for non-Lab submissions) and lowers itself
+  when the duration elapses unless extended; an active session can still be started or ended by
+  hand as today.
+- Overlaps are refused with the existing reservation shown, not silently replaced. Reservations
+  are visible to every Lab-tier user and editable by their creator (or any Lab user — keep it
+  simple; this is a courtesy calendar, not access control).
+- Persist in a small JSON under `data/` (like `members.json`), no database; the flag file stays the
+  single source of truth for "is a session active now".
+
+### Notes
+
+- Tier: Lab only, via `capabilities.py` (`LAB_SESSION_TOGGLE` is the existing capability; add a
+  sibling or widen it — policy stays out of the routes).
+- Out of scope: notifications/e-mail, calendar sync, per-device reservations (the rig is reserved
+  as a whole with the box).
+- Lab look & feel constraint: one extra row under the existing toggle — a time, a duration, a
+  20-character comment, a Reserve button; the list of upcoming reservations as a plain monospace
+  table.
 
 
 ## Backlog notes recovered from session memory (2026-08-19, not CRs yet)
@@ -1060,9 +1251,8 @@ experiment or chore with its evidence pointer. Promote to a CR when picked up.*
 - **STB quick-win test shortlist (2026-07-28 sweep):** (1) HEVC→H.264 rollback client-cost write-up — data
   exists (h264↔h265 ≤0.08 W on fixed-function decode); (2) hardware-decode companion to
   `input-master-sensitivity` (its sw ladder inverts on hw); (3) feed the autocorrelation-honest estimator
-  (30-s Welch blocks) back into `conf_green_polls`/`conf_yellow_polls` from stored raw samples; (4)
-  resolution/upscale-location sweep on the box (hackathon Q1, device-side half of `upscale-sweetspot`);
-  (5) media3 over-fetch — resolved by CR-072's Range-correct origin (verify with `/status` counters);
+  (30-s Welch blocks) back into `conf_green_polls`/`conf_yellow_polls` from stored raw samples; (4) → now
+  CR-079's resolution axis; (5) media3 over-fetch — resolved (CR-072);
   (6) the ~0.14 W non-network residual (two 20-min runs, force-stop + grants, no `pm clear`); (7) REM-cloud
   vs local dual-path on the same playback (Simon's repeatability question). Best single-session combo: 4 + 6.
 - **LAN-misconfig energy experiment (2026-07-05, Ben's design; parked):** does a badly-configured LAN
@@ -1074,10 +1264,9 @@ experiment or chore with its evidence pointer. Promote to a CR when picked up.*
   `/usr/bin/ffmpeg` vs `/usr/local/bin/ffmpeg-master`), run the same encode through both — "updating your
   encoding software as a measurable energy improvement". `apply_custom_cmd` honours absolute paths, so no code
   is needed.
-- **Finding drafter (LLM-assisted, Lab-only, human-gated)** — complete on branch `feat/finding-draft-restore`
-  (`9fab401`), never merged; `stash@{0}` holds a duplicate WIP. Decide: merge behind a flag, or drop both.
-  Design rule worth keeping either way: deterministic code detects signals and sets confidence/scope/sources,
-  the model only verbalises.
+- **Finding drafter** — decided: the `.claude/skills/finding-draft` skill is the drafter; branch
+  `feat/finding-draft-restore` (`9fab401`) and `stash@{0}` are dead and can be dropped. Design rule kept:
+  deterministic code detects signals and sets confidence/scope/sources, the model only verbalises.
 - **`/audience` analytics contamination:** pytest's TestClient writes real visits (every dev day inflates all
   tiers) and ~40–55 anonymous hits/day are one-hit crawlers on `/demo` — never read `/audience` trends at
   face value; cross-check `journalctl -u wattlab` (real member logins = `POST /auth/sign-in` + `/auth/verify`
@@ -1090,21 +1279,21 @@ experiment or chore with its evidence pointer. Promote to a CR when picked up.*
 - **/prepare-rem follow-ups (CR-008):** HDR path (Simon's config supports PQ/HEVC main10; the SDR-only
   pin is in `rem_prep.build_encode_cmd`); verify closed-GOP NVENC concat on 4K. (The decode/encode split
   Simon asked for is implemented — `energy_split`, transcode − null-sink decode probe.)
-- **CR-031 §2 status:** `power.stamp()` + `meter_display_name` shipped 2026-06-09 (provenance + display only);
-  the `PowerBackend` ABC / PDU / synthetic backends and resolution-aware confidence remain.
 
 ---
 
 ## Groupings & dependencies (rewritten 2026-06-11 — restructure pass: CR-018 merged into CR-007, CR-064 closed, CR-029 §4/§6 extracted; **extended 2026-07-06 — Track F added from the OWL_AUDIT.md triage, CR-031/CR-008 refreshed**)
 
-The **21 active CRs** (as of 2026-08-19: 003 004 007 008 009 025 029 031 039 041 043 045 057 059 066 067 068 069 072 074 075) cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items. (Closed since the last rewrite: CR-024 2026-07-06 `09480ec`; **CR-071 and CR-073 closed 2026-08-19** — decode-rig display control and decode campaigns, both fully shipped; see CHANGE_REQUESTS_CLOSED.md.)
+The **28 active CRs** (as of 2026-09-03: 003 004 007 008 009 025 029 031 039 041 043 045 057 059 066 067 068 069 072 074 076 077 078 079 080 081 082 083) cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items. (Closed since the last rewrite: CR-024 2026-07-06 `09480ec`; **CR-071 and CR-073 closed 2026-08-19** — decode-rig display control and decode campaigns, both fully shipped; see CHANGE_REQUESTS_CLOSED.md.)
 
 ### Track G — Decode rig (2026-07-29 → , the largest active surface)
 
 - **CR-072** origin as a measured workload — phase 1 plumbing shipped (`origin.py`, ownership hooks); phase 2 (metered serve window, origin ΔW/bytes in the envelope) is the point.
-- **CR-074** connection method (Wi-Fi / Ethernet / none) — harness shipped, first data 2026-08-19 night; STB Ethernet↔Wi-Fi arm needs a managed switch or a cable pull.
-- **CR-075** Apple TV 4K second attempt — hardware-gated (on-site session), plan written.
-- Rig-side open harness items (JOURNAL S65): Fire TV `alive_at_window_end` false negative (now instrumented), C2 SSAP timeouts at window end, parity's missing inter-row idle guard.
+- **CR-074** connection method (Wi-Fi / Ethernet / none) — harness shipped, both halves measured 2026-08-19 (cable-pull day-half done).
+- **CR-076** /decode topology from settings · **CR-077** onboarding tool (items 1–3 shipped) · **CR-078** device×codec reliability survey (both known blockers fixed; the headless/no-sink regime is its 2026-09-03 addendum) · **CR-079** ladder × resolution sweep (partly pre-empted by the S73 ladder and 4K arms) · **CR-080** decode-pipeline provenance survey · **CR-081** football sports tier (family built; all-nighter pending).
+- Dependencies added 2026-09-03: HDMI dummy plugs (ordered) → CR-081 all-nighter's headless rows, CR-078/079 pooling; CR-081 → CR-082 (Demo Content page, sequenced after it); CR-083 (Lab-session reservations) stands alone.
+- CR-075 closed 2026-08-27 (Apple TV finding 🟢; box back on the rig 2026-09-03 on Lab-F6/HDMI_2).
+- Rig-side open harness items (JOURNAL S65/S73): Fire TV `alive_at_window_end` false negative (instrumented), C2 SSAP timeouts at window end, parity's missing inter-row idle guard.
 
 
 ### Track A — Storage / analytics (Tania-elevated 2026-05-07)

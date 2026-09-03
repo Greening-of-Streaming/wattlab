@@ -1,6 +1,6 @@
 # WattLab — Testing Strategy
 
-*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (1046 tests as of 2026-08-29 — the count drifts upward and the other docs must not quote it; `python3 -m pytest -q` from `wattlab_service/` is authoritative). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
+*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (1074 tests as of 2026-09-03 — the count drifts upward and the other docs must not quote it; `python3 -m pytest -q` from `wattlab_service/` is authoritative). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
 
 ## Philosophy
 
@@ -23,10 +23,10 @@ These are covered by Tier 3 manual checks before high-stakes use.
 
 ```bash
 cd wattlab_service && python3 -m pytest -q
-# 1027 passed in ~57s (2026-08-19)
+# 1074 passed in ~60 s (2026-09-03)
 ```
 
-**Where it lives:** `wattlab_service/tests/` — 55 test files (~12,200 lines) plus `conftest.py`.
+**Where it lives:** `wattlab_service/tests/` — 57 test files (~12,900 lines) plus `conftest.py`.
 
 **Import-path note:** run pytest from inside `wattlab_service/` (or point it at `wattlab_service/tests/`). The suite's `tests/conftest.py` inserts `wattlab_service/` onto `sys.path` so tests can `import persist`, `import settings`, etc. Running bare `pytest` from the repo root collects nothing useful.
 
@@ -57,7 +57,7 @@ pytest tests/ -k "js_bundling or ui_config"                                # tem
 
 The heavyweight differential check for envelope changes — re-summarising every stored result on disk and diffing (used to validate the S42 `_SUMMARISERS` dispatch against all 274 results: 0 diffs) — is a once-per-contract-change exercise, not part of routine. See `docs/result_envelope.md` for what counts as a contract change.
 
-**Monkeypatch note (post-S42 refactor):** orchestration names live in the twelve `routes_*.py` modules, with compat aliases re-exported from `main`. When patching in tests, **patch the `routes_*` module that binds the name**, not `main` — patching the alias doesn't affect the binding the route actually calls.
+**Monkeypatch note (post-S42 refactor):** orchestration names live in the eighteen `routes_*.py` modules, with compat aliases re-exported from `main`. When patching in tests, **patch the `routes_*` module that binds the name**, not `main` — patching the alias doesn't affect the binding the route actually calls.
 
 ---
 

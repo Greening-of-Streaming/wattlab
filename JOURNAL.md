@@ -7,6 +7,61 @@ Scope: device layer only (GoS1). Network, CDN, and CPE explicitly excluded.
 
 ---
 
+## Addenda moved from decode_bench/README.md on 2026-09-03 (historical, kept verbatim)
+
+### Display path (2026-07-29) and PA329C monitor auto-switch behaviour — superseded by the LG C2 (2026-07-30 →)
+
+#### Display path (2026-07-29)
+
+Only the **Google TV** is connected to a screen: HDMI to the 4K monitor metered by
+**Lab-E**. Decode rows on the GTV can therefore include display/brightness arms
+(device + monitor metered separately, both mW-class). Panel caveat for the record:
+it is an **LCD 4K HDR** panel — not very responsive to content luminance (unlike OLED),
+so luminance-driven display effects will be muted; acceptable now that the meter is
+mW-class. Both Pis remain headless (pure-decode rows only).
+
+#### Monitor auto-switch behaviour (verified by eye + Lab-E draw, 2026-07-29)
+
+All three boxes share the monitor on separate HDMI inputs. Verified:
+1. **Fresh monitor power-on** -> scans and locks the only live signal.
+2. **New signal appears** -> steals the input from a currently displayed source
+   (Pi 400 boot took the screen from an actively playing Pi 5).
+3. **Active signal lost** -> falls back to a remaining live signal
+   (Pi 400 shutdown returned the screen to the Pi 5 mid-playback).
+
+Consequence: with the boxes **off by default**, the screen deterministically follows
+whichever single device is powered — no physical input-button presses needed for
+remote/Tania operation. Do not run display arms on two boxes at once.
+
+
+### Pi setup checklist (2026-07; both Pis in service since)
+
+1. Flash Raspberry Pi OS **Bookworm 64-bit** (ships the patched ffmpeg/mpv with the V4L2
+   hw-decode paths), enable SSH, put Ben's key on it (`BatchMode=yes` — no password prompts).
+2. Ethernet preferred (Wi-Fi power management would pollute the numbers; else
+   `iwconfig wlan0 power off`).
+3. Power the Pi from a **spare Tapo P110** (official USB-C PSU on the plug). Before trusting
+   it: `bin/probe-p110-fw` for cadence/dup-rate (fw ≥1.4 ⇒ 1.5 s, matches `cadence_s`).
+   Pi 4 idles ~2.7 W, Pi 5 ~3 W, decode loads 5–10 W — well inside the mW path's resolution.
+4. Verify hw paths before a round: `mpv --hwdec=auto ...` then check its log for
+   `v4l2` / `drm` vs `sw`; on Pi 5 confirm H.264 actually falls back to software.
+5. Disable desktop compositing / run from the console (`mpv --vo=gpu` on KMS); no browser,
+   no auto-updates during runs (`sudo systemctl stop apt-daily.timer` etc. — Pi-side
+   focus-mode equivalent, manual for now).
+
+## Condensed session index S26–S66 (moved here from CLAUDE.md on 2026-09-03; full entries below)
+
+- S26–S45 (05-20→06-11): credibility bundle, VMAF+CI confidence, compare trilogy, findings catalog, benchmark orchestrator, GPU swap → RTX 5080, CR-062 cooldown omnibus, Pixop /enhance-run (CR-063/064), refactor to routes_*.py + runtime.py.
+- S46–S53 (06-11→06-19): CR-065 dual P110 (ci2), P110 fw facts, upscale sweet-spot finding, anon-landing audit + TEMP mockups, GDPR analytics + /audience, HDR→4K throttle, encode-parity calibration harness + /video/budget measured.
+- S54–S57 (07-07→07-20): Guided Tour v2 (9 steps, pins = live state), VMAF v1 via quality.py, CR-070 pre-job idle guard, FR "sandwich" on /enhance-run.
+- S58–S59 (07-28→30): client decode first-class — portable decode-bench rig, `decode` result type, /decode Lab console (rig.py), protocol v3 idle guard, LEM csv export.
+- S59b–S59g (07-31→08-15, back-filled): five devices on the bench (Bbox, Fire TV, C2 native via CR-071), 66-cell campaign (F7/F9/F10/F11), C2 WoL fix, SMPTE overnight couplings (R6 3.7×/4.6×, FGS/CABAC/effort/fps), VP9 one-off + report, gpu-boost prior-art v2, attributional lens.
+- S60–S61 (08-15/16): rig hygiene (idle auto-off, ADB repair, CEC off), overnight long-window review — STB playback dies mid-window (sleep timers) → negative rows are artefacts.
+- S62–S62b (08-16): methodology v0.7 marginal vs attributional; Jan Ozer thread; first clean 5×3×3 decode campaign overnight (harness pins sleep timers, PLAYING gate, screenshots).
+- S63–S64 (08-17): campaign reviewed → finding `stb-decode-and-play-content-over-codec` (DRAFT); CR-073 campaigns = batches (+ self-service, filter/paging).
+- S65 (08-17→18): VP9 re-run — iso-bitrate sw-vs-sw encode (108 rows, n=3) + decode (30 jobs, 3 contents) → report §5; affirmations: operating point decides the dearest codec; hw decode VP9 inside ±0.1 W; sw VP9 cheapest, HEVC 2–3×; no iso-bitrate quality claim. Fire TV liveness false-negative instrumented; campaign paging bug fixed.
+- S66 (08-18→19 overnight): CR-074 network-path campaign (Pi 400 eth/wifi/local × 3 bitrates × burst/paced; STBs on current interface; origin `?pace_kbps=`), CR-075 Apple TV plan, docs sweep (JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal), pixop timeout container reap. Tests 1027.
+
 ## Session 73 — 2026-09-02 (Xiaomi Gen 2 revived, Gen 3 onboarded, Just Player version pin lesson,
 four-way silicon/vendor axis campaign planned)
 
@@ -80,9 +135,9 @@ boxes to the end, head dip on every one (−0.08 W ×3, GTV −0.02), Axis B −
 inside one run, same content through HEVC vs H.264 keeps part of its shape (r 0.39–0.66 per box).
 `content_profile.head_dip` now skips loop 0 like the marker residual (the Fire TV's loop-0 head is
 its +0.58 W cold-start spike). (2) **Bitrate ladder**, 7 NVENC CBR rungs 0.25→32 Mbps, four boxes
-rendezvous-started, n=2 (`bae281b52f90`, 56/56 rows): decode power is **linear in delivered bitrate
-over two decades** on every box (r ≥ 0.92) at 10.0 ±2.3 (Fire TV) / 12.9 ±3.4 (GTV) / 17.1 ±2.8
-(Gen 2) / 13.1 ±6.5 (Gen 3) mW per Mbps — the whole 128× span moves playback draw 16–25 %;
+rendezvous-started, n=3 after a third pass at 13:20 (`bae281b52f90`, 84/84 rows): decode power is **linear in delivered bitrate
+over two decades** on every box (r ≥ 0.92) at 11.0 ±2.3 (Fire TV) / 13.2 ±3.5 (GTV) / 17.2 ±3.1
+(Gen 2) / 13.0 ±6.2 (Gen 3) mW per Mbps — the whole 128× span moves playback draw 15–26 %;
 32 Mbps is where Wi-Fi delivery starts to stall (Gen 2 85–90 % PLAYING), and the Fire TV sustains
 32 Mbps 1080p fine, so its 4K stall was not raw Wi-Fi throughput. Measurement lesson: the Fire TV's
 per-rung ΔW is *negative* because its foregrounded player UI (the 20 s baseline state between
@@ -102,6 +157,87 @@ the `MediaCodec` tag, which the provenance filter didn't scan; fixed, and the lo
 (every 30-min row returned `decoders_allocated: []` because the Xiaomi's ~5k lines/min scrolled the
 allocation out of the default logcat buffer before the mid-window read) fixed with `logcat -G 32M`
 before the clear. TV switched off 12:20. Tests 1072. Full numbers §5b/§5f/§5g of the doc.
+
+**WattLab monthly call, 03 Sep 14:00 (Ben, Tania, Arian/TNO, Stan/IAMT, Marisol) — OWL-relevant
+outcomes.** (1) Primary-data bar: n=3 minimum before anything leaves the room; traffic light keeps its
+one meaning, academic papers carry the real statistics (Tania); r threshold still to set — recorded in
+CLAUDE.md. The ladder on the readout page is n=2 by design (two passes), Arian caught it; a third pass
+(~15 min) brings it to the bar. (2) **Retire the mountain-bike (Kranjska) sequence as the sports tier**
+(Tania: "very different character"); the replacement is the ReadySetGo 4K60 sports clip already on the
+server (`test_content/readysetgo_30s_looped.mp4`, used ×2 to reach 30 s in the parity leg) — noted
+under CR-079; the decode-rig `kranjska`/`kranjskaiso` families stay for continuity of the existing
+rows until the owner says swap. Ben on content: Meridian is the least useful test content, BBB
+surprisingly good (real high-motion passages). (3) Ben mentioned an unpublished decode-side result: a
+~3-min clip looped ×6 measured the same as the 18–20-min original, so looping to reach the >20-min
+window (Android sleep timers) is safe; Tania's caveat: very short loops (5 s) add artificial cuts, so
+the claim holds for multi-minute loops only. The only written-up loop-validity work on disk is the
+**encode-side** `docs/loop_validity_report_2026-07.md` (parity's back-to-back transcode looping) —
+the decode-side comparison still needs its run identified (a `/findings` entry must cite a stored
+result) before it can be drafted. (4) Ben's
+hypothesis for the papers: the decode *pipeline/implementation* dwarfs the codec choice — same
+silicon, same codec, different stack = many percentage points (Axis A is the first controlled
+instance). Arian: the SDK/framework a decoder is built on can be identified and framework
+efficiency is documented; Ben: Claude can establish each rig device's stack by on-box exploration
+and then run grouped comparisons (codec × bitrate × resolution × content, ~20 runs/box × 9 boxes) →
+captured as CR-080. (5) Tania needs GoS1 for a re-run encode sweep on an evening before IBC — she
+messages ahead; rig/box contention that evening. (6) Papers: Ben's SMPTE paper (methodology,
+REM/LEM/OWL) is 10 k words against a 5 k cap, self-imposed 15 Sep, hard 30 Sep, Stan presents;
+Tania's (encode side, 3 codecs × iso-quality/iso-bitrate × 3 contents incl. ReadySetGo, CPU vs GPU)
+draft sent 2 Sep, references Ben's for decode; offer stands to run an encode-option A/B through all
+nine decode devices in an evening if her paper needs it. (7) Two owner asks the same afternoon, captured as CR-082 (a "Demo Content" page off `/video` showing the test corpus in small players, V1 catalogue only, later the content-management surface — sequenced after CR-081) and CR-083 (reserve a Lab session in advance from `/queue-status` with start time, duration and a short comment, so Ben and Tania stop colliding on the box; the immediate toggle stays as is). (8) **Evening: the loop-validity job ran (batch `22bb632c434f`, 3 passes × 4 boxes × 3 arms, 36/36 🟢)
+— a 120 s excerpt ×5 measures as the continuous 600 s original within 0.02 W on all four boxes
+(CIs straddle zero; ±0.03–0.04 W bound on three boxes, Gen 3 inconclusive at n=3 from its own
+two-state noise), while a 30 s excerpt ×20 costs the GTV +0.012 ±0.009 W and Gen 3 +0.101 ±0.027 W
+(+3.8 %, all three passes) — Tania's short-loop caveat measured. Doc §5h; finding drafted
+(`looped-excerpt-measures-as-continuous`, DRAFT tag, Tania to review). CR-081's go/no-go is
+answered: the ReadySetGo source is a 5 s UVG sequence (S71; on disk as 7 repeats = 35 s; KartingTime is
+a 7 s source looped) and cannot be the sports tier by looping alone — a ≥ 2-min continuous source is
+needed. Third ladder pass landed (n=3, doc §5f updated, readout page republished). **Panel
+hygiene:** the C2 woke itself twice today after being switched off (13:00 after a service restart;
+again during the headless loop jobs, Active on HDMI_3 = the Fire TV's input, i.e. a CEC one-touch-
+play from the stick despite CEC "off" in its menu) — ~70 W of panel while "off"; SIMPLINK (LG's CEC)
+off on the C2 side is the fix to try, SSAP input switching does not need CEC. (9) **Sports tier, three sources in one evening (CR-081).** The hunt for ≥ 2 min of 4K60 sport with a
+citable licence found nothing in the open sets (Netflix Open Content has no sport; UVG/Xiph/EBU/JVET
+are 5–10 s clips; Commons and stock sites have nothing); CableLabs' "Moment of Intensity" (skateboarding,
+4K59.94 ProRes, CC BY-NC-ND) was downloaded (36 GB), cut, played on the panel and **rejected by the owner
+on viewing** (slow-motion, soft shots, no broadcast-style coverage) — deleted; the owner's own pick,
+Panasonic's Barcelona football demo on YouTube, was served at 30 fps by the first upload and at a true
+**3840×2160@60 SDR** by another (`-gXGcLDIjPI`) — kept as `test_content/panasonic_football_barcelona_4k60.mkv`,
+**lab-internal only** (© Panasonic, third-party re-upload, no licence to cite; the owner's call, never
+shown outside the lab). New `decode_bench/prep_family.py` (generalises Tania's iso prep: ProRes ref →
+matched-VMAF NVENC bitrate search → loops → iso software family, manifest with VMAF v1 per clip) built
+the **`football` family** from the 50–170 s excerpt in 31 min: H.264 **9.2 Mbps** (VMAF 92.7), HEVC
+**6.9** (92.0), AV1 **6.2** (92.5) — real 60p sport costs ~15 % more bits than BBB at the same quality;
+iso family at 9.2 Mbps: x264 93.0, x265 94.0, SVT-AV1 94.3, VP9 94.0 — the VP9 first read **80.4**
+through `quality.compute_vmaf` (WebM's 1 ms timebase mis-pairing, the S65 trap, still unhandled in the
+shared funnel) and was re-scored with `settb=1/fps,setpts=N`; `prep_family.py` now does that for WebM.
+Templates `football_codecs_rt` / `loop_football_*` / `loop_footballiso_*` live. Family-build loop
+lesson: `pkill -f` patterns that appear in the calling shell's own command line kill the shell (twice
+tonight) — use `pgrep -f "[p]attern"` + kill. (10) **Rig re-cabled, Apple TV back (21:50–22:30).** Owner added a new Tapo **Lab-F6** (.170, MAC
+c0:3a:55:58:92:68 — an OUI the LAN scan's TP-Link list didn't know; found via the owner's app) for the
+Apple TV (own socket — **not on the Shelly-metered strip**, so the strip's sanity sum and the master
+switch exclude it) and re-cabled the panel to the recommended map: **HDMI_1 GTV · HDMI_2 Apple TV · HDMI_3 Roku ·
+HDMI_4 Xiaomi Gen 3; Fire TV and Gen 2 headless** (the Fire TV off HDMI also ends its CEC panel-waking;
+`rig_hdmi_inputs` in /settings, `atv` unparked in `rig.py`). Roku, Bbox and Pi 400 powered up. Each
+HDMI box then played the new football clip full screen with the owner watching — GTV (VIEW intent),
+Apple TV (VLC via Companion), Roku (Dom's channel via ECP), Gen 3 — all four validated in turn, no
+protocol rows, panel input switched over SSAP. A no-sink smoke (`football_codecs_rt`, headless, Fire
+TV + Gen 2, batch `ff44e9cbd81f`) queued as the first rows on the sports tier. Unexplained: a TP-Link
+device at **.199** (MAC 48:22:54:64:15:b6, not in the registry) reading 69 W then 28 W — not a rig
+plug; the old "Ben1-4k-monitor" unit was .199 in July. (11) **The owed no-HDMI-sink test, answered — and it changes what "headless" means on this rig.**
+Fire TV and Gen 2 with NO HDMI cable, `bbb_codecs_rt` headless (job `9d72d8eb`, batch `ff44e9cbd81f`)
+against their n=3 HDMI-attached rows of the night before (`85c22b801df6`), same clips: the **Fire TV
+idles 0.46 W lower (1.44 → 0.98 W), plays 0.77 W lower (1.93 → 1.16 W) and its decode increment drops
+to a third (+0.48 → +0.14/+0.15/+0.26 W)**; **Gen 2 idles 0.23 W lower, plays 0.42 W lower, ΔW −0.2 W**
+(+0.89 → +0.70). Both still report PLAYING with a live media-session clock, so nothing in the liveness
+checks flags it. Reading: without a sink the HDMI transmitter is off (≈ 0.2–0.4 W at 4K60 on both) and
+the Fire TV additionally stops most of its output pipeline. **Consequence: a headless Android STB row
+is a different regime from a screen-attached row and must not be pooled with one** — every box needs a
+sink (real input or an HDMI dummy/EDID plug) for its rows to compare with the July–September corpus.
+The first football rows (`17fd909a`, same batch) are therefore no-sink rows too. Rows now carry
+`hdmi_input` (the screen-map slot, or null = no sink) as provenance. (12) Strategic, not OWL: open-source-everything
+vs member value (Marisol/Ben, board question); new member Sky Peak Technologies (mobile traffic
+shaping); next hackathon format = one hour incl. live analysis (Simon to drive).
 
 **Risk of manual visual checks, caught live:** switching the C2's HDMI input by hand (remote OK
 button) is sometimes unresponsive on the first press; a second press can land as a play/pause toggle

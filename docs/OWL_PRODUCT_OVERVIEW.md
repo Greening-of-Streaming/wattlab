@@ -25,7 +25,7 @@ OWL exists to put **a public, repeatable, inspectable measurement bench** in the
 Three principles shape everything on the site:
 
 1. **Measure, don't model.** Every headline number traces back to a stored, timestamped measurement on named hardware.
-2. **Say what's in scope.** OWL measures the *device* doing the work. Networks, data centres, and your TV at home are explicitly out of scope — and every result says so.
+2. **Say what's in scope.** OWL measures the *device* doing the work. Networks, data centres, and your TV at home are explicitly out of scope (server-side scope; since 2026-07 the separate decode rig measures client devices — see /decode) — and every result says so.
 3. **Signal uncertainty honestly.** Every result carries a traffic-light confidence rating (🟢🟡🔴). When a measurement is too noisy to trust, OWL says so instead of publishing it anyway.
 
 ---
@@ -33,7 +33,7 @@ Three principles shape everything on the site:
 ## What can you do on OWL?
 
 ### 🎬 Take the guided tour
-A six-step walkthrough — from "what is this place?" through a live video encode, the energy budget of a stream, AI video enhancement with real before/after footage, how confidence ratings work, and finally the findings library. Visitors who want more can take an optional three-step AI detour (language models, image generation, retrieval-augmented search).
+A seven-stop walkthrough — from "what is this place?" through a live video encode, the energy budget of a stream, AI video enhancement with real before/after footage, how confidence ratings work, and finally the findings library. Visitors who want more can take an optional three-step AI detour (language models, image generation, retrieval-augmented search).
 
 ### ⚡ Watch video encoding cost real watts
 The video page runs actual encodes on the lab machine and shows the power draw as it happens — comparing codecs, software vs. hardware encoding, and quality-vs-energy trade-offs.
@@ -50,12 +50,12 @@ Local language models, image generators, and retrieval-augmented (RAG) pipelines
 ### 📚 Read the findings
 The findings library is OWL's public output: short, plainly-written results, each citing the actual stored measurement behind it and carrying its own confidence rating. Highlights so far include:
 
-- **Hardware video encoding used 2.5–4.4× less energy per minute than software encoding** on the lab machine — and the win comes from *speed*, not lower power draw.
+- **Hardware video encoding used 2.0–4.4× (published finding abr-all-codecs-meridian-120s) less energy per minute than software encoding** on the lab machine — and the win comes from *speed*, not lower power draw.
 - **AI upscaling has a "sweet spot"**: on degraded sources there's a point where extra enhancement effort stops buying visible quality but keeps costing energy.
 - **"GPU encoding gives worse quality" is only true sometimes** — the gap appears on simple, low-bitrate content and vanishes (or reverses) on complex footage.
 
 > **🔧 For the technically curious — the measurement protocol.**
-> The bench is a single well-characterised workstation (AMD Ryzen 9 7900, NVIDIA RTX 5080) metered at the wall by smart plugs polled every second — two of them, interleaved, for finer effective resolution. Before each task the system quiets background services, takes a ~10-sample idle baseline, runs the workload under a lock so nothing overlaps, then reports the *delta* above baseline as the task's energy (ΔE = ΔW × time). Video quality is scored with VMAF so energy can be traded off against measured quality, not eyeballed impressions. Every result JSON stores the raw power samples, so anyone can re-check the statistics.
+> The bench is a single well-characterised workstation (AMD Ryzen 9 7900, NVIDIA RTX 5080) metered at the wall by smart plugs polled every second — two of them, interleaved, for finer effective resolution. Before each task the system quiets background services, takes a 5-poll idle baseline (live setting), runs the workload under a lock so nothing overlaps, then reports the *delta* above baseline as the task's energy (ΔE = ΔW × time). Video quality is scored with VMAF so energy can be traded off against measured quality, not eyeballed impressions. Every result JSON stores the raw power samples, so anyone can re-check the statistics.
 
 > **🔧 For the technically curious — the confidence model.**
 > The 🟢🟡🔴 rating isn't editorial judgement. It's a statistical test: given the noise in the baseline and task power samples, how confident are we that the measured power increase is real? 🟢 means ≥95% confidence with enough samples; 🟡 is suggestive; 🔴 means "we ran it, but don't quote this number."

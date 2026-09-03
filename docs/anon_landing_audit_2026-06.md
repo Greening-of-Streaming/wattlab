@@ -1,5 +1,7 @@
 # OWL Anonymous Landing — UX Audit & Options for the Marketing Lab
 
+> **Status (2026-09-03):** Tier 0 items shipped — viewport meta in the shared chrome, "pending first run" removed, OG plumbing in `ui.py`.
+
 **Date:** 2026-06-12 · **Author:** Ben (audit run by Claude) · **For:** Veronika / Marketing Lab
 **Context:** We will point to OWL from the GoS website and talk about it on LinkedIn. Expected
 anonymous traffic: (a) GoS members who haven't signed in, (b) people interested in sustainable

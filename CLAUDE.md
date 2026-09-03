@@ -1,24 +1,16 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-09-03 (S73: Xiaomi Gen 2 revived (PSU) + Gen 3 onboarded; two-axis STB
-#   campaign at n=3; synchronised four-box playback with a per-box content clock → intra-content
-#   decode power measurable; bitrate ladder; 4K/HDR arms. See JOURNAL S73 +
-#   docs/intra_content_sync_2026-09-03.md.)
-# Previous: 2026-08-29 (S72: nine devices — Xiaomi bricked, Roku onboarded, two marker-encoder
-#   bugs fixed (HEVC coded-height padding, VP9 container mismatch), LinkedIn VP9-cheaper claim
-#   corrected with fresh Apple TV + Roku data (AV1/VP9 tie on both). See JOURNAL S72.)
-# Previous: 2026-08-28→29 (S70–S71, Tania: SMPTE encode-parity gap closure + ReadySetGo matched-
-#   content leg — consolidated 240-row dataset, caveat-9 resolved. See JOURNAL S70/S71.)
-# Previous: 2026-08-26 (S69: SMPTE-desk handoff — adb path made invocation-proof, SoC audit (GTV MT8696,
-#   Bbox Marvell Berlin), rig follows adb boxes by MAC across DHCP/interface moves, CR-075 corrected to the
-#   2017 A10X box + blocked attempt. See JOURNAL S69.)
+# Last updated: 2026-09-03 (S73: ten devices — Xiaomi Gen 2 revived + Gen 3 onboarded, Apple TV back;
+#   synchronised four-box playback with a per-box content clock; two-axis STB campaign at n=3; bitrate
+#   ladder; 4K/HDR arms; loop-validity finding; headless = no-sink regime; football sports tier.
+#   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
 
 # Public name: OWL (Online WattLab). "WattLab" is the legacy/internal/repo name.
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 22 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (1072 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - CHANGE_REQUESTS.md — 28 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - TESTING.md — pytest suite (1074 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - OWL_AUDIT.md — 2026-07-05 nine-dimension re-audit → CR-066–069 + CR-031/008 updates; disposition in AUDIT_RESPONSE.md
@@ -47,6 +39,10 @@
   quoted as GoS data; OWL = member-recruitment loss-leader, not a production tool; lightweight over ambitious.
 - Publication rule (2026-08-17): finish with a few affirmations we can stand behind (n + CI stated, operating
   point named); Tania checks before Ben posts; credit the critics.
+- Primary-data bar (WattLab call 2026-09-03): **n=3 is the minimum for anything that leaves the room**;
+  the traffic light keeps its single meaning (website / white papers / LinkedIn) — academic papers report
+  the actual statistics (r, CI, n) and never overstate; the r threshold for "primary" data is undecided
+  (Tania to advise; the same n/r bar is GoS's proposed input to the Policy Lab / IEEE methodology).
 
 ## GoS1 Server
 - CPU: AMD Ryzen 9 7900, 24 cores · RAM: 61GB · Python 3.12.3 · Node 20.x
@@ -57,9 +53,8 @@
 - Idle power: **~79 W display-blanked / ~101 W active display** since the GPU swap (+20 W vs AMD era ~57 W) —
   idle↔load crossover means the swap is a capability/quality upgrade, not a same-workload energy win.
 - Variance calibration: live values in `settings.json` (recal 2026-06-10: idle 1.84%, n=20, cooldown 50s).
-  Ambient-sensitive (2–6× swing in heat waves) — calibrate under normal ambient only. **Box moved to the
-  basement 2026-06-19 (cooler, heatwave-resilient → steadier ambient); re-confirm the idle floor there.**
-- Location: **basement since 2026-06-19** (cooler/stable; see GOS1_INFRA.md).
+  Ambient-sensitive (2–6× swing in heat waves) — calibrate under normal ambient only.
+- Location: **basement since 2026-06-19** (cooler, steadier ambient; idle floor there still to re-confirm; see GOS1_INFRA.md).
 
 ## Network Topology
 Bbox Wi-Fi 7 (192.168.1.x) ── GoS1 ethernet `.62` · MacBook Wi-Fi · Tapo P110 ×2 daisy-chained (CR-065):
@@ -136,7 +131,7 @@ Video: "Device layer only (GoS1 server). Network, CDN, and CPE excluded."
 LLM: "Device layer only (GoS1 server). Network and CPE excluded. No amortised training cost."
 
 ## Services & URLs
-wattlab (systemd, port 8000, 1 worker — restart needs the OWNER: not in Claude's sudoers) · ollama (11434).
+wattlab (systemd, port 8000, 1 worker — `sudo systemctl restart wattlab` is in Claude's sudoers since 2026-07-07; never restart mid-job) · ollama (11434).
 LAN `http://192.168.1.62:8000` · public `https://wattlab.greeningofstreaming.org` (nginx + certbot).
 Pages: `/video /llm /rag /image /demo /findings /benchmark /enhance-run /enhance-run/ladder /video/budget /decode
 /decode/batches /decode/batch/{id} /prepare-rem /settings /queue-status /methodology /carbon /privacy`.
@@ -148,54 +143,24 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 24 CRs** in CHANGE_REQUESTS.md (CR-078/079 captured 2026-08-29 — device×codec
-reliability survey incl. VP9, and an HD/4K bitrate-ladder × resolution decode-energy sweep; CR-075 closed
-2026-08-27 — Apple TV Repeatable finding, SMPTE C19; CR-077 captured same night: device-onboarding idle-settle
-tool; CR-076 captured 2026-08-26: /decode topology from settings; CR-066–069 captured 2026-07-06 from the
-OWL_AUDIT.md triage; CR-024 closed same week — PR #5 `09480ec`); closed archive in CHANGE_REQUESTS_CLOSED.md.
-CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — owner-infra remainders keep them active.
+tour/credibility → RAG). **Active: 28 CRs** in CHANGE_REQUESTS.md — newest CR-078–083 (device×codec reliability
+survey, HD/4K ladder × resolution sweep, decode-pipeline provenance survey, football sports tier + all-night
+campaign, Demo Content page, Lab-session reservations); each CR carries its own status; closed archive in
+CHANGE_REQUESTS_CLOSED.md.
 
-### Recent sessions (true one-liners — full entries in JOURNAL.md)
-- S26–S45 (05-20→06-11): credibility bundle, VMAF+CI confidence, compare trilogy, findings catalog, benchmark orchestrator, GPU swap → RTX 5080, CR-062 cooldown omnibus, Pixop /enhance-run (CR-063/064), refactor to routes_*.py + runtime.py.
-- S46–S53 (06-11→06-19): CR-065 dual P110 (ci2), P110 fw facts, upscale sweet-spot finding, anon-landing audit + TEMP mockups, GDPR analytics + /audience, HDR→4K throttle, encode-parity calibration harness + /video/budget measured.
-- S54–S57 (07-07→07-20): Guided Tour v2 (9 steps, pins = live state), VMAF v1 via quality.py, CR-070 pre-job idle guard, FR "sandwich" on /enhance-run.
-- S58–S59 (07-28→30): client decode first-class — portable decode-bench rig, `decode` result type, /decode Lab console (rig.py), protocol v3 idle guard, LEM csv export.
-- S59b–S59g (07-31→08-15, back-filled): five devices on the bench (Bbox, Fire TV, C2 native via CR-071), 66-cell campaign (F7/F9/F10/F11), C2 WoL fix, SMPTE overnight couplings (R6 3.7×/4.6×, FGS/CABAC/effort/fps), VP9 one-off + report, gpu-boost prior-art v2, attributional lens.
-- S60–S61 (08-15/16): rig hygiene (idle auto-off, ADB repair, CEC off), overnight long-window review — STB playback dies mid-window (sleep timers) → negative rows are artefacts.
-- S62–S62b (08-16): methodology v0.7 marginal vs attributional; Jan Ozer thread; first clean 5×3×3 decode campaign overnight (harness pins sleep timers, PLAYING gate, screenshots).
-- S63–S64 (08-17): campaign reviewed → finding `stb-decode-and-play-content-over-codec` (DRAFT); CR-073 campaigns = batches (+ self-service, filter/paging).
-- S65 (08-17→18): VP9 re-run — iso-bitrate sw-vs-sw encode (108 rows, n=3) + decode (30 jobs, 3 contents) → report §5; affirmations: operating point decides the dearest codec; hw decode VP9 inside ±0.1 W; sw VP9 cheapest, HEVC 2–3×; no iso-bitrate quality claim. Fire TV liveness false-negative instrumented; campaign paging bug fixed.
-- S66 (08-18→19 overnight): CR-074 network-path campaign (Pi 400 eth/wifi/local × 3 bitrates × burst/paced; STBs on current interface; origin `?pace_kbps=`), CR-075 Apple TV plan, docs sweep (JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal), pixop timeout container reap. Tests 1027.
-- S69 (08-26): handoff from the SMPTE desk — adb resolution fixed for both bench.py invocations (durable
-  r37.0.0 under /srv/data), SoC audit (GTV = MT8696 like the Fire TV; Bbox = Marvell Berlin/Arcadyan
-  HMB9213NW), `rig.py` MAC target follower (Bbox on Wi-Fi .173 vs .10 — cable still out since CR-074),
-  CR-075: box = AppleTV6,2 (2017 A10X); AirPlay play_url dead on tvOS 18 → VLC via Companion; first rows
-  (n=2, VLC): H.264≈HEVC 5.1 W, AV1/VP9 +1.35 W (+27 %) — third vendor for the penalty claim (🟡, screensaver
-  hit the baselines). Router reservations completed by Ben. Then: Apple TV on /decode (`atv` kind, pyatv) +
-  **screen map** — C2 has 4 HDMI inputs for 7 devices, assignable in /settings, claim/screen-mode refused
-  when uncabled (Pi 5, Apple TV). Tests 1044. Tail (through 08-27, journaled same session): CR-077
-  onboarding tool validated live on two more devices, CR-075 closed 🟢 Repeatable (n=3×3 contents,
-  H.264≈HEVC 4.08 W, AV1/VP9 5.27 W/+29%), tvOS 26.6 idle-floor question resolved (rested re-check
-  2.57 W matches tvOS 18 — was recurring post-boot housekeeping, not a permanent floor change).
-- S70–S71 (08-28→29, Tania): SMPTE encode-parity gap closure (consolidated 240-row dataset, bitrate-ceiling
-  extension, VMAF v0/v1 mismatch caught+fixed) + ReadySetGo matched-content leg (caveat-9 resolved —
-  format/motion-matched third content tier, not Kranjska); caught a second live-site /video/budget
-  regression, same class as the first.
-- S72 (08-29): nine devices — Xiaomi onboarded then bricked (Amlogic S905X4; replacement being sourced),
-  Roku onboarded (ECP, Dom's dormant channel resurrected, RokuDevice); switch-install re-cabling
-  (Roku→HDMI_3, Apple TV→HDMI_4, LG C2 IP fixed); two marker-encoder bugs found+fixed (HEVC coded-height
-  padding, VP9 container mismatch) unblocking VP9 screen-mode entirely; CR-078/079 captured; corrected a
-  public LinkedIn claim with fresh data — AV1/VP9 tie on both Apple TV (3.435 vs 3.495 W) and Roku
-  (0.476 vs 0.481 W), doc §6 + SMPTE-desk digests pushed. Tests 1046.
-- S73 (09-02→03): Xiaomi Gen 2 revived (PSU fault, not bricked) + Gen 3 (Amlogic s7d, Codec2)
-  onboarded; Just Player pinned 0.196; two-axis STB campaign at n=3 all 🟢 (Axis A: GTV +0.26–0.43 W
-  over Fire TV per stream on the same MT8696; Axis B: Gen 3 −0.30…−0.37 W on HEVC/AV1/VP9); **sync
-  mechanism** — looped marker-headed clip + file rendezvous + media3 content clock (`decode_sync.py`,
-  `content_profile.py`) → intra-content power real but below single-box noise at 1080p (cross-box
-  r≈0.8), resolvable single-box at 4K (SNR 2–3); texture ↑ / motion ↓ on four boxes × three regimes;
-  bitrate ladder linear 10–17 mW/Mbps; 4K costs MT8696 +0.37 W, Amlogic ~0; HEVC coded-height rule
-  generalised (`_marker_encoder`); Gen 2 AV1 = hw OMX; Fire TV foreground UI draws more than playback.
-  Tests 1072. Doc: docs/intra_content_sync_2026-09-03.md.
+### Recent sessions (one line each — full entries in JOURNAL.md, which also holds the condensed S26–S66 index)
+- S69 (08-26→27): SMPTE-desk handoff; adb path fixed; SoC audit (GTV = MT8696 like the Fire TV); MAC target follower;
+  Apple TV onboarded over pyatv (VLC via Companion) and CR-075 closed 🟢 (AV1/VP9 +29 % on A10X); screen map in /settings.
+- S70–S71 (08-28→29, Tania): SMPTE encode-parity gap closure (240-row dataset, VMAF v0/v1 mismatch fixed) + ReadySetGo leg.
+- S72 (08-29): Roku onboarded (ECP, Dom's channel); switch-install re-cabling; two marker-encoder bugs fixed (HEVC coded
+  height, VP9 container); LinkedIn VP9 claim corrected (AV1/VP9 tie on Apple TV and Roku).
+- S73 (09-02→03): Xiaomi Gen 2 revived (PSU fault) + Gen 3 onboarded, Just Player pinned 0.196; two-axis STB campaign
+  at n=3 (Axis A: GTV +0.26–0.43 W over Fire TV on the same MT8696; Axis B: Gen 3 −0.30…−0.37 W on HEVC/AV1/VP9);
+  **sync mechanism** (looped marker clip + file rendezvous + media3 content clock → intra-content power: cross-box
+  r≈0.8 at 1080p, single-box SNR 2–3 at 4K; texture ↑ / motion ↓); ladder linear 11–17 mW/Mbps (n=3); 4K costs MT8696
+  +0.37 W, Amlogic ~0; loop-validity finding (multi-minute loops neutral, 30 s loops cost Gen 3 +0.10 W); **headless
+  STB rows are a no-sink regime** (Fire TV −0.77 W playback) → dummy plugs ordered; Apple TV back on Lab-F6/HDMI_2;
+  football sports family built (`prep_family.py`); CR-080–083; WattLab call outcomes (n=3 bar). Tests 1074.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -212,25 +177,22 @@ CR-066/067/068 app-side portions shipped this week (PRs #2/#3/#4, merged) — ow
 - **Rig harness open items** (S65/S66): Fire TV `alive_at_window_end` false negative (instrumented via
   `playback_state_at_end`, root cause open) · Fire TV loses ADB authorisation after a mains power cycle (on-site
   accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard ·
-  Bbox Ethernet cable back in since 2026-08-26 evening (both its addresses reserved; MAC follower covers either) ·
-  Apple TV: never headless (1.6 W "Playing" ≠ decode; hot-plug pauses VLC) — display attached + screensaver off
-  before rows; `display_attached` flag for atv runs still to add (CR-075). **S72 additions:** Xiaomi TV Box
-  "bricked" 2026-08-29 turned out to be a PSU fault — revived S73 on a new supply, unparked (Lab-F3,
-  HDMI_2 via `rig_hdmi_inputs`), Gen 3 added as `xiaomi3` (Lab-F4, HDMI_4); Apple TV `parked`
-  (no plug) · Roku's `idle_w`/`expected_boot_s`/`startup_skip_s` are still unmeasured
-  guesses pending an `onboard_device.py` run (playback mechanism itself is validated, CR-077) · Fire TV and
-  Xiaomi both now have zero HDMI cable (not just unclaimed) — a live no-HDMI-sink smoke test is still owed
-  before trusting either box's headless rows.
+  Apple TV: never headless (VLC pauses on HDMI loss) — needs its HDMI_2 slot for every row · Roku's
+  `idle_w`/`expected_boot_s`/`startup_skip_s` are still unmeasured guesses pending an `onboard_device.py` run ·
+  **headless STB rows are a no-sink regime** (S73: Fire TV −0.77 W playback, Gen 2 −0.42 W; rows carry
+  `hdmi_input`, null = no sink) — Fire TV, Gen 2 and Bbox pool with the screened corpus only once the HDMI dummy
+  plugs (ordered 2026-09-03) are fitted and verified · the shared VMAF scorer mis-pairs WebM frames by timestamp
+  (S65 trap; `prep_family.py` works around it, `quality.compute_vmaf` does not).
 
 ## Key Findings to Date
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real
-stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs (13):
+stored result). Don't restate findings as prose here — prose drifts (see memory). Current slugs (14):
 `abr-all-codecs-meridian-120s` · `av1-hw-sw-vmaf-tradeoff` ⭐ · `input-master-sensitivity` ·
 `llm-cold-inference-mwh-per-token` 🟡 · `rag-faithfulness-rem-question` 🟡 · `sd-turbo-cpu-image-first-run` ·
 `upscale-sweetspot-degraded-sources` · `gpu-boost-overclocks-fixed-function-nvenc` (v2, prior-art positioned) ·
 `hw-decoder-cuts-client-energy-4x` (3.7× rt / 4.6× sat, lab-reviewed) · `codec-decode-energy-depends-on-silicon-and-regime` 🟡 ·
 `streaming-box-plays-4-7x-cheaper-than-general-purpose` · `stb-decode-and-play-content-over-codec` (DRAFT) ·
-`appletv-a10x-av1-vp9-software-fallback` 🟢.
+`appletv-a10x-av1-vp9-software-fallback` 🟢 · `looped-excerpt-measures-as-continuous` (DRAFT).
 Not catalogued (live on `/methodology`): French grid evolution (Eco2mix lifecycle series); CR-016 insight —
 Eco2mix `taux_co2` is combustion-only, never compare it to lifecycle means. VP9 stays a report
 (`docs/vp9_oneoff_2026-08.md`) until the discussion settles.

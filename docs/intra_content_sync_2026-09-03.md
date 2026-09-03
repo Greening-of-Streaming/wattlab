@@ -416,32 +416,37 @@ box (edge +0.47, motion −0.60 standardised, R² 0.43); the bin-profile
 correlation between its 1080p and 4K runs is weak-positive (r=+0.35, t=1.8,
 24 shared bins — 2 min of content is thin).
 
-## 5f. Bitrate ladder — four boxes, 0.25 → 32 Mbps, H.264 1080p60 (batch `bae281b52f90`, n=2)
+## 5f. Bitrate ladder — four boxes, 0.25 → 32 Mbps, H.264 1080p60 (batch `bae281b52f90`, n=3)
 
 Owner's ask: "short runs on all 4 boxes simultaneously starting very low
 bitrate, stepping up to very high". Seven NVENC CBR rungs of the same BBB
 2-min clip (250 k, 500 k, 1.5 M, 4 M, 8 M, 16 M, 32 Mbps), 90 s windows, all
 four boxes rendezvous-started on each rung, two full passes (jobs `acb6fefc`,
-`bf22114b`, 11:00–11:29). 56/56 rows, every box `alive_at_window_end`.
+`bf22114b`, 11:00–11:29; third pass `b6e748a9` at 13:20 after the WattLab call, when
+Arian pointed out n=2 was below the bar). 84/84 rows; one row not alive at
+window end (pass 3, Fire TV 0.25 Mbps: PAUSED on the last two clock polls,
+after the sampled window, reading 0.15 W below the other two passes — kept,
+it widens that cell's CI to ±0.22).
 
-**Absolute draw during playback (W, mean of the two passes):**
+**Absolute draw during playback (W, mean of the three passes):**
 
 | Mbps | Fire TV | GTV | Gen 2 | Gen 3 |
 |---|---|---|---|---|
-| 0.25 | 1.801 | 1.705 | 2.767 | 2.502 |
-| 0.5 | 1.784 | 1.723 | 2.724 | 2.490 |
-| 1.5 | 1.811 | 1.780 | 2.750 | 2.512 |
-| 4 | 1.865 | 1.819 | 2.830 | 2.534 |
-| 8 | 1.916 | 1.878 | 2.926 | 2.757 |
-| 16 | 1.993 | 1.996 | 3.051 | 2.779 |
-| 32 | 2.109 | 2.127 | 3.279 ⚠ | 2.892 |
-| **slope, mW per Mbps (95 % CI over the 7 rungs)** | **10.0 ±2.3** | **12.9 ±3.4** | **17.1 ±2.8** | **13.1 ±6.5** |
+| 0.25 | 1.750 | 1.693 | 2.734 | 2.495 |
+| 0.5 | 1.752 | 1.728 | 2.705 | 2.485 |
+| 1.5 | 1.795 | 1.771 | 2.751 | 2.506 |
+| 4 | 1.828 | 1.816 | 2.828 | 2.524 |
+| 8 | 1.883 | 1.876 | 2.910 | 2.740 |
+| 16 | 1.977 | 1.997 | 3.052 | 2.768 |
+| 32 | 2.101 | 2.132 | 3.261 ⚠ | 2.880 |
+| **slope, mW per Mbps (95 % CI over the 7 rungs)** | **11.0 ±2.3** | **13.2 ±3.5** | **17.2 ±3.1** | **13.0 ±6.2** |
 | r (linear in Mbps) | 0.98 | 0.97 | 0.99 | 0.92 |
-| 0.25 → 32 Mbps | +17 % | +25 % | +18 % | +16 % |
+| 0.25 → 32 Mbps | +20 % | +26 % | +19 % | +15 % |
 
-Pass-to-pass agreement is 0.01–0.07 W per rung on every box (the per-rung
-n=2 CIs are t-based and wide by construction; the slope over seven rungs is
-the statistic that carries).
+Pass-to-pass agreement is within 0.1 W per rung on every box except the Fire
+TV's lowest rung (above); the per-rung n=3 CIs are 0.01–0.17 W; the slope over
+seven rungs is the statistic that carries, and it moved by < 0.2 mW/Mbps
+between n=2 and n=3.
 
 What it says, stated carefully:
 
@@ -450,20 +455,20 @@ What it says, stated carefully:
   within 0.03 W, and every doubling above 4 Mbps costs about the same
   increment. This is the bits axis the near-CBR sync corpus could not test
   (§3b) — with the bitrate actually varied, its coefficient is clean.
-- **The whole 128× bitrate span moves playback draw by 16–25 %.** The
+- **The whole 128× bitrate span moves playback draw by 15–26 %.** The
   operating point (which box, which idle floor) still dominates; the bitstream
   is a second-order lever on the client — consistent with the SMPTE "content
   over codec" and iso-bitrate findings.
-- **Same silicon, different slope:** the Fire TV pays 10.0 ±2.3 mW/Mbps, the
-  GTV 12.9 ±3.4 on the same MT8696 — CIs overlap, so 🟡; but the GTV ends the
-  ladder at the Fire TV's level (2.13 vs 2.11 W) after starting 0.10 W below it.
-- **Gen 2 flexes most** (17.1 ±2.8 mW/Mbps vs Gen 3's 13.1 ±6.5) — the older
+- **Same silicon, different slope:** the Fire TV pays 11.0 ±2.3 mW/Mbps, the
+  GTV 13.2 ±3.5 on the same MT8696 — CIs overlap, so 🟡; but the GTV ends the
+  ladder at the Fire TV's level (2.13 vs 2.10 W) after starting 0.06 W below it.
+- **Gen 2 flexes most** (17.2 ±3.1 mW/Mbps vs Gen 3's 13.0 ±6.2) — the older
   S905X4/OMX path spends more per delivered bit; Gen 3's wide CI comes from its
   8 Mbps rung (2.72 vs 2.79 across passes) and its own slope is not separable
   from the MT8696 boxes.
 - **32 Mbps over Wi-Fi is where delivery starts to bite:** Gen 2 shows only
-  85–90 % PLAYING on that rung (⚠, its 3.28 W is stall-contaminated — stalls
-  raise, not lower, its draw), GTV and Gen 3 94–100 %, the Fire TV 99 %. So the
+  85–92 % PLAYING on that rung (⚠, its 3.26 W is stall-contaminated — stalls
+  raise, not lower, its draw), GTV and Gen 3 94–100 %, the Fire TV 95–99 %. So the
   Fire TV *does* sustain 32 Mbps 1080p on this Wi-Fi — which means its 4K stall
   in §5c at ≥ 20 Mbps was not raw Wi-Fi throughput; it is specific to the 4K60
   AVC path.
@@ -546,6 +551,47 @@ the same pictures at more bits cost more. Bits are not the cost driver; what
 the bits encode is. Texture positive, motion negative is now the same answer
 on three codec/resolution regimes and four boxes.
 
+## 5h. Loop validity — does a looped excerpt measure as the continuous original? (batch `22bb632c434f`, n=3)
+
+Every loop family on the rig is a concat of one 2-min excerpt (`bbb_h264_20min`
+= ×10, `_60min` = ×30), so this assumption sits under every long-window row.
+The owner asked for the test after the WattLab call; Tania's caveat was that
+*short* loops add artificial cuts. One NVENC encode of 600 s of BBB (1080p60
+CBR 8 Mbps, the corpus recipe, keyframes forced every 30 s so stream-copy cuts
+are exact), three arms of identical length in one job per box, all four boxes
+rendezvous-started, three passes (jobs `7e3b31a9`, `40259132`, `52f9cf24`,
+13:40–18:35 with the boxes' boots in between): **A** the continuous 600 s ·
+**B** its 120–240 s excerpt ×5 · **C** its 120–150 s excerpt ×20. Video-only,
+headless, 600 s windows; means below are over PLAYING-only samples (the clip
+ends with the window, so the last ~12 of 600 samples per row sit after EOF and
+are excluded — identically for all three arms).
+
+| box | A continuous, W (n=3) | B − A, 120 s ×5 | C − A, 30 s ×20 |
+|---|---|---|---|
+| Fire TV Stick 4K | 1.867 ±0.022 | +0.007 ±0.029 | +0.026 ±0.050 |
+| Google TV Streamer | 1.944 ±0.036 | −0.003 ±0.024 | **+0.012 ±0.009** |
+| Xiaomi Gen 2 | 2.954 ±0.058 | +0.006 ±0.042 | +0.008 ±0.028 |
+| Xiaomi Gen 3 | 2.682 ±0.025 | +0.019 ±0.237 | **+0.101 ±0.027** |
+
+(paired within pass, 95 % CI, t with n=3; every one of the 36 rows 🟢)
+
+- **A multi-minute loop is measurement-neutral.** The 120 s ×5 arm sits within
+  0.02 W of the continuous original on all four boxes, CIs straddling zero,
+  and the bound the data supports is ±0.03–0.04 W (< 2 %) on the three boxes
+  with tight CIs. Gen 3's CI is wide (±0.24) because its two-state behaviour
+  (§5g) put one pass 0.09 W low and two 0.06–0.09 W high — inconclusive on that
+  box at n=3, not a loop effect.
+- **A 30 s loop is not free everywhere.** It costs the Streamer +0.012 W (CI
+  clear, +0.6 %) and Gen 3 **+0.10 W (+3.8 %, all three passes +0.095 to
+  +0.114)**; the Stick and Gen 2 show +0.01–0.03 W inside their CIs. One cut
+  every 30 s (a keyframe-aligned discontinuity, no decoder reset) is enough for
+  the Amlogic s7d box to pay for it — Tania's caveat, measured.
+- **Consequence for CR-081:** the ReadySetGo source on GoS1 is a **5 s** UVG
+  sequence (600 frames at 120 fps, on disk as seven repeats = 35 s); the rig's
+  150 s and 20-min protocols would cut every 5 s, six times as often as arm C,
+  with a per-box cost the other tiers don't carry. A longer source is needed before it becomes the sports
+  tier; a 30 s-looped tier would have to be caveated per device.
+
 ## 6. Overnight queue
 
 n=3 top-up on both axes (4-wide parallel, all Wi-Fi, standard 150 s protocol so
@@ -575,6 +621,10 @@ the first when its Ethernet was pulled), HEVC, 4K, HDR.
 > **12:30: all queued arms done.** Gen 2's AV1 path resolved as hardware
 > (§4a addendum), TV switched off, provenance gap on long rows fixed in
 > `bench.py`, 1072 tests green, everything still uncommitted.
+> **18:40:** third ladder pass in (n=3, §5f) and the loop-validity job
+> analysed (§5h): multi-minute loops are neutral, 30 s loops cost Gen 3
+> +0.10 W. The panel had woken itself again (Active on HDMI_3, the Fire TV's
+> input, during headless jobs) — switched off a third time; see JOURNAL.
 
 **Ran and analysed:** the n=3 top-up (both axes, all 🟢), H.264 sync ×2 (four
 boxes, test–retest), HEVC sync (failed — diagnosed, §5b), 4K H.264 (GTV only,
