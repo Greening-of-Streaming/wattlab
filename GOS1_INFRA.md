@@ -1,5 +1,6 @@
 # GoS1 Infrastructure & Backup Context
 # Companion to CLAUDE.md (which covers WattLab project specifics)
+# ⚠ Rebuilding from nothing? Read GOS1_DISASTER_RECOVERY.md first — what the backup does and does NOT cover.
 # Last updated: 2026-08-19 (disk inventory refreshed; decode-rig plugs + open infra chores added — see the two
 #   sections at the end). Previous: 2026-06-26 (two infra facts logged in "External Access Incidents & DNS": GoS1 now has a
 #   FIXED public IP — free "IP fixe" opt-in on the Bouygues portal after a WiFi 7 Bbox firmware upgrade
@@ -126,6 +127,7 @@ Bbox (192.168.1.254, IGMP querier)
 - **Ops note for re-finding the switches:** NSDP auto-discovery (UDP 63322) is **dead from GoS1** because `ufw` is active and drops the unicast reply to the broadcast probe. Discover instead by ARP OUI **`28:94:01`** (`ip neigh show dev eno2 | grep 28:94:01`) + web-UI fingerprint (`<title>Redirect to Login</title>`, `index.cgi`).
 
 ## Nextcloud Backup (Hetzner Storage Share)
+*Restore procedure and the full not-backed-up inventory: `GOS1_DISASTER_RECOVERY.md` (in git and on Nextcloud).*
 - **URL:** https://nx92576.your-storageshare.de
 - **Plan:** NX11 base (possibly upgraded to 1 TB — verify at accounts.hetzner.com)
 - **Username:** ben.flute@proton.me

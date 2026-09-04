@@ -13,6 +13,7 @@
 #   - CHANGE_REQUESTS.md — 28 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
 #   - TESTING.md — pytest suite (1107 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
+#   - GOS1_DISASTER_RECOVERY.md — rebuild-from-nothing: what is backed up, what is NOT (secrets, SSH keys, REM glue docs)
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - OWL_AUDIT.md — 2026-07-05 nine-dimension re-audit → CR-066–069 + CR-031/008 updates; disposition in AUDIT_RESPONSE.md
 #   - docs/wattlab_traffic_light_confidence.md (Tania §9 spec) · docs/wattlab_parameters_audit.md (param taxonomy)
