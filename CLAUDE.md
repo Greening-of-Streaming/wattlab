@@ -161,6 +161,11 @@ CHANGE_REQUESTS_CLOSED.md.
   +0.37 W, Amlogic ~0; loop-validity finding (multi-minute loops neutral, 30 s loops cost Gen 3 +0.10 W); **headless
   STB rows are a no-sink regime** (Fire TV −0.77 W playback) → dummy plugs ordered; Apple TV back on Lab-F6/HDMI_2;
   football sports family built (`prep_family.py`); CR-080–083; WattLab call outcomes (n=3 bar). Tests 1074.
+  **Overnight 09-03→04 (CR-081 delivered):** football through the encode-parity sweep (84 + 18 ceiling-ext + 3 recheck
+  rows, VMAF v0 rescore, versioned consolidated CSV — Tania's untouched) and the decode rig (rt ×3 + iso loops ×3, ten
+  devices, 214 rows): football needs ~2× ReadySetGo's bits at VMAF 92 while NVENC's Wh/min doesn't move; the GTV plays it at
+  BBB's watts; Gen 3's modern-codec edge narrows on sport. Panel auto-off (~4 h) paused the Apple TV once — standing
+  hazard. `docs/football_sports_tier_2026-09-04.md`.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
@@ -174,6 +179,8 @@ CHANGE_REQUESTS_CLOSED.md.
 - **2026-07 audit doc-debt residue** (after the 2026-08-19 sweep): VERSION/tag reconciliation (`v1.0.0` tag is
   150+ commits stale; `VERSION` frozen at 1.0.0) · back-fill the 28 closed-CR entries missing closing-commit hashes ·
   ARCHITECTURE.md is refreshed but its per-module line counts will drift again — regenerate, don't hand-edit.
+- **C2 panel auto-off (~4 h after the last remote/SSAP input) kills overnight Apple TV / C2 rows** (09-04 03:54):
+  disable it on the C2 (General › Power › Auto Power Off) or keep-alive from the rig before the next overnight.
 - **Rig harness open items** (S65/S66): Fire TV `alive_at_window_end` false negative (instrumented via
   `playback_state_at_end`, root cause open) · Fire TV loses ADB authorisation after a mains power cycle (on-site
   accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard ·

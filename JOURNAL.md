@@ -235,7 +235,58 @@ the Fire TV additionally stops most of its output pipeline. **Consequence: a hea
 is a different regime from a screen-attached row and must not be pooled with one** — every box needs a
 sink (real input or an HDMI dummy/EDID plug) for its rows to compare with the July–September corpus.
 The first football rows (`17fd909a`, same batch) are therefore no-sink rows too. Rows now carry
-`hdmi_input` (the screen-map slot, or null = no sink) as provenance. (12) Strategic, not OWL: open-source-everything
+`hdmi_input` (the screen-map slot, or null = no sink) as provenance. (12) **All-nighter launched 22:58 (owner: "go, you have until 10 am — run the content through the encode
+benchmarks and decode").** One orchestrator process (`scratchpad/allnighter.sh`, state file, never edited
+live — the phase-2 lesson): **phase E** = the football encode sweep on GoS1, `docs/smpte_2026/
+run_football_clip_sweep.py` (a constants-only clone of Tania's ReadySetGo sweep: 84 rows, frozen BBB/
+Meridian ladder, S53 protocol, source `test_content/football_35s.mp4` = 50–85 s of the 4K60 demo as H.264
+High ~40 Mbps limited-range bt709; artifact to `results/calibration/_staging/`, folding into the
+consolidated dataset is Tania's call) — runs first because the parity harness needs the box idle and
+the rig's origin traffic off; **phase D** = the decode campaign queued behind it: `football_codecs_rt`
+×3 (batch FOOTBALL_RT) and `loop_footballiso_{h264,h265,av1,vp9}` ×3 at 1080 s windows (batch
+FOOTBALL_ISO), all ten devices in parallel, Apple TV on HDMI_2, Fire TV/Gen 2/Bbox as no-sink rows
+(tagged `hdmi_input: null`). Expected: encode ≈ 75 min, decode ≈ 4.5 h → done ≈ 05:30. (13) **00:15 — encode sweep done: 84/84 🟢, no errors, 71 min** (`results/calibration/_staging/
+encode_parity_football_2026-09-03.json`). First read (VMAF v1, 1080p, 30 s): H.264 needs ~11 Mbps for
+VMAF 92.7 on CPU/x264 and NVENC-baseline alike, HEVC ~8.5 Mbps, AV1 ~7.5 Mbps — real 60p sport sits
+well above BBB's points at the same quality; Wh/min: CPU x264 0.34–0.45, x265 0.67–1.10, SVT-AV1
+0.37–0.43; NVENC baseline 0.12–0.14 for all three, tuned 0.22–0.37. **One suspicious row:** h264
+gpu_tuned 13000k ΔW 32.5 W / 0.147 Wh/min vs 49–52 W / 0.22 on both neighbours — flagged 🟢 by the
+harness, so it is a baseline/window artefact or a real dip; a three-row recheck (11/13/15 Mbps, same
+profile, separate artifact `run_football_recheck.py`) is scheduled for after the decode campaign.
+The decode API caps the queue at 8 (`MAX_QUEUE_DEPTH`, 429 beyond): 8 of the 15 decode jobs queued at
+00:15, the rest are topped up by `topup_queue.py` as slots free. Post-sweep pipeline (SI/TI, v0 rescore,
+finalize, iso table, versioned consolidated CSV) running on GoS1's CPU alongside the decode rows.
+(14) **00:48 — encode side complete:** v0.6.1 rescore 84/84, `_final.json`, `football_iso_vmaf_table.csv`,
+and `consolidated_encode_dataset_2026-09-04.csv` (= Tania's 569 rows + 129 football rows, her file untouched;
+addendum in `consolidated_encode_dataset.md`). SI ~48.3 / TI ~10.3 (vs ReadySetGo 38.5/40.4): high
+detail, moderate motion. **Iso-quality reading (VMAF v0.6.1 = 92):** football needs **~10.5 Mbps H.264
+on x264 and ~11.8 on NVENC-baseline** — double ReadySetGo (5.7/5.8) and BBB (5.7/6.8), ~3.5× Meridian —
+and on the frozen ladder AV1 tops out at 91.6 (7.5 Mbps) and HEVC-GPU at 91.4 (10 Mbps), so VMAF 92 is
+unreachable in 5 of 9 cells. Per Tania's rule (extend upward only after scoring the real VMAF, additively,
+separate artifact) a ceiling-extension sweep (AV1 9/11/13 Mbps, HEVC 12/14/16 Mbps, all three profiles,
+18 rows) is chained after the decode campaign together with the h264 gpu_tuned 13000k recheck; a merge
+script folds it in as `football_bitrate_ceiling_ext_2026-09-04` and regenerates the iso table.
+(15) **05:15 — the night's results are in** (full write-up `docs/football_sports_tier_2026-09-04.md`).
+Decode: 15 jobs, 210 rows on ten devices (rt batch `9b738de1ca2a`, iso batch `ca78c5c05464`), all
+alive except one cell — **the C2 panel dropped to standby at ≈ 03:54 (LG auto-off, ~4 h after the last
+remote/SSAP input), pausing the Apple TV's VLC at 720 s and losing the C2's HEVC rep-2 row** (SSAP 1008
+at window end); both re-run at 05:15 with the panel woken, plus one extra Apple TV H.264 rep (one 🔴 rep
+from an elevated tvOS baseline). Readings: the GTV plays football at the same watts as BBB (−0.04…−0.07 W,
+matched VMAF, 9.2 vs 8 Mbps) — the harder content costs it nothing; Gen 3 pays +0.30 W on AV1 and +0.16 W
+on HEVC over BBB, so its modern-codec advantage narrows on sport; the Fire TV's football rows sit exactly
+0.77 W under its screened BBB rows = the no-sink control reproduced; Apple TV software AV1/VP9 +1.3–2.2 W
+over its hardware pair; Pis: HEVC dearest (+2.7 W), VP9 ≈ H.264; Roku all-hardware 0.36–0.50 W. Encode:
+recheck cleared the 13 Mbps outlier (48.5 W vs 32.5); ceiling extension (18 rows) makes VMAF 92 reachable
+in all 9 cells — **football needs ~2× ReadySetGo's and 2–5× Meridian's bits at VMAF 92 while the GPU's
+Wh/min stays at 0.13–0.14 on every content**; merged artifact 102 rows, iso table regenerated, versioned
+consolidated CSV 719 rows (Tania's untouched). Panel auto-off is a standing overnight hazard → disable
+on the C2 or keep-alive from the rig. (16) **05:51 — night closed.** Re-runs: Apple TV HEVC alive to the end at 5.64 W on a 5.20 W tvOS baseline
+(ΔW unusable, W fine), C2 HEVC completed (cell n=3 again), one extra Apple TV H.264 rep (5.68 W, +2.42 W).
+Final decode count 214 rows across 17 jobs. Panel switched off 05:52; rig idle. Handoff artefacts:
+`docs/football_sports_tier_2026-09-04.md`, journal, CR-081 status, the readout page (football section),
+CLAUDE.md LIVE block removed. Open for the owner: fit the HDMI dummy plugs and re-run one football rt pass on
+Fire TV / Gen 2 / Bbox; disable the C2's auto-off before the next overnight; Tania to accept (or not) the
+versioned consolidated CSV and review the loop-validity finding. (17) Strategic, not OWL: open-source-everything
 vs member value (Marisol/Ben, board question); new member Sky Peak Technologies (mobile traffic
 shaping); next hackathon format = one hour incl. live analysis (Simon to drive).
 

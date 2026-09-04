@@ -1110,7 +1110,7 @@ only.
 
 ## CR-081 · ReadySetGo as the decode rig's sports tier — source, encodes, templates, one all-night campaign
 
-**Status:** captured 2026-09-03 (owner: "evaluate the work, schedule an all-nighter"). **Loop-validity
+**Status:** **DELIVERED 2026-09-04** — the all-nighter ran (encode sweep + extension + recheck; decode rt ×3 and iso loops ×3 on all ten devices; `docs/football_sports_tier_2026-09-04.md`). Remaining: HDMI dummy plugs for the three no-sink boxes, then one football rt pass on them to pool; the readout page section. Captured 2026-09-03 (owner: "evaluate the work, schedule an all-nighter"). **Loop-validity
 result in the same evening (doc §5h): multi-minute loops are neutral, but a 30 s loop costs the
 Google TV +0.012 W and Xiaomi Gen 3 +0.10 W (+3.8 %) — so the 5 s ReadySetGo on GoS1 is a NO-GO
 as the sports tier by looping alone.** **Source, third attempt the same evening — settled:** (1) CableLabs "Moment of Intensity"
@@ -1154,7 +1154,8 @@ device × codec matrix on it at n=3 in one night.
    x265 94.0, SVT-AV1 94.3, VP9 94.0 (re-scored; the shared scorer's WebM timebase trap read 80.4).
 3. **Templates**: `football` in `LOOP_FAMILIES`, `footballiso` in `ISO_FAMILIES`, `football_codecs_rt` —
    DONE (tests in). Kranjska families stay for the pooled rows already on them (do not delete streams).
-4. **The all-nighter — next step, needs the owner's go and the re-cabled rig** (≈ 6 h of rig time, boxes in
+4. **The all-nighter — LAUNCHED 2026-09-03 22:58** (encode sweep first, then rt ×3 + iso loops ×3 at
+   1080 s on all ten devices; results in JOURNAL S73/S74). Original plan: (≈ 6 h of rig time, boxes in
    parallel; the four HDMI boxes on their inputs, Apple TV on HDMI_2 for every row; **Fire TV, Gen 2 and
    Bbox are no-sink rows until the HDMI dummy plugs ordered 2026-09-03 are fitted** — run them anyway and
    tag, or wait for the plugs, owner's call):

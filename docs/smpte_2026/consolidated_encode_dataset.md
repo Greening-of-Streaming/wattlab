@@ -355,3 +355,38 @@ signal, not confounded by format differences the way Kranjska's comparisons are.
   `results/calibration/_staging/encode_parity_readysetgo_2026-08-28.json` (raw, v1-scored) →
   `..._final.json` (v0.6.1-rescored, the one the CSV rows above cite). **Both in
   `_staging/`, not `results/calibration/` directly** — see the regression note above.
+
+---
+
+## Addendum 2026-09-04 — the football sports tier (versioned copy, Tania's file untouched)
+
+*Added by Ben's overnight session 2026-09-03/04 (CR-081). Nothing above was edited; the rows live in a
+**new versioned file**, `consolidated_encode_dataset_2026-09-04.csv` = this file's 569 rows + 129 football
+rows. Adopting it as the canonical file is Tania's call.*
+
+Three new `dataset` values, mirroring the ReadySetGo ones:
+
+| `dataset` value | Rows | Source |
+|---|---|---|
+| `football_iso_bitrate_sweep_2026-09-03` | 60 | `results/calibration/_staging/encode_parity_football_2026-09-03_final.json` |
+| `football_abr_ladder_typical_2026-09-03` | 24 | same |
+| `football_iso_quality_interpolated_2026-09-03` | 45 | `docs/smpte_2026/football_iso_vmaf_table.csv` |
+
+**Clip:** `football_30s` — Panasonic's "Barcelona Football" 4K demo as re-uploaded to YouTube
+(3840×2160@60 SDR AV1 as served), 50–85 s excerpt re-wrapped as 4K60 H.264 High ~40 Mbps limited-range
+bt709 (`test_content/football_35s.mp4`; `ensure_clip()` trims the 30 s window). **Lab-internal only:**
+© Panasonic, third-party upload, no citable licence — the measurements are usable, the pictures are
+never shown or redistributed outside the lab (owner's decision 2026-09-03). Broadcast-style coverage
+(long-lens follow pans, cuts); SI ~48.3 / TI ~10.3 (ffmpeg `siti` on the 1080p 30 s trim) — much higher
+spatial detail than ReadySetGo (SI ~38.5) at a fraction of its temporal activity (TI ~40.4).
+
+**Protocol:** identical to the ReadySetGo leg — `run_football_clip_sweep.py` is a constants-only clone of
+`run_sport_clip_sweep.py` (84 rows, frozen BBB/Meridian ladder, 30 s, 5-poll baseline, 10 s cooldown,
+S53 harness — so it carries the same three integrity gaps `CLEAN_SWEEP.md` documents), ran 22:58–00:09,
+all 84 rows 🟢. Scored live under VMAF v1, then rescored under v0.6.1 (`bin/rescore-football-v0.py`,
+`finalize_football_v0.py`) so `vmaf` matches the dataset convention; v1 kept as `vmaf_v1_bonus`.
+
+**One row flagged for a recheck:** `h264 / gpu_tuned / 13000k` measured ΔW 32.5 W / 0.147 Wh/min against
+49–52 W / 0.22 on both neighbours (still 🟢 by the harness's own test). A separate three-row re-measure
+(`run_football_recheck.py` → `encode_parity_football_recheck_<date>.json`) runs after the decode
+campaign; the main artifact is left as measured.
