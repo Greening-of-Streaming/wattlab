@@ -24,6 +24,7 @@ from dotenv import dotenv_values
 import analytics
 import audience
 import carbon
+import lab_reservations   # CR-083 — reserve a Lab session in advance (courtesy calendar)
 import queue_control
 import rag as rag_module
 import rig
@@ -184,6 +185,7 @@ async def startup():
     asyncio.create_task(runtime.power_poller())
     asyncio.create_task(runtime.sensors_poller())
     asyncio.create_task(rig.rig_poller())
+    asyncio.create_task(lab_reservations.ticker())   # CR-083 — due slots raise/lower the flag
     try:
         import origin_control
         print(await asyncio.get_event_loop().run_in_executor(
@@ -481,29 +483,131 @@ async def lab_session_toggle(on: str = Form(...)):
         queue_control.LAB_SESSION_FLAG.touch()
     else:
         queue_control.LAB_SESSION_FLAG.unlink(missing_ok=True)
+    # CR-083: ending by hand finishes the active reservation (it never
+    # re-raises); starting by hand ahead of a due slot just means the slot
+    # runs as a courtesy entry. Tick now so the redirect shows the outcome.
+    lab_reservations.tick()
     return RedirectResponse("/queue-status", status_code=303)
 
 
-def _lab_session_toggle_html(request: Request) -> str:
-    """Lab-only control block on /queue-status; others see nothing."""
+# --- CR-083 — reserve a Lab session in advance (courtesy calendar) ----------
+# Same capability as the toggle: a reservation raises the same flag, just
+# later. Policy stays in capabilities.py; these routes only shape the data.
+# Form posts redirect back to /queue-status; a refusal (overlap, bad input)
+# travels as ?note=… and is rendered inside the Lab block, never as a raw 4xx.
+
+def _queue_status_note(msg: str) -> RedirectResponse:
+    from urllib.parse import quote
+    return RedirectResponse("/queue-status?note=" + quote(msg, safe=""),
+                            status_code=303)
+
+
+@app.post("/lab-session/reserve",
+          dependencies=[Depends(requires(LAB_SESSION_TOGGLE))])
+async def lab_session_reserve(start: str = Form(...),
+                              duration_min: str = Form(...),
+                              comment: str = Form("")):
+    try:
+        lab_reservations.add(start, duration_min, comment)
+    except lab_reservations.ReservationError as ex:
+        return _queue_status_note(str(ex))
+    lab_reservations.tick()          # a slot starting "now" activates at once
+    return RedirectResponse("/queue-status", status_code=303)
+
+
+@app.post("/lab-session/reservation/{rid}/delete",
+          dependencies=[Depends(requires(LAB_SESSION_TOGGLE))])
+async def lab_session_reservation_delete(rid: str):
+    if not lab_reservations.remove(rid):
+        return _queue_status_note("That reservation is already gone.")
+    return RedirectResponse("/queue-status", status_code=303)
+
+
+@app.post("/lab-session/reservation/{rid}/extend",
+          dependencies=[Depends(requires(LAB_SESSION_TOGGLE))])
+async def lab_session_reservation_extend(rid: str, minutes: str = Form("30")):
+    try:
+        lab_reservations.extend(rid, minutes)
+    except lab_reservations.ReservationError as ex:
+        return _queue_status_note(str(ex))
+    return RedirectResponse("/queue-status", status_code=303)
+
+
+@app.get("/lab-session/reservations.json",
+         dependencies=[Depends(requires(LAB_SESSION_TOGGLE))])
+async def lab_session_reservations_json():
+    """Lab-only: the calendar as the /queue-status and /decode pages poll it.
+    Ticks first so a slot that just came due is already reflected."""
+    lab_reservations.tick()
+    return lab_reservations.snapshot()
+
+
+_LAB_BTN = ('style="background:none;border:1px solid var(--border-3);'
+            'color:var(--text-2);font-family:monospace;font-size:0.78rem;'
+            'padding:0.25rem 0.7rem;border-radius:4px;cursor:pointer"')
+_LAB_INPUT_CSS = ('background:var(--bg);border:1px solid var(--border-3);'
+                  'color:var(--text);font-family:monospace;font-size:0.78rem;'
+                  'padding:0.2rem 0.4rem;border-radius:4px')
+
+
+def _lab_session_toggle_html(request: Request, note: str = "") -> str:
+    """Lab-only control block on /queue-status; others see nothing.
+
+    Row 1 — the immediate toggle, exactly as before (CR-083 keeps it).
+    Row 2 — reserve a slot: start, duration, short comment, Reserve.
+    Then the calendar: the active slot (with +30 min / end) and the upcoming
+    ones (with ✕), as a plain monospace table. The page JS re-renders the
+    state line and the table from /lab-session/reservations.json every 4 s so
+    a half-typed reservation is never wiped by a page reload."""
     if not can(audience.tier(request), LAB_SESSION_TOGGLE):
         return ""
-    active = queue_control.lab_session_active()
-    state = ('<b style="color:var(--warn)">ACTIVE</b> — public runs refused, '
-             'browsing open' if active else
-             '<b style="color:var(--text-3)">off</b> — public runs open')
+    import html as _html
+    lab_reservations.tick()
+    snap = lab_reservations.snapshot()
+    active = snap["flag_up"]
+    act = snap["active"]
+    if active:
+        state = ('<b style="color:var(--warn)">ACTIVE</b> — public runs refused, '
+                 'browsing open')
+        if act:
+            state += (f' · reserved until {_html.escape(act["end_label"])} — '
+                      f'{_html.escape(act["comment"])}'
+                      + ('' if act["owns_flag"] else ' (started by hand)'))
+    else:
+        state = '<b style="color:var(--text-3)">off</b> — public runs open'
     btn = ("End session" if active else "Start session")
     val = "0" if active else "1"
+    note_html = (f'<div style="color:var(--warn);margin-top:0.4rem">'
+                 f'⚠ {_html.escape(note)}</div>' if note else "")
+    from datetime import timedelta as _td
+    default_start = ((lab_reservations.now_local() + _td(hours=1))
+                     .replace(minute=0, second=0).strftime("%Y-%m-%dT%H:%M"))
+    lim = snap["limits"]
     return (
+        '<div style="border:1px solid var(--border-3);border-radius:4px;'
+        'padding:0.6rem 0.9rem;margin-bottom:1.2rem;font-size:0.8rem">'
         '<form method="post" action="/lab-session/toggle" '
-        'style="border:1px solid var(--border-3);border-radius:4px;'
-        'padding:0.6rem 0.9rem;margin-bottom:1.2rem;font-size:0.8rem;'
-        'display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap">'
-        f'<span>🔬 Lab session: {state}</span>'
-        f'<button name="on" value="{val}" style="background:none;'
-        'border:1px solid var(--border-3);color:var(--text-2);'
-        'font-family:monospace;font-size:0.78rem;padding:0.25rem 0.7rem;'
-        f'border-radius:4px;cursor:pointer">{btn}</button></form>')
+        'style="display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap">'
+        f'<span id="lab-state">🔬 Lab session: {state}</span>'
+        f'<button name="on" value="{val}" {_LAB_BTN}>{btn}</button></form>'
+        '<form method="post" action="/lab-session/reserve" '
+        'style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;'
+        'margin-top:0.55rem">'
+        '<span style="color:var(--text-3)">Reserve:</span>'
+        f'<input type="datetime-local" name="start" value="{default_start}" '
+        f'required style="{_LAB_INPUT_CSS}">'
+        '<span style="color:var(--text-3)">for</span>'
+        f'<input type="number" name="duration_min" value="120" '
+        f'min="{lim["min_duration_min"]}" max="{lim["max_duration_min"]}" '
+        f'step="5" required style="width:4.6rem;{_LAB_INPUT_CSS}">'
+        '<span style="color:var(--text-3)">min</span>'
+        f'<input type="text" name="comment" placeholder="who — what" '
+        f'maxlength="{lim["max_comment_chars"]}" required '
+        f'style="width:16rem;{_LAB_INPUT_CSS}">'
+        f'<button {_LAB_BTN}>Reserve</button></form>'
+        f'{note_html}'
+        '<div id="lab-res-list" style="margin-top:0.5rem"></div>'
+        '</div>')
 
 
 @app.get("/queue-status", response_class=HTMLResponse, dependencies=[Depends(requires(QUEUE_VIEW))])
@@ -511,9 +615,13 @@ async def queue_page(request: Request):
     # Only Lab (BENCHMARK_RUN) may cancel — gate the button so anonymous
     # viewers (QUEUE_VIEW is Anonymous-allowed) don't see a control they can't use.
     can_cancel = "true" if can(audience.tier(request), BENCHMARK_RUN) else "false"
+    can_lab = "true" if can(audience.tier(request), LAB_SESSION_TOGGLE) else "false"
+    # CR-083: the page used to <meta refresh> every 4 s; that would wipe a
+    # half-typed reservation, so the JS now polls /queue (and the calendar)
+    # on the same 4 s cadence instead.
+    note = (request.query_params.get("note") or "")[:300]
     return ui.render_page(request, "Queue", head=(
-        '    <meta http-equiv="refresh" content="4">\n'
-        f'    <script>window.CAN_CANCEL={can_cancel};</script>\n'
+        f'    <script>window.CAN_CANCEL={can_cancel};window.CAN_LAB={can_lab};</script>\n'
     ), styles="""
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: monospace; background: var(--bg); color: var(--text);
@@ -535,7 +643,16 @@ async def queue_page(request: Request):
         .back:hover { color: var(--accent); }
         .depth { font-size: 2.5rem; color: var(--accent); font-weight: bold; }
         .depth-lbl { color: var(--text-4); font-size: 0.75rem; margin-bottom: 2rem; }
-""", tail=_PROGRESS_JS, body=_lab_session_toggle_html(request) + """
+        .labres { border-collapse: collapse; font-size: 0.78rem; }
+        .labres td { padding: 0.15rem 0.6rem 0.15rem 0; color: var(--text-2);
+                     vertical-align: middle; white-space: nowrap; }
+        .labres td.c { color: var(--text-3); white-space: normal; }
+        .labres tr.on td { color: var(--warn); }
+        .labres form { display: inline; }
+        .labres button { background: none; border: 1px solid var(--border-3);
+                         color: var(--text-3); font-family: monospace; font-size: 0.72rem;
+                         padding: 0.1rem 0.45rem; border-radius: 4px; cursor: pointer; }
+""", tail=_PROGRESS_JS, body=_lab_session_toggle_html(request, note) + """
     <h1>Queue</h1>
     <div class="sub">Auto-refreshes every 4s</div>
     <div id="pause-banner"></div>
@@ -550,7 +667,54 @@ function resumeLink(type, jobId, page) {
     return ' <a href="' + base + '?job=' + jobId + '" style="color:var(--accent);font-size:0.75rem;' +
            'text-decoration:none;margin-left:0.75rem">↩ Resume</a>';
 }
+function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
+}
+// CR-083 — Lab calendar: re-render the state line + the reservations table
+// from the JSON (the form itself is static, so typing is never interrupted).
+async function loadLab() {
+    if (!window.CAN_LAB) return;
+    const el = document.getElementById('lab-res-list');
+    if (!el) return;
+    let s;
+    try { s = await (await fetch('/lab-session/reservations.json')).json(); } catch(e) { return; }
+    const st = document.getElementById('lab-state');
+    if (st) {
+        let txt;
+        if (s.flag_up) {
+            txt = '<b style="color:var(--warn)">ACTIVE</b> — public runs refused, browsing open';
+            if (s.active) txt += ' · reserved until ' + esc(s.active.end_label) + ' — '
+                + esc(s.active.comment) + (s.active.owns_flag ? '' : ' (started by hand)');
+        } else {
+            txt = '<b style="color:var(--text-3)">off</b> — public runs open';
+        }
+        st.innerHTML = '🔬 Lab session: ' + txt;
+    }
+    const rows = [];
+    if (s.active) {
+        const a = s.active;
+        rows.push('<tr class="on"><td>▶ now</td><td>until ' + esc(a.end_label) + '</td>'
+            + '<td class="c">' + esc(a.comment) + '</td><td>'
+            + '<form method="post" action="/lab-session/reservation/' + esc(a.id) + '/extend">'
+            + '<input type="hidden" name="minutes" value="30"><button>+30 min</button></form> '
+            + '<form method="post" action="/lab-session/reservation/' + esc(a.id) + '/delete" '
+            + 'onsubmit="return confirm(\\'End this reserved session now?\\')"><button>end</button></form>'
+            + '</td></tr>');
+    }
+    (s.upcoming || []).forEach(function(u) {
+        rows.push('<tr><td>' + esc(u.start_label) + '</td><td>' + esc(u.duration_label) + '</td>'
+            + '<td class="c">' + esc(u.comment) + '</td><td>'
+            + '<form method="post" action="/lab-session/reservation/' + esc(u.id) + '/delete" '
+            + 'onsubmit="return confirm(\\'Remove this reservation?\\')"><button>✕</button></form>'
+            + '</td></tr>');
+    });
+    el.innerHTML = rows.length
+        ? '<table class="labres">' + rows.join('') + '</table>'
+        : '<span style="color:var(--text-5)">no reservations — the box is first come, first served</span>';
+}
 async function load() {
+    loadLab();
     const r = await fetch('/queue');
     const q = await r.json();
     const banner = document.getElementById('pause-banner');
@@ -639,5 +803,6 @@ async function togglePause(on) {
     load();
 }
 load();
+setInterval(load, 4000);
 </script>
 """)

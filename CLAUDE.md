@@ -1,6 +1,7 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-09-03 (S73: ten devices — Xiaomi Gen 2 revived + Gen 3 onboarded, Apple TV back;
+# Last updated: 2026-09-04 (S74: CR-083 Lab-session reservations delivered unattended — see JOURNAL S74.
+#   S73: ten devices — Xiaomi Gen 2 revived + Gen 3 onboarded, Apple TV back;
 #   synchronised four-box playback with a per-box content clock; two-axis STB campaign at n=3; bitrate
 #   ladder; 4K/HDR arms; loop-validity finding; headless = no-sink regime; football sports tier.
 #   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
@@ -10,7 +11,7 @@
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
 #   - CHANGE_REQUESTS.md — 28 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (1074 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - TESTING.md — pytest suite (1107 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
 #   - OWL_AUDIT.md — 2026-07-05 nine-dimension re-audit → CR-066–069 + CR-031/008 updates; disposition in AUDIT_RESPONSE.md
@@ -145,8 +146,8 @@ TEST-NET 203.0.113.x as private → Lab).
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
 tour/credibility → RAG). **Active: 28 CRs** in CHANGE_REQUESTS.md — newest CR-078–083 (device×codec reliability
 survey, HD/4K ladder × resolution sweep, decode-pipeline provenance survey, football sports tier + all-night
-campaign, Demo Content page, Lab-session reservations); each CR carries its own status; closed archive in
-CHANGE_REQUESTS_CLOSED.md.
+campaign [delivered], Demo Content page, Lab-session reservations [delivered 09-04]); each CR carries its own
+status; closed archive in CHANGE_REQUESTS_CLOSED.md.
 
 ### Recent sessions (one line each — full entries in JOURNAL.md, which also holds the condensed S26–S66 index)
 - S69 (08-26→27): SMPTE-desk handoff; adb path fixed; SoC audit (GTV = MT8696 like the Fire TV); MAC target follower;
@@ -166,6 +167,10 @@ CHANGE_REQUESTS_CLOSED.md.
   devices, 214 rows): football needs ~2× ReadySetGo's bits at VMAF 92 while NVENC's Wh/min doesn't move; the GTV plays it at
   BBB's watts; Gen 3's modern-codec edge narrows on sport. Panel auto-off (~4 h) paused the Apple TV once — standing
   hazard. `docs/football_sports_tier_2026-09-04.md`.
+- S74 (09-04, unattended): **CR-083 delivered** — reserve a Lab session from `/queue-status` (start, minutes, 40-char
+  comment); `lab_reservations.py` ticker raises/lowers the same `/tmp/owl-lab-session` flag, owns only what it raised,
+  never re-raises after a hand end; banner shows "reserved until", `/decode` shows who is next. Queue page polls
+  instead of `<meta refresh>`. CR-067 items 3/4 found already live and marked. Tests 1107. Uncommitted.
 
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage

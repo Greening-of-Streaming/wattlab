@@ -1,6 +1,6 @@
 # WattLab — Testing Strategy
 
-*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (1074 tests as of 2026-09-03 — the count drifts upward and the other docs must not quote it; `python3 -m pytest -q` from `wattlab_service/` is authoritative). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
+*Rewritten 2026-06-11 to match reality: the automated tiers are now the pytest suite (1107 tests as of 2026-09-04 — the count drifts upward and the other docs must not quote it; `python3 -m pytest -q` from `wattlab_service/` is authoritative). The `scripts/smoke.sh` / `scripts/integration.sh` outlines this file used to carry were never written and have been deleted.*
 
 ## Philosophy
 
@@ -23,7 +23,7 @@ These are covered by Tier 3 manual checks before high-stakes use.
 
 ```bash
 cd wattlab_service && python3 -m pytest -q
-# 1074 passed in ~60 s (2026-09-03)
+# 1107 passed in ~64 s (2026-09-04)
 ```
 
 **Where it lives:** `wattlab_service/tests/` — 57 test files (~12,900 lines) plus `conftest.py`.

@@ -18,7 +18,8 @@ software-only, say so and skip the re-baseline, not the preflight.
 
 - `curl -s http://127.0.0.1:8000/live` — queue_depth must be 0; never measure alongside a queued job.
 - **`bin/lab-session-on` before any campaign** — blocks visitor job submissions (503 + banner) while
-  the rig is yours; browsing stays open. `bin/lab-session-off` at close-out. (Missed 2026-08-24.)
+  the rig is yours; browsing stays open. `bin/lab-session-off` at close-out. (Missed 2026-08-24.) Or reserve the
+  slot ahead on `/queue-status` (CR-083) — the flag then comes up and goes down by itself.
 - Staging/maintenance flag: check `/tmp/owl-maintenance` (stage-on does NOT auto-lower it).
 - Demo lock off unless this IS the demo.
 

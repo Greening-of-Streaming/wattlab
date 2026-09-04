@@ -611,6 +611,10 @@ CR-031 §3 (docker-bridge blocker, transcode sandboxing) · CR-068 (non-Lab rout
 ## CR-067 · Observability & durability floor — logging, health, job-failure journal, backup scope
 
 **Status:** captured 2026-07-06 from OWL_AUDIT.md §3.5 (reliability, maturity 2/5 — the audit's lowest score) + §3.4 backup findings; triage items 4–5.
+**Progress (checked against the code 2026-09-04, S74):** item 3 is live (`queue_control._worker` logs the traceback and appends
+`results/diagnostics/job_failures.jsonl`) and item 4's app side is live (`/healthz` + `watts_age_s`/`watts_fresh`, read from cache);
+the external monitor, backup dead-man ping and nginx 502 page (owner actions) and items 1, 2, 5, 6, 7 were not re-checked.
+Note for item 5: `data/lab_reservations.json` (CR-083) now sits beside `members.json` outside the backup — a courtesy calendar, acceptable loss.
 **Triggered by:** the audit's summary line — *"the system cannot tell anyone when it is broken"* — on a live member-facing service. The repo records the lesson twice already ("silent background jobs need a visible failure signal", GOS1_INFRA.md), and the backup last-success check promised after the 2026-04 24-night silent backup failure is still an unchecked TODO.
 
 ### Problem
@@ -1208,7 +1212,19 @@ which measurements use it.
 
 ## CR-083 · Reserve a Lab session in advance from the Queue page
 
-**Status:** captured 2026-09-03 (owner). Not urgent.
+**Status:** **DELIVERED 2026-09-04 (S74, unattended)** — `wattlab_service/lab_reservations.py` (calendar in
+`data/lab_reservations.json` + a 15 s ticker started at service startup), routes `POST /lab-session/reserve`,
+`POST /lab-session/reservation/{id}/delete|extend`, `GET /lab-session/reservations.json` (all behind the existing
+`LAB_SESSION_TOGGLE` capability — widened, no policy-table change), the reservation row + monospace table under the
+toggle on `/queue-status`, "Reserved until HH:MM" on the site banner (comment shown to Lab only), a one-line notice
+on `/decode`; 33 tests in `tests/test_lab_reservations.py`. **Ownership rules** so the calendar never fights the hand
+controls: a reservation activates at most once; it raises the flag only if the flag is down and then owns it (flag
+content `reservation:<id>` — `bin/lab-session-on`'s `touch` leaves it empty = hand-owned); it lowers only what it
+owns; a hand end (End session / `lab-session-off`) finishes it without re-raise; a slot the service slept through is
+dropped without touching the flag; overlaps are refused naming the existing slot; an extension that would run into
+the next slot is refused. **Deviations:** the comment box takes 40 characters (the examples below already exceed
+20); `/queue-status` polls every 4 s instead of `<meta refresh>` so a half-typed reservation is never wiped.
+Captured 2026-09-03 (owner).
 
 ### Ask
 

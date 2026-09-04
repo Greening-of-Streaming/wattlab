@@ -24,6 +24,11 @@ def _isolate_lab_session_flag(tmp_path, monkeypatch):
     import queue_control
     monkeypatch.setattr(queue_control, "LAB_SESSION_FLAG",
                         tmp_path / "owl-lab-session")
+    # CR-083: the reservations calendar is live state too (data/
+    # lab_reservations.json) — same isolation, per test.
+    import lab_reservations
+    monkeypatch.setattr(lab_reservations, "RESERVATIONS_FILE",
+                        tmp_path / "lab_reservations.json")
 
 
 @pytest.fixture(autouse=True)

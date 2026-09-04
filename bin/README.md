@@ -299,7 +299,9 @@ owner (Lab) — historically accurate, it was all bench work then.
   `parity.build_cmd` and set `parity.ARTIFACT_DIR = results/diagnostics` — see `docs/vp9_rerun_2026-08-17/`.
 - **`lab-session-on` / `lab-session-off`** — raise/lower `/tmp/owl-lab-session`: public browsing stays open with a
   banner, non-Lab job submission gets a 503. Softer than `stage-on` (no code swap). Survives restarts, not reboots.
-  Use for overnight campaigns and hands-on lab work.
+  Use for overnight campaigns and hands-on lab work. Or reserve the slot ahead on `/queue-status` (CR-083): a due
+  reservation raises this same flag and lowers it when its duration ends — only a flag it raised itself; a flag
+  raised here (empty file) is never lowered by the calendar.
 - **`overnight-benchmark`** — the full-pipeline overnight benchmark runner (variance → video → llm → rag → image);
   today the same orchestration is reachable as `POST /benchmark/run`; the script remains for headless runs.
 - **`gpu-clock-sweep`** — finds the lowest NVENC SM clock that still holds throughput (`nvidia-smi -lgc`), the

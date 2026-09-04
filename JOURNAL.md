@@ -62,6 +62,43 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 - S65 (08-17→18): VP9 re-run — iso-bitrate sw-vs-sw encode (108 rows, n=3) + decode (30 jobs, 3 contents) → report §5; affirmations: operating point decides the dearest codec; hw decode VP9 inside ±0.1 W; sw VP9 cheapest, HEVC 2–3×; no iso-bitrate quality claim. Fire TV liveness false-negative instrumented; campaign paging bug fixed.
 - S66 (08-18→19 overnight): CR-074 network-path campaign (Pi 400 eth/wifi/local × 3 bitrates × burst/paced; STBs on current interface; origin `?pace_kbps=`), CR-075 Apple TV plan, docs sweep (JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal), pixop timeout container reap. Tests 1027.
 
+## Session 74 — 2026-09-04 (CR-083: reserve a Lab session in advance — delivered unattended)
+
+Owner asked for CR-083 and whether other open CRs fit the same work package, then went AFK: "take this
+workpackage through without me; unwind if anything is broken". Assessment: nothing else shares CR-083's
+surface (queue page, lab-session flag, Lab tier). CR-076 is rig topology, CR-082 (Demo Content, unblocked
+now that CR-081 is delivered) is a player/licence job of its own, and CR-067's overlapping items (job-failure
+journal, `/healthz`) were already in the code. Package = CR-083 in full + marking CR-067 items 3/4 as live.
+CR-082 untouched.
+
+**Delivered**
+- `wattlab_service/lab_reservations.py` (new): `data/lab_reservations.json` (gitignored via `data/*`),
+  `add/remove/extend`, the `tick()` state machine, `ticker()` (15 s, started in `main.py` startup), `snapshot()`.
+  Ownership rules: a reservation activates at most once; raises the flag only if it is down and then owns it
+  (flag content `reservation:<id>` — `bin/lab-session-on`'s `touch` leaves the file empty = hand-owned); lowers
+  only what it owns; a hand end (End session / `lab-session-off`) finishes it, never re-raises; a slot the
+  service slept through is dropped without touching the flag; overlaps refused naming the existing slot;
+  an extension that would run into the next slot refused.
+- Routes in `main.py`, all behind the existing `LAB_SESSION_TOGGLE` (widened; policy table unchanged):
+  `POST /lab-session/reserve`, `POST /lab-session/reservation/{id}/delete|extend`,
+  `GET /lab-session/reservations.json`. Refusals travel back as `?note=` on `/queue-status`.
+  `/lab-session/toggle` ticks after changing the flag so a hand end finishes the active slot at once.
+- `/queue-status`: one extra row under the toggle (datetime-local, minutes, 40-char comment, Reserve) and a
+  monospace table (active slot: +30 min / end; upcoming: ✕). The page's `<meta refresh 4s>` is gone — JS
+  polls `/queue` and the calendar every 4 s, so a half-typed reservation is never wiped.
+- Site banner: "Reserved until HH:MM" for every tier; the comment (who / what) only for Lab.
+- `/decode`: one-line notice (active until … / next reservation …), Lab-only, polled every 30 s.
+- Naive form times are read in the host zone as a real `ZoneInfo` (Europe/Paris via `/etc/localtime`), so a
+  slot booked across the October DST switch gets that date's offset rather than today's.
+- Tests: `tests/test_lab_reservations.py` (33) + conftest isolates the calendar file per test. Suite 1107 green.
+  Inline JS on `/queue-status` and `/decode` node-checked. Service restarted 17:33 with the rig idle; live
+  check: reserve-now raised the flag with owner content, banner showed "Reserved until", delete lowered it;
+  UTF-8 comments intact; journal clean.
+
+**Deviations from the CR text:** comment box 40 characters (the CR's own examples exceed 20); no sibling
+capability. **Left to the owner:** commit; `data/lab_reservations.json` sits outside the nightly backup like
+`members.json` (noted under CR-067 item 5).
+
 ## Session 73 — 2026-09-02 (Xiaomi Gen 2 revived, Gen 3 onboarded, Just Player version pin lesson,
 four-way silicon/vendor axis campaign planned)
 

@@ -597,18 +597,31 @@ _BENCH_HYDRATE_JS = f'<script src="/static/wl-bench-hydrate.js?v={_WL_ASSET_V}">
 # version stamp, queue badge, shared JS bundles). A page brings only its
 # own CSS, body, optional extra <head> content, and optional scripts that
 # must load after the footer's bundles.
-def _lab_session_banner() -> str:
+def _lab_session_banner(request: Request | None = None) -> str:
     """Site-wide strip while bin/lab-session-on holds the box: browsing stays
     open, non-Lab runs 503 at the enqueue chokepoint (queue_control). Shown to
-    every tier — Lab too, as a reminder the flag is up."""
+    every tier — Lab too, as a reminder the flag is up. CR-083: when a
+    reservation holds the session, everyone sees until when; Lab also sees
+    the comment (who / what) — names stay off the public surface."""
     import queue_control
     if not queue_control.lab_session_active():
         return ""
+    extra = ""
+    try:
+        import lab_reservations
+        act = lab_reservations.active_summary()
+        if act:
+            extra = f' Reserved until <b>{html_lib.escape(act["end_label"])}</b>'
+            if request is not None and audience.tier(request) == audience.Tier.Lab:
+                extra += f' — {html_lib.escape(act["comment"])}'
+            extra += '.'
+    except Exception:
+        extra = ""
     return ('<div style="background:var(--accent-soft);border:1px solid '
             'var(--border-3);border-radius:4px;padding:0.45rem 0.8rem;'
             'margin:0.6rem 0;font-size:0.8rem;color:var(--text-2)">'
             '🔬 <b>Lab session in progress</b> — browsing is open; new '
-            'measurement runs are paused until the session ends.</div>')
+            f'measurement runs are paused until the session ends.{extra}</div>')
 
 
 def render_page(request: Request, title: str, body: str, *,
@@ -620,7 +633,7 @@ def render_page(request: Request, title: str, body: str, *,
     page's inline JS depends on at call time (e.g. _PROGRESS_JS).
     `back=False` drops the ← Home link (the home page itself)."""
     header = (_auth_chip_html(request) + (_BACK if back else "")
-              + _nav_html(request) + _lab_session_banner())
+              + _nav_html(request) + _lab_session_banner(request))
     return f"""<!DOCTYPE html>
 <html>
 <head>

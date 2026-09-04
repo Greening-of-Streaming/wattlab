@@ -68,7 +68,10 @@ RIG_CONTROL        = "rig_control"         # /decode — client-decode rig power
                                            # Google TV + monitor + optional Shelly master). Whole page is
                                            # Lab-only like /settings: it switches real mains relays.
 LAB_SESSION_TOGGLE = "lab_session_toggle"  # raise/lower the lab-session flag from /queue-status —
-                                           # UI twin of bin/lab-session-on|off.
+                                           # UI twin of bin/lab-session-on|off. CR-083 widened it to
+                                           # the reservations calendar (/lab-session/reserve, …/delete,
+                                           # …/extend, reservations.json): a reservation raises the
+                                           # same flag, just later — same privilege, one capability.
 
 
 # --- Capability → minimum tier ----------------------------------------------

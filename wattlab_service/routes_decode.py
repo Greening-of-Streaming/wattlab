@@ -782,6 +782,7 @@ _BODY = """
 <div class="rig-wrap">
   <h2>Decode rig <span class="rig-badge">Lab</span></h2>
   {LAB_BANNER}
+  <div id="lab-res" class="rig-note" style="display:none;margin:0 0 0.6rem 0"></div>
   <div class="rig-agg" id="rig-agg">connecting…</div>
   <div class="rig-err" id="rig-err"></div>
 
@@ -1348,6 +1349,40 @@ async function tick() {
 }
 tick();
 setInterval(tick, 2500);
+
+// CR-083 — Lab calendar notice: who holds the rig now / who is next. The
+// rig is the usual contention, so the reservation made on /queue-status
+// shows here too. Lab-only (the JSON is gated); polled every 30 s.
+async function labTick() {
+  if (!IS_LAB) return;
+  var el = document.getElementById('lab-res');
+  if (!el) return;
+  try {
+    var r = await fetch('/lab-session/reservations.json');
+    if (!r.ok) return;
+    var s = await r.json();
+    var txt = '';
+    if (s.active) {
+      txt = '🔬 Lab session active until ' + s.active.end_label
+          + (s.active.comment ? ' — ' + s.active.comment : '')
+          + (s.active.owns_flag ? '' : ' (started by hand)');
+    } else if (s.upcoming && s.upcoming.length) {
+      var u = s.upcoming[0];
+      txt = '🔬 Next Lab reservation: ' + u.start_label + ' (' + u.duration_label + ')'
+          + (u.comment ? ' — ' + u.comment : '');
+    }
+    el.textContent = txt ? txt + '  ·  ' : '';
+    if (txt) {
+      var a = document.createElement('a');
+      a.href = '/queue-status'; a.textContent = 'calendar';
+      a.style.color = 'var(--accent)';
+      el.appendChild(a);
+    }
+    el.style.display = txt ? '' : 'none';
+  } catch (e) {}
+}
+labTick();
+setInterval(labTick, 30000);
 
 // Read-only (non-Lab): controls off, monitor/master buttons hidden.
 if (!IS_LAB) {
