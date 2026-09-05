@@ -776,17 +776,31 @@ def panel_awake() -> bool | None:
 
 
 def effective_sink(dev_cfg: dict, awake: bool | None = None) -> str:
-    """`sink_of` corrected for what the panel was actually doing. A box on a
-    panel socket with the panel in standby had no sink for that row, however
-    the screen map is configured — pooling it with lit-panel rows is the S73
-    error in a new costume. `awake` None (unknown) leaves the wiring value
-    and the row keeps `panel_awake: null` so the ambiguity stays visible."""
-    sink = sink_of(dev_cfg)
-    if awake is None:
-        awake = panel_awake()
-    if sink.startswith("panel") and awake is False:
-        return "none"
-    return sink
+    """The sink as cabled. Deliberately does NOT reclassify a panel box when
+    the panel is asleep — that rule was here from 2026-09-05 until the same
+    evening's logcat test disproved its premise.
+
+    The premise was "Always-Ready standby deasserts HPD". It does not: HDMI
+    1.3 s8.5 requires a sink to keep HPD asserted "even if the Sink is
+    powered-off or in standby", and the measurement agrees. What the C2
+    actually does on standby is broadcast CEC <Standby> (0x36 -> 0x0F), and
+    the boxes answer it in three different ways:
+
+      Google TV   vendor HAL runs handleStandby -> the box SLEEPS (1.16 ->
+                  0.94 W) and does NOT wake when the panel does. Note it does
+                  this with mOptionEnableCec=0 and a null framework callback:
+                  mCecHalAlwaysOn=1, so turning CEC off in Android settings
+                  does not stop it.
+      Fire TV     logs isPowerOffChangerMessage:false, stays Awake with
+                  mGlobalDisplayState=ON, and loses only 0.31 W. Mechanism
+                  for that residue is OPEN - not established as sink loss.
+      Roku        does not move at all (1.77 -> 1.78 W).
+
+    Three mechanisms, one power signature, so a blanket demotion would have
+    mislabelled all three. `panel_awake` is recorded on every row instead and
+    the analysis decides. Kept as a named function so the rule lives in one
+    place if a future test earns one."""
+    return sink_of(dev_cfg)
 
 
 def hdmi_map() -> dict:

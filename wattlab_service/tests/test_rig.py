@@ -807,21 +807,18 @@ def test_panel_awake_reads_the_meter_not_the_wiring():
     m["watts"] = None;  assert rig.panel_awake() is None
 
 
-def test_effective_sink_demotes_a_panel_box_when_the_panel_is_asleep():
-    # 2026-09-05: an LG C2 in Always-Ready standby deasserts HPD, so a box on
-    # a panel socket genuinely had no sink for that row — the Fire TV's idle
-    # falls 1.44 -> 0.6-0.7 W. Pooling those with lit-panel rows is the S73
-    # mistake again, so the wiring value must not be taken at face value.
+def test_effective_sink_does_not_reclassify_on_panel_state():
+    # Superseded rule (2026-09-05): a panel box was demoted to "none" when the
+    # panel slept, on the premise that Always-Ready standby drops HPD. The
+    # logcat test that evening disproved it — the C2 broadcasts CEC <Standby>
+    # and the boxes diverge (GTV sleeps outright, Fire TV stays awake and
+    # loses 0.31 W, Roku ignores it). One signature, three mechanisms, so the
+    # sink stays the wiring truth and `panel_awake` is recorded alongside.
     rig.apply_hdmi_assignments({})
     rig.apply_sink_assignments({"firestick": "dummy"})
     d = rig.RIG["devices"]
-    assert rig.effective_sink(d["bbox"], awake=True) == "panel:HDMI_1"
-    assert rig.effective_sink(d["bbox"], awake=False) == "none"
-    # unknown panel state leaves the wiring value — the ambiguity stays visible
-    assert rig.effective_sink(d["bbox"], awake=None) == "panel:HDMI_1"
-    # a dummy box is unaffected by the panel either way (the control that
-    # proved the effect was the panel and not drift)
     for st in (True, False, None):
+        assert rig.effective_sink(d["bbox"], awake=st) == "panel:HDMI_1"
         assert rig.effective_sink(d["firestick"], awake=st) == "dummy"
         assert rig.effective_sink(d["pi5"], awake=st) == "none"
 
