@@ -748,6 +748,47 @@ def sink_of(dev_cfg: dict) -> str:
     return "none"
 
 
+# The panel's own draw separates its two states unambiguously: ~9.8 W in
+# Always-Ready standby vs 50-80 W lit (measured 2026-09-05). Anything in
+# between is a transition — report None rather than guess.
+PANEL_AWAKE_W = 20.0
+PANEL_STANDBY_W = 15.0
+
+
+def panel_awake() -> bool | None:
+    """Is the shared screen actually lit? None when the meter can't say.
+
+    This is a MEASUREMENT question, not a wiring one, and it changes the
+    regime: an LG C2 in Always-Ready standby deasserts HPD, so a box cabled
+    to it is a no-sink box until the panel wakes (2026-09-05 — Fire TV idle
+    falls 1.44 -> 0.6-0.7 W with the panel asleep and returns within a poll
+    when it wakes, while a dummy-attached box does not move). The box's own
+    `wm size` keeps reporting the cached 4K mode throughout, so the panel
+    meter is the only honest signal."""
+    w = (rig_cache.get("monitor") or {}).get("watts")
+    if not isinstance(w, (int, float)):
+        return None
+    if w >= PANEL_AWAKE_W:
+        return True
+    if w <= PANEL_STANDBY_W:
+        return False
+    return None
+
+
+def effective_sink(dev_cfg: dict, awake: bool | None = None) -> str:
+    """`sink_of` corrected for what the panel was actually doing. A box on a
+    panel socket with the panel in standby had no sink for that row, however
+    the screen map is configured — pooling it with lit-panel rows is the S73
+    error in a new costume. `awake` None (unknown) leaves the wiring value
+    and the row keeps `panel_awake: null` so the ambiguity stays visible."""
+    sink = sink_of(dev_cfg)
+    if awake is None:
+        awake = panel_awake()
+    if sink.startswith("panel") and awake is False:
+        return "none"
+    return sink
+
+
 def hdmi_map() -> dict:
     """{input: device | None} from the current RIG state (no settings IO)."""
     inputs = list(RIG["monitor"].get("hdmi_inputs") or [])

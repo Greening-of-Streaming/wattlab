@@ -1230,14 +1230,18 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
         # → "panel:HDMI_n" | "dummy" | "none") is what an analysis must group
         # on. Both are written: never infer the regime from hdmi_input alone.
         hdmi_in = dev_cfg.get("hdmi_input") or None
-        sink = rig.sink_of(dev_cfg)
+        sink_wiring = rig.sink_of(dev_cfg)
+        awake = rig.panel_awake()
+        sink = rig.effective_sink(dev_cfg, awake)
         for row in bench_out.get("rows", []):
             row.setdefault("hdmi_input", hdmi_in)
             row.setdefault("sink", sink)
+            row.setdefault("sink_wiring", sink_wiring)
+            row.setdefault("panel_awake", awake)
         section = {
             "label": dev_cfg["label"], "kind": dev_cfg["kind"],
             "hdmi_input": hdmi_in,
-            "sink": sink,
+            "sink": sink, "sink_wiring": sink_wiring, "panel_awake": awake,
             "meter": {"model": "Tapo P110", "ip": cfg["meter_ip"],
                       "fw": "1.3.1", "cadence_s": cfg["cadence_s"]},
             "rows": bench_out.get("rows", []),
