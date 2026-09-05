@@ -307,6 +307,24 @@ async def settings_page(request: Request):
                         f'<select id="hdmi_{inp}" style="width:14rem">{"".join(opts)}</select></div>')
         return "\n".join(rows)
 
+    def _sink_rows():
+        import html as _h
+        rows = []
+        for n, d in rig.RIG["devices"].items():
+            if d.get("kind") == "webos" or d.get("parked"):
+                continue
+            on = d.get("sink_kind") == "dummy"
+            box = (f'<input type="checkbox" class="sink-toggle" data-key="{n}" id="sink_{n}"'
+                   f'{" checked" if on else ""}'
+                   ' style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer">'
+                   if local else ("✓" if on else "—"))
+            cabled = d.get("hdmi_input")
+            note = (f' <span style="color:var(--text-4);font-size:0.75rem">'
+                    f'(on {cabled} — panel sink)</span>' if cabled else "")
+            rows.append(f'<div class="row"><label for="sink_{n}">{_h.escape(d["label"])}{note}</label>'
+                        f'{box}</div>')
+        return "\n".join(rows)
+
     import json as _json
     hdmi_devices_json = _json.dumps([n for n, d in rig.RIG["devices"].items()
                                      if d.get("kind") != "webos" and not d.get("parked")])
@@ -488,6 +506,15 @@ async def settings_page(request: Request):
       within ~10 s (poller); the C2 is the screen itself and never appears here.
     </div>
     {_hdmi_rows()}
+    <div style="color:var(--text-4);font-size:0.75rem;line-height:1.6;margin:0.75rem 0 0.25rem">
+      <strong>Dummy sinks.</strong> A box on no HDMI socket above is <em>not</em> automatically
+      sink-less: an HDMI dummy/EDID plug is a real sink, and a box with no sink at all measures in a
+      different regime (Fire TV plays 0.77 W lower, Gen 2 0.42 W — JOURNAL S73). Tick the boxes
+      wearing a dummy plug so their rows are stamped <code>sink: dummy</code> instead of
+      <code>none</code>. Fitted 2026-09-05; the dummies negotiate 1080p60 where the panel gives 4K60,
+      so dummy rows still group separately from panel rows.
+    </div>
+    {_sink_rows()}
 
     <div class="section" id="s-staging">Staging</div>
     {field("max_idle_mins",     s['max_idle_mins'],     5,  240, "min",    "auto-lower /tmp/owl-maintenance after this much Lab inactivity (CR-015 watchdog)")}
@@ -657,6 +684,13 @@ async def settings_page(request: Request):
         const list_fields = ['llm_enabled_models','rag_enabled_models','image_enabled_models'];
         const body = {{}};
         body.rig_hdmi_inputs = hdmi;
+        // Dummy sinks: {{device: "dummy"|""}} for every cabled-capable device.
+        const sinks = {{}};
+        for (const d of hdmiDevices) {{
+            const el = document.getElementById('sink_' + d);
+            sinks[d] = (el && el.checked) ? 'dummy' : '';
+        }}
+        body.rig_sinks = sinks;
         for (const f of num_fields) {{
             const el = document.getElementById(f);
             if (el) body[f] = parseFloat(el.value);

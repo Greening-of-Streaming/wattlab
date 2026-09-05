@@ -690,6 +690,64 @@ def not_claimable_reason(dev_cfg: dict) -> str:
             "— assign it under /settings › Rig › HDMI inputs first")
 
 
+# --- Sink provenance (2026-09-05) -------------------------------------------
+# `hdmi_input` answers "which of the C2's four sockets is this box cabled to"
+# and drives screen arbitration — it must keep meaning exactly that. It is NOT
+# the same question as "did this box have a display sink at all": since the
+# HDMI dummy/EDID plugs were fitted (2026-09-05) a box can have a real sink
+# while being on no C2 socket, and its rows would otherwise be stamped
+# `hdmi_input: null` = "no sink" — the exact mislabelling JOURNAL S73 warned
+# about (Fire TV plays 0.77 W lower with no sink, Gen 2 0.42 W). So sink kind
+# is carried separately, from /settings `rig_sinks` ({device: "dummy"}).
+SINK_KINDS = ("dummy",)          # anything else/absent = no sink of its own
+RIG_SINK_DEFAULT: dict = {n: d.get("sink_kind") for n, d in RIG["devices"].items()}
+
+
+def apply_sink_assignments(overrides: dict | None = None) -> dict:
+    """Merge settings `rig_sinks` ({device: "dummy" | ""}) into RIG in place;
+    returns {device: sink_kind | None}. Same shape rules as the screen map: a
+    device absent keeps its rig.py default, "" clears it, unknown devices and
+    unknown kinds are ignored, the webOS panel never has one (it IS a sink)."""
+    if overrides is None:
+        try:
+            import settings as _cfg
+            overrides = _cfg.load().get("rig_sinks") or {}
+        except Exception:
+            overrides = {}
+    if not isinstance(overrides, dict):
+        overrides = {}
+    out: dict = {}
+    for name, dev in RIG["devices"].items():
+        if dev.get("kind") == "webos":
+            dev["sink_kind"] = None
+            out[name] = None
+            continue
+        want = overrides[name] if name in overrides else RIG_SINK_DEFAULT.get(name)
+        want = str(want).strip().lower() if want else None
+        if want and want not in SINK_KINDS:
+            log.warning("rig: %s → unknown sink kind %r ignored", name, want)
+            want = None
+        dev["sink_kind"] = want
+        out[name] = want
+    return out
+
+
+def sink_of(dev_cfg: dict) -> str:
+    """THE rule for "what display sink did this box have" — the one place that
+    answers it, so rows, caveats and status.json can never disagree.
+    "panel:HDMI_n" (cabled to the shared screen) · "dummy" (its own EDID plug)
+    · "none" (no sink at all — a different measurement regime, JOURNAL S73).
+    The webOS panel is its own sink."""
+    if dev_cfg.get("kind") == "webos":
+        return "panel"
+    hdmi = dev_cfg.get("hdmi_input")
+    if hdmi:
+        return f"panel:{hdmi}"
+    if dev_cfg.get("sink_kind") == "dummy":
+        return "dummy"
+    return "none"
+
+
 def hdmi_map() -> dict:
     """{input: device | None} from the current RIG state (no settings IO)."""
     inputs = list(RIG["monitor"].get("hdmi_inputs") or [])
@@ -699,6 +757,7 @@ def hdmi_map() -> dict:
 
 
 apply_hdmi_assignments()
+apply_sink_assignments()
 
 RIG_HOLD_FILE = Path("/tmp/owl-rig-hold")
 # Ignore hold files older than this (a stale touch from a crashed campaign
@@ -1517,6 +1576,7 @@ async def rig_poller():
         try:
             apply_target_overrides()      # /settings may have moved a box (Wi-Fi arms)
             apply_hdmi_assignments()      # …or re-cabled the four HDMI sockets
+            apply_sink_assignments()      # …or fitted/removed an HDMI dummy plug
             await poll_once()
         except Exception:
             log.debug("rig_poller sweep failed", exc_info=True)
@@ -1804,6 +1864,7 @@ def status_payload() -> dict:
             "target": cfg_d.get("target"),
             "target_source": target_source(name),
             "hdmi_input": cfg_d.get("hdmi_input"),
+            "sink": sink_of(cfg_d),
             "screen_claimable": screen_claimable(cfg_d),
         }
     master = rig_cache["master"]

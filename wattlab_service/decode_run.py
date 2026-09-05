@@ -1221,17 +1221,23 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                         head_s=cfg["content_clock"].get("head_s", MARKER_HEAD_S))
                     if ml.get("loops"):
                         row["screen_marker_loops"] = ml
-        # HDMI sink provenance (2026-09-03): a box with no HDMI input is a
-        # different regime — the Fire TV plays 0.77 W lower and its ΔW drops
-        # to a third with no sink, Gen 2 0.42 W lower (JOURNAL S73). The
-        # screen-map slot (settings › rig_hdmi_inputs, applied into RIG) is
-        # the best proxy the rig has for "had a sink"; null = headless/no sink.
+        # Sink provenance (2026-09-03, split out 2026-09-05): a box with no
+        # display sink is a different regime — the Fire TV plays 0.77 W lower
+        # and its ΔW drops to a third with no sink, Gen 2 0.42 W lower
+        # (JOURNAL S73). `hdmi_input` is the screen-map slot and answers only
+        # "cabled to the shared panel"; since the HDMI dummy plugs were fitted
+        # a box can have a real sink on no panel socket, so `sink` (rig.sink_of
+        # → "panel:HDMI_n" | "dummy" | "none") is what an analysis must group
+        # on. Both are written: never infer the regime from hdmi_input alone.
         hdmi_in = dev_cfg.get("hdmi_input") or None
+        sink = rig.sink_of(dev_cfg)
         for row in bench_out.get("rows", []):
             row.setdefault("hdmi_input", hdmi_in)
+            row.setdefault("sink", sink)
         section = {
             "label": dev_cfg["label"], "kind": dev_cfg["kind"],
             "hdmi_input": hdmi_in,
+            "sink": sink,
             "meter": {"model": "Tapo P110", "ip": cfg["meter_ip"],
                       "fw": "1.3.1", "cadence_s": cfg["cadence_s"]},
             "rows": bench_out.get("rows", []),
@@ -1251,11 +1257,16 @@ async def _run_bench_for(job_id: str, tpl_key: str, tpl: dict, name: str,
                 "Android renders regardless of the shared monitor; headless "
                 "here means the screen was not claimed — rows are indicative "
                 "vs the Pis' true null-sink decode (July 2026 convention)."
-                + (" This box has NO HDMI cable attached at all (not just "
-                   "unclaimed) — unverified whether it decodes/renders the "
-                   "same way with zero display sink; confirm with a live "
-                   "smoke test before trusting this row (2026-08-29)."
-                   if not dev_cfg.get("hdmi_input") else ""))
+                + (" This box has NO display sink at all (no HDMI cable, no "
+                   "dummy plug) — a measurably different regime: the Fire TV "
+                   "plays 0.77 W lower and its \u0394W drops to a third, Gen 2 "
+                   "0.42 W lower (JOURNAL S73). Do not pool with "
+                   "sink-attached rows." if sink == "none" else
+                   " Sink is an HDMI dummy/EDID plug, not the shared panel: "
+                   "the box has a real sink but the negotiated output mode "
+                   "can differ from the C2's (2026-09-05: the dummies "
+                   "negotiate 1080p60 where the panel gives 4K60). Group on "
+                   "`sink`, not on hdmi_input." if sink == "dummy" else ""))
         if dev_cfg["kind"] == "roku":
             section["display_caveat"] = (
                 "Roku rows play through Dom's own 'Greening of Streaming' "

@@ -32,6 +32,7 @@ def _fresh_rig(monkeypatch):
     rig._discover_last.clear()
     rig.apply_target_overrides({})
     rig.apply_hdmi_assignments({})
+    rig.apply_sink_assignments({})
     monkeypatch.setattr(rig, "atv_cmd", lambda dev, *c, **k: "")   # never shell out to pyatv
     monkeypatch.setattr(rig, "_neigh_table", lambda: {})     # no LAN IO from tests
     monkeypatch.setattr(rig, "_ping_sweep", lambda *a, **k: None)
@@ -372,10 +373,14 @@ def test_status_payload_shape():
     for name, d in p["devices"].items():
         assert set(d) == {"label", "plug_name", "device_class", "shape", "silicon",
                           "os", "chip_vendor", "target", "target_source", "hdmi_input",
-                          "screen_claimable", "conn", "state", "watts", "busy",
+                          "sink", "screen_claimable", "conn", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s", "adb_auth",
                           "network"}
         assert d["device_class"] in ("sbc", "stb", "tv")
+        # `sink` is the regime marker, not a duplicate of hdmi_input: a box on
+        # no panel socket may still have a dummy/EDID plug (2026-09-05).
+        assert d["sink"] == "panel" if d["conn"] == "webos" else (
+            d["sink"] in ("dummy", "none") or d["sink"].startswith("panel:"))
         assert d["conn"] in ("ssh", "adb", "webos", "atv", "roku")
         assert d["network"] in ("ethernet", "wifi")
     # Transparency: which devices are Wi-Fi (2026-08-29: no longer just the
@@ -753,6 +758,45 @@ def test_hdmi_assignment_one_device_per_socket_and_ignores_junk():
     assert rig.RIG["devices"]["c2"]["hdmi_input"] is None        # the panel itself
     assert m["HDMI_1"] == "bbox"
     assert rig.apply_hdmi_assignments("garbage") == rig.apply_hdmi_assignments({})
+
+
+def test_sink_of_distinguishes_panel_dummy_and_none():
+    # The regime split JOURNAL S73 found: no sink is NOT the same measurement
+    # as a sink (Fire TV plays 0.77 W lower, Gen 2 0.42 W). Since the dummy
+    # plugs went on (2026-09-05) "not on a panel socket" no longer implies
+    # "no sink", so sink_of is the only thing an analysis may group on.
+    rig.apply_hdmi_assignments({})
+    rig.apply_sink_assignments({"firestick": "dummy", "xiaomi": "dummy"})
+    d = rig.RIG["devices"]
+    assert rig.sink_of(d["bbox"]) == "panel:HDMI_1"      # cabled to the screen
+    assert rig.sink_of(d["firestick"]) == "dummy"        # its own EDID plug
+    assert rig.sink_of(d["xiaomi"]) == "dummy"
+    assert rig.sink_of(d["pi5"]) == "none"               # genuinely sink-less
+    assert rig.sink_of(d["c2"]) == "panel"               # the panel IS a sink
+
+
+def test_sink_panel_socket_wins_over_a_dummy_flag():
+    # A box that is cabled to the screen reports the panel even if someone
+    # left its dummy flag ticked — one physical sink, and the socket is the
+    # one we can verify from the rig.
+    rig.apply_hdmi_assignments({"firestick": "HDMI_1", "bbox": ""})
+    rig.apply_sink_assignments({"firestick": "dummy"})
+    assert rig.sink_of(rig.RIG["devices"]["firestick"]) == "panel:HDMI_1"
+
+
+def test_sink_assignment_clears_ignores_junk_and_never_marks_the_panel():
+    rig.apply_sink_assignments({"firestick": "dummy"})
+    assert rig.RIG["devices"]["firestick"]["sink_kind"] == "dummy"
+    # "" clears it; unknown kinds and unknown devices are ignored; the webOS
+    # panel never carries one.
+    out = rig.apply_sink_assignments({"firestick": "", "bbox": "tinfoil",
+                                      "c2": "dummy", "nope": "dummy"})
+    assert out["firestick"] is None
+    assert rig.RIG["devices"]["firestick"]["sink_kind"] is None
+    assert rig.RIG["devices"]["bbox"]["sink_kind"] is None
+    assert rig.RIG["devices"]["c2"]["sink_kind"] is None
+    assert rig.sink_of(rig.RIG["devices"]["firestick"]) == "none"
+    assert rig.apply_sink_assignments("garbage") == rig.apply_sink_assignments({})
 
 
 def test_claim_screen_refused_for_headless_devices_with_a_pointer(monkeypatch):
