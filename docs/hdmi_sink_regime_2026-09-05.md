@@ -202,6 +202,15 @@ A literature sweep was run alongside the measurements. Positioning, honestly:
   TMDS pairs are terminated only by their own impedance. Needs ~2 minutes of on-site cable work; designed
   and ready.
 - **The Fire TV's −0.31 W with the panel in standby and its display still ON.**
+- **A controlled resolution arm could not be run.** The intended design was to force the output mode
+  remotely and hold the sink fixed, un-confounding resolution from sink. `cmd display
+  set-user-preferred-display-mode` exists on the Android 14 boxes but throws
+  `SecurityException: Package android does not belong to 2000` from the adb shell, and writing the
+  underlying `user_preferred_resolution_*` globals stores the values without applying them (the GTV stayed
+  at mode 83 = 3840×2160@60). It is absent entirely on Fire OS 8. So §4's resolution×silicon result rests
+  on the *natural* experiment — different boxes negotiating different modes — not on a forced one, and the
+  two factors are separable only because Gen 2 and Gen 3 differ in mode while sharing a vendor. A forced
+  arm would still be worth having; it needs a route that is not the adb shell.
 - **Whether a certified 48 Gbps coupler lets the Fire TV take 4K from a dummy** — parts on order.
 - Whether the Fire TV's 1080p choice is its own *Video Resolution* setting rather than EDID negotiation.
 - The Bbox's sink term remains below its own noise floor.
