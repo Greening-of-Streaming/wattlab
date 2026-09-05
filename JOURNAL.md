@@ -62,6 +62,71 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 - S65 (08-17→18): VP9 re-run — iso-bitrate sw-vs-sw encode (108 rows, n=3) + decode (30 jobs, 3 contents) → report §5; affirmations: operating point decides the dearest codec; hw decode VP9 inside ±0.1 W; sw VP9 cheapest, HEVC 2–3×; no iso-bitrate quality claim. Fire TV liveness false-negative instrumented; campaign paging bug fixed.
 - S66 (08-18→19 overnight): CR-074 network-path campaign (Pi 400 eth/wifi/local × 3 bitrates × burst/paced; STBs on current interface; origin `?pace_kbps=`), CR-075 Apple TV plan, docs sweep (JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal), pixop timeout container reap. Tests 1027.
 
+## Session 75 — 2026-09-05 → 09-06 (HDMI dummy plugs fitted → the sink is a measurement variable)
+
+Owner fitted HDMI dummy/EDID plugs on the three headless Android STBs (Fire TV, Xiaomi Gen 2, Bbox) plus a
+fourth on the Pi 400's loose cable, and asked (1) whether only three boxes really needed them, (2) for a
+quick nine-box headless smoke, then (3) a plan for a longer run. It turned into a full campaign plus two
+reports. **`docs/hdmi_sink_regime_2026-09-05.md`** (technical) and
+**`docs/sink_regime_explainer_2026-09-05.md`** (wider audience).
+
+(1) **Three was right.** Fire TV / Gen 2 / Bbox are Android app-playback boxes whose rows S73 showed are
+invalidated without a sink; the Pi 400 and Pi 5 are `ssh` + `ffmpeg -f null` with no display path at any
+point, so a dummy restores nothing there — it is a new condition, not a fix. Measured benign on the Pi 400
+all the same: **+0.19 W constant offset, decode increment unchanged** (ΔW +1.475 vs the seven-week
++1.48–1.50 anchor). Pi 5 left bare as the only true no-sink control, and it earned its keep.
+
+(2) **Cold smoke (`d0dd1e5a0905`) was unusable and said so.** All nine booted, played and were alive at
+window end, but every baseline was elevated — *including untouched controls* (Pi 5 +0.4 W, GTV +0.56 W).
+First-row-after-cold-boot artefact. Owner's call to re-run warm was the right one; warm reps landed back on
+anchor. **Protocol: discard the first row after power-on.**
+
+(3) **The finding.** Crossover with one cable move (owner on site): Fire TV → HDMI_4 (panel), Gen 3 → a
+spare dummy. Fire TV on the panel reproduced its S73 anchor to **3 mW base / 5 mW playback / 8 mW ΔW**.
+Sink ladder, H.264: Fire TV **1.139 (none) → 1.410 (dummy@1080p) → 1.945 W (panel@4K)**, with the decode
+increment **+0.140 → +0.273 → +0.489** — it more than triples, so it is not an offset you can subtract.
+**A dummy at matched resolution reproduces the panel**: Gen 3 dummy@4K vs panel@4K agrees within 6–25 mW on
+three same-session codecs (≤56 mW incl. cross-night VP9). **A mismatch is silicon-dependent**: MediaTek
+loses 0.54 W and half its increment at 1080p, Amlogic loses 0.07 W and *zero* increment — independently
+reproducing S73's "4K costs the MT8696 +0.37 W, Amlogic ~0". Batches `bef05e0905`, `af7e050905`,
+`aaaa050901` (135 rows, n=15/box), `eeee050901` (VP9).
+
+(4) **Couplers exonerated.** The two cheap F-F couplers were the obvious suspects (Fire TV and Pi 400 are
+male-ended). EDID reads clean through them — 256 valid bytes, FUE `4k60-1080@240`, CTA VIC 97 present, and
+the Fire TV *sees* both 4K60 modes and picks 1080p anyway. Gen 2 has **no** coupler and gets 1080p; Gen 3
+has **no** coupler and gets 4K. The split is Android 11 vs 14. Certified 48 Gbps parts ordered anyway to
+close the untested TMDS question.
+
+(5) **Retraction, same session.** Mid-session I claimed LG Always-Ready standby deasserts HPD and shipped
+code demoting a panel box's sink on that basis (`f9142dc`). The literature sweep flagged HDMI 1.3 §8.5 —
+a sink keeps HPD asserted "even if the Sink is powered-off or in standby" — and a logcat test disproved it.
+What the C2 actually does is broadcast **CEC `<Standby>` (0x36 → 0x0F)**; **GTV** runs
+`[CecMsgProcessor] handleStandby` and **sleeps** (and **does not wake when the panel does** — 0.88 W a
+minute later: a standing overnight hazard, and a better explanation for failed rows than any sink theory);
+**Fire TV** logs `isPowerOffChangerMessage:false`, stays awake with Display ON and loses only 0.31 W
+(**mechanism open**); **Roku** ignores it. Dummy boxes unmoved — the control. Retracted in `c52c9b2`. Also
+found: the GTV obeyed Standby with `mOptionEnableCec=0` and a null framework callback because
+`mCecHalAlwaysOn=1` — **turning CEC off in Android settings does not stop it**.
+
+(6) **Provenance shipped.** Rows now carry `sink` (`panel:HDMI_n` | `dummy` | `none`), `sink_wiring` and
+`panel_awake`; `/settings › Rig` grows a "Dummy sinks" block; the adb caveat no longer claims the dummy
+boxes have no cable. Group on `sink`, never `hdmi_input`. `9478c56`, `f9142dc`, `c52c9b2`. Suite 1112.
+
+(7) **Literature.** No published measurement varies HDMI sink state as the independent variable; ENERGY
+STAR §4.2(E) requires a display connected while EU CoC v9 §9.1(A) forbids external loads, and **neither
+specifies the display's state**. Confirmed rather than new: HPD carries no sink-state information (§8.5),
+"headless ≠ no display work" (Pi `userland` #447), and manufacturer discretion over `<Standby>` (CEC
+13.3.2) — our three-way split is spec-sanctioned, not a set of bugs.
+
+**Open:** unplugged at the TV end vs the box end — owner asked, **not tested**, needs ~2 min of hands, and
+the literature does not answer it either. Fire TV's −0.31 W residue. Whether a certified coupler lets the
+Fire TV take 4K from a dummy. Fire TV's own *Video Resolution* setting still unread. Bbox sink term remains
+below its 6.2–6.7 W idle drift even at its tightest reps ever (sd 0.03–0.15).
+
+**Systematic to declare:** the dummies carry an indicator LED fed from HDMI +5 V (pin 18, source-supplied),
+so it sits inside the box's measured power — 10–50 mW realistically, 0.25 W by spec cap, always the same
+direction, and it works *against* the gaps reported here.
+
 ## Session 74 — 2026-09-04 (CR-083: reserve a Lab session in advance — delivered unattended)
 
 Owner asked for CR-083 and whether other open CRs fit the same work package, then went AFK: "take this
