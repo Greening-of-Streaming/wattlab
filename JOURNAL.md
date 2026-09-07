@@ -62,6 +62,160 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 - S65 (08-17→18): VP9 re-run — iso-bitrate sw-vs-sw encode (108 rows, n=3) + decode (30 jobs, 3 contents) → report §5; affirmations: operating point decides the dearest codec; hw decode VP9 inside ±0.1 W; sw VP9 cheapest, HEVC 2–3×; no iso-bitrate quality claim. Fire TV liveness false-negative instrumented; campaign paging bug fixed.
 - S66 (08-18→19 overnight): CR-074 network-path campaign (Pi 400 eth/wifi/local × 3 bitrates × burst/paced; STBs on current interface; origin `?pace_kbps=`), CR-075 Apple TV plan, docs sweep (JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal), pixop timeout container reap. Tests 1027.
 
+## Session 76 — 2026-09-06 → 09-07 (Tania — SMPTE clean sweep: two passes + a contaminated-row re-measure)
+
+*Run by Tania, via Claude Code.*
+
+**Outcome: 708/708 rows, all 🟢, zero errors, and the CR-070 contamination flag proved causal.** The
+two-pass clean-protocol sweep ran 21:50 → 06:53 (9.06 h, 46 s/row, ~35 min inside Tania's reservation),
+then the 10 rows it flagged as measured on a contaminated baseline were re-measured on 09-07 morning
+(§8). Box released, all flags down, queue back to normal. Pass 3 is the only thing outstanding.
+
+**1. Notes-for-Tania sweep.** Went through JOURNAL, CLAUDE.md, CHANGE_REQUESTS and `docs/smpte_2026/`
+for anything left for her since her 09-02 session. No note addressed to her by name; the open items
+marked "Tania's call" are: adopt-or-not `consolidated_encode_dataset_2026-09-04.csv` (her 569 rows +
+150 football; her own file untouched — football source is lab-internal, no citable licence); review the
+DRAFT finding `looped-excerpt-measures-as-continuous`; set the r threshold for "primary" data; CR-029 §2
+encode-normalisation review against NVENC reality; CR-045's "typical use" operating points vs
+Bitmovin/Netflix guidance. Also flagged to her: CR-083 means she can now reserve the box herself, and
+the C2/CEC `<Standby>` + panel auto-off hazards from S75.
+
+**2. The task-definition correction — worth carrying into the paper.** Tania asked to confirm that each
+task in the published dataset is "a 30 s excerpt, 20 s window, repeated once" before finalising the
+sweep. Two of the three hold; the third conflates two different counters. `reps=1` means one *row* per
+recipe (n=1) — true. But **within** each row the excerpt is re-encoded until the window fills, and that
+counter, `n_encodes`, ran **1–13** across the canonical 240 rows: only **7 rows** (CPU H.265, the slowest
+encoder) did a single pass, while NVENC rows encoded 150–210 s of content and low-res ladder rungs up to
+390 s — all inside windows of similar length (20–40 s), because the window is wall-clock and encoder
+speeds differ ~5× (measured medians per 30 s encode: NVENC 3.6–4.0 s, libx264 8.6, SVT-AV1 9.5,
+libx265 17.6). `wh_per_min_video` divides by content actually encoded, so the published numbers are
+right — but the tasks are neither equal-length nor a fixed amount of content. **Tania's call: keep the
+published task definition unchanged**, so the clean rows stay directly comparable to the existing 569,
+and describe the variable `n_encodes` in the paper's Section 3 instead. Options for making each task a
+literal 120 s (either fixed content or a 120 s excerpt, ~+4 h) were costed and declined.
+
+**3. Scope raised to n=3 over four contents.** Meridian, BBB, ReadySetGo **and football**. ReadySetGo
+stays in despite the 5 s-source looping caveat (S73's loop-validity result) — it goes in the paper's
+limitations rather than the clip coming out; this is the *paper's* sweep and does not touch the decode
+rig's content tiers or CR-079. Football carries its **ceiling-extended ladder** (H.265 to 16 Mbps, AV1 to
+13) from the start, because on the matched ladder its targets fell off the top in the 09-03 leg — the
+cause of the empty `bitrate_kbps_at_target` cells there. **1062 rows at full n=3** (354/pass: 774 sweep +
+288 ladder); **two passes = 708 rows tonight**, third pass deferred.
+
+**4. `run_clean_sweep.py` finalised** (the three integrity fixes from 09-02 — real
+`power.cooldown_between_runs()` instead of the flat 10 s sleep, `baseline_elevated`/`baseline_reference_w`
+kept, `posix_fadvise` cache eviction — were already in; this session added the scope and the plumbing):
+- **Replicates run as whole passes, not back-to-back.** `parity.Campaign.recipes()` yields `rep`
+  innermost, which would measure each recipe three times in a row sharing thermal state and a warm
+  cache — understating exactly the run-to-run spread n=3 exists to measure. Built with `reps=1` and the
+  whole matrix repeated (`expand_passes()`), so replicate k is ~6.5 h from replicate k+1; an interrupted
+  run also leaves complete passes.
+- **`--resume`** (continues into the same artifact, skips measured rows, re-runs rows that stored an
+  error) and **`--passes N`**, so the third pass can be added later.
+- **Overwrite guard**: a fresh `--run` refuses to start onto an existing artifact and names `--resume`.
+- **VMAF scored v0.6.1 in-run** via an in-process settings override (dataset convention, not the live v1
+  default), so these rows need no `bin/rescore-*-v0.py` pass. Terminal pass after the window closes — no
+  energy number touched. Everything else reads live settings, read-only.
+- Verified before launch: `--print-only` 1062 rows / 3 passes / ~19.4 h (708 / ~12.9 h for two); all four
+  30 s trims build clean (`-c copy`, 30.03–30.05 s); a 2-pass synthetic-power run exercised pass ordering,
+  the kept contamination fields, v0.6.1 stamping, checkpointing, resume-skips-measured, resume-re-runs-
+  errors, and resume-of-a-finished-artifact as a no-op.
+
+**5. The overnight run (completed 06:53 on 09-07).**
+- **Process:** PID 1816780, `python3 docs/smpte_2026/run_clean_sweep.py --run --passes 2
+  --skip-lab-session`, detached (nohup), started **21:50 on 09-06**.
+- **Artifact:** `results/calibration/_staging/encode_parity_CLEAN_nvenc_24c_2026-09-06.json`,
+  checkpointed after every row — a crash leaves a valid partial. **`_staging/` only**, so `/video/budget`
+  and its "latest artifact" glob are untouched.
+- **Log:** `results/calibration/_staging/clean_sweep_2026-09-06.log` — `tail -f` it.
+- **Actual:** 708 rows in **9.06 h at 46 s/row**, finished **06:53**, against a 12.9 h / 66 s/row
+  estimate. The estimate's per-row overhead was pessimistic: the real cooldowns settled in a median
+  **4.3 s** (max 15.5 s, **zero timeouts** against the 120 s ceiling), so the box was reconverging on
+  its floor between every row — the thing the old flat 10 s sleep never verified.
+- **Lab flag:** deliberately **not** touched by the script (`--skip-lab-session`). Tania's reservation
+  ("Tania - SMPTE sweep", 22:00→08:00, `r24478590`) raises and lowers `/tmp/owl-lab-session` itself and
+  owns it. Had the script grabbed it too, the run ending would have looked like a hand-end and closed
+  her slot early. **Consequence: from 08:00 the visible lockout lapses while the run continues** — the
+  run is still protected by its own lock and pause flag, but the banner will no longer say the box is
+  reserved.
+- **Caveat on the process now in flight.** A flag-ownership fix landed *after* launch, so the running
+  copy still carries the old cleanup, which unlinks `/tmp/owl-lab-session` on exit **whether or not it
+  raised it**. Tania's slot ends at 08:00, well before the sweep does, so nothing of hers is affected —
+  but **if you book a reservation that activates before the run finishes**, the sweep's exit
+  (~10:00–11:00) will delete the flag *her/his* reservation raised, and `lab_reservations.tick()` reads
+  that as a hand-end: the slot is finished and never re-raised. Re-raise with `bin/lab-session-on` or
+  rebook. Fixed in `run_clean_sweep.py` for the pass-3 resume and every future run (the flag is now
+  lowered only if the script raised it) — the running process cannot pick that up, Python having already
+  loaded the module.
+- **To stop it safely:** `kill -INT 1816780` (SIGINT → the `finally` block clears
+  `/tmp/owl-paused`, `/tmp/gos-measure.lock` and restores focus-mode timers). A plain `kill`/SIGTERM
+  would leave those flags behind and the queue parked. Rows already measured survive in the artifact;
+  restart later with `--run --resume <artifact> --passes 2`.
+- **Health:** all 708 🟢, 0 errors, VMAF on every row, `cache_evicted: True` throughout, `w_base`
+  first/last 80.7/80.3 W (floor 78.0, max 103.6 — see §8).
+- **Flag cleanup, as predicted:** the run's exit at 06:53 deleted `/tmp/owl-lab-session` while Tania's
+  reservation still had ~1 h to go — the pre-fix cleanup documented in the caveat above, behaving
+  exactly as described. No practical effect (the run was over), and the fix is in for pass 3.
+
+**6. Third pass, later.** `python3 docs/smpte_2026/run_clean_sweep.py --run --resume
+results/calibration/_staging/encode_parity_CLEAN_nvenc_24c_2026-09-06.json --passes 3
+--skip-lab-session` adds the 354 rep-2 rows and skips everything already measured. ~6.5 h.
+
+**7. Variance recalibration, for the record.** `settings.json`'s uncommitted diff is not a stray edit: an
+automatic calibration ran **2026-09-05 04:03** (n=20, `w_base_mean` 78.36 W, nothing else writing results
+in that window — a genuinely idle box) and wrote itself in. `variance_pct` 1.49 → 2.19, gpu 1.25 → 2.87,
+idle drift 1.12 → 1.9; log in `results/variance/history.jsonl`. The box is simply noisier than it was in
+July. Consequence: `SE_final` is larger, so traffic lights on the new rows are more conservative than the
+2026-06 rows. Raw baseline/task samples are persisted per row, so any of it can be recomputed. Left live
+per Tania, and `settings.json` stays out of any commit as usual.
+
+**8. The contamination flag turned out to be causal, not cosmetic — the session's real result.**
+Ten of the 708 rows tripped CR-070's `baseline_elevated` (baselines 84.6–103.6 W against ~80–82 W
+references). In the published dataset that field is computed and dropped before it reaches disk, so
+these rows were invisible; with two passes on disk they can be checked, and they are exactly the rows
+that fail to reproduce:
+
+| pass-to-pass spread in `wh_per_min_video` | median | p90 | max |
+|---|---|---|---|
+| 344 clean pairs | **1.8 %** | 5.4 % | 13.4 % |
+| 10 pairs with a flagged baseline | **24.0 %** | — | 44.8 % |
+
+All five worst-disagreeing recipes in the dataset carried a flag in one of their two passes, and 8 of
+the 10 flagged rows read **low** — the direction an inflated `w_base` predicts, since ΔW is measured
+above it. **Re-measured on 09-07 (~9 min, box flagged in use), the causal chain closes:** every baseline
+came back to 78.7–81.8 W, nine of ten values moved *up* toward their twin, and the pass-to-pass gap on
+those ten went **median 24 % → 3.0 %, max 45 % → 6.5 %**. Worst cases: readysetgo h264 gpu_baseline
+15000k 45 % → 5.9 % (`w_base` 100.3 → 81.4 W), meridian h265 gpu_baseline 3500k 41 % → 6.5 %
+(99.4 → 80.5 W), football h265 cpu 650k 480p 40 % → 2.4 % (103.6 → 80.5 W). So gap #2 is a real defect,
+not a tidiness complaint: the flag identifies contaminated rows, predicts the direction of their error,
+and re-measuring on a clean baseline makes them reproduce. Worth stating that way in Section 3.5.
+
+Mechanics: new `--redo-flagged` (only meaningful with `--resume`) re-measures rows whose baseline was
+flagged; the originals are **not deleted** but moved to the artifact's `superseded_rows` with a
+`superseded_reason` and timestamp, so the 24 %-vs-1.8 % comparison stays reproducible from the artifact
+itself. Selection logic factored out as `partition_prior_rows()` and unit-checked against the real
+artifact (698 keep / 10 redo; default resume unchanged at 708 keep / 0 redo).
+
+**9. Dataset state, and one open oddity.** 708 rows + 10 superseded, `complete: true`, **zero flagged,
+zero errors, all 🟢**. Whole-dataset pass-to-pass agreement: **median 1.9 %, p90 5.6 %, max 13.4 %,
+87 % of recipes within 5 %, 98 % within 10 %** — the headline barely moved (the ten were 3 % of pairs)
+but the tail is gone: the worst disagreement is now 13.4 % instead of 44.8 %. **Open:** VMAF is not
+bit-identical across passes on 39 of 354 recipes, and every one of them is `av1 / cpu` — SVT-AV1 is the
+only non-deterministic encoder in the set. Mostly trivial (Δ ≤ 0.21) except `readysetgo / av1 / cpu /
+2800k`, **84.26 vs 83.00 (Δ1.26)**. An encoder property rather than a measurement problem, but it puts a
+small extra uncertainty on iso-quality interpolation over SVT-AV1 rows that the other paths don't carry;
+pass 3 will say which of the two scores is the outlier.
+
+**Committed:** `docs/smpte_2026/run_clean_sweep.py` (scope + passes + resume + v0 scoring + overwrite
+guard + lab-flag ownership fix + `--redo-flagged`),
+`docs/smpte_2026/CLEAN_SWEEP.md` (revised Scope / Time estimate / Status), this entry. `settings.json`
+excluded as usual. Artifact lives on `/srv/data` (not in git):
+`results/calibration/_staging/encode_parity_CLEAN_nvenc_24c_2026-09-06.json` — the single file needed to
+redo the paper's analysis; log alongside it.
+**After the run:** folding the clean artifact into `consolidated_encode_dataset.csv` — or deciding it
+*replaces* the existing sweep rows — stays a deliberate, reviewed step, and if it does replace them,
+Section 3.5's flat-sleep / no-cache-mitigation language needs a pass.
+
 ## Session 75 — 2026-09-05 → 09-06 (HDMI dummy plugs fitted → the sink is a measurement variable)
 
 Owner fitted HDMI dummy/EDID plugs on the three headless Android STBs (Fire TV, Xiaomi Gen 2, Bbox) plus a

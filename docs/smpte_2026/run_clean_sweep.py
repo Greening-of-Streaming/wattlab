@@ -48,17 +48,40 @@ that footgun, this script avoids it from the start). Nothing here is on any
 serving path; a visitor hitting /video or /video/budget during this run sees
 no difference at all.
 
-n=1 PER POINT — same design as the existing dataset, deliberately not scoped
-up to real repeat replication (n=3+) here. That's a separate, larger, later
-decision (see chat), not bundled into this fix.
+n=3 PER POINT (Tania, 2026-09-06) — three independent replicates of every
+recipe, meeting the WattLab call's n=3 primary-data bar. The reps are run as
+three WHOLE PASSES over the matrix (pass 1 = every row once, then pass 2,
+then pass 3), NOT as three back-to-back measurements of the same recipe:
+consecutive repeats of one recipe share thermal state and a warm cache, so
+they would understate run-to-run spread — exactly the quantity n=3 exists to
+measure. A side benefit: an interrupted run always leaves COMPLETE passes.
+
+TASK DEFINITION IS UNCHANGED FROM THE PUBLISHED DATASET (Tania's call,
+2026-09-06, after checking what the published rows actually did): a 30 s
+excerpt (DURATION_S), encoded back-to-back until the measured window reaches
+20 s of wall clock (MIN_TASK_S), energy normalised per minute of content
+encoded. That means n_encodes varies with encoder speed exactly as it did in
+the canonical set (1-13 there; NVENC fills the window in 5-7 passes where
+libx265 needs 1-2), and content_s varies with it. This script changes ONLY
+the three integrity gaps above, plus n, plus the content list — so its rows
+stay directly comparable to the existing 569.
 
 Scope: same matched ladder as the ReadySetGo sweep (MATCHED_BITRATES below —
 the post-ceiling-extension ladder, NOT parity.FULL_BITRATES) x the same 4
 ABR-ladder-typical lower rungs, x 3 codecs x 3 profiles (cpu / gpu_baseline /
 gpu_tuned for the sweep; cpu / gpu_baseline only for the ladder rungs, same
-convention as everywhere else), x all three contents (Meridian, BBB,
-ReadySetGo). 252 rows total. See print_recipes() for the exact count and a
-runtime estimate.
+convention as everywhere else), x FOUR contents (Meridian, BBB, ReadySetGo,
+football). Football carries the taller ceiling-extension ladder it needed in
+the 2026-09-03 leg (FOOTBALL_BITRATES) — its VMAF targets sit above the
+matched ladder's top on h265/av1, and interpolating an iso-quality bitrate
+from a ladder that never reaches the target is what produced the empty
+`bitrate_kbps_at_target` cells there. 1062 rows total (354 per pass). See
+print_recipes() for the exact count and a runtime estimate.
+
+VMAF is scored under v0.6.1 (VMAF_MODEL) — the consolidated dataset's
+convention — not the live service's v1 default. That is a scoring-model
+choice only: it is a terminal pass after the measurement window has closed,
+so it touches no energy number. Everything else reads live settings.
 
 Usage:
   1. python docs/smpte_2026/run_clean_sweep.py --print-only
@@ -69,8 +92,12 @@ Usage:
      skips the real active-wait branch specifically, not just cooldown)
   3. python docs/smpte_2026/run_clean_sweep.py --run
      (the real metered run, unattended; needs /bench-preflight conditions:
-     queue idle, meter exclusive. ~4.5h — run detached, e.g. nohup, same
-     pattern run_sport_clip_sweep.py used to survive a dropped SSH session)
+     queue idle, meter exclusive. ~19h at n=3 — too long for one night, so
+     run detached, e.g. nohup, same pattern run_sport_clip_sweep.py used to
+     survive a dropped SSH session, and resume it on a later evening:)
+  4. python docs/smpte_2026/run_clean_sweep.py --run --resume <artifact.json>
+     (continues into the SAME artifact, skipping rows already measured and
+     re-running any that stored an error; safe to repeat as often as needed)
 """
 from __future__ import annotations
 
@@ -102,8 +129,13 @@ from confidence import confidence  # noqa: E402
 # exist; ReadySetGo's isn't in parity.CLIPS on disk (run_sport_clip_sweep.py
 # injects it in-process only), so it's named directly here, same convention.
 # ---------------------------------------------------------------------------
-CLIP_KEYS = ["meridian_120s", "bbb_120s", "readysetgo_30s"]
+CLIP_KEYS = ["meridian_120s", "bbb_120s", "readysetgo_30s", "football_30s"]
 READYSETGO_CLIP = Path("/home/gos/wattlab/test_content/readysetgo_30s_looped.mp4")
+# Football: same key and same 35s master the 2026-09-03 sports-tier leg used, so
+# rows carry the identical `clip` value and merge without a rename.
+# LAB-INTERNAL SOURCE (Panasonic demo via a third-party upload, no citable
+# licence): measurements are usable and publishable, the pictures are not.
+FOOTBALL_CLIP = Path("/home/gos/wattlab/test_content/football_35s.mp4")
 
 # Exactly the canonical post-ceiling-extension ladder ReadySetGo was already
 # swept at (docs/smpte_2026/run_sport_clip_sweep.py) — NOT parity.FULL_BITRATES
@@ -114,6 +146,21 @@ MATCHED_BITRATES = {
     "h265": [1500, 2500, 3500, 5000, 7000, 8500, 10000],
     "av1":  [1000, 1800, 2800, 4000, 6000, 7500],
 }
+
+# Football is the high-spatial-detail tier (SI ~48 vs ReadySetGo's ~38): on the
+# matched ladder its h265/av1 VMAF targets fell OFF THE TOP of the sweep, so the
+# 2026-09-03 leg needed a ceiling extension afterwards (av1 +9/11/13 Mbps, h265
+# +12/14/16). Folded in up front here so every iso-quality target is interior to
+# the measured range on the first pass — h264 reached its targets on the matched
+# ladder and is unextended.
+FOOTBALL_BITRATES = {
+    "h264": [3000, 4500, 6000, 8000, 11000, 13000, 15000],
+    "h265": [1500, 2500, 3500, 5000, 7000, 8500, 10000, 12000, 14000, 16000],
+    "av1":  [1000, 1800, 2800, 4000, 6000, 7500, 9000, 11000, 13000],
+}
+
+REPS = 3                   # n=3 per point, run as three whole passes (see header)
+VMAF_MODEL = "v0"          # consolidated_encode_dataset convention, not the live v1
 
 DURATION_S = 30            # matches the existing protocol exactly
 BASELINE_POLLS = 5         # matches the existing protocol exactly
@@ -135,7 +182,8 @@ def campaign() -> "parity.Campaign":
         clips=list(CLIP_KEYS),
         codecs=["h264", "h265", "av1"],
         profiles=["cpu", "gpu_baseline", "gpu_tuned"],
-        bitrates=MATCHED_BITRATES,          # same ladder for all three clips
+        bitrates=MATCHED_BITRATES,          # matched ladder for the three 1080p-target clips
+        clip_bitrates={"football_30s": FOOTBALL_BITRATES},  # football needs its ceiling
         duration_s=DURATION_S,
         baseline_polls=BASELINE_POLLS,
         cooldown_s=int(cfg.load().get("video_cooldown_s", 60)),  # fallback only —
@@ -144,7 +192,9 @@ def campaign() -> "parity.Campaign":
                                              # power.cooldown_between_runs(), this
                                              # value is only what it falls back to
                                              # if the active wait times out.
-        reps=1,                             # n=1 per point, deliberately (see chat)
+        reps=1,                             # ONE pass here; the n=3 replication is the
+                                            # outer pass loop in run_clean_campaign(),
+                                            # so reps are independent, not back-to-back
         min_task_s=MIN_TASK_S,
         ladder_rungs=list(parity._LADDER_LOWER),  # same 4 ABR rungs as everyone else
     )
@@ -240,7 +290,13 @@ async def measure_recipe_clean(ref: Path, job_id: str, codec: str, profile: str,
     out_size_mb = round(out_path.stat().st_size / 1024 / 1024, 2) \
         if out_path.exists() and out_path.stat().st_size > 0 else None
     stream = video.probe_output_stream(out_path)
-    vmaf = video.compute_vmaf(out_path, ref)          # terminal pass
+    # Terminal pass — runs AFTER the measurement window has closed, so it cannot
+    # touch any energy number. Scored under the consolidated dataset's v0.6.1
+    # convention through an in-process settings override (same mechanism as
+    # bin/rescore-*-v0.py); settings.json is read, never written, and a
+    # concurrent visitor's own job still scores under the live default.
+    vmaf_s = {**cfg.load(), "vmaf_model": VMAF_MODEL}
+    vmaf = video.compute_vmaf(out_path, ref, s=vmaf_s)
     try:
         out_path.unlink()
     except FileNotFoundError:
@@ -248,7 +304,7 @@ async def measure_recipe_clean(ref: Path, job_id: str, codec: str, profile: str,
 
     return {
         "vmaf": vmaf,
-        "vmaf_model": quality.vmaf_model_id() if vmaf is not None else None,
+        "vmaf_model": quality.vmaf_model_id(vmaf_s) if vmaf is not None else None,
         "ffmpeg_cmd": (last_tx or {}).get("ffmpeg_cmd"),
         "transcode_ok": (last_tx or {}).get("success"),
         "n_encodes": n_enc, "content_s": round(content_s, 1),
@@ -273,13 +329,72 @@ async def measure_recipe_clean(ref: Path, job_id: str, codec: str, profile: str,
 # every row so an overnight crash leaves a valid partial artifact), but with
 # a real cooldown call in place of the flat sleep.
 # ---------------------------------------------------------------------------
+def partition_prior_rows(prior_rows: list, redo_flagged: bool = False) -> tuple:
+    """Split a resumed artifact's rows into (keep, redo).
+
+    Always redo a row that stored an `error` — it holds no measurement. With
+    `redo_flagged`, also redo a row whose baseline tripped CR-070's
+    `baseline_elevated`: it IS a measurement, but one taken on top of residual
+    heat, and the 2026-09-06 two-pass run showed those rows are exactly the ones
+    that fail to reproduce (median pass-to-pass spread 24% vs 1.8% for clean
+    rows, 8 of 10 reading low, as an inflated w_base predicts).
+
+    Redone rows are not discarded — run_clean_campaign moves them to the
+    artifact's `superseded_rows`, so the evidence behind that comparison
+    survives the re-measurement."""
+    keep, redo = [], []
+    for row in prior_rows:
+        if row.get("error"):
+            redo.append((row, "error"))
+        elif redo_flagged and row.get("baseline_elevated") is True:
+            redo.append((row, "baseline_elevated"))
+        else:
+            keep.append(row)
+    return keep, redo
+
+
+def _recipe_key(rc: dict) -> tuple:
+    """Identity of one measured point, used to skip what a resumed run already has."""
+    return (rc["clip"], rc["codec"], rc["profile"], rc["bps"], rc["height"],
+            rc["kind"], rc["rep"])
+
+
+def _row_key(row: dict) -> tuple:
+    """The same identity, read back off a stored row."""
+    return (row["clip"], row["codec"], row["profile"], row["target_bitrate_kbps"],
+            row["height"], row["rung"], row["rep"])
+
+
+def expand_passes(camp: "parity.Campaign", reps: int = REPS) -> list:
+    """The full n=`reps` recipe list, ordered as WHOLE PASSES over the matrix.
+
+    camp.recipes() itself yields rep innermost — three consecutive measurements
+    of the same recipe, which share thermal state and a warm page cache and so
+    understate run-to-run spread. The campaign is therefore built with reps=1
+    and repeated here instead, so replicate k of every point is separated from
+    replicate k+1 by a full pass over the matrix (~6 h). Also means an
+    interrupted run leaves complete passes rather than a ragged matrix."""
+    out = []
+    for rep_i in range(reps):
+        for rc in camp.recipes():          # camp.reps == 1 -> exactly one pass
+            out.append({**rc, "rep": rep_i})
+    return out
+
+
 async def run_clean_campaign(camp: "parity.Campaign", clips_map: dict, *,
-                             dry: bool = False, log=print) -> dict:
+                             dry: bool = False, log=print,
+                             resume: Optional[Path] = None,
+                             reps: Optional[int] = None,
+                             redo_flagged: bool = False) -> dict:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    total = camp.count()
+    # reps: None -> the real n (REPS), or a single pass in --dry, where the point
+    # is plumbing rather than statistics. Explicit values are for tests.
+    n_reps = reps if reps is not None else (1 if dry else REPS)
+    recipes = expand_passes(camp, n_reps)
+    total = len(recipes)
     log(f"[clean-sweep] {'DRY ' if dry else ''}campaign: {total} rows "
         f"({len(camp.clips)} clip(s) x {len(camp.codecs)} codec(s), "
-        f"duration={camp.duration_s}s)")
+        f"duration={camp.duration_s}s, {n_reps} pass(es))")
 
     started = time.time()
     fp = parity.fingerprint()
@@ -300,7 +415,12 @@ async def run_clean_campaign(camp: "parity.Campaign", clips_map: dict, *,
                                 "sleep; see run_clean_sweep.py header)",
             "cache_eviction": "posix_fadvise DONTNEED on the source clip before every "
                                "row's first read (see evict_from_cache())",
-            "reps": camp.reps, "min_task_s": camp.min_task_s,
+            "reps": n_reps, "min_task_s": camp.min_task_s,
+            "rep_order": "whole passes over the matrix (rep is the OUTER loop), so "
+                          "replicates of one point are ~a pass apart, never back-to-back",
+            "clip_bitrates": {"football_30s": "ceiling-extended ladder (h265 to 16 Mbps, "
+                                               "av1 to 13) — see FOOTBALL_BITRATES"},
+            "vmaf_model_setting": VMAF_MODEL,
             "ladder_rungs": camp.ladder_rungs,
             "expected_rows": total, "elapsed_s": 0,
         },
@@ -309,6 +429,47 @@ async def run_clean_campaign(camp: "parity.Campaign", clips_map: dict, *,
     date = artifact["generated_at"][:10]
     suffix = "_DRY" if dry else ""
     out = ARTIFACT_DIR / f"encode_parity_CLEAN_{parity.fingerprint_slug(fp)}_{date}{suffix}.json"
+
+    # Never silently clobber a previous night's artifact: a fresh --run that
+    # lands on the same fingerprint+date as an existing file would overwrite
+    # pass 1 rather than continue it. Refuse, and name the fix.
+    if resume is None and out.exists() and not dry:
+        raise SystemExit(
+            f"ABORT: {out} already exists. Continue it with\n"
+            f"  --run --resume {out}\n"
+            "or move it aside if you really want a fresh artifact.")
+
+    # --- resume ----------------------------------------------------------
+    # Continue into the SAME artifact: keep every row already measured, re-run
+    # any that stored an error, and leave the original generated_at/fingerprint
+    # in place (with this session's appended) so the artifact says honestly that
+    # it was collected over more than one sitting.
+    done: set = set()
+    if resume is not None:
+        prior = json.loads(resume.read_text())
+        kept, redo = partition_prior_rows(prior.get("rows", []), redo_flagged)
+        dropped = len(redo)
+        rows.extend(kept)
+        done = {_row_key(r) for r in kept}
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        artifact["superseded_rows"] = prior.get("superseded_rows", []) + [
+            {**row, "superseded_at": stamp, "superseded_reason": why} for row, why in redo]
+        artifact["generated_at"] = prior.get("generated_at", artifact["generated_at"])
+        artifact["fingerprint"] = prior.get("fingerprint", fp)
+        artifact["resumed"] = prior.get("resumed", []) + [
+            {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+             "fingerprint": fp, "rows_already_present": len(kept)}]
+        if prior.get("fingerprint", {}).get("sha") != fp.get("sha"):
+            log(f"[clean-sweep] NOTE: resuming under a different code fingerprint "
+                f"({prior.get('fingerprint', {}).get('sha')} -> {fp.get('sha')}); "
+                "recorded in artifact['resumed'].")
+        out = resume
+        why = {}
+        for _, w in redo:
+            why[w] = why.get(w, 0) + 1
+        log(f"[clean-sweep] resuming {out.name}: {len(kept)} rows kept"
+            + (f", re-running {dropped} ({why}) -> artifact['superseded_rows']" if dropped else "")
+            + f", {total - len(done)} to go")
 
     def checkpoint():
         artifact["protocol"]["elapsed_s"] = round(time.time() - started, 1)
@@ -323,14 +484,16 @@ async def run_clean_campaign(camp: "parity.Campaign", clips_map: dict, *,
     last_floor = None   # reference_w for the NEXT row's cooldown; None = skip (first row)
 
     try:
-        for idx, rc in enumerate(camp.recipes()):
+        for idx, rc in enumerate(recipes):
             clip_key, codec, profile = rc["clip"], rc["codec"], rc["profile"]
             bps, height, rep, rkind = rc["bps"], rc["height"], rc["rep"], rc["kind"]
+            if _recipe_key(rc) in done:
+                continue
             ref = parity.ensure_clip(clips_map[clip_key], camp.duration_s)
             clip_dur_s = camp.duration_s or video._probe_duration(ref) or 0
             job_id = f"clean_{idx:03d}_{clip_key}_{codec}_{profile}_{height}p_{bps}_r{rep}"
-            log(f"[clean-sweep] {idx + 1}/{total}  {codec:5s} {profile:12s} {height:>4}p "
-                f"{bps:>6}k  {clip_key} [{rkind}]")
+            log(f"[clean-sweep] {idx + 1}/{total}  pass {rep + 1}  {codec:5s} "
+                f"{profile:12s} {height:>4}p {bps:>6}k  {clip_key} [{rkind}]")
 
             cd = None
             if not dry and last_floor is not None:
@@ -393,7 +556,8 @@ async def run_clean_campaign(camp: "parity.Campaign", clips_map: dict, *,
 def clips_map() -> dict:
     m = {"meridian_120s": parity.CLIPS["meridian_120s"],
          "bbb_120s": parity.CLIPS["bbb_120s"],
-         "readysetgo_30s": READYSETGO_CLIP}
+         "readysetgo_30s": READYSETGO_CLIP,
+         "football_30s": FOOTBALL_CLIP}
     return m
 
 
@@ -437,21 +601,61 @@ def preflight() -> bool:
     return ok
 
 
-def print_recipes() -> None:
+# Median wall-clock seconds to encode one 30 s excerpt, per path — measured
+# across the 426 real rows on disk (canonical 240 + ReadySetGo 84 + football
+# 102): delta_t_s / n_encodes. Used ONLY for the planning estimate below.
+ENCODE_S_PER_30S = {
+    ("h264", "cpu"): 8.6,  ("h264", "gpu_baseline"): 3.7, ("h264", "gpu_tuned"): 7.6,
+    ("h265", "cpu"): 17.6, ("h265", "gpu_baseline"): 4.0, ("h265", "gpu_tuned"): 14.3,
+    ("av1",  "cpu"): 9.5,  ("av1",  "gpu_baseline"): 3.6, ("av1",  "gpu_tuned"): 8.8,
+}
+ROW_OVERHEAD_S = 20        # 5-poll baseline + VMAF terminal pass + probe/bookkeeping
+ROW_COOLDOWN_S = 20        # budget for the ACTIVE wait-for-idle (the old flat sleep was 10)
+
+
+def estimate_seconds(recipes: list) -> float:
+    """Planning estimate: for each row, how long the >=20 s window actually takes
+    given that path's encoder speed, plus fixed per-row overhead."""
+    total = 0.0
+    for rc in recipes:
+        per_enc = ENCODE_S_PER_30S[(rc["codec"], rc["profile"])]
+        n_enc = 1
+        while per_enc * n_enc < MIN_TASK_S:
+            n_enc += 1
+        total += per_enc * n_enc + ROW_OVERHEAD_S + ROW_COOLDOWN_S
+    return total
+
+
+def print_recipes(passes: Optional[int] = None) -> None:
     camp = campaign()
-    n = camp.count()
-    log(f"=== clean sweep: {n} rows across {camp.clips} ===")
-    by_kind = {}
-    for rc in camp.recipes():
+    n_passes = passes if passes is not None else REPS
+    recipes = expand_passes(camp, n_passes)
+    n = len(recipes)
+    per_pass = camp.count()
+    log(f"=== clean sweep: {n} rows ({n_passes} passes x {per_pass}) across {camp.clips} ===")
+    by_kind, by_clip = {}, {}
+    for rc in recipes:
         by_kind[rc["kind"]] = by_kind.get(rc["kind"], 0) + 1
+        by_clip[rc["clip"]] = by_clip.get(rc["clip"], 0) + 1
     log(f"  breakdown: {by_kind}")
-    log(f"\n~{round(n * 65 / 3600, 2)} h at ~65s/row planning estimate "
-        "(observed ~54.7s/row on the real ReadySetGo run under the OLD flat-"
-        "10s-cooldown protocol [4596.7s / 84 rows], +~10s/row for a genuine "
-        "settle-verified wait instead of an unverified flat sleep — see chat).")
+    log(f"  per clip:  {by_clip}   (football carries the ceiling-extended ladder)")
+    log(f"  task:      {DURATION_S}s excerpt, encoded back-to-back to a >={MIN_TASK_S:.0f}s "
+        f"window, {BASELINE_POLLS}-poll baseline — unchanged from the published dataset")
+    log(f"  vmaf:      scored {VMAF_MODEL} (dataset convention), terminal pass, "
+        "no effect on any energy number")
+    est = estimate_seconds(recipes)
+    log(f"\n~{est / 3600:.1f} h total, ~{est / n_passes / 3600:.1f} h per pass "
+        f"(~{est / n:.0f}s/row), from the MEASURED per-path encode speeds in "
+        "ENCODE_S_PER_30S plus 20s overhead and a 20s active-cooldown budget. "
+        "Anchor: the real ReadySetGo run logged 54.7s/row under the old flat-10s "
+        "protocol [4596.7s / 84 rows].\nToo long for one night — run it detached "
+        "and continue with --resume.")
 
 
-async def run_real(use_lab_session: bool, dry: bool) -> int:
+async def run_real(use_lab_session: bool, dry: bool,
+                   resume: Optional[Path] = None,
+                   passes: Optional[int] = None,
+                   redo_flagged: bool = False) -> int:
     if not dry and not preflight():
         return 2
 
@@ -464,8 +668,13 @@ async def run_real(use_lab_session: bool, dry: bool) -> int:
 
     try:
         camp = campaign()
-        log(f"\n--- clean sweep ({camp.count()} rows) ---")
-        await run_clean_campaign(camp, clips_map(), dry=dry, log=log)
+        n_passes = passes if passes is not None else (1 if dry else REPS)
+        n_rows = len(expand_passes(camp, n_passes))
+        est = estimate_seconds(expand_passes(camp, n_passes))
+        log(f"\n--- clean sweep ({n_rows} rows, {n_passes} pass(es), ~{est / 3600:.1f} h"
+            + (f", resuming {resume.name}" if resume else "") + ") ---")
+        await run_clean_campaign(camp, clips_map(), dry=dry, log=log, resume=resume,
+                                 reps=n_passes, redo_flagged=redo_flagged)
         log(f"\nDONE. Artifact written under {ARTIFACT_DIR}/ "
             "(never results/calibration/ directly — see header note on the "
             "S70/S71 /video/budget-glob footgun).")
@@ -476,10 +685,19 @@ async def run_real(use_lab_session: bool, dry: bool) -> int:
         if not dry:
             log("\nRestoring normal state...")
             PAUSE_FLAG.unlink(missing_ok=True)
-            LAB_SESSION_FLAG.unlink(missing_ok=True)
+            # Only lower the lab-session flag if THIS script raised it. Under
+            # --skip-lab-session the flag belongs to someone else — since CR-083
+            # usually a /queue-status reservation, whose ticker owns what it
+            # raised; deleting it there reads as a hand-end and closes that
+            # person's slot early (their reservation is then finished, never
+            # re-raised). Same reasoning as lab_reservations.tick()'s ownership rule.
+            if use_lab_session:
+                LAB_SESSION_FLAG.unlink(missing_ok=True)
             LOCK_FILE.unlink(missing_ok=True)  # belt-and-braces; run_clean_campaign does this itself
             log(f"  {PAUSE_FLAG}: {'still present (!)' if PAUSE_FLAG.exists() else 'removed'}")
-            log(f"  {LAB_SESSION_FLAG}: {'still present (!)' if LAB_SESSION_FLAG.exists() else 'removed'}")
+            log(f"  {LAB_SESSION_FLAG}: "
+                + ("not ours, left alone" if not use_lab_session
+                   else ('still present (!)' if LAB_SESSION_FLAG.exists() else 'removed')))
             log(f"  {LOCK_FILE}: {'still present (!)' if LOCK_FILE.exists() else 'removed'}")
             log("Queue worker will pick back up on its own now that the pause flag is gone.")
 
@@ -494,15 +712,40 @@ def main() -> int:
     p.add_argument("--run", action="store_true", help="actually run it (metered, real)")
     p.add_argument("--skip-lab-session", action="store_true",
                    help="only set the pause flag, skip the visitor-lockout flag")
+    p.add_argument("--passes", type=int, metavar="N",
+                   help=f"how many whole passes over the matrix to run (default {REPS} = "
+                        "the full n=3). Fewer now, the rest later with --resume: the "
+                        "artifact keeps whichever passes it already holds.")
+    p.add_argument("--redo-flagged", action="store_true",
+                   help="with --resume: also re-measure rows whose baseline tripped "
+                        "baseline_elevated (contaminated by residual heat). The originals "
+                        "move to the artifact's superseded_rows, they are not deleted.")
+    p.add_argument("--resume", metavar="ARTIFACT.json",
+                   help="continue a previous run into the SAME artifact: rows already "
+                        "measured are skipped, rows that stored an error are re-run")
     args = p.parse_args()
 
+    resume = Path(args.resume).expanduser().resolve() if args.resume else None
+    if resume is not None and not resume.exists():
+        print(f"ABORT: --resume {resume} does not exist")
+        return 2
+
+    if args.redo_flagged and resume is None:
+        print("ABORT: --redo-flagged only means anything with --resume")
+        return 2
+    if args.passes is not None and not (1 <= args.passes <= REPS):
+        print(f"ABORT: --passes must be between 1 and {REPS}")
+        return 2
+
     if args.print_only:
-        print_recipes()
+        print_recipes(args.passes)
         return 0
     if args.dry:
-        return asyncio.run(run_real(not args.skip_lab_session, dry=True))
+        return asyncio.run(run_real(not args.skip_lab_session, dry=True, resume=resume,
+                                    passes=args.passes, redo_flagged=args.redo_flagged))
     if args.run:
-        return asyncio.run(run_real(not args.skip_lab_session, dry=False))
+        return asyncio.run(run_real(not args.skip_lab_session, dry=False, resume=resume,
+                                    passes=args.passes, redo_flagged=args.redo_flagged))
     p.print_help()
     return 2
 
