@@ -206,8 +206,24 @@ only non-deterministic encoder in the set. Mostly trivial (Δ ≤ 0.21) except `
 small extra uncertainty on iso-quality interpolation over SVT-AV1 rows that the other paths don't carry;
 pass 3 will say which of the two scores is the outlier.
 
+**10. Rendered into the consolidated schema** (`docs/smpte_2026/clean_sweep_to_csv.py`, Tania's request):
+`clean_sweep_2026-09-06.csv` (the 708 rows alone) and `consolidated_encode_dataset_2026-09-07.csv`
+(= her 569 rows verbatim + those 708 = 1277). Her `consolidated_encode_dataset.csv` is read-only to the
+script and byte-unchanged, same rule as the ReadySetGo and football appends. Two new `dataset` values,
+`clean_iso_bitrate_sweep_2026-09-06` (516) and `clean_abr_ladder_typical_2026-09-06` (192). **One row per
+measurement, not per recipe** — each recipe appears twice, the pass carried in `notes` ("pass 1 of 2"),
+because the 19-column schema has no replicate column and was not extended. `n` stays n_encodes, as in
+every existing row. The ten re-measured rows say so in `notes`; their superseded originals live only in
+the JSON. **No `*_iso_quality_interpolated` component was emitted** — every other campaign has one, but
+theirs interpolates from a single pass, and with two the interpolation input (mean of passes? per-pass
+curves averaged?) is a modelling choice that belongs to the analysis, not to a transcription. Verified:
+header identical to the consolidated file, 2832 field comparisons against the JSON with 0 mismatches,
+Tania's rows byte-identical at the head of the merged file. Adopting either file as canonical — and the
+still-open "alongside or replaces the s53 rows" question — remains hers.
+
 **Committed:** `docs/smpte_2026/run_clean_sweep.py` (scope + passes + resume + v0 scoring + overwrite
-guard + lab-flag ownership fix + `--redo-flagged`),
+guard + lab-flag ownership fix + `--redo-flagged`), `docs/smpte_2026/clean_sweep_to_csv.py` + the two
+CSVs it writes,
 `docs/smpte_2026/CLEAN_SWEEP.md` (revised Scope / Time estimate / Status), this entry. `settings.json`
 excluded as usual. Artifact lives on `/srv/data` (not in git):
 `results/calibration/_staging/encode_parity_CLEAN_nvenc_24c_2026-09-06.json` — the single file needed to
