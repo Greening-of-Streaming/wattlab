@@ -6,11 +6,11 @@ Built by [Greening of Streaming](https://greeningofstreaming.org), a French NGO 
 
 **Live instance:** [wattlab.greeningofstreaming.org](https://wattlab.greeningofstreaming.org)
 
-**Current release:** `v1.0.0` · the running build stamps its exact commit (e.g. `OWL v1.0.0 · <sha> · <date>`, auto-derived from `git describe`) · [Report an issue or feature request](https://github.com/greeningofstreaming/wattlab/issues)
+**Current release:** `v1.0.0` · the running build stamps its exact commit (e.g. `OWL v1.0.0 · <sha> · <date>`, auto-derived from `git describe`) · [Report an issue or feature request](https://github.com/Greening-of-Streaming/wattlab/issues)
 
 **Sister projects (GoS energy-measurement toolkit):**
-[LEM](https://github.com/nebul2/LEM) — Local Energy Measurement: measures one or more smart plugs over the LAN (no TP-Link cloud) and can stream into REM ·
-[REM](https://github.com/nebul2/REM) — Remote Energy Measurement: fleet-wide collection + exploration in TimescaleDB.
+[LEM](https://github.com/Greening-of-Streaming/LEM) — Local Energy Measurement: measures one or more smart plugs over the LAN (no TP-Link cloud) and can stream into REM ·
+[REM](https://github.com/Greening-of-Streaming/rem) — Remote Energy Measurement: fleet-wide collection + exploration in TimescaleDB.
 
 ---
 
