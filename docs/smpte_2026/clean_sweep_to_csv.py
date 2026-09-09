@@ -39,13 +39,19 @@ Schema notes for whoever reads the output:
 """
 import csv
 import json
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT = ROOT / "results" / "calibration" / "_staging" / "encode_parity_CLEAN_nvenc_24c_2026-09-06.json"
 CONSOLIDATED = Path(__file__).parent / "consolidated_encode_dataset.csv"           # read-only (Tania's)
+# STANDALONE is named for the CAMPAIGN and is rewritten in place as passes are
+# added — one file, always the artifact's current contents. VERSIONED is named
+# for the DAY IT IS WRITTEN, matching consolidated_encode_dataset_2026-09-04.csv's
+# convention, so re-rendering after a later pass makes a new dated file instead of
+# silently changing what an older filename means.
 STANDALONE = Path(__file__).parent / "clean_sweep_2026-09-06.csv"
-VERSIONED = Path(__file__).parent / "consolidated_encode_dataset_2026-09-07.csv"
+VERSIONED = Path(__file__).parent / f"consolidated_encode_dataset_{date.today().isoformat()}.csv"
 
 SOURCE_FILE = "results/calibration/_staging/encode_parity_CLEAN_nvenc_24c_2026-09-06.json"
 VMAF_VERSION = "v0.6.1 (default model, explicit override 2026-09-06)"
@@ -120,7 +126,17 @@ def main() -> int:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         w.writeheader()
         w.writerows(new_rows)
-    print(f"wrote {STANDALONE.name}: {len(new_rows)} rows")
+    # Replicate census — the point of the n=3 scope, so state it rather than imply it.
+    conds = {}
+    for r in artifact["rows"]:
+        k = (r["clip"], r["codec"], r["profile"], r["target_bitrate_kbps"], r["height"])
+        conds[k] = conds.get(k, 0) + 1
+    census = {}
+    for c in conds.values():
+        census[c] = census.get(c, 0) + 1
+    print(f"wrote {STANDALONE.name}: {len(new_rows)} rows over {len(conds)} conditions")
+    print(f"  measurements per condition: {dict(sorted(census.items()))}"
+          + ("  <- every condition has the same n" if len(census) == 1 else "  <- UNEVEN, check"))
 
     existing = CONSOLIDATED.read_text()
     if DATASET["sweep"] in existing:
