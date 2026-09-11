@@ -330,6 +330,16 @@ _VERIFIED_PIX_FMTS = {"yuv420p", "yuv422p", "yuv444p",
 # Audio fidelity is not what /enhance-run measures — video stays lossless.
 _MP4_SAFE_AUDIO = {"aac", "mp3", "ac3", "eac3"}
 
+# AAC's lowest legal rate is 8 kHz, and ffmpeg lands there for any source below
+# it (the trigger case: 7832 Hz PCM in a 2005 UGC .mov). Browsers ship their own
+# AAC decoder and play 8 kHz fine; Android's PLATFORM decoder routinely plays it
+# as silence — verified 2026-09-12 on a Fairphone, where the same output played
+# with sound once re-encoded at 48 kHz stereo and silent at 8 kHz mono. Sources
+# under the floor are re-encoded to that verified-playable config instead.
+_MIN_SAFE_AUDIO_RATE = 16000
+_SAFE_AUDIO_RATE = "48000"
+_SAFE_AUDIO_CHANNELS = "2"
+
 # Detected average rates snap to the nearest standard rate (within 2%) so the
 # CFR intermediate lands on a clean broadcast rate instead of e.g. 29.53.
 _STD_FPS = ((23.976, "24000/1001"), (24, "24"), (25, "25"),
@@ -370,11 +380,12 @@ def probe_normalization(path) -> dict:
     returns needed=False — the run then fails (or passes) exactly as it
     would have before this stage existed, with the real encoder error."""
     out = {"needed": False, "reasons": [], "vfr": False, "pix_fmt": None,
-           "target_fps": None, "audio_codec": None}
+           "target_fps": None, "audio_codec": None, "audio_sample_rate": None}
     try:
         r = subprocess.run(
             [_ffprobe_bin(), "-v", "error", "-show_entries",
-             "stream=codec_type,codec_name,pix_fmt,r_frame_rate,avg_frame_rate",
+             "stream=codec_type,codec_name,pix_fmt,r_frame_rate,avg_frame_rate,"
+             "sample_rate",
              "-of", "json", str(path)],
             capture_output=True, text=True, timeout=15)
         streams = json.loads(r.stdout).get("streams") or []
@@ -386,6 +397,7 @@ def probe_normalization(path) -> dict:
         return out
     out["pix_fmt"] = video.get("pix_fmt")
     out["audio_codec"] = (audio or {}).get("codec_name")
+    out["audio_sample_rate"] = (audio or {}).get("sample_rate")
     declared = _parse_rate(video.get("r_frame_rate"))
     avg = _parse_rate(video.get("avg_frame_rate"))
     if declared and avg and abs(declared - avg) / max(declared, avg) > _VFR_TOLERANCE:
@@ -400,6 +412,16 @@ def probe_normalization(path) -> dict:
         if out["target_fps"] is None and avg:
             out["target_fps"] = _snap_fps(avg)
     return out
+
+
+def audio_rate_unsafe(sample_rate) -> bool:
+    """True when a source's audio rate would put the AAC re-encode at or near
+    the 8 kHz floor (see _MIN_SAFE_AUDIO_RATE). Unknown or unprobeable rates
+    return False — fail-soft, exactly the behaviour before this guard."""
+    try:
+        return 0 < int(sample_rate) < _MIN_SAFE_AUDIO_RATE
+    except (TypeError, ValueError):
+        return False
 
 
 def _normalized_name(input_name: str) -> str:
@@ -429,7 +451,8 @@ def build_preview_cmd(normalized_name: str, preview_name: str,
 def build_normalize_cmd(input_name: str, normalized_name: str, target_fps: str,
                         audio_codec: Optional[str],
                         c: Optional[dict] = None,
-                        force_audio_reencode: bool = False) -> list[str]:
+                        force_audio_reencode: bool = False,
+                        audio_sample_rate=None) -> list[str]:
     """The Jon-prescribed lossless pre-conversion: yuv444p10le (a superset of
     any input — no chroma or bit-depth loss) + `fps` at the detected rate
     (VFR→CFR with clean timestamps, so `--avsync forcecfr` stays valid), FFV1
@@ -437,17 +460,25 @@ def build_normalize_cmd(input_name: str, normalized_name: str, target_fps: str,
     transcodes to AAC (video stays lossless; audio is not the measurand).
     `force_audio_reencode` overrides the copy branch: a codec-safe stream can
     still carry a PCE-based channel config the container's paced-path mux
-    can't rewrite (aac_adtstoasc) — re-encoding writes a standard config."""
+    can't rewrite (aac_adtstoasc) — re-encoding writes a standard config.
+
+    A sub-standard `audio_sample_rate` overrides it too, and pins the re-encode
+    to 48 kHz stereo: AAC's 8 kHz floor is silent on Android's platform decoder
+    (see _MIN_SAFE_AUDIO_RATE). Copying a safe codec would carry the bad rate
+    through untouched, so the guard has to beat the copy branch as well."""
     c = c or config()
     inp, _, _ = _workdir_paths(c)
     ff = cfg.load().get("ffmpeg_bin", "ffmpeg")
     cmd = [ff, "-y", "-i", str(inp / input_name),
            "-vf", f"fps={target_fps}", "-pix_fmt", "yuv444p10le",
            "-c:v", "ffv1"]
-    if audio_codec in _MP4_SAFE_AUDIO and not force_audio_reencode:
+    low_rate = audio_rate_unsafe(audio_sample_rate)
+    if audio_codec in _MP4_SAFE_AUDIO and not force_audio_reencode and not low_rate:
         cmd += ["-c:a", "copy"]
     elif audio_codec:
         cmd += ["-c:a", "aac", "-b:a", "192k"]
+        if low_rate:
+            cmd += ["-ar", _SAFE_AUDIO_RATE, "-ac", _SAFE_AUDIO_CHANNELS]
     else:
         cmd += ["-an"]
     cmd += ["-f", "nut", str(inp / normalized_name)]
@@ -544,7 +575,8 @@ def normalize_input(input_name: str, probe: dict, c: Optional[dict] = None,
     normalized = _normalized_name(input_name)
     cmd = build_normalize_cmd(input_name, normalized, target_fps,
                               probe.get("audio_codec"), c,
-                              force_audio_reencode=force_audio_reencode)
+                              force_audio_reencode=force_audio_reencode,
+                              audio_sample_rate=probe.get("audio_sample_rate"))
     t0 = time.time()
     try:
         r = subprocess.run(cmd, capture_output=True, text=True,
@@ -585,8 +617,13 @@ def normalize_input(input_name: str, probe: dict, c: Optional[dict] = None,
         "target_fps": target_fps,
         "source_pix_fmt": probe.get("pix_fmt"),
         "audio": ("copy" if (probe.get("audio_codec") in _MP4_SAFE_AUDIO
-                             and not force_audio_reencode)
+                             and not force_audio_reencode
+                             and not audio_rate_unsafe(probe.get("audio_sample_rate")))
                   else ("aac" if probe.get("audio_codec") else "none")),
+        # Set only when the 8 kHz-floor guard fired — records the rate we lifted.
+        "audio_resampled_from_hz": (probe.get("audio_sample_rate")
+                                    if audio_rate_unsafe(probe.get("audio_sample_rate"))
+                                    else None),
         "duration_s": round(time.time() - t0, 1),
         "size_mb": round(out_path.stat().st_size / 1024 / 1024, 2),
         "cmd": " ".join(cmd),

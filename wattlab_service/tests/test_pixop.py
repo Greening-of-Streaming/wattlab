@@ -1417,6 +1417,83 @@ def test_build_normalize_cmd_lossless_contract(tmp_path, monkeypatch):
     assert "-an" in cmd3
 
 
+def test_probe_normalization_captures_audio_sample_rate(monkeypatch):
+    monkeypatch.setattr(pixop.subprocess, "run", lambda *a, **kw: _ffprobe_json([
+        {"codec_type": "video", "pix_fmt": "yuvj422p",
+         "r_frame_rate": "15/1", "avg_frame_rate": "15/1"},
+        {"codec_type": "audio", "codec_name": "pcm_s16be", "sample_rate": "7832"},
+    ]))
+    p = pixop.probe_normalization("ugc_2005.mov")
+    assert p["audio_sample_rate"] == "7832"
+
+
+def test_audio_rate_unsafe_floor():
+    # Below the floor: the AAC re-encode would land at 8 kHz — silent on
+    # Android's platform decoder (Fairphone, 2026-09-12).
+    assert pixop.audio_rate_unsafe("7832") is True
+    assert pixop.audio_rate_unsafe(8000) is True
+    # At or above it, and for anything unprobeable, the guard stays out of it.
+    assert pixop.audio_rate_unsafe(16000) is False
+    assert pixop.audio_rate_unsafe("48000") is False
+    assert pixop.audio_rate_unsafe(None) is False
+    assert pixop.audio_rate_unsafe("N/A") is False
+    assert pixop.audio_rate_unsafe(0) is False
+
+
+def test_build_normalize_cmd_lifts_sub_standard_audio_rate(tmp_path, monkeypatch):
+    monkeypatch.setattr(pixop, "config", lambda: _cfg(tmp_path))
+    # 2005 UGC .mov: 7832 Hz PCM → AAC at the verified-playable config.
+    cmd = pixop.build_normalize_cmd("in.mov", "n.nut", "15", "pcm_s16be",
+                                    _cfg(tmp_path), audio_sample_rate="7832")
+    joined = " ".join(cmd)
+    assert "-c:a aac" in joined
+    assert "-ar 48000" in joined and "-ac 2" in joined
+    # A safe codec at a bad rate must NOT ride through on -c:a copy.
+    cmd = pixop.build_normalize_cmd("in.mov", "n.nut", "15", "aac",
+                                    _cfg(tmp_path), audio_sample_rate="8000")
+    joined = " ".join(cmd)
+    assert "-c:a copy" not in joined
+    assert "-ar 48000" in joined
+    # A normal rate is left exactly as it was — no needless resampling.
+    cmd = pixop.build_normalize_cmd("in.mov", "n.nut", "25", "aac",
+                                    _cfg(tmp_path), audio_sample_rate="48000")
+    assert "-c:a copy" in " ".join(cmd)
+    assert "-ar" not in cmd
+    # Unknown rate (unprobeable audio) → pre-guard behaviour, PCM still re-encodes.
+    cmd = pixop.build_normalize_cmd("in.mov", "n.nut", "25", "pcm_s16le",
+                                    _cfg(tmp_path))
+    assert "-c:a aac" in " ".join(cmd) and "-ar" not in cmd
+
+
+def test_normalize_input_stamps_audio_resample(tmp_path, monkeypatch):
+    c = _cfg(tmp_path)
+    _stage(tmp_path, inp=True)
+
+    def fake_run(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"nut" * 100)
+
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(pixop.subprocess, "run", fake_run)
+    n = pixop.normalize_input("clip.mov", {"target_fps": "15",
+                                           "audio_codec": "aac",
+                                           "audio_sample_rate": "7832"}, c)
+    # aac is MP4-safe, but the bad rate beats the copy branch.
+    assert n["audio"] == "aac"
+    assert n["audio_resampled_from_hz"] == "7832"
+    assert "-ar 48000" in n["cmd"]
+    # …and a healthy rate leaves the provenance clean.
+    n = pixop.normalize_input("clip.mov", {"target_fps": "25",
+                                           "audio_codec": "aac",
+                                           "audio_sample_rate": "48000"}, c)
+    assert n["audio"] == "copy"
+    assert n["audio_resampled_from_hz"] is None
+
+
 def test_normalize_input_provenance_and_log(tmp_path, monkeypatch):
     c = _cfg(tmp_path)
     _stage(tmp_path, inp=True)
