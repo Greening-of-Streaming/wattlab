@@ -252,9 +252,20 @@ RIG: dict = {
             # Lab-F6 is NOT on the Shelly-metered 8-way strip (own socket):
             # the Shelly sum excludes this box and the master switch does
             # not cut it — device power is this plug alone.
+            # ⚠ Lab-F6 has NO Bbox DHCP reservation (the one rig address the
+            # 2026-08-26/29 sweep missed — it was added 2026-09-03, after).
+            # Its lease lapsed and the Bbox moved it .170 → .169 sometime
+            # after 2026-09-08, which read here as "unreachable" for a week
+            # while the plug sat solid green (verified 2026-09-16: the plug
+            # answers on .169 as nickname 'Lab-F6', relay on). The MAC
+            # follower does NOT cover this — it follows `target`, not
+            # `plug_ip`, and `macs` below is the Apple TV's MAC, not the
+            # plug's (c0:3a:55:58:92:68). So this address is only as good as
+            # the current lease: RESERVE IT IN THE BBOX and the band-aid
+            # becomes the real answer.
             "parked": False,
             "label": "Apple TV 4K", "plug_name": "Lab-F6",
-            "plug_ip": "192.168.1.170",
+            "plug_ip": "192.168.1.169",
             "kind": "atv", "target": "192.168.1.152",
             "macs": ["90:dd:5d:ab:70:8e"],
             "device_class": "stb",
