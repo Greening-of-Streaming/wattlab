@@ -30,6 +30,14 @@ def _fresh_rig(monkeypatch):
     rig._OP_LOCKS.clear()   # asyncio locks can't be reused across event loops
     rig.DISCOVERED_TARGETS.clear()
     rig._discover_last.clear()
+    rig.DISCOVERED_PLUGS.clear()
+    rig._plug_discover_last.clear()
+    # the plug follower re-points plug_ip in place — put the tree back
+    for _n, _ip in rig.RIG_PLUGS_DEFAULT.items():
+        if _n == "__monitor__":
+            rig.RIG["monitor"]["plug_ip"] = _ip
+        else:
+            rig.RIG["devices"][_n]["plug_ip"] = _ip
     rig.apply_target_overrides({})
     rig.apply_hdmi_assignments({})
     rig.apply_sink_assignments({})
@@ -375,7 +383,8 @@ def test_status_payload_shape():
                           "os", "chip_vendor", "target", "target_source", "hdmi_input",
                           "sink", "screen_claimable", "conn", "state", "watts", "busy",
                           "detail", "elapsed_s", "expected_s", "adb_auth",
-                          "network"}
+                          "network", "plug_ip", "plug_source"}
+        assert d["plug_source"] in ("default", "discovered")
         assert d["device_class"] in ("sbc", "stb", "tv")
         # `sink` is the regime marker, not a duplicate of hdmi_input: a box on
         # no panel socket may still have a dummy/EDID plug (2026-09-05).
@@ -923,3 +932,117 @@ def test_atv_asleep_is_reported_not_stuck_and_on_wakes_it(monkeypatch):
     monkeypatch.setattr(rig, "plug_set", _set)
     _run(rig.device_on("atv"))
     assert ("turn_on",) in calls
+
+
+# ---------------------------------------------------------------- plug follower
+# Regression cover for the Lab-F6 drift (2026-09-16): the Apple TV's P110 lost
+# its lease (.170 → .169) and the tile read "unreachable" for a week while the
+# plug sat solid green. The target follower did not cover plug IPs.
+
+def _atv():
+    return rig.RIG["devices"]["atv"]
+
+
+def test_plug_followed_to_new_lease_by_mac(monkeypatch):
+    """A plug that stops answering is chased to wherever its MAC now lives."""
+    dead, alive = _atv()["plug_ip"], "192.168.1.77"
+
+    async def _status(ip, **kw):
+        if ip == dead:
+            raise OSError("connect error")
+        return {"on": True, "watts": 3.0, "ip": ip}
+    monkeypatch.setattr(rig, "plug_status", _status)
+    monkeypatch.setattr(rig, "_neigh_table", lambda: {_atv()["plug_mac"]: alive})
+
+    _run(rig.poll_once())
+
+    assert _atv()["plug_ip"] == alive
+    assert rig.rig_cache["devices"]["atv"]["state"] != "unreachable"
+    assert rig.DISCOVERED_PLUGS["Lab-F6"] == alive
+    assert rig.plug_source("Lab-F6") == "discovered"
+
+
+def test_plug_follow_repoints_config_so_meter_ip_agrees(monkeypatch):
+    """decode_run reads dev_cfg["plug_ip"] for cfg["meter_ip"] and for
+    PAUSED_PLUGS — a heal that did not re-point the config in place would
+    pause one address and measure another."""
+    dead, alive = _atv()["plug_ip"], "192.168.1.78"
+
+    async def _status(ip, **kw):
+        if ip == dead:
+            raise OSError("connect error")
+        return {"on": True, "watts": 3.0, "ip": ip}
+    monkeypatch.setattr(rig, "plug_status", _status)
+    monkeypatch.setattr(rig, "_neigh_table", lambda: {_atv()["plug_mac"]: alive})
+
+    _run(rig.poll_once())
+
+    assert rig._plug_key(_atv()) == {alive}
+
+
+def test_paused_plug_is_never_followed(monkeypatch):
+    """A measurement owns the KLAP session — re-pointing mid-window would
+    hand the bench subprocess a different meter than the one it paused."""
+    dead = _atv()["plug_ip"]
+    rig.PAUSED_PLUGS.add(dead)
+
+    async def _status(ip, **kw):
+        raise AssertionError("paused plug must not be read at all")
+    monkeypatch.setattr(rig, "plug_status", _status)
+    monkeypatch.setattr(rig, "_neigh_table", lambda: {_atv()["plug_mac"]: "192.168.1.79"})
+
+    _run(rig.poll_once())
+
+    assert _atv()["plug_ip"] == dead
+    assert "Lab-F6" not in rig.DISCOVERED_PLUGS
+
+
+def test_no_ping_sweep_while_a_measurement_holds_a_plug(monkeypatch):
+    """The passive neighbour look is free and still runs; the ~2 s /24 sweep
+    is exactly the network noise a decode row must not see."""
+    swept = []
+    monkeypatch.setattr(rig, "_ping_sweep", lambda *a, **k: swept.append(1))
+    monkeypatch.setattr(rig, "_neigh_table", lambda: {})          # MAC not in table
+    rig.PAUSED_PLUGS.add(rig.RIG["devices"]["pi400"]["plug_ip"])  # some OTHER plug
+
+    assert rig.discover_plug(_atv()) is None
+    assert swept == []
+
+
+def test_plug_follow_leaves_unreachable_when_mac_is_nowhere(monkeypatch):
+    """No MAC in the table ⇒ the old honest failure, not a silent pass."""
+    async def _status(ip, **kw):
+        raise OSError("connect error")
+    monkeypatch.setattr(rig, "plug_status", _status)
+    monkeypatch.setattr(rig, "_neigh_table", lambda: {})
+
+    _run(rig.poll_once())
+
+    assert rig.rig_cache["devices"]["atv"]["state"] == "unreachable"
+    assert _atv()["plug_ip"] == rig.RIG_PLUGS_DEFAULT["atv"]
+
+
+def test_shared_plug_heal_propagates_to_every_config(monkeypatch):
+    """Lab-E backs both the `c2` device and the `monitor`."""
+    dead, alive = rig.RIG["monitor"]["plug_ip"], "192.168.1.80"
+
+    async def _status(ip, **kw):
+        if ip == dead:
+            raise OSError("connect error")
+        return {"on": True, "watts": 50.0, "ip": ip}
+    monkeypatch.setattr(rig, "plug_status", _status)
+    monkeypatch.setattr(rig, "_neigh_table",
+                        lambda: {rig.RIG["monitor"]["plug_mac"]: alive})
+
+    _run(rig.poll_once())
+
+    assert rig.RIG["monitor"]["plug_ip"] == alive
+    assert rig.RIG["devices"]["c2"]["plug_ip"] == alive
+
+
+def test_every_plug_carries_a_mac():
+    """The follower is only as good as its coverage — no plug may ship without
+    one, or it silently keeps the old fail-to-unreachable behaviour."""
+    for name, cfg in rig.RIG["devices"].items():
+        assert cfg.get("plug_mac"), f"{name} has no plug_mac"
+    assert rig.RIG["monitor"].get("plug_mac")

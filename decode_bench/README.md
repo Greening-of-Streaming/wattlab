@@ -101,6 +101,19 @@ All bench devices and lab plugs have router reservations. GTV, Bbox, Pi 400 and 
 Pi 5 PSU replaced 2026-07-29 (old one under-voltage-throttled; throttled=0x0 verified —
 re-validate one July decode row before comparing new Pi 5 numbers against the July panel).
 
+**Address drift self-heals for meter plugs (2026-09-16).** Every plug in `rig.py` carries
+`plug_mac` (queried from the plugs themselves, not inferred from ARP). When a plug stops
+answering, the poller looks its MAC up in the kernel neighbour table and re-points `plug_ip`
+in place — the same trick the adb/atv `target` follower has used since 2026-08-26, which did
+not cover plug IPs. `/decode/status.json` reports `plug_source: default|discovered`, and a
+heal logs a warning naming the old and new address. Two integrity rules: a plug held by a
+running measurement (`PAUSED_PLUGS`) is never re-pointed, and the ~2 s /24 ping sweep is
+skipped while any measurement is in flight (the passive neighbour look still runs).
+
+⚠ **This covers plugs, not webOS.** The C2's `target` still has no follower — see the
+`monitor.lg_host` note in `rig.py`. A reservation is still the real fix for all of them:
+the follower buys time, it does not make a lease durable.
+
 | IP | What | MAC | Notes |
 |---|---|---|---|
 | `.62` | GoS1 (eno2) | `a0:ad:9f:58:ec:0d` | pre-existing reservation, confirmed correct (bound to eno2; eno1 is dark) |

@@ -89,6 +89,7 @@ RIG: dict = {
             # put it on one when it is physically re-cabled.
             "hdmi_input": None,
             "plug_ip": "192.168.1.184",
+            "plug_mac": "b8:fb:b3:ef:0e:df",
             "kind": "ssh", "target": "admin@192.168.1.102",
             "device_class": "sbc",
             "silicon": "BCM2712 · sw decode only",
@@ -107,6 +108,7 @@ RIG: dict = {
             "label": "Pi 400", "plug_name": "Lab-B",
             "os": "Raspberry Pi OS", "chip_vendor": "Broadcom",
             "plug_ip": "192.168.1.31",
+            "plug_mac": "bc:07:1d:a2:df:66",
             "kind": "ssh", "target": "nebul2@192.168.1.108",
             "device_class": "sbc",
             "silicon": "BCM2711 · hw H.264",
@@ -125,6 +127,7 @@ RIG: dict = {
             # first bench 2026-07-31 on Lab-B/HDMI_3.
             "label": "Fire TV 4K", "plug_name": "Lab-A",
             "plug_ip": "192.168.1.146",
+            "plug_mac": "bc:07:1d:a2:d3:11",
             # Fire TV Stick 4K 2nd-gen (AFTKRT "karat"), Fire OS 8.1.8 /
             # Android 11. Wi-Fi ONLY (no Ethernet port) — reserve .200 for
             # MAC ec:31:5f:6d:7c:a7 on the router or the ADB target drifts
@@ -165,6 +168,7 @@ RIG: dict = {
         "gtv": {
             "label": "Google TV", "plug_name": "Lab-D",
             "plug_ip": "192.168.1.36",
+            "plug_mac": "bc:07:1d:a2:da:48",
             # The owner's re-pinned reservation (.126, the July address) took
             # effect on the 2026-07-30 boot — the interim .189 lease is dead.
             # The "stuck/no-network" episode was this address move mid-flight.
@@ -210,6 +214,7 @@ RIG: dict = {
             # Lab-F re-plugged 2026-07-30 (new unit on fw 1.3.1 for 1 s mW
             # polling; old .22 was fw 1.4.0). New DHCP lease → .155.
             "plug_ip": "192.168.1.155",
+            "plug_mac": "bc:07:1d:a2:dc:e2",
             # Operator CPE (Bouygtel4K, Android 11, Marvell Berlin / Arcadyan
             # HMB9213NW — R3a 2026-08-26) — the first operator box on the
             # bench. On Ethernet at .10 (re-onboarded after a factory reset
@@ -266,6 +271,7 @@ RIG: dict = {
             "parked": False,
             "label": "Apple TV 4K", "plug_name": "Lab-F6",
             "plug_ip": "192.168.1.169",
+            "plug_mac": "c0:3a:55:58:92:68",
             "kind": "atv", "target": "192.168.1.152",
             "macs": ["90:dd:5d:ab:70:8e"],
             "device_class": "stb",
@@ -348,6 +354,7 @@ RIG: dict = {
             # trusting a headless row from this box.
             "label": "Xiaomi TV Box (Gen 2)", "plug_name": "Lab-F3",
             "plug_ip": "192.168.1.1",
+            "plug_mac": "b8:fb:b3:ef:27:26",
             "kind": "adb", "target": "192.168.1.151:5555",
             "macs": ["32:6c:9f:c5:c1:fd"],   # wlan0 — no Ethernet port on this box
             "device_class": "stb",
@@ -398,6 +405,7 @@ RIG: dict = {
             # onboard_device.py never ran; run it before trusting any row.
             "label": "Xiaomi TV Box (Gen 3)", "plug_name": "Lab-F4",
             "plug_ip": "192.168.1.33",
+            "plug_mac": "b8:fb:b3:ef:3c:47",
             "kind": "adb", "target": "192.168.1.192:5555",
             "macs": ["9c:9d:07:8c:87:7e"],   # wlan0 — confirmed live via ARP + adb connect
             "device_class": "stb",
@@ -436,6 +444,7 @@ RIG: dict = {
             # bench.py hold the same values — keep both in sync if it moves.
             "label": "Roku Express 4K", "plug_name": "Lab-F5",
             "plug_ip": "192.168.1.113",
+            "plug_mac": "b8:fb:b3:ef:3b:97",
             "kind": "roku", "target": "192.168.1.13",
             "macs": ["d4:e2:2f:e2:39:bb"],   # Wi-Fi only, no Ethernet port
             "device_class": "stb",
@@ -465,6 +474,7 @@ RIG: dict = {
             # differential carry the measurement).
             "label": "LG C2 (native)", "plug_name": "Lab-E",
             "plug_ip": "192.168.1.71",
+            "plug_mac": "bc:07:1d:a2:d6:8e",
             "kind": "webos", "target": "192.168.1.26",   # moved from .25, 2026-08-29 (see monitor.lg_host note)
             "device_class": "tv",
             "os": "webOS 22", "chip_vendor": "LG",
@@ -477,6 +487,7 @@ RIG: dict = {
     "monitor": {
         "label": "Shared screen", "plug_name": "Lab-E",
         "plug_ip": "192.168.1.71",
+        "plug_mac": "bc:07:1d:a2:d6:8e",
         "panel": "LG OLED55C2 (OLED55C25LB)",
         # The panel has exactly four HDMI inputs; which four of the external
         # devices are cabled to them is the screen map — rig.py defaults per
@@ -535,6 +546,11 @@ _WAIT_LABEL = {"ssh": "SSH", "adb": "ADB", "atv": "pyatv", "roku": "ECP"}
 # so a settings change takes effect within ~10 s. The original wired targets
 # stay in RIG_TARGETS_DEFAULT for the day the cable goes back in.
 RIG_TARGETS_DEFAULT: dict = {n: d.get("target") for n, d in RIG["devices"].items()}
+# Same, for meter plugs — the address as shipped in this file, before any
+# MAC-follow re-points it. Lets a heal be told from a config value (and lets
+# tests put the tree back).
+RIG_PLUGS_DEFAULT: dict = {n: d.get("plug_ip") for n, d in RIG["devices"].items()}
+RIG_PLUGS_DEFAULT["__monitor__"] = RIG["monitor"]["plug_ip"]
 
 # Target discovery by MAC (2026-08-26). The adb targets above are DHCP
 # addresses, and a box takes a new lease whenever it moves between Ethernet
@@ -552,6 +568,31 @@ RIG_TARGETS_DEFAULT: dict = {n: d.get("target") for n, d in RIG["devices"].items
 DISCOVERED_TARGETS: dict = {}          # name → "ip:5555" found by MAC
 _discover_last: dict = {}              # name → monotonic of the last sweep
 DISCOVER_MIN_INTERVAL_S = 45
+
+# The same follower, for METER plugs (2026-09-16). The target follower above
+# covers `target` only; a plug that moves lease is a different failure and was
+# not covered. Lab-F6 (the Apple TV's P110) had no Bbox reservation, drifted
+# .170 → .169 after 2026-09-08, and the tile read "unreachable" for a week
+# with the plug sitting solid green — a whole box silently out of the corpus.
+#
+# Every plug now carries `plug_mac` (queried from the plugs themselves
+# 2026-09-16, not inferred from ARP). When a plug stops answering, the poller
+# looks its MAC up in the neighbour table and re-points `plug_ip` in place.
+# In-place is deliberate and load-bearing: decode_run reads `dev_cfg["plug_ip"]`
+# for `cfg["meter_ip"]` and for PAUSED_PLUGS, so the poller, the KLAP pause set
+# and the bench subprocess must all name the SAME address or a measurement
+# would pause one plug and read another.
+#
+# Two integrity rules:
+#   * a plug that is PAUSED (a measurement owns its KLAP session) is never
+#     re-pointed — `_poll_device` returns before the read, so discovery is
+#     unreachable for it by construction, and `discover_plug` re-checks.
+#   * the ~2 s /24 ping sweep is skipped while ANY plug is paused: a burst of
+#     254 pings mid-window is exactly the network noise a decode row must not
+#     see. The passive neighbour-table look still runs (free), so a plug whose
+#     new address is already in the table still heals mid-campaign.
+DISCOVERED_PLUGS: dict = {}            # plug_name → ip found by MAC
+_plug_discover_last: dict = {}         # plug_name → monotonic of the last sweep
 _LAN_PREFIX = "192.168.1."
 _NEIGH_STATE_RANK = {"REACHABLE": 0, "DELAY": 1, "PROBE": 1, "STALE": 2}
 
@@ -612,6 +653,62 @@ def discover_target(dev: dict) -> str | None:
         if attempt == 0:
             _ping_sweep()
     return None
+
+
+def discover_plug(cfg: dict) -> str | None:
+    """Find a meter plug's current address by `plug_mac`: neighbour table
+    first, then (only when no measurement is in flight) a ping sweep and a
+    second look. Returns a bare IP, or None. Runs in a thread."""
+    mac = (cfg.get("plug_mac") or "").lower()
+    if not mac:
+        return None
+    if _plug_key(cfg) & PAUSED_PLUGS:
+        return None                     # a measurement owns this plug — hands off
+    for attempt in (0, 1):
+        found = _neigh_table().get(mac)
+        if found:
+            return found
+        if attempt == 0:
+            if PAUSED_PLUGS:
+                return None             # no ping sweep mid-measurement
+            _ping_sweep()
+    return None
+
+
+def plug_source(plug_name: str) -> str:
+    """Where a plug's effective address came from: discovered | default."""
+    return "discovered" if plug_name in DISCOVERED_PLUGS else "default"
+
+
+async def _read_plug_following(cfg: dict) -> dict:
+    """plug_status(), but on failure follow the plug to its current lease by
+    MAC and retry once. Re-points `cfg["plug_ip"]` in place so decode_run's
+    `meter_ip` and PAUSED_PLUGS see the same address the poller uses."""
+    try:
+        return await plug_status(cfg["plug_ip"])
+    except Exception:
+        name = cfg.get("plug_name") or str(cfg.get("plug_ip"))
+        now = time.monotonic()
+        if now - _plug_discover_last.get(name, 0) < DISCOVER_MIN_INTERVAL_S:
+            raise
+        _plug_discover_last[name] = now
+        found = await asyncio.to_thread(discover_plug, cfg)
+        if not found or found == cfg["plug_ip"]:
+            raise
+        ps = await plug_status(found)   # let a failure here surface as unreachable
+        old = cfg["plug_ip"]
+        DISCOVERED_PLUGS[name] = found
+        # One plug can back several configs (Lab-E is both the `c2` device and
+        # the `monitor`). Re-point every config naming it, or the two halves
+        # split-brain: one polling the new lease, one still on the dead one.
+        for other in [*RIG["devices"].values(), RIG["monitor"]]:
+            if other.get("plug_name") == name:
+                other["plug_ip"] = found
+        cfg["plug_ip"] = found
+        log.warning("rig: plug %s not at %s — followed to %s by MAC (%s). "
+                    "This address is a DHCP lease, not a reservation.",
+                    name, old, found, cfg.get("plug_mac"))
+        return ps
 
 
 def target_source(name: str) -> str:
@@ -1476,7 +1573,7 @@ async def _step_device(name: str, master_off: bool) -> None:
         return
 
     try:
-        ps = await plug_status(dev_cfg["plug_ip"])
+        ps = await _read_plug_following(dev_cfg)
     except Exception:
         d.update({"state": "unreachable", "watts": None,
                   "detail": f"{dev_cfg['plug_name']} not answering"})
@@ -1610,7 +1707,7 @@ async def poll_once() -> None:
         pass   # a measurement owns the monitor plug — keep last values
     else:
         try:
-            ms = await plug_status(mon_cfg["plug_ip"])
+            ms = await _read_plug_following(mon_cfg)
             rig_cache["monitor"] = {
                 "on": ms["on"], "watts": round(ms["watts"], 2),
                 "in_use_hint": ms["watts"] >= mon_cfg["in_use_threshold_w"],
@@ -1929,6 +2026,8 @@ def status_payload() -> dict:
             "adb_auth": d.get("adb_auth"),
             "target": cfg_d.get("target"),
             "target_source": target_source(name),
+            "plug_ip": cfg_d.get("plug_ip"),
+            "plug_source": plug_source(cfg_d.get("plug_name", "")),
             "hdmi_input": cfg_d.get("hdmi_input"),
             "sink": sink_of(cfg_d),
             "screen_claimable": screen_claimable(cfg_d),
