@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>C2 full-field test clip</title>
+<style>html,body{margin:0;background:#000;overflow:hidden;width:100%;height:100%}
+video{position:fixed;left:0;top:0;width:100vw;height:100vh;object-fit:fill;background:#000}</style></head>
+<body><video id="v" autoplay muted playsinline preload="auto"></video>
+<script>
+// 80 s: black, white, black, green, red, blue, white, black — 10 s each, pure RGB.
+// Some TV browsers restore the last playback position of a URL they have seen,
+// so the clip URL is made unique per load and playback is pinned to 0.
+var v=document.getElementById('v');
+v.src='c2_rgbfield_1080p_80s.mp4?'+Date.now();
+v.addEventListener('loadedmetadata',function(){try{v.currentTime=0}catch(e){}});
+function go(){var p=v.play();if(p&&p.catch){p.catch(function(){setTimeout(go,500)})}}
+v.addEventListener('canplay',go);go();
+</script></body></html>
