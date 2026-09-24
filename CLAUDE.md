@@ -104,6 +104,7 @@ Key paths: `wattlab_service/static/wl-*.js` (shared JS bundles, sha cache-busted
 `.chroma/` similarly symlinked; `docs/findings/` (finding markdowns); `infra/` (nginx), `systemd/`, `bin/` (ops
 scripts, see bin/README.md). Feature modules NEVER import main; tests monkeypatch the routes_* module that
 binds a name, not main.
+**Test content (`/video` Source picker):** `sources.SOURCES` is the single registry — radios, parent header/vignette, the per-variant **Download Source Video** button and its `/video/source/{key}/download` route all render from it. To add or change test content, drop the file in `test_content/` and edit `sources.py`; nothing else needs touching (a variant whose file is missing is silently skipped).
 
 ## Measurement Protocol
 1. Focus mode: stop background timers (sudoers: `/etc/sudoers.d/wattlab-focus`)

@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 import audience
 import queue_control
@@ -44,6 +44,12 @@ def _video_source_picker_html() -> str:
     off the schema so adding a variant only requires editing sources.py.
     Each parent gets a small dim header (name + license), variants under
     it as radios with the same density / border style as the upload row.
+
+    Every variant row also carries a small "Download Source Video" button
+    (`/video/source/{key}/download`). It is rendered from the same schema,
+    so a variant added to `sources.SOURCES` gets the button — and the
+    download route — with no further wiring. Never hand-add per-file
+    download links here.
     """
     label_style = (
         "display:flex;align-items:flex-start;gap:0.75rem;"
@@ -65,6 +71,15 @@ def _video_source_picker_html() -> str:
     # so the link is discoverable without shouting (full underline would read
     # as link-soup against the deliberately quiet header row).
     link_style = "color:inherit;text-decoration:none;border-bottom:1px dotted var(--border-3)"
+    # Per-variant "Download Source Video" button — right-aligned in the
+    # radio row, dim + bordered so it reads as a lab control, not a CTA.
+    # An <a> is interactive content, so clicking it inside the <label>
+    # does not select the radio (HTML label activation rule).
+    dl_style = (
+        "margin-left:auto;align-self:center;flex-shrink:0;white-space:nowrap;"
+        "font-size:0.68rem;color:var(--text-4);text-decoration:none;"
+        "border:1px solid var(--border-3);padding:0.15rem 0.45rem"
+    )
     parts = []
     for src in get_grouped_sources():
         lic = src.get("license")
@@ -95,15 +110,21 @@ def _video_source_picker_html() -> str:
             )
         for v in src["variants"]:
             key = v["key"]
+            size = v.get("size_mb")
+            dl_title = (f"Download the source file for this variant"
+                        + (f" · {size} MB" if size else ""))
             parts.append(
                 f'<label style="{label_style}">'
                 f'<input type="radio" name="source" value="{key}" '
                 f'onchange="selectSource(\'{key}\')" '
                 f'style="{radio_style}">'
-                f'<div>'
+                f'<div style="flex:1;min-width:0">'
                 f'<div style="{title_style}">{v["variant_label"]}</div>'
                 f'<div style="{desc_style}">{v["description"]}</div>'
                 f'</div>'
+                f'<a href="/video/source/{key}/download" download '
+                f'title="{dl_title}" style="{dl_style}">'
+                f'&#8615; Download Source Video</a>'
                 f'</label>'
             )
     return "".join(parts)
@@ -396,6 +417,18 @@ async def video_page(request: Request):
 
     <div id="status"></div>
     <div id="prev-runs" style="margin-top:2rem;border-top:1px solid var(--panel);padding-top:1.5rem"></div>
+
+    <details id="replicate-howto" style="margin-top:2rem;border-left:2px solid #222;padding-left:1rem">
+        <summary style="cursor:pointer;color:var(--text-3);font-size:0.82rem;list-style:none;outline:none">
+            ⟲ Replicate a run on your own server <span style="color:var(--text-4);font-size:0.72rem">(click to expand)</span>
+        </summary>
+        <ol style="color:var(--text-3);font-size:0.82rem;line-height:1.6;margin:0.75rem 0 0 1.1rem;padding:0">
+            <li><b>Download the source</b> — the button beside each preloaded source gives you the exact file OWL encodes (licences in the header).</li>
+            <li><b>Copy the ffmpeg command</b> — pick a preset and the command appears below it; swap in your input path and your <code>ffmpeg</code> binary.</li>
+            <li><b>Meter wall power, not CPU counters</b> — measure an idle baseline first, then the encode. ΔE = (mean W during encode − idle W) × seconds ÷ 3600.</li>
+            <li><b>Or run one job here and click "↓ Reproduce this"</b> on the result — the zip carries the commands, OWL's numbers and a script that checks yours against OWL's variance envelope. Different hardware gives different watts; what compares is the CPU-vs-GPU ratio and Wh per minute of content.</li>
+        </ol>
+    </details>
 
     <script>
     // CR-001 part C2c — capability flags from server. CAN_CUSTOM_CMD
@@ -882,6 +915,22 @@ async def upload_video(
 @router.get("/video/sources", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_sources():
     return get_all_sources()
+
+
+@router.get("/video/source/{source_key}/download", dependencies=[Depends(requires(VIDEO_RUN))])
+async def video_source_download(source_key: str):
+    """Serve a preloaded source master as an attachment — the target of the
+    "Download Source Video" button in the /video picker, so a visitor can
+    reproduce a run off-bench from the exact file OWL encoded. Resolves
+    through `sources.PRELOADED`: any variant in `sources.SOURCES` is
+    downloadable, nothing else on disk is. Same tier as running a preset
+    on the source (VIDEO_RUN, Anonymous today); uploads are never served.
+    """
+    source = PRELOADED.get(source_key)
+    if not source or not source["path"].exists():
+        return JSONResponse({"error": f"Source '{source_key}' not found"}, status_code=404)
+    path = Path(source["path"])
+    return FileResponse(path, filename=path.name)
 
 
 @router.get("/video/preview-cmd", dependencies=[Depends(requires(PUBLIC_PAGE))])
