@@ -6,6 +6,26 @@ When you add a new script here, **add a section to this file**. The pattern: `##
 
 ---
 
+## owl-status — session-start snapshot
+
+One-screen, read-only summary of GoS1's live state: git status (flags `settings.json` as live state that never
+goes in a feature commit), last three commits, wattlab service + queue + GoS1 watts/temps, the lock/Lab/
+maintenance/rig-hold flags, the rig table from `/decode/status.json` (state, W, connection, current target and
+plug IP — `*` marks one followed by MAC away from the rig.py default — and sink), and the canonical adb path.
+
+```bash
+~/wattlab/bin/owl-status
+```
+
+**Things to know:**
+- Wired as a Claude Code **SessionStart hook** (`.claude/settings.json`, on startup / `/clear` / compaction), so
+  a fresh session starts with this in context instead of re-discovering it. Its output is paid for in tokens on
+  every session start — keep it short (~2 KB today).
+- No network scans: the rig table is whatever the running service already knows (~0.1 s). If the service is
+  down, that section says so and the rest still prints.
+
+---
+
 ## stage-on / stage-off — staging mode
 
 Switch OWL onto a feature branch and test it live with full production wiring (nginx, cert, systemd, P110, GPU), without public visitors hitting a 502 during the restart window. Public visitors see a friendly maintenance page; the owner bypasses nginx and reaches the live site via LAN or SSH tunnel.

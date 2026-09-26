@@ -97,6 +97,23 @@ Both Pis have been in service since 2026-07; the flash/SSH/plug checklist moved 
 - KLAP sessions are exclusive per plug: don't run bench.py while anything else polls the
   same plugs locally (REM's *cloud* polling is fine — different path).
 
+### Rig harness open items (moved from CLAUDE.md "Deferred / open" 2026-09-27, verbatim; "S75" here = the W5 session, JOURNAL S77)
+- (S65/S66) Fire TV `alive_at_window_end` false negative (instrumented via
+  `playback_state_at_end`, root cause open) · Fire TV loses ADB authorisation after a mains power cycle (on-site
+  accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard ·
+  Apple TV: never headless (VLC pauses on HDMI loss) — now dummy-plugged, which should settle it, unverified ·
+  Roku's `idle_w`/`expected_boot_s`/`startup_skip_s` are still unmeasured guesses pending an `onboard_device.py`
+  run · **no rig box is headless any more (S75, 09-21)** — dummy plugs fitted on every box off the panel, so the
+  S73 no-sink penalty (Fire TV −0.77 W, Gen 2 −0.42 W) should now be absent: **fitted, not yet re-measured as
+  absent**, so dummy↔panel pooling is expected-safe and undemonstrated. Group rows on `sink`
+  (`panel:HDMI_n`|`dummy`|`none`), never on `hdmi_input` · **a row can pass every existing gate and still be
+  invalid** (S75: W5 AV1 plays at 1.7 fps with PLAYING, a flat trace and a correct screenshot — see CR-078's
+  2026-09-21 addendum; presented frame rate is the only tell and `bench.py` does not sample it) · the shared VMAF
+  scorer mis-pairs WebM frames by timestamp (S65 trap; `prep_family.py` works around it, `quality.compute_vmaf`
+  does not).
+- ~~C2 panel auto-off~~ — owner confirms it is **already disabled** on the C2 (2026-09-21). The 09-04 03:54
+  overnight kill should not recur; if it does, the setting is General › Power › Auto Power Off.
+
 ## Network — fixed addresses (router DHCP reservations, set 2026-07-29; **completed 2026-08-26** — owner reserved every row below in the Bbox admin UI, incl. the Bbox wlan0, the Apple TV, Lab-F3 and the Shelly)
 
 All bench devices and lab plugs have router reservations. GTV, Bbox, Pi 400 and the C2 are on

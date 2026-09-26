@@ -49,7 +49,7 @@ remote/Tania operation. Do not run display arms on two boxes at once.
    no auto-updates during runs (`sudo systemctl stop apt-daily.timer` etc. — Pi-side
    focus-mode equivalent, manual for now).
 
-## Condensed session index S26–S66 (moved here from CLAUDE.md on 2026-09-03; full entries below)
+## Condensed session index S26–S77 (S26–S66 moved here from CLAUDE.md on 2026-09-03, S69–S77 on 2026-09-27; full entries below)
 
 - S26–S45 (05-20→06-11): credibility bundle, VMAF+CI confidence, compare trilogy, findings catalog, benchmark orchestrator, GPU swap → RTX 5080, CR-062 cooldown omnibus, Pixop /enhance-run (CR-063/064), refactor to routes_*.py + runtime.py.
 - S46–S53 (06-11→06-19): CR-065 dual P110 (ci2), P110 fw facts, upscale sweet-spot finding, anon-landing audit + TEMP mockups, GDPR analytics + /audience, HDR→4K throttle, encode-parity calibration harness + /video/budget measured.
@@ -61,6 +61,72 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 - S63–S64 (08-17): campaign reviewed → finding `stb-decode-and-play-content-over-codec` (DRAFT); CR-073 campaigns = batches (+ self-service, filter/paging).
 - S65 (08-17→18): VP9 re-run — iso-bitrate sw-vs-sw encode (108 rows, n=3) + decode (30 jobs, 3 contents) → report §5; affirmations: operating point decides the dearest codec; hw decode VP9 inside ±0.1 W; sw VP9 cheapest, HEVC 2–3×; no iso-bitrate quality claim. Fire TV liveness false-negative instrumented; campaign paging bug fixed.
 - S66 (08-18→19 overnight): CR-074 network-path campaign (Pi 400 eth/wifi/local × 3 bitrates × burst/paced; STBs on current interface; origin `?pace_kbps=`), CR-075 Apple TV plan, docs sweep (JOURNAL back-fill, CR tidy, memory prune, methodology-vs-code journal), pixop timeout container reap. Tests 1027.
+- S69 (08-26→27): SMPTE-desk handoff; adb path fixed; SoC audit (GTV = MT8696 like the Fire TV); MAC target follower;
+  Apple TV onboarded over pyatv (VLC via Companion) and CR-075 closed 🟢 (AV1/VP9 +29 % on A10X); screen map in /settings.
+- S70–S71 (08-28→29, Tania): SMPTE encode-parity gap closure (240-row dataset, VMAF v0/v1 mismatch fixed) + ReadySetGo leg.
+- S72 (08-29): Roku onboarded (ECP, Dom's channel); switch-install re-cabling; two marker-encoder bugs fixed (HEVC coded
+  height, VP9 container); LinkedIn VP9 claim corrected (AV1/VP9 tie on Apple TV and Roku).
+- S73 (09-02→03): Xiaomi Gen 2 revived (PSU fault) + Gen 3 onboarded, Just Player pinned 0.196; two-axis STB campaign
+  at n=3 (Axis A: GTV +0.26–0.43 W over Fire TV on the same MT8696; Axis B: Gen 3 −0.30…−0.37 W on HEVC/AV1/VP9);
+  **sync mechanism** (looped marker clip + file rendezvous + media3 content clock → intra-content power: cross-box
+  r≈0.8 at 1080p, single-box SNR 2–3 at 4K; texture ↑ / motion ↓); ladder linear 11–17 mW/Mbps (n=3); 4K costs MT8696
+  +0.37 W, Amlogic ~0; loop-validity finding (multi-minute loops neutral, 30 s loops cost Gen 3 +0.10 W); **headless
+  STB rows are a no-sink regime** (Fire TV −0.77 W playback) → dummy plugs ordered; Apple TV back on Lab-F6/HDMI_2;
+  football sports family built (`prep_family.py`); CR-080–083; WattLab call outcomes (n=3 bar). Tests 1074.
+  **Overnight 09-03→04 (CR-081 delivered):** football through the encode-parity sweep (84 + 18 ceiling-ext + 3 recheck
+  rows, VMAF v0 rescore, versioned consolidated CSV — Tania's untouched) and the decode rig (rt ×3 + iso loops ×3, ten
+  devices, 214 rows): football needs ~2× ReadySetGo's bits at VMAF 92 while NVENC's Wh/min doesn't move; the GTV plays it at
+  BBB's watts; Gen 3's modern-codec edge narrows on sport. Panel auto-off (~4 h) paused the Apple TV once — standing
+  hazard. `docs/football_sports_tier_2026-09-04.md`.
+- S74 (09-04, unattended): **CR-083 delivered** — reserve a Lab session from `/queue-status` (start, minutes, 40-char
+  comment); `lab_reservations.py` ticker raises/lowers the same `/tmp/owl-lab-session` flag, owns only what it raised,
+  never re-raises after a hand end; banner shows "reserved until", `/decode` shows who is next. Queue page polls
+  instead of `<meta refresh>`. CR-067 items 3/4 found already live and marked. Tests 1107. Uncommitted.
+- S77 (09-21→22, unattended; committed as "S75" in fac9405 — numbering collision with JOURNAL S75/S76): **TV Box W5 onboarded** (no-brand Allwinner H618, Android 12, legacy OMX, 32-bit
+  userland; Lab-F3 + HDMI_1) — `ro.product.*` is SPOOFED as a Google ADT-3, so provenance must come from
+  `ro.board.platform`/logcat. **It cannot play AV1: 1.7 fps vs 60.0 for its three hw codecs, yet PLAYING + flat
+  trace + correct screenshot all pass, and its ΔW lands 58% BELOW the cheapest codec it can play** — a third
+  failure class for CR-078; presented frame rate is the only tell. n=3 BBB iso (batch `3e54b322a9b4`): H.264
+  +1.073 > HEVC +0.966 ≈ VP9 +0.971 W — **hardware decode is NOT codec-flat on this silicon** (t=4.96,
+  separated), qualifying the Google TV's ≤0.08 W "wash". Gen 2 Xiaomi retired; screen map corrected and every
+  off-panel box dummy-plugged (`rig_sinks` defaults now in rig.py); `/decode` badges read `sink`, not
+  `hdmi_input`; /methodology gained a device-onboarding section written from all eleven onboardings; findings
+  v2 ×4; VP9 one-off §7. Tests 1123. Uncommitted.
+
+*CLAUDE.md "Last updated" header as it stood before the 2026-09-27 move (verbatim):*
+
+```
+# Last updated: 2026-09-22 (S75: TV Box W5 onboarded unattended — Allwinner H618, hw H.264/HEVC/VP9 but NO
+#   AV1 block; it PLAYS AV1 at 1.7 fps while every rig gate reports a clean row, and its ΔW then reads as the
+#   CHEAPEST codec — see CR-078 addendum + docs/w5_onboarding_2026-09-21.md. Gen 2 Xiaomi off the rig; screen
+#   map corrected (HDMI_1 W5 · 2 Bbox · 3 Roku · 4 Fire TV); no box headless any more.
+#   S74: CR-083 Lab-session reservations delivered unattended — see JOURNAL S74.
+#   S73: ten devices — Xiaomi Gen 2 revived + Gen 3 onboarded, Apple TV back;
+#   synchronised four-box playback with a per-box content clock; two-axis STB campaign at n=3; bitrate
+#   ladder; 4K/HDR arms; loop-validity finding; headless = no-sink regime; football sports tier.
+#   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
+```
+
+## Session 77 — 2026-09-21 → 09-22 (TV Box W5 onboarded, unattended)
+
+*Committed as "S75" (`fac9405`, 2026-09-27) — the number collided with the JOURNAL S75 (09-05) and S76 (09-06)
+entries, which never got `S##` commits. Full write-up: `docs/w5_onboarding_2026-09-21.md`; CR-078 2026-09-21
+addendum; CR-084. This entry was reconstructed on 2026-09-27 from the CLAUDE.md summary, verbatim:*
+
+**TV Box W5 onboarded** (no-brand Allwinner H618, Android 12, legacy OMX, 32-bit
+userland; Lab-F3 + HDMI_1) — `ro.product.*` is SPOOFED as a Google ADT-3, so provenance must come from
+`ro.board.platform`/logcat. **It cannot play AV1: 1.7 fps vs 60.0 for its three hw codecs, yet PLAYING + flat
+trace + correct screenshot all pass, and its ΔW lands 58% BELOW the cheapest codec it can play** — a third
+failure class for CR-078; presented frame rate is the only tell. n=3 BBB iso (batch `3e54b322a9b4`): H.264
++1.073 > HEVC +0.966 ≈ VP9 +0.971 W — **hardware decode is NOT codec-flat on this silicon** (t=4.96,
+separated), qualifying the Google TV's ≤0.08 W "wash". Gen 2 Xiaomi retired; screen map corrected and every
+off-panel box dummy-plugged (`rig_sinks` defaults now in rig.py); `/decode` badges read `sink`, not
+`hdmi_input`; /methodology gained a device-onboarding section written from all eleven onboardings; findings
+v2 ×4; VP9 one-off §7. Tests 1123. Uncommitted.
+
+Rig-harness consequences recorded at the time (now in `decode_bench/README.md` §Known infra caveats): no box is
+headless any more (dummy plugs fitted, no-sink penalty not yet re-measured as absent); group rows on `sink`, never
+`hdmi_input`; a row can pass every gate and still be invalid (presented frame rate is the only tell).
 
 ## Session 76 — 2026-09-06 → 09-07 (Tania — SMPTE clean sweep: two passes + a contaminated-row re-measure)
 

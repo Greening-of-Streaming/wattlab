@@ -1361,6 +1361,20 @@ experiment or chore with its evidence pointer. Promote to a CR when picked up.*
 
 ---
 
+## Deferred items moved from CLAUDE.md (2026-09-27, verbatim — not CRs; promote when picked up)
+
+- **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
+  (server stamps vmaf_done/vmaf_total; verify `-progress` works on the scoring pass, else render the counters);
+  (2) spurious "Wait for Idle" after first/second VMAF run (suspect stage-strip index vs extra cooldown call — cf.
+  the S39 duplicate-key class); (3) faster scoring: `vmaf_n_subsample`/`vmaf_n_threads` first; GPU libvmaf_cuda
+  needs a rebuild AND heats the GPU between passes (integrity caveat — CPU scoring stays cleaner); (4) per-run
+  VMAF checkbox defaulting from `vmaf_enabled` (video.py:229).
+- **Guided Tour Findings step** — redesign to aggregate across all stored results, not echo the session run.
+- **Power-user/visitor UX watch** — revisit if a visible density toggle becomes needed.
+- **2026-07 audit doc-debt residue** (after the 2026-08-19 sweep): VERSION/tag reconciliation (`v1.0.0` tag is
+  150+ commits stale; `VERSION` frozen at 1.0.0) · back-fill the 28 closed-CR entries missing closing-commit hashes ·
+  ARCHITECTURE.md is refreshed but its per-module line counts will drift again — regenerate, don't hand-edit.
+
 ## Groupings & dependencies (rewritten 2026-06-11 — restructure pass: CR-018 merged into CR-007, CR-064 closed, CR-029 §4/§6 extracted; **extended 2026-07-06 — Track F added from the OWL_AUDIT.md triage, CR-031/CR-008 refreshed**)
 
 The **28 active CRs** (as of 2026-09-03: 003 004 007 008 009 025 029 031 039 041 043 045 057 059 066 067 068 069 072 074 076 077 078 079 080 081 082 083) cluster into a few loose tracks. Each CR remains its own entry — these notes are about where the *next* design session should look first when picking up two adjacent items. (Closed since the last rewrite: CR-024 2026-07-06 `09480ec`; **CR-071 and CR-073 closed 2026-08-19** — decode-rig display control and decode campaigns, both fully shipped; see CHANGE_REQUESTS_CLOSED.md.)

@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""owl-status — one-screen snapshot of GoS1/OWL live state for a fresh session.
+
+Runs as a Claude Code SessionStart hook (.claude/settings.json), so its stdout
+lands in the new session's context; also fine to run by hand. Stdlib only,
+read-only, no network scans — the rig table comes from the running service's
+own /decode/status.json (which already follows every box and plug by MAC), so
+the whole thing costs ~1 s. Keep the output SHORT: it is paid for in tokens
+on every session start.
+"""
+import json
+import os
+import subprocess
+import time
+import urllib.request
+
+REPO = "/home/gos/wattlab"
+BASE = "http://127.0.0.1:8000"
+# Tracked files that hold GoS1 live state — never part of a feature commit.
+LIVE_STATE_FILES = {"settings.json"}
+FLAGS = {
+    "/tmp/gos-measure.lock": "MEASURING (lock held)",
+    "/tmp/owl-lab-session": "Lab session flag up",
+    "/tmp/owl-maintenance": "MAINTENANCE page up (stage-on)",
+    "/tmp/owl-rig-hold": "rig hold file",
+}
+HOLD_STALE_MIN = 30  # rig.HOLD_STALE_S — an older hold file no longer holds
+ADB = "/srv/data/owl/decode-bench/tools/platform-tools/adb"
+
+
+def sh(*cmd, timeout=5):
+    try:
+        return subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
+                              timeout=timeout).stdout.rstrip()
+    except Exception:
+        return ""
+
+
+def get(path, timeout=3):
+    try:
+        with urllib.request.urlopen(BASE + path, timeout=timeout) as r:
+            return json.load(r)
+    except Exception:
+        return None
+
+
+def git_block():
+    out = []
+    branch = sh("git", "status", "-sb").splitlines()
+    out.append("git: " + (branch[0].lstrip("# ") if branch else "?"))
+    dirty = sh("git", "status", "--porcelain").splitlines()
+    if dirty:
+        for line in dirty[:15]:
+            path = line[3:]
+            tag = "  <- LIVE STATE, never in a feature commit" if path in LIVE_STATE_FILES else ""
+            out.append(f"  {line[:2]} {path}{tag}")
+        if len(dirty) > 15:
+            out.append(f"  … +{len(dirty) - 15} more")
+    else:
+        out.append("  clean")
+    log = sh("git", "log", "-3", "--format=%h %ad %s", "--date=short")
+    out += ["  " + l[:110] for l in log.splitlines()]
+    return out
+
+
+def service_block():
+    out = []
+    active = sh("systemctl", "is-active", "wattlab") or "?"
+    live = get("/live")
+    if live:
+        out.append(f"wattlab: {active} · queue {live.get('queue_depth')} · "
+                   f"paused {live.get('paused')} · GoS1 {live.get('watts')} W · "
+                   f"CPU {live.get('cpu_tctl')}°C GPU {live.get('gpu_junction')}°C")
+    else:
+        out.append(f"wattlab: {active} · /live not answering")
+    now = time.time()
+    raised = []
+    for p, label in FLAGS.items():
+        if os.path.exists(p):
+            age = int((now - os.path.getmtime(p)) / 60)
+            stale = " — stale, ignored" if p.endswith("rig-hold") and age > HOLD_STALE_MIN else ""
+            raised.append(f"{label} ({age} min{stale})")
+    out.append("flags: " + ("; ".join(raised) if raised else "none"))
+    return out
+
+
+def rig_block():
+    st = get("/decode/status.json", timeout=4)
+    if not st:
+        return ["rig: /decode/status.json unavailable"]
+    out = []
+    m, mon = st.get("master") or {}, st.get("monitor") or {}
+    idle = st.get("idle_off") or {}
+    hdmi = " · ".join(f"{k[-1]}:{v}" for k, v in (mon.get("hdmi_inputs") or {}).items())
+    out.append(f"rig: total {st.get('total_w')} W · master {m.get('kind')} "
+               f"{m.get('apower_w')} W · C2 {'on' if mon.get('on') else 'off'} "
+               f"{mon.get('watts')} W · HDMI {hdmi} · screen owner {st.get('screen_owner')}")
+    if idle:
+        out.append(f"  idle-off {'on' if idle.get('enabled') else 'OFF'} {idle.get('hours')} h, "
+                   f"idle {int((idle.get('idle_s') or 0) / 60)} min")
+    out.append("  name       state        W      conn  target                 plug(src)            sink")
+    for name, d in (st.get("devices") or {}).items():
+        tgt = f"{d.get('target')}" + ("*" if d.get("target_source") not in (None, "default") else "")
+        plug = f"{d.get('plug_name')}@{(d.get('plug_ip') or '?').replace('192.168.1.', '.')}"
+        if d.get("plug_source") not in (None, "default"):
+            plug += "*"
+        busy = " BUSY" if d.get("busy") else ""
+        out.append(f"  {name:<10} {str(d.get('state')):<12} {d.get('watts') or 0:>5.2f}  "
+                   f"{str(d.get('conn')):<5} {tgt:<22} {plug:<20} {d.get('sink')}{busy}")
+    out.append("  (* = followed by MAC away from the rig.py default)")
+    return out
+
+
+def main():
+    lines = ["== OWL session snapshot (bin/owl-status) " + time.strftime("%Y-%m-%d %H:%M") + " =="]
+    lines += git_block() + service_block() + rig_block()
+    lines.append(f"adb: {ADB} (rig.ADB_BIN — not the apt adb) · pyatv: /srv/data/owl/pyatv-venv/bin/atvremote")
+    print("\n".join(lines))
+
+
+if __name__ == "__main__":
+    main()
