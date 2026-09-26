@@ -302,6 +302,7 @@ async def index(request: Request):
     <div class="nav">
         <div class="nav-tour"><a href="/demo">◆ Guided Tour</a></div>
         <div class="nav-video"><a href="/video">▶ Video transcode</a></div>
+        <div class="nav-video"><a href="/decode">▣ Client decode rig</a></div>
         <div class="nav-video"><a href="/enhance-run">✦ ML Video Enhancement</a></div>
         <div class="nav-label">Beta · exploratory</div>
         <div class="nav-beta-note">

@@ -485,7 +485,8 @@ def _nav_items(request: Request) -> tuple:
                     else "/demo#enhance")
     return (
         ("/demo", "Tour"),
-        ("/video", "Video"),
+        ("/video", "Encode"),
+        ("/decode", "Decode"),
         (enhance_href, "Enhancement"),
         ("/findings", "Findings"),      # rendered only when _findings_on()
         ("/methodology", "Methodology"),
