@@ -1005,6 +1005,21 @@ HDMI cable the Fire TV plays 0.77 W lower and its decode increment drops to a th
 0.42 W lower (BBB, same clips, vs their n=3 screen-attached rows; JOURNAL S73). Both still report
 PLAYING. Headless STB rows are a separate regime; rows now carry `hdmi_input` (null = no sink). Any
 box measured without a real input needs an HDMI dummy (EDID) plug before its rows can pool.
+**2026-09-21 addendum — a THIRD failure class, and the current gates cannot see it.** Onboarding the
+TV Box W5 (Allwinner H618, hw H.264/HEVC/VP9, no AV1 block) found an AV1 row where *everything the
+harness checks is clean*: media session reports PLAYING start to end, the power trace is flat and
+stable (sd 0.10 W / 90 samples), `alive_at_window_end` is fine, and the mid-window screenshot shows
+correct, non-black picture. The row is still invalid — measured from SurfaceFlinger frame timestamps
+the box presents **1.3 fps against a 1080p60 source** (H.264/HEVC/VP9 all present exactly 60.0 fps on
+the same box, which validates the method). Just Player falls back to its bundled in-app
+`Libgav1VideoRenderer`, so no MediaCodec/OMX name appears in logcat either. Because the device is not
+doing the work, AV1's ΔW comes back as the **lowest of the four codecs** (+0.50 W vs +1.44 W for
+H.264) — a naive row publishes "AV1 is cheapest on this device", exactly backwards.
+So the matrix this CR asks for needs a third column beyond working/suspect/broken:
+**"plays, but not at real-time rate"**. The tell is presented frame rate, and nothing in `bench.py`
+samples it today. Suggested gate (owner to weigh, not actioned): sample the video layer's presented
+frame rate mid-window (`dumpsys SurfaceFlinger --latency '<SurfaceView layer>'`) and fail any row
+outside tolerance of the source rate. Evidence and method: `docs/w5_onboarding_2026-09-21.md` §3.
 
 ### Why it matters
 
@@ -1259,6 +1274,53 @@ on each other's toes on the box and the rig.
   20-character comment, a Reserve button; the list of upcoming reservations as a plain monospace
   table.
 
+
+## CR-084 · "4K stays 4K" — a resolution test-pattern clip as an option on `/prepare-rem` (and in hackathon content)
+
+**Status:** captured 2026-09-15 (owner, during the Bbox Wi-Fi campaign). The clip exists and is proven; the page
+option is the work. Not started.
+
+### Ask
+
+Keep a synthetic 2160p **line-pair test pattern** in the corpus and offer it on `/prepare-rem` as something that can
+be **prepended or appended** to any playback file the page builds, so that a "4K" test visibly stays 4K through every
+stage of a workflow — encode → packaging → CDN → player → HDMI → panel — and a silent 1080p stage anywhere in the
+chain is caught by eye, without instruments. Same intent for hackathon content: ship the pattern inside the test
+material so participants can check their own chain.
+
+### The clip (exists)
+
+`/srv/data/owl/test-clips/respattern_4k_180s_h264_30mbps.mp4` (README alongside; also served by the rig origin as
+`decode-bench/streams/_uploads/respattern_4k.mp4`): 3840×2160p30 H.264 High, NVENC CBR 30 Mb/s, 180 s, silent AAC.
+Left half = 1-pixel white/black vertical line pairs — they resolve only if every stage is 2160p; any 1080p stage
+turns them into flat grey. Right half = 2-pixel pairs, the reference that resolves at 1080p too. Centre band = running
+timecode + legend. Born 2026-09-15 to settle whether the Bbox 4K's HDMI link was 2160p (Android's `dumpsys display`
+reported a 1920×1080 mode — that is the UI compositing plane only; the pattern resolved on the C2, so the link was
+4K). Generator: ffmpeg lavfi `drawgrid`/`drawbox`/`drawtext` + `h264_nvenc` (recipe in the README).
+
+### Behaviour
+
+- On `/prepare-rem`, a checkbox (or a small select: none / prepend / append / both) adds the pattern to the built
+  playback file **at the file's own resolution and codec**: the page already re-encodes to a target-VMAF ladder, so
+  the pattern segment must go through the same encode as the content (a stream-copied 4K segment glued to a 1080p
+  rung would prove nothing — and would break concat). For rungs below 2160p the pattern is expected to *fail* on the
+  left half; that is the point, and the legend should say which half is the reference at which rung.
+- Duration option: 10 s / 30 s / full 180 s (default 10 s — enough to look at, cheap on the REM file budget).
+- The timer/markers the page already wraps in (REM 10-min files) stay untouched; the pattern is content, placed
+  before/after, and must not disturb the marker detection (black·white·black head) — place it *after* the marker
+  head if prepending.
+- Also expose the raw clip for download from the page (Lab/Member) and list it on the "Demo Content" page (CR-082)
+  once that exists.
+
+### Open questions
+
+- HDR variant (PQ/HEVC main10) for the HDR path noted under CR-008 follow-ups — a 10-bit pattern with a
+  graded ramp would also catch banding from an 8-bit stage.
+- Frame-rate variant (a 60p flicker pair) to catch 60→30 conversions the same way.
+- Whether the rig's `upload` template should get the pattern as a built-in "sanity" template for any adb box
+  (it already works today via the `_uploads` copy).
+
+---
 
 ## Backlog notes recovered from session memory (2026-08-19, not CRs yet)
 

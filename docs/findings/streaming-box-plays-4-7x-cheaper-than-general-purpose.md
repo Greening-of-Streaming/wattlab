@@ -1,14 +1,19 @@
 ---
 slug: streaming-box-plays-4-7x-cheaper-than-general-purpose
-version: 1
+version: 2
 first_measured: 2026-07-30
-last_refined: 2026-08-09
-headline: "Playing the same video, display attached: a fixed-function streaming box draws 4–7× less than a general-purpose board — even against the board's own hardware decoder"
+last_refined: 2026-09-22
+headline: "Playing the same video, display attached: THIS fixed-function streaming box draws 4–7× less than a general-purpose board — even against the board's own hardware decoder; a cheaper box is not in the same class"
 claim_short: "BBB 1080p60 H.264, local file, screen on, marker-verified: Google TV +0.30 W · Pi 400 hw +1.32 W (4.4×) · Pi 400 sw +1.96 W (6.5×) · Pi 5 sw +2.03 W (6.8×). All 🟢."
 confidence: green
 scope: "Client device layer, display attached (device and monitor metered separately). Local delivery — network/CDN share excluded by design (measured separately at ~+0.3 W on the GTV). One clip, one rung, one board pair + one STB."
 methodology_ref: docs/wattlab_traffic_light_confidence.md
 source_result_ids:
+  - decode/ffa41f71
+  - decode/7685cffc
+  - decode/64e14084
+  - decode/0e55456b
+  - decode/35b5ff43
   - decode/357b087d
   - decode/606d5ad3
   - decode/d99775a0
@@ -17,6 +22,8 @@ related_findings: [hw-decoder-cuts-client-energy-4x, codec-decode-energy-depends
 supersedes: null
 tags: [decode, playback, client-device, cross-silicon, fixed-function, owl-rem-lem, protocol-v3]
 caveats:
+  - "\"Streaming box\" is NOT an efficiency class — added 2026-09-22, and it is the main limit on this finding. A same-night, same-corpus, same-protocol run put the no-brand TV Box W5 (Allwinner H618, hardware H.264) at +1.073 W (n=3) against the Google TV Streamer's +0.619 W (n=2) on the identical clip — 1.7x, and the W5 idles at ~3.8 W vs ~1.0 W, nearly 4x. Against this finding's own Pi 400 hardware-decode row (+1.32 W) the W5 is only ~1.2x cheaper, not 4-7x; even allowing ~0.3 W for the W5's HTTP delivery (the Pi rows are local-file) the gap is ~1.7x. The 4-7x result therefore describes the Google TV Streamer, not streaming boxes as a category. Batches 3e54b322a9b4 / 4b94ea5075f3, docs/w5_onboarding_2026-09-21.md §9."
+  - "The W5/GTV comparison above is not state-identical: the GTV ran Wi-Fi + dummy plug, the W5 Ethernet + panel sink. CR-074 measured the GTV's Wi-Fi term at +0.21 W, so that confound INFLATES the GTV and the true silicon gap is if anything wider. The dummy-vs-panel sink difference is unquantified. One codec, one content family."
   - "Single content (BBB 1080p60), single rung (~matched-VMAF 1080p), one device per silicon class."
   - "The GTV row is full playback on Android (player app + compositor inherent to the platform); the Pi rows are mpv on a desktop compositor. That asymmetry IS the finding's frame — each device on the playback stack a real product would use — not a lab artefact, but don't read the ratios as decoder-silicon ratios alone."
   - "Pi 400 hardware path is v4l2m2m via mpv --hwdec=v4l2m2m-copy (the zero-copy path composites incorrectly on this stack — copy adds some CPU cost, so +1.32 W is an upper bound on the board's hw-decode playback)."

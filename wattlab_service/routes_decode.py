@@ -894,7 +894,7 @@ _BODY = """
   </div>
 
   <div class="rig-run" style="margin-top:1rem">
-    <h3>Open items <span class="rig-badge">2026-08-29</span></h3>
+    <h3>Open items <span class="rig-badge">2026-09-21</span></h3>
     <div class="rig-note" style="margin-top:0.2rem">
     <b>Landed this month:</b> campaigns = batches with self-service stamping, filter and paging
     (CR-073) · rig follows a box that changes address by MAC (Ethernet↔Wi-Fi moves, forgotten
@@ -902,24 +902,35 @@ _BODY = """
     AirPlay <code>play_url</code> is dead on tvOS 18; liveness = playback state, no marker; rows are
     “VLC on tvOS”) · <b>Xiaomi TV Box</b> (Amlogic S905X4, Android 11, adb driver) and
     <b>Roku Express 4K</b> (Realtek RTD1315, ECP driver — playback via an undocumented app-launch,
-    unvalidated end to end) join the rig, now nine devices · OS/chipset filter bar above the tiles ·
+    unvalidated end to end) join the rig · OS/chipset filter bar above the tiles ·
     <b>screen map</b>: the C2 has four HDMI sockets — which four are cabled is set in
-    <a href="/settings#s-decode">/settings › Rig › HDMI inputs</a>; uncabled boxes are headless-only
-    (no <i>Claim screen</i>, no screen-mode rows) · silicon audited per box (both Android streamers =
-    MediaTek MT8696, Bbox = Marvell Berlin, Apple TV = A10X, Xiaomi = Amlogic S905X4, Roku = Realtek
-    RTD1315) · every rig address reserved on the router.<br>
+    <a href="/settings#s-decode">/settings › Rig › HDMI inputs</a> · silicon audited per box (both
+    Android streamers = MediaTek MT8696, Bbox = Marvell Berlin, Apple TV = A10X, Xiaomi Gen 3 =
+    Amlogic s7d, Roku = Realtek RTD1315) · every rig address reserved on the router.<br>
+    <b>2026-09-21:</b> <b>TV Box W5</b> joins the rig on HDMI_1 (no-brand Allwinner H618, Android 12,
+    legacy OMX HAL — hardware H.264/HEVC/VP9 but <i>no AV1 block</i>, the first box here with that
+    combination; its product props are spoofed as a Google ADT-3, so read silicon from
+    <code>ro.board.platform</code>, never <code>ro.product.*</code>) · the Xiaomi Gen 2 leaves the rig,
+    handing over its Lab-F3 plug · <b>screen map corrected</b>: HDMI_1 W5 · HDMI_2 Bbox · HDMI_3 Roku
+    · HDMI_4 Fire TV, so the Google TV comes off the panel · <b>no rig box is headless any more</b>
+    — every box off the panel now carries its own HDMI dummy/EDID plug, shown as a
+    <span class="rig-badge" style="opacity:.55">dummy plug</span> badge on its tile, so its rows stay
+    comparable with the screened boxes instead of sitting in the no-sink regime.<br>
     <b>Still open:</b><br>
-    · Fire TV and Xiaomi now have NO HDMI cable at all (not just unclaimed, after the 2026-08-29
-      screen-map reshuffle) — unconfirmed whether Android app-launch playback still decodes/renders
-      the same way with zero display sink; needs a live smoke test before either box's headless rows
-      are trusted<br>
+    · the dummy plugs are <i>fitted</i> but not yet <i>verified</i>: the S73 no-sink penalty (Fire TV
+      played 0.77 W lower with no sink, Gen 2 0.42 W) should now be absent, and that has to be
+      measured before dummy-plugged rows are pooled with screened ones — not assumed<br>
+    · W5: <code>idle_w</code>/<code>expected_boot_s</code> are an unmeasured reading pending an
+      <code>onboard_device.py</code> run; its HDMI link sits at 4096×2160 (DCI, not the C2's native
+      UHD) while Android renders a 1280×720 surface upscaled to fill it, so no 4K row from this box
+      means anything until the video layer's true decode resolution is established<br>
     · Roku: playback mechanism (Dom's "Greening of Streaming" channel via ECP, NOT the
       <code>roku_probe.py</code>-documented Media Assistant path, which is dead on this firmware) is
       validated end-to-end (🟢, real jobs) — its idle_w/expected_boot_s/startup_skip_s are still
-      unmeasured guesses pending an <code>onboard_device.py</code> run (CR-077) · Xiaomi is parked
-      (bricked after the switch-install relocation; replacement being sourced)<br>
+      unmeasured guesses pending an <code>onboard_device.py</code> run (CR-077)<br>
     · Apple TV: tvOS screensaver contaminates parked baselines (disable it — a disclosed harness
-      setting — before the next rows); headless-vs-display power still to pin down; n≥3 owed (CR-075)<br>
+      setting — before the next rows); now dummy-plugged rather than on the panel, which should also
+      settle the old "VLC pauses on HDMI loss" hazard — unverified; n≥3 owed (CR-075)<br>
     · Fire TV <code>alive_at_window_end</code> false negative on flat traces (instrumented via
       <code>playback_state_at_end</code>, root cause open) · Fire TV drops ADB authorisation after a
       mains cycle (on-site accept, one reconnect)<br>
@@ -1031,12 +1042,26 @@ function claimButton(name, dev, screenOwner) {
   return ' <button class="rig-btn" onclick="post(\\'/decode/device/' + name
        + '/screen\\', {})">Claim screen</button>';
 }
+// Sink provenance, not just cabling. `dev.sink` is rig.sink_of() — the one
+// server-side rule — as "panel:HDMI_n" | "dummy" | "none". A box off the
+// panel is NOT headless: since 2026-09-21 every one of them carries its own
+// HDMI dummy/EDID plug, so it renders as if a display were attached. Only
+// "none" is the different measurement regime (JOURNAL S73: Fire TV plays
+// 0.77 W lower with no sink at all), so only "none" is allowed to shout.
 function hdmiBadge(dev) {
   if (dev.conn === 'webos') return '';        // the panel itself
-  return dev.hdmi_input
-    ? ' <span class="rig-badge" title="cabled to this input of the shared screen">📺 ' + dev.hdmi_input + '</span>'
-    : ' <span class="rig-badge" style="opacity:.6" title="not on one of the screen\\'s HDMI inputs — '
-      + 'headless only; assign a socket under /settings › Rig › HDMI inputs">no HDMI</span>';
+  var sink = dev.sink || (dev.hdmi_input ? 'panel:' + dev.hdmi_input : 'none');
+  if (sink.indexOf('panel:') === 0)
+    return ' <span class="rig-badge" title="cabled to this input of the shared screen">📺 '
+         + sink.slice(6) + '</span>';
+  if (sink === 'dummy')
+    return ' <span class="rig-badge" style="opacity:.55" title="Not on the shared screen, but not '
+         + 'headless either: this box has its own HDMI dummy/EDID plug, so the sink stays present '
+         + 'and its rows are comparable with the screened boxes.">dummy plug</span>';
+  return ' <span class="rig-badge" style="color:#ffaa00" title="No display sink at all — a '
+       + 'DIFFERENT measurement regime, not just a cabling detail (JOURNAL S73: the Fire TV plays '
+       + '0.77 W lower with no sink). Do not pool these rows with screened or dummy-plugged ones. '
+       + 'Fit a dummy plug, or assign a socket under /settings › Rig › HDMI inputs.">⚠ no sink</span>';
 }
 
 function deviceTile(name, dev, screenOwner, screenSettling) {

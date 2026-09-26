@@ -1,4 +1,4 @@
-# VP9 one-off — first high-level indication vs the OWL trio (2026-08-09, re-run 2026-08-17→18)
+# VP9 one-off — first high-level indication vs the OWL trio (2026-08-09; re-run 2026-08-17→18; §6 correction 2026-08-29; §7 Allwinner H618 addition 2026-09-22)
 
 One-off bench run prompted by the Disney+/HEVC royalty story: where does VP9 sit against
 the three codecs OWL measures (H.264, HEVC, AV1), on encode (GoS1 server) and client
@@ -430,6 +430,60 @@ Apple TV `alive_at_window_end: False` on every atv row here — a known pyatv li
 false-negative (`playing` can misreport "Idle" mid-playback), not treated as invalidating since
 the raw traces and screen-context ΔW confirm real, varying playback throughout.
 
+## 7. Addition, 2026-09-22 — a fourth silicon vendor, where VP9 is cheap and AV1 is unplayable
+
+A no-brand **TV Box W5** (Allwinner H618, Android 12, legacy OMX HAL) joined the rig 2026-09-21. It
+is the first box here with **hardware VP9 but no hardware AV1**, which makes it the first device
+that can contrast a hardware and a software modern-codec path *on one piece of silicon, in one
+session* — every earlier comparison in this report crosses devices.
+
+Protocol: same BBB iso-bitrate 1080p60 @8 Mb/s family as §5.2 (no new encodes), **screen mode**
+(sink `panel:HDMI_1`, marker-calibrated), 1095 s windows, n=3 per codec, batch `3e54b322a9b4`,
+12 rows, none discarded. **Regime note:** §5.2's tables are *headless* rows (no HDMI sink), which
+JOURNAL S73 showed is a different regime worth up to 0.77 W. These rows are screen-attached and are
+therefore reported separately rather than appended to those tables.
+
+**TV Box W5 (Allwinner H618) — ΔW above device idle, n=3:**
+
+| decode path | H.264 | HEVC | AV1 | VP9 |
+|---|---|---|---|---|
+| hardware (OMX.allwinner.*) | **+1.073** | **+0.966** | — | **+0.971** |
+| in-app software (libgav1) | — | — | *+0.442 — **INVALID**, see below* | — |
+
+**What these rows support:**
+
+11. **VP9 is cheap where the silicon covers it — a fourth vendor saying so.** `OMX.allwinner.video
+    .decoder.vp9` is allocated on every VP9 row. VP9 ties HEVC (difference −0.004 W, not separated)
+    and comes in **0.103 W below H.264** (t=3.85, 95 % CI +0.018…+0.188, rep ranges non-overlapping).
+    Together with the Google TV and Fire TV rows in §5.2 this is the fourth silicon vendor on which
+    VP9 carries no hardware-decode penalty.
+12. **But hardware decode is not codec-flat here, and the *old* codec is the expensive one.**
+    §5.2 point 5 found the Google TV's four codecs inside a ±0.1 W spread that its CIs could not
+    separate. On the H618 the spread is resolvable at n=3: H.264 costs ~11 % more than either HEVC
+    or VP9. So "with a hardware decoder, VP9 costs what the other three cost" holds on MediaTek but
+    **not** as a general law — on this silicon VP9 and HEVC are cheaper than H.264. Fixed-function
+    decode makes codec choice *cheap, not free*, and how cheap is a property of the part.
+13. **AV1 is not merely dearer here — it is unplayable, and it measures as the cheapest codec.**
+    The H618 has no AV1 block, Just Player falls back to its bundled `Libgav1VideoRenderer`, and the
+    box presents **1.7 fps against a 1080p60 source** (the H.264 marker clip returns 60.0 fps on the
+    same box in the same session). Its ΔW of +0.442 W is **58 % below the cheapest codec the box can
+    actually play**, because it is not doing the work. All three reps agree to ±0.015 W — it is
+    consistently wrong, not noisily wrong.
+
+    Every gate this rig applies passed those rows: PLAYING at mid-window, a flat stable power trace,
+    `alive_at_window_end` fine, and a mid-window screenshot showing correct moving picture. **The
+    only signal that catches it is presented frame rate**, which the harness does not sample. This
+    is the strongest form of the report's own thesis: *client-decode numbers are only meaningful if
+    the client was actually decoding at real-time rate*, and a device that cannot sustain a codec
+    will systematically flatter it. Logged against CR-078 as a third failure class; full method and
+    evidence in `docs/w5_onboarding_2026-09-21.md`.
+
+Caveats: one content family (BBB, iso-bitrate); one box; screen-attached, so not drop-in comparable
+with §5.2's headless tables. The W5 composites at 1280×720 (its HDMI link runs 4096×2160 DCI with
+the Android surface upscaled), and it is factory-fresh with no Google account, so its idle floor is
+cleaner than the account-carrying boxes — both are cross-device comparability caveats, neither
+affects the within-box codec ranking above.
+
 ---
 *Sources: `results/diagnostics/encode_parity_nvenc_24c_2026-08-09.json` (VP9 encode rows,
 🟢), `results/calibration/encode_parity_nvenc_24c_2026-06-20.json` (S53 comparison rows),
@@ -440,4 +494,4 @@ decode envelopes under `results/decode/` dated 2026-08-09 (session jsonl + job i
 `results/decode/2026-08-29_{0ec0f05a,305561b2,97c47248,6ce7dc03,704959dc,e2a6de84,9114fb90,
 d6a6242e,b5f5bbb2,38b13c96,41c25f50,5fe6c26d}.json` (Roku, headless) and
 `results/decode/2026-08-29_{1f2c4f9e,c7479e15,b1d642f8,4728f8b8,f10c86a0,f5ecaf0a}.json`
-(Apple TV, screen).*
+(Apple TV, screen); §7 rows from batch `3e54b322a9b4`, `results/decode/2026-09-22_{64e14084,0e55456b,35b5ff43,374a67b2,a6c84770,a574cbdf,3fb59067,23e5aba9,6da9885f,548866c5,51f8c53e,e7e90640}.json` (TV Box W5, screen mode, n=3 × 4 codecs; the three AV1 rows are stored but are NOT a decode-energy measurement — 1.7 fps, see §7 point 13). Onboarding record and frame-rate method: `docs/w5_onboarding_2026-09-21.md`.*

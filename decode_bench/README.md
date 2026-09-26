@@ -31,16 +31,20 @@ paced/live-like arm).
 
 | driver | box (plug · HDMI · network) | start | provenance |
 |---|---|---|---|
-| `adb` | Google TV Streamer `.127` Wi-Fi (Lab-D `.36`, **HDMI_1**) · Xiaomi TV Box Gen 3 `.192` Wi-Fi (Lab-F4 `.33`, **HDMI_4**, Amlogic s7d, Codec2) · Xiaomi TV Box Gen 2 `.151` Wi-Fi (Lab-F3 `.1`, headless, Amlogic S905X4, OMX) · Fire TV Stick 4K `.200` Wi-Fi only (Lab-A `.146`, headless; no logcat decoder names; loses ADB auth after a mains cycle) · Bbox 4K operator CPE `.10` eth / `.173` Wi-Fi, MAC-followed (Lab-F `.155`, headless, Marvell Berlin) | VIEW intent → Just Player 0.196 (GTV 0.212-legacy), `--ei position 0`, PLAYING verified (≤2 presses), keep-awake pins + CEC rule in `prepare()` | logcat decoder names (`CCodec allocate(c2.*)` / `OMX.*`) + mid-window screenshot + `playback_state_midwindow`/`_at_end`, content clock |
-| `atv` (pyatv) | Apple TV 4K 1st gen `.152` (Lab-F6 `.170`, **HDMI_2** — never headless) | Companion `launch_app` → VLC x-callback stream URL; baseline = tvOS Home; power = plug + `turn_off` | `playing` state + position (no screenshot/logcat) |
+| `adb` | **TV Box W5** `.98` eth (Lab-F3 `.1`, **HDMI_1**, Allwinner H618, legacy OMX; hw H.264/HEVC/VP9, **no AV1 block — AV1 renders ~1.3 fps, see below**) · Google TV Streamer `.127` Wi-Fi (Lab-D `.36`, dummy plug) · Xiaomi TV Box Gen 3 `.192` Wi-Fi (Lab-F4 `.33`, dummy plug, Amlogic s7d, Codec2) · Fire TV Stick 4K `.200` Wi-Fi only (Lab-A `.146`, **HDMI_4**; no logcat decoder names; loses ADB auth after a mains cycle) · Bbox 4K operator CPE `.10` eth / `.173` Wi-Fi, MAC-followed (Lab-F `.155`, **HDMI_2**, Marvell Berlin) | VIEW intent → Just Player 0.196 (GTV 0.212-legacy), `--ei position 0`, PLAYING verified (≤2 presses), keep-awake pins + CEC rule in `prepare()` | logcat decoder names (`CCodec allocate(c2.*)` / `OMX.*`) + mid-window screenshot + `playback_state_midwindow`/`_at_end`, content clock |
+| `atv` (pyatv) | Apple TV 4K 1st gen `.152` (Lab-F6 `.169`, dummy plug — never headless; the dummy should settle that, unverified) | Companion `launch_app` → VLC x-callback stream URL; baseline = tvOS Home; power = plug + `turn_off` | `playing` state + position (no screenshot/logcat) |
 | `roku` (ECP) | Roku Express 4K `.13` Wi-Fi (Lab-F5 `.113`, **HDMI_3**) | Dom's GoS channel via ECP launch + playlist rewrite (see `RokuDevice`) | ECP media-player state + position |
-| `ssh` | Raspberry Pi 400 `.108` (Lab-B `.31`, headless; Wi-Fi `.110` for the CR-074 arms) · Pi 5 `.102` (lab-F2 `.184`, headless) | per-run `cmd` over SSH (`ffmpeg -re … -f null -` pure decode; `mpv` for a display arm) | the command + `ifaces_midwindow` |
+| `ssh` | Raspberry Pi 400 `.108` (Lab-B `.31`, dummy plug; Wi-Fi `.110` for the CR-074 arms) · Pi 5 `.102` (lab-F2 `.184`, dummy plug) | per-run `cmd` over SSH (`ffmpeg -re … -f null -` pure decode; `mpv` for a display arm) | the command + `ifaces_midwindow` |
 | `webos` | LG C2 55" `.26` (Lab-E `.71` = the panel plug; native decode via the built-in browser, `lg.py` SSAP + Wake-on-LAN) | `launch_url` | `current_app` only; rows are panel-dominated — differential only |
 
-**Headless = no HDMI sink = a different regime** (2026-09-03: Fire TV plays 0.77 W lower, Gen 2 0.42 W lower
-than screen-attached; rows carry `hdmi_input`, null = no sink). HDMI dummy plugs are on order for the headless
-STBs; until fitted, their rows do not pool with screen-attached ones. The HDMI map lives in /settings › Rig ›
-HDMI inputs (`rig_hdmi_inputs`), not in `rig.py`.
+**No sink = a different regime** (2026-09-03: Fire TV played 0.77 W lower, Gen 2 0.42 W lower than
+screen-attached). **Resolved 2026-09-21: nothing on the rig is headless any more** — the four panel
+inputs are HDMI_1 W5 · HDMI_2 Bbox · HDMI_3 Roku · HDMI_4 Fire TV, and every other box carries its own
+HDMI dummy/EDID plug. Rows carry `sink` (`rig.sink_of`): `panel:HDMI_n` | `dummy` | `none` — group on
+that, never on `hdmi_input`, which answers a different question. The dummy plugs are fitted but the
+no-sink penalty has not yet been re-measured as absent, so pooling dummy with panel rows is expected
+to be safe and is not yet demonstrated. The HDMI map lives in /settings › Rig › HDMI inputs
+(`rig_hdmi_inputs`) and sinks in `rig_sinks`; `rig.py` carries matching defaults.
 
 Authoritative registry (IPs, plugs, `idle_w`, boot thresholds, HDMI ports): `wattlab_service/rig.py` `RIG`.
 The table above is a reading aid; when it disagrees with `rig.py`, `rig.py` wins.
@@ -138,7 +142,9 @@ the follower buys time, it does not make a lease durable.
 | `.184` | lab-F2 P110 — Pi 5 meter (2026-08-19) | `b8:fb:b3:ef:0e:df` | fw 1.3.1 |
 | `.33` | Lab-F4 P110 — Xiaomi TV Box **Gen 3** meter (2026-08-29; Gen 3 arrived 2026-09-02) | `b8:fb:b3:ef:3c:47` | fw 1.3.1 |
 | `.192` | Xiaomi TV Box **Gen 3** (Wi-Fi) | — | Amlogic s7d, Android 14, Codec2 (`c2.amlogic.*`); needs both "Network debugging" and "MiTV ADB debugging" on |
-| `.151` | Xiaomi TV Box **Gen 2** (Wi-Fi, no Ethernet port) | `32:6c:9f:c5:c1:fd` | Amlogic S905X4 (`ro.board.platform=sc2`), Android 11, model `MiTV_AFKR0` codename `jaws`; reserved 2026-08-29 |
+| ~~`.151`~~ | ~~Xiaomi TV Box **Gen 2**~~ — **OFF THE RIG 2026-09-21**, plug + HDMI slot handed to the W5 | `32:6c:9f:c5:c1:fd` | Amlogic S905X4 (`sc2`), Android 11, `MiTV_AFKR0` / `jaws`. Stored rows under device key `xiaomi` stay valid |
+| `.98` | **TV Box W5** (eth0 — the rig target) | `58:5c:de:01:31:59` | no-brand Allwinner H618 (`ro.board.platform=apollo`, `ro.hardware=sun50iw9p1`), Android 12, armeabi-v7a only. ⚠ **`ro.product.*` is SPOOFED** (claims model `ADT-3`, brand `google`, device `blueline`, fingerprint `…blueline:15/…:userdebug/test-keys`) — never read provenance from it. `adb root` works. **NEEDS A BBOX RESERVATION at `.98`** |
+| `.124` | TV Box W5 (wlan0) | `fe:fd:fc:bb:c4:3b` (locally-administered, per-SSID randomised) | ⚠ **TRAP: not a Wi-Fi path.** Both interfaces are on the same /24 and the kernel answers ARP for `.124` out of eth0, so addressing the box here silently measures Ethernet. A Wi-Fi row needs the cable physically out. Do not reserve against this MAC — it rotates |
 | `.113` | Lab-F5 P110 — Roku meter (2026-08-29) | — | fw 1.3.1 |
 | `.13` | Roku Express 4K (Wi-Fi, no Ethernet port) | `d4:e2:2f:e2:39:bb` | Realtek RTD1315; ECP control (port 8060, "Control by mobile apps" set to Permissive); reserved 2026-08-29. Playback = Dom's pre-installed "Greening of Streaming" channel (id 775528) — its playlist-URL setting must be `http://192.168.1.62:8123/gos_local_test.m3u` (one-time, on-device; its old default pointed at a dead personal domain) — validated end-to-end live 2026-08-29, see `bench.py`'s `RokuDevice` docstring for the exact (non-obvious) nav sequence |
 | `.95` / `.132` / `.199` | Ben's desk P110s: `Ben-Lab-X` · `Ben HD LCD monitor (Pi)` · `Ben1-4k-monitor` | `ec:75:0c:96:dd:a5` · `ec:75:0c:96:db:03` · `48:22:54:64:15:b6` | all fw 1.4.6 (~2 s update — not for 1 s rows); not rig plugs |
@@ -201,10 +207,7 @@ standby rejects SSAP with WS 1008 → wake with raw Wake-on-LAN first (`lg.wake(
 poller never auto-wakes it (household TV); SIMPLINK/CEC turned OFF by the owner 2026-08-15 (input
 hopping was contaminating baselines).
 
-**HDMI port map (2026-09-03, in /settings `rig_hdmi_inputs`):** GTV → HDMI_1 · Apple TV → HDMI_2 ·
-Roku → HDMI_3 · Xiaomi Gen 3 → HDMI_4. Fire TV, Xiaomi Gen 2, Bbox and both Pis are headless. The no-sink
-smoke test is answered (2026-09-03): a headless Android STB is a different regime (Fire TV −0.77 W playback,
-Gen 2 −0.42 W), hence the HDMI dummy plugs on order — see the Devices table above.
+**HDMI port map (2026-09-21, owner-confirmed; in /settings `rig_hdmi_inputs`):** W5 → HDMI_1 · Bbox → HDMI_2 · Roku → HDMI_3 · Fire TV → HDMI_4. The Google TV came off the panel that day. Everything else — GTV, Apple TV, Xiaomi Gen 3, Pi 5, Pi 400 — carries its own HDMI dummy/EDID plug (`rig_sinks`), so no rig box is in the no-sink regime any more.
 
 **Bbox (Bouygtel4K, operator CPE — Marvell Berlin, Arcadyan HMB9213NW, `ro.soc.*` empty; R3a 2026-08-26):** ADB authorised (Android 11), Ethernet `.10` since 2026-07-31 (on Wi-Fi `.173` since the CR-074 cable pull),
 plug Lab-F `.155`, `idle_w` 6.6 W (drifts 6.3–6.8 → its H.264/HEVC ΔW sits inside its own noise; AV1

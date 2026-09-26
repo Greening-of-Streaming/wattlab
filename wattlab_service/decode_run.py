@@ -271,7 +271,24 @@ TEMPLATES["net_pi_eth_b8000_wifioff"] = {
 TEMPLATES["net_local_b8000"] = {
     "label": "Net — STB local file (adb push), BBB H.264 8 Mb/s — no network",
     "clips": {"net_local_b8000": _NET_CLIPS[8000]}, "delivery": "local",
-    "max_window_s": 1080, "bench": dict(_NET_BENCH), "devices": ["gtv", "firestick"],
+    "max_window_s": 1080, "bench": dict(_NET_BENCH), "devices": ["gtv", "firestick", "bbox"],
+}
+# 2026-09-15 (Bbox Wi-Fi night): 4K local-file control — same clip as bbb_h264_4k, staged by adb push, no network.
+# 2026-09-15 04:10: exact-clip 4K local controls — the same CBR clips as the streamed Wi-Fi ladder rows.
+for _kb in (20000, 35000):
+    TEMPLATES[f"net_local_wl_bbb4k_h264_{_kb}"] = {
+        "label": f"Net — STB local file (adb push), ladder clip BBB H.264 2160p {_kb//1000} Mb/s — no network",
+        "clips": {f"net_local_wl_bbb4k_h264_{_kb}": f"_uploads/wl_bbb_h264_2160p{_kb}.mp4"}, "delivery": "local",
+        "max_window_s": 330, "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 15,
+                                       "startup_skip_s": 8, "window_s": 150, "gap_s": 10},
+        "devices": ["gtv", "firestick", "bbox"],
+    }
+TEMPLATES["net_local_bbb4k_h264"] = {
+    "label": "Net — STB local file (adb push), BBB H.264 4K 20 Mb/s 2 min — no network",
+    "clips": {"net_local_bbb4k_h264": "bbb_h264_4k_2min.mp4"}, "delivery": "local",
+    "max_window_s": 100, "bench": {"cadence_s": 1.0, "baseline_samples": 20, "settle_s": 5,
+                                   "startup_skip_s": 8, "window_s": 90, "gap_s": 10},
+    "devices": ["gtv", "firestick", "bbox"],
 }
 
 # Screen-mode marker head (2026-07-30, Ben's design): 5 s black · 5 s white ·

@@ -1,8 +1,8 @@
 ---
 slug: appletv-a10x-av1-vp9-software-fallback
-version: 1
+version: 2
 first_measured: 2026-08-26
-last_refined: 2026-08-27
+last_refined: 2026-09-22
 headline: "Apple TV 4K (2017, A10X): H.264/HEVC play at the same power; AV1 and VP9 both cost +29% more — the third silicon-coverage instance"
 claim_short: "Device-total W, VLC for tvOS, n=3 per codec across three content families: H.264 4.10 W, HEVC 4.07 W, AV1 5.25 W, VP9 5.28 W — hardware pair (VideoToolbox) flat, software-fallback pair +1.19 W (+29%), gap stable per content (+1.0 to +1.3 W)."
 confidence: green
@@ -36,6 +36,8 @@ On the 2017 Apple TV 4K (A10X Fusion, tvOS 26.6), playing the same 1080p60 conte
 # Why this matters
 
 This is the **third independent silicon vendor** to show the same shape in OWL's decode panel: a codec with a hardware block is free; a codec without one is paid for in software, at a cost set by the silicon, not the codec. MediaTek (Google TV Streamer, Fire TV Stick — same MT8696 part) shows AV1 free where it has the block. Marvell (the Bbox operator CPE) shows AV1 costing +1.2–1.4 W where it doesn't. Apple silicon of this generation now shows the same penalty for **two** codecs at once — AV1 and VP9 — from the platform whose codec support was directly questioned in the LinkedIn thread this campaign's VP9 report grew out of. The panel's "codec cost is a property of silicon coverage" claim (`codec-decode-energy-depends-on-silicon-and-regime`) now spans three vendors, not two.
+
+**A fourth vendor, added 2026-09-22, pushes the same shape to its limit.** The TV Box W5 (Allwinner H618) has a hardware VP9 block and no AV1 block. VP9 there is cheap — it ties HEVC and comes in *below* H.264. AV1 is not merely dearer: the box falls back to in-app libgav1 and presents **1.7 fps against a 1080p60 source**, so the codec is effectively unavailable on that silicon rather than expensive on it. Where this Apple TV pays a measurable +29 % to decode AV1 in software, a weaker SoC cannot pay it at all — and, because it is not doing the work, its AV1 rows read as the *cheapest* codec on the box. Same mechanism, two very different consequences.
 
 # How it was measured
 

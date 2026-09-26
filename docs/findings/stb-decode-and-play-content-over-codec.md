@@ -1,8 +1,8 @@
 ---
 slug: stb-decode-and-play-content-over-codec
-version: 1
+version: 2
 first_measured: 2026-08-16
-last_refined: 2026-08-17
+last_refined: 2026-09-22
 headline: "On modern hardware-decode set-top boxes, an hour of 1080p playback costs ~0.25–0.65 W over the home screen — and the content moves that number more than the codec does"
 claim_short: "Google TV Streamer + Fire TV Stick 4K, 1080p over LAN, 1100–3540 s windows, all 🟢: BBB (animation) +0.60/+0.64/+0.60 W (GTV h264/hevc/av1), +0.59/+0.44/+0.52 W (Fire TV); live-action Meridian/Kranjska +0.25–0.46 W. Codec spread within a content ≤0.1 W; content spread ~0.35 W."
 confidence: green
@@ -23,6 +23,7 @@ related_findings: [hw-decoder-cuts-client-energy-4x, codec-decode-energy-depends
 supersedes: null
 tags: [decode, client-device, set-top-box, google-tv, fire-tv, content-dependence, long-window, protocol-v3, draft]
 caveats:
+  - "The \"codec spread within a content ≤0.1 W\" half does not generalise to a third box (2026-09-22). On the TV Box W5 (Allwinner H618, n=3, same BBB iso-bitrate family, screen-attached) the hardware codec spread is 0.107 W and is statistically separated: H.264 +1.073 W vs HEVC +0.966 and VP9 +0.971 (Welch t=4.96, 95% CI +0.038..+0.176, rep ranges non-overlapping). So on that silicon the codec term is resolvable rather than lost in noise. The content half of this finding is UNTESTED on the W5 — only BBB has been run there — so whether content still outweighs codec on that box is an open question, not a claim. See docs/w5_onboarding_2026-09-21.md."
   - "DRAFT pending lab review. Two boxes, one resolution (1080p), one bitrate rung per codec (matched-VMAF ~92 NVENC encodes), one player (Just Player / media3), LAN HTTP delivery."
   - "Bench configuration: the boxes' inattentive-sleep timer (GTV default 20 min), screensaver (Fire TV default 5 min) and the GTV's HDMI-CEC active-source-lost standby were pinned OFF so a full window plays; a living-room box on defaults sleeps at 20 min. Every row records the pinned values (`keep_awake`). Earlier long-window rows taken WITHOUT this (2026-07-31, 2026-08-15) are invalid — box asleep, not decode — and are not cited."
   - "Fire TV Stick is Wi-Fi only (no Ethernet port): its ΔW includes the radio's share of streaming; the Google TV is on Ethernet. Link quality is not the confound (Wi-Fi 7 AP metres away)."

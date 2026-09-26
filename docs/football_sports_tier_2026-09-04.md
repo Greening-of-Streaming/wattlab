@@ -15,6 +15,16 @@ ProRes — rejected on viewing: slow motion, soft shots, no coverage) and the 30
 Panasonic demo. Nothing with an open licence, ≥ 2 min, 4K60 and broadcast coverage exists in the public
 datasets (Netflix Open Content has no sport; UVG/Xiph/EBU/JVET are 5–10 s clips).
 
+**Rights status (updated 2026-09-18).** Still lab-internal: © Panasonic, working copy is a third-party YouTube
+re-upload, no licence. On 2026-09-18 Ben asked Stan (CTO, IAMT) to find a Panasonic contact; the request is
+(1) permission to use the clip as GoS's official sports reference, cited as Panasonic material, pictures not
+redistributed unless Panasonic prefers otherwise, and (2) a mezzanine/ProRes or original 4Kp60 master so VMAF
+references and upscaling tests share the encodes' source. Draft in Ben's Downloads (`stan_panasonic_email.txt`).
+Until an answer arrives nothing changes: measurements usable and published as numbers (the 14–15 Sept Bbox Wi-Fi
+ladder used the football family on public batch pages, owner's call 2026-09-14), pictures never shown. If consent
+is refused the football rows stay valid as measurements but the content must not be named as a reference asset
+in publications; the CableLabs clip is the fallback.
+
 Excerpt 50–170 s (clear of the intro card and the outro fade). SI ≈ 48.3 / TI ≈ 10.3 on the 1080p
 30 s trim (ffmpeg `siti`) — much more spatial detail than ReadySetGo (38.5) at a quarter of its
 temporal activity (40.4).

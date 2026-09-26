@@ -400,8 +400,11 @@ def test_status_payload_shape():
     # 2026-09-03: the Google TV joins them — moved to Wi-Fi so the Fire TV vs
     # Google TV axis (same MT8696 silicon) compares like with like instead of
     # confounding the OS difference with Ethernet-vs-Wi-Fi (CR-074: +0.21 W).
+    # 2026-09-21: the Gen 2 Xiaomi left the rig; the TV Box W5 took its plug
+    # and is on Ethernet (it has a wlan0 too, but both interfaces sit on one
+    # /24 and ARP answers out of eth0 — see the trap note in rig.py).
     assert [n for n, d in p["devices"].items() if d["network"] == "wifi"] == \
-        ["firestick", "gtv", "xiaomi", "xiaomi3", "roku"]
+        ["firestick", "gtv", "xiaomi3", "roku"]
     assert p["monitor"]["panel"]          # bench schematic display identity
     assert p["monitor"]["plug_name"] == "Lab-E"
 
@@ -612,6 +615,10 @@ def test_adb_repair_claims_screen_and_reconnects_once(monkeypatch):
     monkeypatch.setattr(rig, "adb_host_fingerprint", lambda: "AA:BB")
     monkeypatch.setattr(rig.lg, "set_input", lambda host, inp: None)
     monkeypatch.setattr(rig.asyncio, "sleep", _fake_sleep)
+    # This covers the repair MECHANISM (reconnect once + take the screen), so
+    # it cables gtv explicitly rather than riding on the shipped screen map —
+    # which moved on 2026-09-21 and will move again.
+    rig.apply_hdmi_assignments({"gtv": "HDMI_1", "w5": ""})
     rig.rig_cache["devices"]["gtv"]["state"] = "stuck"
     out = _run(rig.adb_repair("gtv"))
     assert calls == ["Google TV"]
@@ -727,45 +734,52 @@ def test_poller_does_not_sweep_before_the_box_has_had_time_to_boot(monkeypatch):
 
 # --- Screen map: four HDMI sockets, seven devices (2026-08-26) ----------------
 
-def test_hdmi_defaults_leave_pi5_pi400_and_firestick_headless():
-    # 2026-08-29 reshuffle (Ben's actual on-site cabling during the switch
-    # install): Roku took HDMI_3 from the Pi 400; Apple TV took HDMI_4 from
-    # the Fire TV (it cannot be measured headless at all — VLC pauses on
-    # HDMI loss). Both Pi boards and the Fire TV are fully valid headless
-    # (ADB/SSH prove decode without a screen) — though the Fire TV and the
-    # (never-cabled) Xiaomi still owe a live no-HDMI-sink smoke test before
-    # their headless rows can be trusted (Ben's catch, same date).
+def test_hdmi_defaults_match_the_cabling_as_of_2026_09_21():
+    # THE one test that pins the shipped screen map to physical reality; every
+    # other test below drives apply_hdmi_assignments() explicitly so a
+    # re-cabling only ever breaks this one.
+    #
+    # 2026-09-21 (owner-confirmed): the TV Box W5 takes HDMI_1 and the Google
+    # TV comes off the panel entirely; the Gen 2 Xiaomi leaves the rig. Every
+    # box NOT on one of the four sockets now carries its own HDMI dummy/EDID
+    # plug, so "off the panel" no longer means headless — nothing on this rig
+    # is in the no-sink regime any more (JOURNAL S73).
     m = rig.apply_hdmi_assignments({})
+    rig.apply_sink_assignments({})
+    d = rig.RIG["devices"]
     assert set(m) == {"HDMI_1", "HDMI_2", "HDMI_3", "HDMI_4"}
-    assert m["HDMI_1"] == "bbox" and m["HDMI_2"] == "gtv"
-    assert m["HDMI_3"] == "roku" and m["HDMI_4"] == "atv"
-    assert rig.RIG["devices"]["pi5"]["hdmi_input"] is None
-    assert rig.RIG["devices"]["pi400"]["hdmi_input"] is None
-    assert rig.RIG["devices"]["firestick"]["hdmi_input"] is None
-    assert rig.RIG["devices"]["xiaomi"]["hdmi_input"] is None
-    assert rig.RIG["devices"]["c2"]["hdmi_input"] is None
+    assert m == {"HDMI_1": "w5", "HDMI_2": "bbox",
+                 "HDMI_3": "roku", "HDMI_4": "firestick"}
+    for name in ("pi5", "pi400", "gtv", "atv", "xiaomi3"):
+        assert d[name]["hdmi_input"] is None, name
+        assert rig.sink_of(d[name]) == "dummy", name
+    assert d["c2"]["hdmi_input"] is None            # the panel itself
     assert rig.hdmi_map() == m
+    # No rig box is sink-less.
+    assert [n for n, c in d.items() if rig.sink_of(c) == "none"] == []
+    # The Gen 2 Xiaomi is gone, not merely unassigned.
+    assert "xiaomi" not in d
 
 
 def test_hdmi_assignment_recables_a_socket_and_unplugs_the_previous_device():
-    # Fire TV takes the Bbox's socket; "" unplugs the Bbox explicitly.
-    m = rig.apply_hdmi_assignments({"firestick": "HDMI_1", "bbox": ""})
+    # Fire TV takes HDMI_1 off the W5; "" unplugs the W5 explicitly.
+    m = rig.apply_hdmi_assignments({"firestick": "HDMI_1", "w5": ""})
     assert m["HDMI_1"] == "firestick"
     assert rig.RIG["devices"]["firestick"]["hdmi_input"] == "HDMI_1"
-    assert rig.RIG["devices"]["bbox"]["hdmi_input"] is None
+    assert rig.RIG["devices"]["w5"]["hdmi_input"] is None
     # devices not mentioned keep their rig.py default
-    assert rig.RIG["devices"]["gtv"]["hdmi_input"] == "HDMI_2"
+    assert rig.RIG["devices"]["bbox"]["hdmi_input"] == "HDMI_2"
     rig.apply_hdmi_assignments({})
-    assert rig.RIG["devices"]["bbox"]["hdmi_input"] == "HDMI_1"
+    assert rig.RIG["devices"]["w5"]["hdmi_input"] == "HDMI_1"
 
 
 def test_hdmi_assignment_one_device_per_socket_and_ignores_junk():
-    # atv also asks for HDMI_2 — gtv (earlier in RIG order) keeps it.
+    # atv also asks for HDMI_2 — bbox (earlier in RIG order) keeps it.
     m = rig.apply_hdmi_assignments({"atv": "HDMI_2", "pi5": "HDMI_9", "c2": "HDMI_1", "nope": "HDMI_4"})
-    assert m["HDMI_2"] == "gtv" and rig.RIG["devices"]["atv"]["hdmi_input"] is None
+    assert m["HDMI_2"] == "bbox" and rig.RIG["devices"]["atv"]["hdmi_input"] is None
     assert rig.RIG["devices"]["pi5"]["hdmi_input"] is None       # unknown socket
     assert rig.RIG["devices"]["c2"]["hdmi_input"] is None        # the panel itself
-    assert m["HDMI_1"] == "bbox"
+    assert m["HDMI_1"] == "w5"
     assert rig.apply_hdmi_assignments("garbage") == rig.apply_hdmi_assignments({})
 
 
@@ -774,13 +788,17 @@ def test_sink_of_distinguishes_panel_dummy_and_none():
     # as a sink (Fire TV plays 0.77 W lower, Gen 2 0.42 W). Since the dummy
     # plugs went on (2026-09-05) "not on a panel socket" no longer implies
     # "no sink", so sink_of is the only thing an analysis may group on.
+    # All three regimes are constructed here rather than read off the shipped
+    # map: on the rig as cabled today nothing is sink-less, but "none" is the
+    # regime the rule exists to separate, so it still has to be covered.
     rig.apply_hdmi_assignments({})
-    rig.apply_sink_assignments({"firestick": "dummy", "xiaomi": "dummy"})
+    rig.apply_sink_assignments({"gtv": "dummy", "atv": "dummy", "pi5": ""})
     d = rig.RIG["devices"]
-    assert rig.sink_of(d["bbox"]) == "panel:HDMI_1"      # cabled to the screen
-    assert rig.sink_of(d["firestick"]) == "dummy"        # its own EDID plug
-    assert rig.sink_of(d["xiaomi"]) == "dummy"
-    assert rig.sink_of(d["pi5"]) == "none"               # genuinely sink-less
+    assert rig.sink_of(d["bbox"]) == "panel:HDMI_2"      # cabled to the screen
+    assert rig.sink_of(d["w5"]) == "panel:HDMI_1"
+    assert rig.sink_of(d["gtv"]) == "dummy"              # its own EDID plug
+    assert rig.sink_of(d["atv"]) == "dummy"
+    assert rig.sink_of(d["pi5"]) == "none"               # sink cleared -> no sink
     assert rig.sink_of(d["c2"]) == "panel"               # the panel IS a sink
 
 
@@ -788,23 +806,26 @@ def test_sink_panel_socket_wins_over_a_dummy_flag():
     # A box that is cabled to the screen reports the panel even if someone
     # left its dummy flag ticked — one physical sink, and the socket is the
     # one we can verify from the rig.
-    rig.apply_hdmi_assignments({"firestick": "HDMI_1", "bbox": ""})
+    rig.apply_hdmi_assignments({"firestick": "HDMI_1", "w5": ""})
     rig.apply_sink_assignments({"firestick": "dummy"})
     assert rig.sink_of(rig.RIG["devices"]["firestick"]) == "panel:HDMI_1"
 
 
 def test_sink_assignment_clears_ignores_junk_and_never_marks_the_panel():
-    rig.apply_sink_assignments({"firestick": "dummy"})
-    assert rig.RIG["devices"]["firestick"]["sink_kind"] == "dummy"
+    # gtv is off the panel as cabled today, so clearing its sink really does
+    # leave it sink-less — the firestick used to serve here but now holds
+    # HDMI_4, where the socket would mask the cleared flag.
+    rig.apply_sink_assignments({"gtv": "dummy"})
+    assert rig.RIG["devices"]["gtv"]["sink_kind"] == "dummy"
     # "" clears it; unknown kinds and unknown devices are ignored; the webOS
     # panel never carries one.
-    out = rig.apply_sink_assignments({"firestick": "", "bbox": "tinfoil",
+    out = rig.apply_sink_assignments({"gtv": "", "bbox": "tinfoil",
                                       "c2": "dummy", "nope": "dummy"})
-    assert out["firestick"] is None
-    assert rig.RIG["devices"]["firestick"]["sink_kind"] is None
+    assert out["gtv"] is None
+    assert rig.RIG["devices"]["gtv"]["sink_kind"] is None
     assert rig.RIG["devices"]["bbox"]["sink_kind"] is None
     assert rig.RIG["devices"]["c2"]["sink_kind"] is None
-    assert rig.sink_of(rig.RIG["devices"]["firestick"]) == "none"
+    assert rig.sink_of(rig.RIG["devices"]["gtv"]) == "none"
     assert rig.apply_sink_assignments("garbage") == rig.apply_sink_assignments({})
 
 
@@ -824,11 +845,13 @@ def test_effective_sink_does_not_reclassify_on_panel_state():
     # loses 0.31 W, Roku ignores it). One signature, three mechanisms, so the
     # sink stays the wiring truth and `panel_awake` is recorded alongside.
     rig.apply_hdmi_assignments({})
-    rig.apply_sink_assignments({"firestick": "dummy"})
+    # pi5 is dummy-plugged by default since 2026-09-21 — cleared here so the
+    # no-sink leg of the rule stays covered.
+    rig.apply_sink_assignments({"gtv": "dummy", "pi5": ""})
     d = rig.RIG["devices"]
     for st in (True, False, None):
-        assert rig.effective_sink(d["bbox"], awake=st) == "panel:HDMI_1"
-        assert rig.effective_sink(d["firestick"], awake=st) == "dummy"
+        assert rig.effective_sink(d["bbox"], awake=st) == "panel:HDMI_2"
+        assert rig.effective_sink(d["gtv"], awake=st) == "dummy"
         assert rig.effective_sink(d["pi5"], awake=st) == "none"
 
 
@@ -848,11 +871,13 @@ def test_status_payload_carries_the_screen_map(monkeypatch):
     # — unpark it just for this test so its enduring default-screen-map
     # behaviour stays covered independent of tonight's temporary rig state.
     monkeypatch.setitem(rig.RIG["devices"]["atv"], "parked", False)
-    rig.apply_hdmi_assignments({})
+    # Cabled explicitly: this covers the payload CARRYING the screen map, not
+    # which box happens to be on which socket (that is pinned once, in
+    # test_hdmi_defaults_match_the_cabling_as_of_2026_09_21).
+    rig.apply_hdmi_assignments({"atv": "HDMI_4", "gtv": "HDMI_2",
+                                "firestick": "", "bbox": ""})
     p = rig.status_payload()
     assert p["monitor"]["hdmi_inputs"] == rig.hdmi_map()
-    # 2026-08-29: atv now holds HDMI_4 by default (see the reshuffle note on
-    # test_hdmi_defaults_leave_pi5_pi400_and_firestick_headless).
     assert p["devices"]["atv"]["hdmi_input"] == "HDMI_4"
     assert p["devices"]["gtv"]["hdmi_input"] == "HDMI_2"
     assert p["devices"]["atv"]["conn"] == "atv"

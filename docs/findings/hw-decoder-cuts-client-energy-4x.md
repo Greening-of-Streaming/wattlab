@@ -1,9 +1,9 @@
 ---
 slug: hw-decoder-cuts-client-energy-4x
-version: 1
+version: 2
 first_measured: 2026-07-29
-last_refined: 2026-08-09
-headline: "A hardware decoder cuts client decode power ~3.7× — and having the silicon isn't enough: stock software must be able to reach it"
+last_refined: 2026-09-22
+headline: "A hardware decoder cuts client decode power ~3.7× — and having the silicon isn't enough: stock software must be able to reach it, while having none at all can put the codec out of reach entirely"
 claim_short: "Pi 400, same board, same 1080p60 file — H.264 hw +0.41 W vs sw +1.50 W playing (3.7×, n=6/3); +0.59 vs +2.72 W saturated (4.6×, n=3). Pi 5 (block dropped): +1.57 W."
 confidence: green
 scope: "Client device layer only (Raspberry Pi 400 / Pi 5, headless pure decode; Google TV as playback context). Network, CDN, display excluded on the Pis."
@@ -19,6 +19,8 @@ related_findings: [codec-decode-energy-depends-on-silicon-and-regime, stb-decode
 supersedes: null
 tags: [decode, client-device, hw-vs-sw, raspberry-pi, owl-rem-lem, protocol-v3]
 caveats:
+  - "Third leg added 2026-09-22 — the case where the silicon is simply absent. The TV Box W5 (Allwinner H618) has hardware H.264/HEVC/VP9 and NO AV1 block. Its three hardware codecs all present 60.0 fps; AV1 falls back to Just Player's in-app libgav1 and presents 1.7 fps against a 1080p60 source — i.e. the software path does not merely cost more, it cannot do the job at all on this class of SoC (4x Cortex-A53). This is the limit case of the finding's own thesis: \"software must be able to reach the silicon\" becomes \"with no silicon, software may not reach real time\". n=3, BBB iso-bitrate 1080p60, batch 3e54b322a9b4."
+  - "That same absence produces a measurement trap rather than a measurement: because the W5 is not doing the work, its AV1 ΔW (+0.442 W) comes in 58% BELOW the cheapest codec it can actually play (HEVC +0.966 W). Any hardware-vs-software comparison that includes a codec the device cannot sustain will flatter the software path. Frame rate is the only gate that catches it — see CR-078 and docs/w5_onboarding_2026-09-21.md."
   - "Realtime rows are BBB 1080p60 only; single board pair; one rung."
   - "Ratio reconciled 2026-08-09 (R6): n≥3 interleaved under protocol v3 gives 3.7× realtime / 4.6× saturated, replicating July v2 within noise; a 07-30 single-pair read of ~7× rested on one baseline-suspect hw row (+0.221 W, below the n=6 range 0.33–0.51). The hw arm's own rep spread (CV ~18% of ~0.4 W) is why single-pair ratios ranged 3.6–7×."
   - "Pi rows are headless pure decode (ffmpeg -f null, audio disabled) — no display path. A real player adds display/compositor energy on top."

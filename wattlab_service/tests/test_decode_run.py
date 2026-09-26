@@ -299,7 +299,7 @@ def test_screen_device_adds_the_panel_meter_to_one_device_only(monkeypatch):
     decode_run._LOOP_LEN_CACHE.clear()
     watched = decode_run._materialize("sj5", "loop_bbb_h264_sync", "gtv",
                                       "headless", False, context_meter=True)
-    other = decode_run._materialize("sj5", "loop_bbb_h264_sync", "xiaomi",
+    other = decode_run._materialize("sj5", "loop_bbb_h264_sync", "xiaomi3",
                                     "headless", False, context_meter=False)
     try:
         assert json.loads(watched.read_text())["monitor_meter_ip"] == \

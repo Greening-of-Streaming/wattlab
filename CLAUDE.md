@@ -1,6 +1,10 @@
 # WattLab — Claude Code Context File
 # Auto-loaded by Claude Code. Keep this current — and keep it LEAN: one-liners here, detail in JOURNAL.md.
-# Last updated: 2026-09-04 (S74: CR-083 Lab-session reservations delivered unattended — see JOURNAL S74.
+# Last updated: 2026-09-22 (S75: TV Box W5 onboarded unattended — Allwinner H618, hw H.264/HEVC/VP9 but NO
+#   AV1 block; it PLAYS AV1 at 1.7 fps while every rig gate reports a clean row, and its ΔW then reads as the
+#   CHEAPEST codec — see CR-078 addendum + docs/w5_onboarding_2026-09-21.md. Gen 2 Xiaomi off the rig; screen
+#   map corrected (HDMI_1 W5 · 2 Bbox · 3 Roku · 4 Fire TV); no box headless any more.
+#   S74: CR-083 Lab-session reservations delivered unattended — see JOURNAL S74.
 #   S73: ten devices — Xiaomi Gen 2 revived + Gen 3 onboarded, Apple TV back;
 #   synchronised four-box playback with a per-box content clock; two-axis STB campaign at n=3; bitrate
 #   ladder; 4K/HDR arms; loop-validity finding; headless = no-sink regime; football sports tier.
@@ -10,7 +14,7 @@
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 28 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - CHANGE_REQUESTS.md — 29 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
 #   - TESTING.md — pytest suite (1107 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - GOS1_DISASTER_RECOVERY.md — rebuild-from-nothing: what is backed up, what is NOT (secrets, SSH keys, REM glue docs)
@@ -146,7 +150,7 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 28 CRs** in CHANGE_REQUESTS.md — newest CR-078–083 (device×codec reliability
+tour/credibility → RAG). **Active: 29 CRs** in CHANGE_REQUESTS.md — newest CR-078–084 (device×codec reliability
 survey, HD/4K ladder × resolution sweep, decode-pipeline provenance survey, football sports tier + all-night
 campaign [delivered], Demo Content page, Lab-session reservations [delivered 09-04]); each CR carries its own
 status; closed archive in CHANGE_REQUESTS_CLOSED.md.
@@ -174,6 +178,16 @@ status; closed archive in CHANGE_REQUESTS_CLOSED.md.
   never re-raises after a hand end; banner shows "reserved until", `/decode` shows who is next. Queue page polls
   instead of `<meta refresh>`. CR-067 items 3/4 found already live and marked. Tests 1107. Uncommitted.
 
+- S75 (09-21→22, unattended): **TV Box W5 onboarded** (no-brand Allwinner H618, Android 12, legacy OMX, 32-bit
+  userland; Lab-F3 + HDMI_1) — `ro.product.*` is SPOOFED as a Google ADT-3, so provenance must come from
+  `ro.board.platform`/logcat. **It cannot play AV1: 1.7 fps vs 60.0 for its three hw codecs, yet PLAYING + flat
+  trace + correct screenshot all pass, and its ΔW lands 58% BELOW the cheapest codec it can play** — a third
+  failure class for CR-078; presented frame rate is the only tell. n=3 BBB iso (batch `3e54b322a9b4`): H.264
+  +1.073 > HEVC +0.966 ≈ VP9 +0.971 W — **hardware decode is NOT codec-flat on this silicon** (t=4.96,
+  separated), qualifying the Google TV's ≤0.08 W "wash". Gen 2 Xiaomi retired; screen map corrected and every
+  off-panel box dummy-plugged (`rig_sinks` defaults now in rig.py); `/decode` badges read `sink`, not
+  `hdmi_input`; /methodology gained a device-onboarding section written from all eleven onboardings; findings
+  v2 ×4; VP9 one-off §7. Tests 1123. Uncommitted.
 ### Deferred / open (unique items only — CRs track themselves)
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
   (server stamps vmaf_done/vmaf_total; verify `-progress` works on the scoring pass, else render the counters);
@@ -186,17 +200,21 @@ status; closed archive in CHANGE_REQUESTS_CLOSED.md.
 - **2026-07 audit doc-debt residue** (after the 2026-08-19 sweep): VERSION/tag reconciliation (`v1.0.0` tag is
   150+ commits stale; `VERSION` frozen at 1.0.0) · back-fill the 28 closed-CR entries missing closing-commit hashes ·
   ARCHITECTURE.md is refreshed but its per-module line counts will drift again — regenerate, don't hand-edit.
-- **C2 panel auto-off (~4 h after the last remote/SSAP input) kills overnight Apple TV / C2 rows** (09-04 03:54):
-  disable it on the C2 (General › Power › Auto Power Off) or keep-alive from the rig before the next overnight.
+- ~~C2 panel auto-off~~ — owner confirms it is **already disabled** on the C2 (2026-09-21). The 09-04 03:54
+  overnight kill should not recur; if it does, the setting is General › Power › Auto Power Off.
 - **Rig harness open items** (S65/S66): Fire TV `alive_at_window_end` false negative (instrumented via
   `playback_state_at_end`, root cause open) · Fire TV loses ADB authorisation after a mains power cycle (on-site
   accept, ONE reconnect) · C2 SSAP timeouts at window end lose rows · parity has no inter-row idle guard ·
-  Apple TV: never headless (VLC pauses on HDMI loss) — needs its HDMI_2 slot for every row · Roku's
-  `idle_w`/`expected_boot_s`/`startup_skip_s` are still unmeasured guesses pending an `onboard_device.py` run ·
-  **headless STB rows are a no-sink regime** (S73: Fire TV −0.77 W playback, Gen 2 −0.42 W; rows carry
-  `hdmi_input`, null = no sink) — Fire TV, Gen 2 and Bbox pool with the screened corpus only once the HDMI dummy
-  plugs (ordered 2026-09-03) are fitted and verified · the shared VMAF scorer mis-pairs WebM frames by timestamp
-  (S65 trap; `prep_family.py` works around it, `quality.compute_vmaf` does not).
+  Apple TV: never headless (VLC pauses on HDMI loss) — now dummy-plugged, which should settle it, unverified ·
+  Roku's `idle_w`/`expected_boot_s`/`startup_skip_s` are still unmeasured guesses pending an `onboard_device.py`
+  run · **no rig box is headless any more (S75, 09-21)** — dummy plugs fitted on every box off the panel, so the
+  S73 no-sink penalty (Fire TV −0.77 W, Gen 2 −0.42 W) should now be absent: **fitted, not yet re-measured as
+  absent**, so dummy↔panel pooling is expected-safe and undemonstrated. Group rows on `sink`
+  (`panel:HDMI_n`|`dummy`|`none`), never on `hdmi_input` · **a row can pass every existing gate and still be
+  invalid** (S75: W5 AV1 plays at 1.7 fps with PLAYING, a flat trace and a correct screenshot — see CR-078's
+  2026-09-21 addendum; presented frame rate is the only tell and `bench.py` does not sample it) · the shared VMAF
+  scorer mis-pairs WebM frames by timestamp (S65 trap; `prep_family.py` works around it, `quality.compute_vmaf`
+  does not).
 
 ## Key Findings to Date
 Canonical store is **`/findings`** (one markdown per finding under `docs/findings/`, strict schema, cites a real
