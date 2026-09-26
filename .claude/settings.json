@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/gos/wattlab/bin/owl-status 2>/dev/null || true",
+            "command": "if [ -x /home/gos/wattlab/bin/owl-status ]; then /home/gos/wattlab/bin/owl-status; else ssh -o BatchMode=yes -o ConnectTimeout=5 \"${OWL_SSH_HOST:-gos1}\" wattlab/bin/owl-status; fi 2>/dev/null || true",
             "timeout": 15
           }
         ]

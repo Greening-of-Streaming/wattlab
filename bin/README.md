@@ -21,6 +21,8 @@ plug IP — `*` marks one followed by MAC away from the rig.py default — and s
 - Wired as a Claude Code **SessionStart hook** (`.claude/settings.json`, on startup / `/clear` / compaction), so
   a fresh session starts with this in context instead of re-discovering it. Its output is paid for in tokens on
   every session start — keep it short (~2 KB today).
+- From a MacBook-run session the same hook falls back to `ssh ${OWL_SSH_HOST:-gos1} wattlab/bin/owl-status`
+  (set `OWL_SSH_HOST` if the Mac's ssh alias for GoS1 isn't `gos1`); if that fails it prints nothing.
 - No network scans: the rig table is whatever the running service already knows (~0.1 s). If the service is
   down, that section says so and the rest still prints.
 
