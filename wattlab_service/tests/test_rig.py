@@ -403,8 +403,11 @@ def test_status_payload_shape():
     # 2026-09-21: the Gen 2 Xiaomi left the rig; the TV Box W5 took its plug
     # and is on Ethernet (it has a wlan0 too, but both interfaces sit on one
     # /24 and ARP answers out of eth0 — see the trap note in rig.py).
+    # 2026-09-30: the W5 is parked (hidden from the console) and the Gen 2 is
+    # back on its Lab-F3 plug, on Wi-Fi as before.
     assert [n for n, d in p["devices"].items() if d["network"] == "wifi"] == \
-        ["firestick", "gtv", "xiaomi3", "roku"]
+        ["firestick", "gtv", "xiaomi", "xiaomi3", "roku"]
+    assert "w5" not in p["devices"]
     assert p["monitor"]["panel"]          # bench schematic display identity
     assert p["monitor"]["plug_name"] == "Lab-E"
 
@@ -734,7 +737,7 @@ def test_poller_does_not_sweep_before_the_box_has_had_time_to_boot(monkeypatch):
 
 # --- Screen map: four HDMI sockets, seven devices (2026-08-26) ----------------
 
-def test_hdmi_defaults_match_the_cabling_as_of_2026_09_21():
+def test_hdmi_defaults_match_the_cabling_as_of_2026_09_30():
     # THE one test that pins the shipped screen map to physical reality; every
     # other test below drives apply_hdmi_assignments() explicitly so a
     # re-cabling only ever breaks this one.
@@ -744,33 +747,41 @@ def test_hdmi_defaults_match_the_cabling_as_of_2026_09_21():
     # box NOT on one of the four sockets now carries its own HDMI dummy/EDID
     # plug, so "off the panel" no longer means headless — nothing on this rig
     # is in the no-sink regime any more (JOURNAL S73).
+    #
+    # 2026-09-27 (C24/C25 re-cabling, live /settings since then; rig.py
+    # defaults aligned 2026-09-30): Google TV on HDMI_1, Apple TV on HDMI_3,
+    # the Roku off the panel on a dummy plug. 2026-09-30 (owner): the W5 is
+    # parked and the Gen 2 Xiaomi is back on its Lab-F3 plug with a dummy.
     m = rig.apply_hdmi_assignments({})
     rig.apply_sink_assignments({})
     d = rig.RIG["devices"]
     assert set(m) == {"HDMI_1", "HDMI_2", "HDMI_3", "HDMI_4"}
-    assert m == {"HDMI_1": "w5", "HDMI_2": "bbox",
-                 "HDMI_3": "roku", "HDMI_4": "firestick"}
-    for name in ("pi5", "pi400", "gtv", "atv", "xiaomi3"):
+    assert m == {"HDMI_1": "gtv", "HDMI_2": "bbox",
+                 "HDMI_3": "atv", "HDMI_4": "firestick"}
+    for name in ("pi5", "pi400", "xiaomi", "xiaomi3", "roku"):
         assert d[name]["hdmi_input"] is None, name
         assert rig.sink_of(d[name]) == "dummy", name
     assert d["c2"]["hdmi_input"] is None            # the panel itself
     assert rig.hdmi_map() == m
-    # No rig box is sink-less.
-    assert [n for n, c in d.items() if rig.sink_of(c) == "none"] == []
-    # The Gen 2 Xiaomi is gone, not merely unassigned.
-    assert "xiaomi" not in d
+    # No rig box is sink-less (a parked box is off the rig, not a sink case).
+    assert [n for n, c in d.items()
+            if rig.sink_of(c) == "none" and not c.get("parked")] == []
+    # The W5 is parked, off the panel; the Gen 2 shares its Lab-F3 plug.
+    assert d["w5"]["parked"] and d["w5"]["hdmi_input"] is None
+    assert d["xiaomi"]["plug_name"] == d["w5"]["plug_name"] == "Lab-F3"
+    assert not d["xiaomi"].get("parked")
 
 
 def test_hdmi_assignment_recables_a_socket_and_unplugs_the_previous_device():
-    # Fire TV takes HDMI_1 off the W5; "" unplugs the W5 explicitly.
-    m = rig.apply_hdmi_assignments({"firestick": "HDMI_1", "w5": ""})
+    # Fire TV takes HDMI_1 off the Google TV; "" unplugs the GTV explicitly.
+    m = rig.apply_hdmi_assignments({"firestick": "HDMI_1", "gtv": ""})
     assert m["HDMI_1"] == "firestick"
     assert rig.RIG["devices"]["firestick"]["hdmi_input"] == "HDMI_1"
-    assert rig.RIG["devices"]["w5"]["hdmi_input"] is None
+    assert rig.RIG["devices"]["gtv"]["hdmi_input"] is None
     # devices not mentioned keep their rig.py default
     assert rig.RIG["devices"]["bbox"]["hdmi_input"] == "HDMI_2"
     rig.apply_hdmi_assignments({})
-    assert rig.RIG["devices"]["w5"]["hdmi_input"] == "HDMI_1"
+    assert rig.RIG["devices"]["gtv"]["hdmi_input"] == "HDMI_1"
 
 
 def test_hdmi_assignment_one_device_per_socket_and_ignores_junk():
@@ -779,7 +790,7 @@ def test_hdmi_assignment_one_device_per_socket_and_ignores_junk():
     assert m["HDMI_2"] == "bbox" and rig.RIG["devices"]["atv"]["hdmi_input"] is None
     assert rig.RIG["devices"]["pi5"]["hdmi_input"] is None       # unknown socket
     assert rig.RIG["devices"]["c2"]["hdmi_input"] is None        # the panel itself
-    assert m["HDMI_1"] == "w5"
+    assert m["HDMI_1"] == "gtv"
     assert rig.apply_hdmi_assignments("garbage") == rig.apply_hdmi_assignments({})
 
 
@@ -792,12 +803,12 @@ def test_sink_of_distinguishes_panel_dummy_and_none():
     # map: on the rig as cabled today nothing is sink-less, but "none" is the
     # regime the rule exists to separate, so it still has to be covered.
     rig.apply_hdmi_assignments({})
-    rig.apply_sink_assignments({"gtv": "dummy", "atv": "dummy", "pi5": ""})
+    rig.apply_sink_assignments({"xiaomi": "dummy", "roku": "dummy", "pi5": ""})
     d = rig.RIG["devices"]
     assert rig.sink_of(d["bbox"]) == "panel:HDMI_2"      # cabled to the screen
-    assert rig.sink_of(d["w5"]) == "panel:HDMI_1"
-    assert rig.sink_of(d["gtv"]) == "dummy"              # its own EDID plug
-    assert rig.sink_of(d["atv"]) == "dummy"
+    assert rig.sink_of(d["gtv"]) == "panel:HDMI_1"
+    assert rig.sink_of(d["xiaomi"]) == "dummy"           # its own EDID plug
+    assert rig.sink_of(d["roku"]) == "dummy"
     assert rig.sink_of(d["pi5"]) == "none"               # sink cleared -> no sink
     assert rig.sink_of(d["c2"]) == "panel"               # the panel IS a sink
 
@@ -806,26 +817,27 @@ def test_sink_panel_socket_wins_over_a_dummy_flag():
     # A box that is cabled to the screen reports the panel even if someone
     # left its dummy flag ticked — one physical sink, and the socket is the
     # one we can verify from the rig.
-    rig.apply_hdmi_assignments({"firestick": "HDMI_1", "w5": ""})
+    rig.apply_hdmi_assignments({"firestick": "HDMI_1", "gtv": ""})
     rig.apply_sink_assignments({"firestick": "dummy"})
     assert rig.sink_of(rig.RIG["devices"]["firestick"]) == "panel:HDMI_1"
 
 
 def test_sink_assignment_clears_ignores_junk_and_never_marks_the_panel():
-    # gtv is off the panel as cabled today, so clearing its sink really does
-    # leave it sink-less — the firestick used to serve here but now holds
-    # HDMI_4, where the socket would mask the cleared flag.
-    rig.apply_sink_assignments({"gtv": "dummy"})
-    assert rig.RIG["devices"]["gtv"]["sink_kind"] == "dummy"
+    # roku is off the panel as cabled today (since 2026-09-27; gtv served
+    # here until it took HDMI_1), so clearing its sink really does leave it
+    # sink-less — a box on a socket would have the socket mask the flag.
+    rig.apply_hdmi_assignments({})
+    rig.apply_sink_assignments({"roku": "dummy"})
+    assert rig.RIG["devices"]["roku"]["sink_kind"] == "dummy"
     # "" clears it; unknown kinds and unknown devices are ignored; the webOS
     # panel never carries one.
-    out = rig.apply_sink_assignments({"gtv": "", "bbox": "tinfoil",
+    out = rig.apply_sink_assignments({"roku": "", "bbox": "tinfoil",
                                       "c2": "dummy", "nope": "dummy"})
-    assert out["gtv"] is None
-    assert rig.RIG["devices"]["gtv"]["sink_kind"] is None
+    assert out["roku"] is None
+    assert rig.RIG["devices"]["roku"]["sink_kind"] is None
     assert rig.RIG["devices"]["bbox"]["sink_kind"] is None
     assert rig.RIG["devices"]["c2"]["sink_kind"] is None
-    assert rig.sink_of(rig.RIG["devices"]["gtv"]) == "none"
+    assert rig.sink_of(rig.RIG["devices"]["roku"]) == "none"
     assert rig.apply_sink_assignments("garbage") == rig.apply_sink_assignments({})
 
 
@@ -847,11 +859,11 @@ def test_effective_sink_does_not_reclassify_on_panel_state():
     rig.apply_hdmi_assignments({})
     # pi5 is dummy-plugged by default since 2026-09-21 — cleared here so the
     # no-sink leg of the rule stays covered.
-    rig.apply_sink_assignments({"gtv": "dummy", "pi5": ""})
+    rig.apply_sink_assignments({"xiaomi3": "dummy", "pi5": ""})
     d = rig.RIG["devices"]
     for st in (True, False, None):
         assert rig.effective_sink(d["bbox"], awake=st) == "panel:HDMI_2"
-        assert rig.effective_sink(d["gtv"], awake=st) == "dummy"
+        assert rig.effective_sink(d["xiaomi3"], awake=st) == "dummy"
         assert rig.effective_sink(d["pi5"], awake=st) == "none"
 
 

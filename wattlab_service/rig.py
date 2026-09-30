@@ -72,9 +72,12 @@ ADB_BIN = "/srv/data/owl/decode-bench/tools/platform-tools/adb"
 # until the plug's lease renews. expected_boot_s: pi5 measured 2026-07-29;
 # pi400/gtv are placeholders until the first live verification measures them.
 RIG: dict = {
-    # --- SCREEN MAP / SINK PROVENANCE (corrected 2026-09-21) --------------
-    # The C2's four inputs, as physically cabled and confirmed by the owner:
-    #   HDMI_1 W5 · HDMI_2 Bbox · HDMI_3 Roku · HDMI_4 Fire TV
+    # --- SCREEN MAP / SINK PROVENANCE (corrected 2026-09-30) --------------
+    # The C2's four inputs, as physically cabled (live /settings since
+    # 2026-09-27, defaults aligned 2026-09-30):
+    #   HDMI_1 Google TV · HDMI_2 Bbox · HDMI_3 Apple TV · HDMI_4 Fire TV
+    # 2026-09-30: the W5 is parked and the Gen 2 Xiaomi is back on its Lab-F3
+    # plug; both Xiaomis and the Roku carry dummy plugs. History below:
     # The Google TV came off HDMI_1 that day (the W5 took the slot) and the
     # Gen 2 Xiaomi left the rig entirely. Every box NOT on one of those four
     # inputs now carries its own HDMI dummy/EDID plug, so `sink_kind:
@@ -208,7 +211,7 @@ RIG: dict = {
             # codecs are hardware Codec2 on this box.
             "silicon": "MediaTek MT8696 · hw H.264/HEVC/AV1/VP9 (c2.mtk.*)",   # getprop ro.soc.model, R3a 2026-08-26
             # Cabling 2026-09-21 — see SCREEN MAP note above.
-            "hdmi_input": None,
+            "hdmi_input": "HDMI_1",   # re-cabled 2026-09-27 (C25); was dummy-plugged 09-21 → 09-27
             "sink_kind": "dummy",
             "expected_boot_s": 90, "boot_threshold_w": 0.4,
             "shutdown_wait_s": 15,
@@ -304,7 +307,7 @@ RIG: dict = {
             # CANNOT be measured headless — VLC pauses on HDMI loss. CR-075
             # still owes n≥3.
             # Cabling 2026-09-21 — see SCREEN MAP note above.
-            "hdmi_input": None,
+            "hdmi_input": "HDMI_3",   # 2026-09-27 (C24 amendment); was dummy-plugged before
             "sink_kind": "dummy",
             "expected_boot_s": 60, "boot_threshold_w": 1.0,
             "shutdown_wait_s": 10,
@@ -348,13 +351,70 @@ RIG: dict = {
             # not the routine path.
             "min_idle_tolerance_w": 1.0, "min_idle_max_wait_s": 45,
         },
-        # "xiaomi" — Xiaomi TV Box (Gen 2, Amlogic S905X4/sc2, Android 11,
-        # OMX.amlogic.*.awesome2 incl. hardware AV1) — OFF THE RIG 2026-09-21,
-        # its Lab-F3 plug and HDMI slot handed to the W5 below. Its Gen2-vs-Gen3
-        # A/B is done (JOURNAL S73: Gen 3 -0.30...-0.37 W on HEVC/AV1/VP9), and
-        # its rows stay valid in the stored results under the key "xiaomi".
-        # To put it back: restore this entry from git (it was here through
-        # 2026-09-21), give it a plug of its own — Lab-F3 is no longer free.
+        "xiaomi": {
+            # BACK ON THE RIG 2026-09-30 (owner): on its old Lab-F3 plug, which
+            # the W5 (parked below) hands back, with its own HDMI dummy/EDID
+            # plug — off the panel. Restored from git (fac9405^). Off the rig
+            # 2026-09-21 → 09-30; its earlier rows stay valid under "xiaomi".
+            # Xiaomi TV Box (Gen 2) — REVIVED 2026-09-02: a new PSU brought it
+            # back to life, correcting the 2026-08-29 note below — this was a
+            # PSU fault, not DOA hardware. Now running an A/B against the new
+            # Gen 3 unit (see "xiaomi3") to decide whether to keep or return
+            # the Gen 2. ADB is still trusted from before (no re-pair
+            # needed). No "MiTV ADB debugging" toggle exists on this Gen —
+            # that's Gen-3-specific; stock "USB debugging" was always enough
+            # here. idle_w/expected_boot_s are STILL UNMEASURED GUESSES —
+            # onboard_device.py never ran; run it before trusting any row.
+            #
+            # (superseded) PARKED 2026-08-29 after the switch-install
+            # physical relocation: box stopped powering on entirely (no
+            # video, no boot). Tapo meter + cable/PSU reasoning inconclusive
+            # at the time (DOA hardware vs. PSU fault not distinguishable
+            # without a confirmed-matching spare PSU or a second unit).
+            #
+            # ⚠ Runs the same Android VIEW-intent/Just Player mechanism as
+            # the Fire TV — genuinely unverified whether it decodes/renders
+            # the same way with zero display sink attached (moot for now:
+            # it's cabled, see hdmi_input note below). Confirm with a live
+            # smoke test (logcat CCodec allocation + playback_state) before
+            # trusting a headless row from this box.
+            "label": "Xiaomi TV Box (Gen 2)", "plug_name": "Lab-F3",
+            "plug_ip": "192.168.1.1",
+            "plug_mac": "b8:fb:b3:ef:27:26",
+            "kind": "adb", "target": "192.168.1.151:5555",
+            "macs": ["32:6c:9f:c5:c1:fd"],   # wlan0 — no Ethernet port on this box
+            "device_class": "stb",
+            # SoC audit 2026-08-29: ro.soc.* is empty (same gap as the Bbox) —
+            # identified instead via ro.hardware=amlogic + ro.board.platform=sc2
+            # (Amlogic's own codename for the S905X4, confirmed via web search;
+            # model MiTV_AFKR0, codename "jaws", Android 11 confirmed live).
+            "os": "Google TV (Android 11)", "chip_vendor": "Amlogic",
+            # Confirmed 2026-09-03 from logcat on the n=3 batch: this box uses
+            # the LEGACY OMX IL HAL, not Codec2 — OMX.amlogic.{avc,hevc,vp9}
+            # .decoder.awesome2 are hardware. AV1 settled the same day with a
+            # 60 s probe + unfiltered logcat: hardware too —
+            # "MediaCodec: [OMX.amlogic.av1.decoder.awesome2]", kernel
+            # vdec_init dev_name ammvdec_av1_v4l with the av1_mmu firmware
+            # loaded in the TEE. Just Player loads its bundled Libgav1 renderer
+            # at init but MediaCodec wins the surface. The n=3 rows missed it
+            # because the OMX line is logged under the MediaCodec tag, not
+            # OmxComponent — bench.py's provenance filter now scans both.
+            "silicon": "Amlogic S905X4 (sc2) · Android 11 · hw H.264/HEVC/VP9/AV1"
+                       " (OMX.amlogic.*.awesome2, legacy OMX HAL; AV1 = ammvdec_av1_v4l)",
+            "network": "wifi",
+            # Live/temporary for the Gen2-vs-Gen3 A/B (2026-09-02): cabled to
+            # HDMI_2 on Lab-F3's old Apple TV plug, took over the Apple TV's
+            # power spot while the Apple TV sits aside decommissioned for
+            # now. NOT hardcoded here — this box's permanent design is
+            # headless — carried instead via /settings rig_hdmi_inputs
+            # ({"xiaomi": "HDMI_2", "gtv": "", "atv": ""}) so it reverts
+            # cleanly once the A/B concludes.
+            "hdmi_input": None,
+            "sink_kind": "dummy",   # own HDMI dummy/EDID plug (2026-09-30)
+            "expected_boot_s": 60, "boot_threshold_w": 0.4,   # UNMEASURED guess
+            "shutdown_wait_s": 15,
+            "idle_w": 1.5,   # UNMEASURED guess — replace via onboard_device.py
+        },
         "w5": {
             # "TV Box W5" — no-brand Android box, on the rig 2026-09-21, into
             # the Gen 2 Xiaomi's Lab-F3 plug and its HDMI_1 slot (the GTV came
@@ -371,6 +431,11 @@ RIG: dict = {
             # (apollo), ro.hardware (sun50iw9p1) and ro.soc.* (H618 /
             # Allwinner). Anything reading ro.product.* off this box for
             # provenance will record a lie: see CR-080.
+            # PARKED 2026-09-30 (owner: "temporarily retired"): off the rig, its
+            # Lab-F3 plug handed back to the Gen 2 Xiaomi. Hidden from the
+            # console and skipped by the poller; its rows stay valid under
+            # "w5". To bring it back: "parked": False, park or re-plug the Gen 2.
+            "parked": True,
             "label": "TV Box W5", "plug_name": "Lab-F3",
             "plug_ip": "192.168.1.1",
             "plug_mac": "b8:fb:b3:ef:27:26",
@@ -429,7 +494,7 @@ RIG: dict = {
             # surface, and that 4096x2160 is DCI, not the C2's native
             # 3840x2160 UHD — so the panel is rescaling too.
             "network": "ethernet",
-            "hdmi_input": "HDMI_1",
+            "hdmi_input": None,   # parked; was HDMI_1 until 2026-09-27
             # MEASURED 2026-09-22 (power-cycle test + onboard_device.py,
             # --reps 3, report /srv/data/owl/onboard_w5_2026-09-22.md).
             # expected_boot_s comes from the live mains-restore test, not from
@@ -477,7 +542,10 @@ RIG: dict = {
             "os": "Google TV (Android 14)", "chip_vendor": "Amlogic",
             # Confirmed 2026-09-03 from logcat on the n=3 batch: Codec2 hardware
             # decoders c2.amlogic.{avc,hevc,av1,vp9}.decoder for all four codecs.
-            "silicon": "Amlogic s7d · Android 14 · hw H.264/HEVC/AV1/VP9 (c2.amlogic.*)",
+            # SoC read live 2026-09-30 (getprop): ro.soc.manufacturer=Amlogic,
+            # ro.soc.model=AMLS905X5M, ro.board.platform=s7d, 4x Cortex-A55
+            # (CPU part 0xd05); model MiTV-AFMU0 "twilight", Android 14.
+            "silicon": "Amlogic S905X5M (s7d) · Android 14 · hw H.264/HEVC/AV1/VP9 (c2.amlogic.*)",
             "network": "wifi",
             # Live/temporary for the Gen2-vs-Gen3 A/B (2026-09-02): cabled to
             # HDMI_4, took over the Apple TV's old panel input while the
@@ -521,7 +589,8 @@ RIG: dict = {
             "network": "wifi",
             # HDMI_3, physically re-cabled 2026-08-29 (took the Pi 400's old
             # socket, on-site during the switch install).
-            "hdmi_input": "HDMI_3",
+            "hdmi_input": None,       # off the panel since 2026-09-27 (Apple TV took HDMI_3)
+            "sink_kind": "dummy",     # own HDMI dummy/EDID plug
             "expected_boot_s": 30, "boot_threshold_w": 0.5,   # UNMEASURED guess
             "shutdown_wait_s": 10,
             "idle_w": 2.0,   # UNMEASURED guess — replace via onboard_device.py

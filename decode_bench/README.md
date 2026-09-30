@@ -224,7 +224,9 @@ standby rejects SSAP with WS 1008 → wake with raw Wake-on-LAN first (`lg.wake(
 poller never auto-wakes it (household TV); SIMPLINK/CEC turned OFF by the owner 2026-08-15 (input
 hopping was contaminating baselines).
 
-**HDMI port map (2026-09-21, owner-confirmed; in /settings `rig_hdmi_inputs`):** W5 → HDMI_1 · Bbox → HDMI_2 · Roku → HDMI_3 · Fire TV → HDMI_4. The Google TV came off the panel that day. Everything else — GTV, Apple TV, Xiaomi Gen 3, Pi 5, Pi 400 — carries its own HDMI dummy/EDID plug (`rig_sinks`), so no rig box is in the no-sink regime any more.
+**2026-09-30:** HDMI_1 Google TV · HDMI_2 Bbox · HDMI_3 Apple TV · HDMI_4 Fire TV (since 2026-09-27; `rig.py` defaults aligned). The **W5 is parked** (temporarily retired, `"parked": True`) and the **Xiaomi Gen 2 is back on Lab-F3 `.1`** (`.151`, Wi-Fi); both Xiaomis and the Roku sit on dummy plugs. Gen 3 SoC read live: `ro.soc.model=AMLS905X5M` (s7d). Rows and tables below that say otherwise predate this.
+
+**HDMI port map (2026-09-21, owner-confirmed; superseded, see 2026-09-30 above):** W5 → HDMI_1 · Bbox → HDMI_2 · Roku → HDMI_3 · Fire TV → HDMI_4. The Google TV came off the panel that day. Everything else — GTV, Apple TV, Xiaomi Gen 3, Pi 5, Pi 400 — carries its own HDMI dummy/EDID plug (`rig_sinks`), so no rig box is in the no-sink regime any more.
 
 **Bbox (Bouygtel4K, operator CPE — Marvell Berlin, Arcadyan HMB9213NW, `ro.soc.*` empty; R3a 2026-08-26):** ADB authorised (Android 11), Ethernet `.10` since 2026-07-31 (on Wi-Fi `.173` since the CR-074 cable pull),
 plug Lab-F `.155`, `idle_w` 6.6 W (drifts 6.3–6.8 → its H.264/HEVC ΔW sits inside its own noise; AV1

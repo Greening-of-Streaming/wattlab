@@ -894,7 +894,7 @@ _BODY = """
   </div>
 
   <div class="rig-run" style="margin-top:1rem">
-    <h3>Open items <span class="rig-badge">2026-09-21</span></h3>
+    <h3>Open items <span class="rig-badge">2026-09-30</span></h3>
     <div class="rig-note" style="margin-top:0.2rem">
     <b>Landed this month:</b> campaigns = batches with self-service stamping, filter and paging
     (CR-073) · rig follows a box that changes address by MAC (Ethernet↔Wi-Fi moves, forgotten
@@ -906,7 +906,7 @@ _BODY = """
     <b>screen map</b>: the C2 has four HDMI sockets — which four are cabled is set in
     <a href="/settings#s-decode">/settings › Rig › HDMI inputs</a> · silicon audited per box (both
     Android streamers = MediaTek MT8696, Bbox = Marvell Berlin, Apple TV = A10X, Xiaomi Gen 3 =
-    Amlogic s7d, Roku = Realtek RTD1315) · every rig address reserved on the router.<br>
+    Amlogic S905X5M (s7d), Roku = Realtek RTD1315) · every rig address reserved on the router.<br>
     <b>2026-09-21:</b> <b>TV Box W5</b> joins the rig on HDMI_1 (no-brand Allwinner H618, Android 12,
     legacy OMX HAL — hardware H.264/HEVC/VP9 but <i>no AV1 block</i>, the first box here with that
     combination; its product props are spoofed as a Google ADT-3, so read silicon from
@@ -916,6 +916,12 @@ _BODY = """
     — every box off the panel now carries its own HDMI dummy/EDID plug, shown as a
     <span class="rig-badge" style="opacity:.55">dummy plug</span> badge on its tile, so its rows stay
     comparable with the screened boxes instead of sitting in the no-sink regime.<br>
+    <b>2026-09-27:</b> screen map re-cabled for C24/C25: HDMI_1 Google TV · HDMI_2 Bbox · HDMI_3
+    Apple TV · HDMI_4 Fire TV; the W5 and the Roku move to dummy plugs.<br>
+    <b>2026-09-30:</b> the <b>TV Box W5 is parked</b> (temporarily retired; hidden from the tiles,
+    its rows stay valid) and the <b>Xiaomi Gen 2 is back</b> on its old Lab-F3 plug. Both Xiaomis
+    (Gen 2 Amlogic S905X4 / legacy OMX, Gen 3 Amlogic S905X5M / Codec2 — both with hardware AV1)
+    sit off the panel on HDMI dummy plugs.<br>
     <b>Still open:</b><br>
     · the dummy plugs are <i>fitted</i> but not yet <i>verified</i>: the S73 no-sink penalty (Fire TV
       played 0.77 W lower with no sink, Gen 2 0.42 W) should now be absent, and that has to be
