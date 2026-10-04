@@ -1,9 +1,13 @@
 # GoS2 — second OWL node: design
 
 **Status:** design phase, opened 2026-10-04. Tracked as **CR-085** (CHANGE_REQUESTS.md). Nothing built yet.
-**Hardware:** Mac Mini M6 (owner-reported model; specs to be read off the machine, not assumed: encoders,
-`powermetrics` surface, idle draw). macOS. Metered by two daisy-chained Tapo P110s, **lab-G1** and **lab-G2**
-(found on the LAN 2026-10-04, §8). Wi-Fi only for now. Sits next to GoS1 on the Bbox LAN today; must be movable to another
+**Hardware (read over SSH 2026-10-04):** Mac mini `Mac18,5`, **Apple M6** (12 cores: 2 Super + 4 Performance +
+6 Efficiency), 24 GB, 460 GB SSD, macOS **27.0**, FileVault off. Hostname `gos2` / ComputerName `GoS2`, admin user
+`gos`, no Apple ID (deliberate: no Activation Lock, no iCloud background load). Reached from GoS1 with
+`~/.ssh/id_ed25519_gos2`. Wi-Fi `.95` (MAC `c8:80:6d:3d:a7:6e`, private address off); Ethernet `en0`
+`c8:80:6d:2e:20:cc`, not yet cabled. Metered by two daisy-chained Tapo P110s, **lab-G1** and **lab-G2** (§8).
+Still unmeasured: encoders (no ffmpeg yet), what `powermetrics` exposes, and the idle floor (the 5.2 W seen on
+G1 was with a 4K screen attached and Setup Assistant running). Sits next to GoS1 on the Bbox LAN today; must be movable to another
 member's office later with configuration changes only.
 
 ---
