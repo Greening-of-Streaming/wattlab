@@ -134,7 +134,7 @@ def test_save_result_stamps_envelope_version(tmp_path, monkeypatch):
     persist.save_result("decode", "zz9", {"mode": "ui_headless", "runs": []},
                         visitor_key=None)
     f = next((tmp_path / "decode").glob("*_zz9.json"))
-    assert json.loads(f.read_text())["envelope_version"] == persist.ENVELOPE_VERSION == 1
+    assert json.loads(f.read_text())["envelope_version"] == persist.ENVELOPE_VERSION == 2  # v2 = host stamp (CR-085)
 
 
 # --- routes ---------------------------------------------------------------

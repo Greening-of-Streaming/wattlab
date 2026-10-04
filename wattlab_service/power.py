@@ -27,6 +27,8 @@ To swap in a different power source (PDU, IPMI, another smart plug brand):
 """
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import subprocess
 import time
@@ -45,9 +47,31 @@ _DEVICE_CACHE: dict = {}
 _DEVICE_LOCKS: dict = {}
 
 
+# CR-085 — a remote host's job measures that host's own plugs. The override is
+# context-local: set inside the job's coroutine it is inherited by the sampler
+# tasks that coroutine creates, and invisible to everything else (the runtime
+# telemetry poller and GoS1 jobs keep reading GoS1's meters).
+_METER_OVERRIDE: contextvars.ContextVar = contextvars.ContextVar(
+    "owl_meter_override", default=None)
+
+
+@contextlib.contextmanager
+def use_meters(ips: list):
+    """Route every meter read in this context to `ips` ([primary, secondary?])."""
+    token = _METER_OVERRIDE.set([ip for ip in ips if ip])
+    try:
+        yield
+    finally:
+        _METER_OVERRIDE.reset(token)
+
+
 def _meter_ips() -> list:
     """Registered meter IPs. Index 0 = primary = INNER plug (measures the
-    server alone). A second entry exists only when `TAPO_P110_IP_2` is set."""
+    server alone). A second entry exists only when `TAPO_P110_IP_2` is set.
+    Inside `use_meters()` the remote host's plugs replace them."""
+    override = _METER_OVERRIDE.get()
+    if override is not None:
+        return list(override)
     ips = [(_config.get("TAPO_P110_IP") or "").strip()]
     ip2 = (_config.get("TAPO_P110_IP_2") or "").strip()
     if ip2:

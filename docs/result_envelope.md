@@ -22,12 +22,14 @@ Every result JSON under `results/{type}/{date}_{job_id}.json` carries:
 | field | source | notes |
 |---|---|---|
 | `job_id`, `saved_at` | `persist.save_result` | |
-| `envelope_version` | `persist.save_result` | **1** since 2026-08-17 (CR-031 §1 pre-work / CR-073); absent on disk = 0. Bump on any shape change and note it here. v1 = decode raw samples single-stored in `runs[]`; `batch_id` field. |
+| `envelope_version` | `persist.save_result` | **1** since 2026-08-17 (CR-031 §1 pre-work / CR-073); absent on disk = 0. Bump on any shape change and note it here. v1 = decode raw samples single-stored in `runs[]`; `batch_id` field. **v2 (2026-10-05, CR-085)** = `host{}` stamped on every result. |
 | `batch_id` | the runner (`rem`, `decode`) | optional group id — several jobs queued as one campaign; collate via `persist.list_batch` (`/prepare-rem/csv/batch/{id}`, `/decode/batch/{id}`). None/absent = solo. |
 | `mode` | the runner | dispatch key — see inventory below |
 | `version`, `build` | `persist` ← `version.py` | build stamp |
-| `gpu_hardware` | `persist` ← `gpu.BACKEND` | CR-060 |
-| `power_hardware` | `persist` ← `power.stamp()` | CR-031 §2; dual-meter runs (CR-065) add `meters: 2, topology: "daisy_chain", stagger_s` |
+| `host{}` | `persist` ← `hosts.py` | **v2+, CR-085.** `{id, label, chip, machine, os, remote}` — the machine that measured the result. Absent (v0/v1) = GoS1, by construction: read via `hosts.result_host()`, never by rewriting files (owner decision 2026-10-04). Remote-host runs set `remote: true`. |
+| `engine{}` per video side | `video.run_single` / `remote_video` | **v2+, CR-085.** `{id, kind (cpu\|hw), label, encoder, custom_cmd?}` — which encoding engine produced the side. Absent on older sides: derive with `hosts.side_engine(side, result)` (preset key + that result's own `gpu_hardware`, so AMD-era runs read as AMD). |
+| `gpu_hardware` | `persist` ← `gpu.BACKEND` (local) / `hosts.gpu_stamp()` (remote) | CR-060. A remote result carries its own host's stamp, never GoS1's. |
+| `power_hardware` | `persist` ← `power.stamp()` (local) / `hosts.power_stamp()` (remote: + `host`, `meter_ips`) | CR-031 §2; dual-meter runs (CR-065) add `meters: 2, topology: "daisy_chain", stagger_s` |
 | `energy{}` per run/side | measurement module | `w_base, w_task, delta_w, delta_e_wh, delta_t_s, poll_count, confidence{}, baseline_samples_w[], task_samples_w[], co2e{}` |
 | `energy.meters{}` | `power.meters_summary()` | **optional**, CR-065 dual-meter only. `inner{w_base,w_task,delta_w}, outer{… + baseline_samples_w[], task_samples_w[]}, combine_method, delta_w_combined` — top-level `delta_w`/`delta_e_wh` ARE the combined figures; `w_base`/`w_task`/`*_samples_w` keep their historical meaning (inner/primary meter). A dropped secondary stream persists as `meters: {degraded: true}` instead — the run is honest single-meter data. Renderers may ignore the whole block. |
 | `confidence{}` | `confidence.confidence()` | `flag` 🟢🟡🔴, `label`, `method` (`ci`/`ci2`/`variance` — `ci2` = CR-065 per-meter combine) |

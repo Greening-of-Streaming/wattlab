@@ -67,6 +67,9 @@ PREPARE_REM        = "prepare_rem"         # REM↔OWL integration — /prepare-
 RIG_CONTROL        = "rig_control"         # /decode — client-decode rig power console (Pi 5 / Pi 400 /
                                            # Google TV + monitor + optional Shelly master). Whole page is
                                            # Lab-only like /settings: it switches real mains relays.
+VIDEO_REMOTE_RUN   = "video_remote_run"    # CR-085 — launch encodes on another compute host (GoS2, …)
+                                           # from /video. Lab-only at launch (owner, 2026-10-04); widen
+                                           # here, nowhere else.
 LAB_SESSION_TOGGLE = "lab_session_toggle"  # raise/lower the lab-session flag from /queue-status —
                                            # UI twin of bin/lab-session-on|off. CR-083 widened it to
                                            # the reservations calendar (/lab-session/reserve, …/delete,
@@ -111,6 +114,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     PREPARE_REM:        Tier.Lab,
     RIG_CONTROL:        Tier.Lab,
     LAB_SESSION_TOGGLE: Tier.Lab,
+    VIDEO_REMOTE_RUN:   Tier.Lab,
 }
 
 

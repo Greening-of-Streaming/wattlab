@@ -11,7 +11,7 @@ import power
 import version
 
 RESULTS_DIR = Path("/home/gos/wattlab/results")
-ENVELOPE_VERSION = 1   # see docs/result_envelope.md · absent on disk = 0
+ENVELOPE_VERSION = 2   # see docs/result_envelope.md · absent on disk = 0 · v2 = `host` stamped (CR-085)
 
 
 def save_result(job_type: str, job_id: str, data: dict,
@@ -62,11 +62,22 @@ def save_result(job_type: str, job_id: str, data: dict,
     # NVIDIA (NVENC/CUDA) runs can never be silently compared across a hw swap.
     # Key is `gpu_hardware`, NOT `gpu` — the video CPU-vs-GPU "both" mode already
     # uses a top-level `gpu` key for the GPU-side measurement (video.py).
-    payload["gpu_hardware"] = gpu.stamp()
+    # CR-085 — every result names the machine that measured it. A remote
+    # host's result arrives with its own `host` block (remote: true) and MUST
+    # carry that host's GPU/meter stamps, never GoS1's. Results saved before
+    # v2 have no `host`: hosts.result_host() reads them as GoS1.
+    import hosts as _hosts
+    _remote = None
+    if isinstance(payload.get("host"), dict) and payload["host"].get("remote"):
+        _remote = (_hosts.all_remote().get(payload["host"]["id"]) or {}) | \
+            {"id": payload["host"]["id"], **payload["host"]}
+    else:
+        payload["host"] = _hosts.identity(_hosts.local_host())
+    payload["gpu_hardware"] = _hosts.gpu_stamp(_remote) if _remote else gpu.stamp()
     # Stamp the power meter too (cheap-wins pass, 2026-06-09) — the analogue of
     # gpu_hardware. A future PDU/IPMI swap (CR-031 §2) then can't be silently
     # compared against Tapo P110 runs; records meter name + polling resolution.
-    payload["power_hardware"] = power.stamp()
+    payload["power_hardware"] = _hosts.power_stamp(_remote) if _remote else power.stamp()
     # CR-070 — pre-job idle guard provenance. The queue worker's guard outcome
     # (did wall power return to the previous job's floor before this job's
     # first baseline?) rides on the job's FIRST stored result — consume-once,
@@ -637,6 +648,8 @@ def _sum_video_single(summary: dict, data: dict) -> dict:
     result = data.get("result", {})
     e = result.get("energy", {})
     summary["preset"] = result.get("preset_label")
+    import hosts as _hosts
+    summary["engine"] = _hosts.side_engine(result, data).get("label")
     summary["delta_e_wh"] = e.get("delta_e_wh")
     summary["duration_s"] = e.get("delta_t_s")
     summary["confidence"] = e.get("confidence", {}).get("flag")
@@ -762,6 +775,11 @@ _FALLBACKS = {"image": _sum_image_single, "video": _sum_video_single,
 
 def _summarise(job_type: str, data: dict) -> dict:
     summary = {"job_id": data.get("job_id"), "saved_at": data.get("saved_at")}
+    # CR-085 — host on every summary (read-time default GoS1 for pre-v2 files).
+    import hosts as _hosts
+    _h = _hosts.result_host(data)
+    summary["host"] = _h.get("label") or _h.get("id")
+    summary["host_id"] = _h.get("id")
     if job_type == "benchmark":
         return _sum_benchmark(summary, data)
     family = job_type if job_type in _SUMMARISERS else "llm"

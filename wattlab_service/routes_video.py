@@ -19,7 +19,9 @@ import queue_control
 import settings as cfg
 import ui
 import uploads
-from capabilities import (requires, can, gate,
+import hosts
+import remote_video
+from capabilities import (requires, can, gate, VIDEO_REMOTE_RUN,
                           BATCH_COMPARE, CUSTOM_PROMPT, CUSTOM_UPLOAD,
                           PUBLIC_PAGE, QUEUE_VIEW, VIDEO_RUN)
 from persist import save_result
@@ -130,6 +132,50 @@ def _video_source_picker_html() -> str:
     return "".join(parts)
 
 
+def _remote_hosts_panel_html(request: Request) -> str:
+    """CR-085 — one block per enabled remote compute host, rendered from the
+    hosts.py registry (adding/removing a host is a settings edit). Engines,
+    not hosts (D6): each button names a codec + engine; the host is the block
+    header and provenance on the result. Hidden entirely without
+    VIDEO_REMOTE_RUN (Lab-only at launch)."""
+    if not can(audience.tier(request), VIDEO_REMOTE_RUN):
+        return ""
+    blocks = []
+    for hid, h in hosts.remote_hosts().items():
+        offered = hosts.offered({**h, "id": hid})
+        if not offered:
+            continue
+        kinds = {kind: (eid, lbl, codecs) for eid, lbl, kind, codecs in offered}
+        rows = []
+        for codec in hosts.CODECS:
+            btns = []
+            for eid, lbl, kind, codecs in offered:
+                if codec in codecs:
+                    btns.append(f'<button class="remote-btn" onclick="runRemote(\'{hid}\',\'{codec}\',\'{eid}\')">{lbl}</button>')
+            if "cpu" in kinds and "hw" in kinds and codec in kinds["cpu"][2] and codec in kinds["hw"][2]:
+                btns.append(f'<button class="remote-btn remote-pair" onclick="runRemote(\'{hid}\',\'{codec}\',\'both\')">'
+                            f'{kinds["cpu"][1]} vs {kinds["hw"][1]}</button>')
+            if btns:
+                rows.append(f'<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-top:0.45rem">'
+                            f'<span style="color:var(--text-3);font-size:0.8rem;min-width:3.5rem">{hosts.CODEC_LABEL[codec]}</span>{"".join(btns)}</div>')
+        sub = " · ".join(x for x in (h.get("chip"), h.get("machine")) if x)
+        blocks.append(f'<div class="batch-box" style="padding:0.9rem 1rem;margin-bottom:0.6rem">'
+                      f'<div style="color:var(--accent);font-size:0.9rem;font-weight:bold">{h.get("label", hid)}'
+                      f' <span style="color:var(--text-3);font-weight:normal;font-size:0.78rem">{sub}</span></div>'
+                      f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.2rem">Same source, same bitrate, measured on '
+                      f'{h.get("label", hid)}&#39;s own meters · VMAF scored on GoS1 · uses the source selected below (not uploads)</div>'
+                      f'{"".join(rows)}</div>')
+    if not blocks:
+        return ""
+    return ('<div id="remote-hosts-panel" style="margin:0 0 1.5rem 0">'
+            '<div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem">'
+            'Other machines <span style="color:var(--text-5);text-transform:none;letter-spacing:0">· Lab only</span></div>'
+            '<style>.remote-btn{background:var(--panel-2);color:var(--text-1);border:1px solid var(--border-2);'
+            'padding:0.3rem 0.6rem;font-size:0.78rem;cursor:pointer;font-family:inherit}'
+            '.remote-btn:hover{border-color:var(--accent)}.remote-pair{color:var(--accent)}</style>'
+            + "".join(blocks) + '</div>')
+
+
 @router.get("/video", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def video_page(request: Request):
     # CR-001 part C2c — custom ffmpeg edits were Lab-only by UI before
@@ -158,6 +204,7 @@ async def video_page(request: Request):
                    f'yours will be added and run automatically.</div>') \
         if queue_depth > 0 else ""
     source_picker_html = _video_source_picker_html()
+    remote_panel_html = _remote_hosts_panel_html(request)
     # CR-054 — discreet beta link to the AV1 hw-vs-sw VMAF finding (the
     # worked example). Gated on `findings_enabled` so the same flag that
     # rolls back the /findings route also removes this link. When CR-055
@@ -366,6 +413,8 @@ async def video_page(request: Request):
         </div>
         <div style="color:var(--text-4);font-size:0.75rem">~6× longer · locks queue</div>
     </div>
+
+    {remote_panel_html}
 
     <div style="margin-bottom:1.5rem">
         <div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;
@@ -623,6 +672,27 @@ async def video_page(request: Request):
         }}
     }}
 
+    async function runRemote(host, codec, engine) {{
+        const status = document.getElementById('status');
+        if (selectedSource === 'upload') {{ alert('Other machines run the preloaded sources — pick one under Source.'); return; }}
+        const form = new FormData();
+        form.append('source_key', selectedSource);
+        form.append('host', host); form.append('codec', codec); form.append('engine', engine);
+        form.append('compute_vmaf', document.getElementById('vmafToggle').checked ? 'true' : 'false');
+        status.innerHTML = '<div style="color:var(--warn)">Starting ' + codec + ' on ' + host + '...</div>';
+        const resp = await fetch('/video/remote', {{ method: 'POST', body: form }});
+        const data = await resp.json().catch(() => ({{}}));
+        if (data.job_id) {{
+            const mode = engine === 'both' ? 'both' : 'cpu';
+            document.getElementById('runBtn').disabled = true;
+            startTime = Date.now();
+            renderProgress(data.job_id, mode, 'starting');
+            pollJob(data.job_id, mode);
+        }} else {{
+            status.innerHTML = '<div style="color:var(--err)">Error: ' + (data.error || ('HTTP ' + resp.status)) + '</div>';
+        }}
+    }}
+
     async function pollJob(jobId, mode) {{
         try {{
             const [resp, powerR] = await Promise.all([
@@ -847,6 +917,49 @@ async def use_preloaded_source(
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
+
+@router.post("/video/remote", dependencies=[Depends(requires(VIDEO_REMOTE_RUN))])
+async def run_on_remote_host(
+    request: Request,
+    source_key: str = Form(...),
+    host: str = Form(...),
+    codec: str = Form(...),
+    engine: str = Form(...),          # registry engine id, or "both" (CPU vs hardware)
+    compute_vmaf: str = Form(""),
+):
+    """CR-085 — encode a preloaded source on a remote compute host."""
+    h = hosts.get(host)
+    if h is None:
+        return JSONResponse({"error": f"Unknown or disabled host '{host}'"}, status_code=400)
+    if codec not in hosts.CODECS:
+        return JSONResponse({"error": "Invalid codec"}, status_code=400)
+    if engine != "both" and not hosts.codec_spec(h, engine, codec):
+        return JSONResponse({"error": f"{h.get('label', host)} has no {engine} engine for {codec}"}, status_code=400)
+    source = PRELOADED.get(source_key)
+    if not source or not source["path"].exists():
+        return JSONResponse({"error": f"Source '{source_key}' not found"}, status_code=404)
+
+    job_id = f"{host}-{str(uuid.uuid4())[:8]}"
+    label = f"Video — {codec} {engine} on {h.get('label', host)} · {source['label']}"
+    vmaf_override = None if compute_vmaf == "" else compute_vmaf == "true"
+
+    async def coro():
+        try:
+            jobs[job_id].update({"status": "running", "stage": "starting"})
+            result = await remote_video.run_remote(source["path"], job_id, host, codec,
+                                                   engine, jobs, vmaf_override=vmaf_override)
+            entry = PRELOADED.get(source_key) or {}
+            result["source"] = {"key": source_key, "parent": entry.get("_parent")}
+            save_result("video", job_id, result)
+            jobs[job_id].update({"status": "done", "stage": "done", "result": result})
+        except Exception as e:
+            jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+
+    position = queue_control.enqueue(job_id, "video", label, coro, request=request)
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}
+
 
 @router.post("/video/upload", dependencies=[Depends(requires(CUSTOM_UPLOAD))])
 async def upload_video(

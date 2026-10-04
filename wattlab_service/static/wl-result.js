@@ -255,6 +255,18 @@
          + '<span class="val">' + val + (unit ? ' ' + unit : '') + '</span></div>';
   }
 
+  // CR-085 — which engine on which machine produced a side. Results saved
+  // before the host stamp carry neither field: every one of them ran on GoS1.
+  function _wlEngineLine(res){
+    var h = res.host || {label: 'GoS1'};
+    var e = res.engine;
+    var eng = e ? (e.label + (e.encoder ? ' · ' + e.encoder : '')) : '';
+    var hw = h.chip ? ' (' + h.chip + ')' : '';
+    return '<div style="color:var(--text-3);font-size:0.74rem;margin:0.15rem 0 0.4rem 0">'
+      + (eng ? 'Engine: <span style="color:var(--text-1)">' + eng + '</span> · ' : '')
+      + 'Machine: <span style="color:var(--text-1)">' + (h.label || h.id) + hw + '</span></div>';
+  }
+
   function _wlVideoSingleRich(r){
     var e = r.energy;
     if (!e) return _wlBadRecord('Video', r);
@@ -273,8 +285,10 @@
         : '';
     return '<div class="single-report">'
       + '<h2>Energy Report — ' + (r.preset_label || 'Video') + '</h2>'
+      + _wlEngineLine(r)
       + '<div class="section-title">Encode</div>'
       + _wlMetricRow('Preset', r.preset_detail || '—')
+      + (r.vmaf != null ? _wlMetricRow('VMAF' + _wlVmafTag(r), r.vmaf) : '')
       + _wlMetricRow('Duration', e.delta_t_s, 's')
       + _wlMetricRow('Output size', r.output_size_mb, 'MB')
       + cmdNote
@@ -285,10 +299,12 @@
       + _wlMetricRow('Energy (ΔE)', e.delta_e_wh, 'Wh')
       + wlCarbonRow(e)
       + _wlMetricRow('Polls', e.poll_count)
-      + '<div class="section-title">Thermals</div>'
-      + _wlMetricRow('CPU base → peak', t.cpu_base + ' → ' + t.cpu_peak, '°C')
-      + _wlMetricRow('GPU base → peak', t.gpu_base + ' → ' + t.gpu_peak, '°C')
-      + pptNote
+      + (t.note
+          ? '<div class="section-title">Thermals</div><div style="color:var(--text-4);font-size:0.75rem">' + t.note + '</div>'
+          : '<div class="section-title">Thermals</div>'
+            + _wlMetricRow('CPU base → peak', t.cpu_base + ' → ' + t.cpu_peak, '°C')
+            + _wlMetricRow('GPU base → peak', t.gpu_base + ' → ' + t.gpu_peak, '°C')
+            + pptNote)
       + '<div class="conf-badge" style="margin-top:0.75rem">' + (conf.flag || '') + ' ' + (conf.label || '') + '</div>'
       + (conf.hint ? '<div style="margin-top:0.35rem;color:var(--text-3);font-size:0.72rem">' + conf.hint + '</div>' : '')
       + wlCarbonStrip(e.delta_e_wh, r.preset_label || 'Video transcode', e.delta_t_s,
@@ -327,6 +343,7 @@
       return '<div class="col">'
         + '<h3>' + (res.preset_label || side) + '</h3>'
         + '<div class="sub">' + (res.preset_detail || '') + '</div>'
+        + _wlEngineLine(res)
         + '<div class="section-title">Encode</div>'
         + _wlMetricRow('Duration', e.delta_t_s + (isSpeedWinner ? ' 🏁' : ''), 's')
         + _wlMetricRow('Output size', res.output_size_mb, 'MB')
@@ -340,9 +357,11 @@
         + wlCarbonRow(e)
         + _wlMetricRow('Polls', e.poll_count)
         + '<div class="section-title">Thermals</div>'
-        + _wlMetricRow('CPU base → peak', t.cpu_base + ' → ' + t.cpu_peak, '°C')
-        + _wlMetricRow('GPU base → peak', t.gpu_base + ' → ' + t.gpu_peak, '°C')
-        + pptNote
+        + (t.note
+            ? '<div style="color:var(--text-4);font-size:0.72rem">' + t.note + '</div>'
+            : _wlMetricRow('CPU base → peak', t.cpu_base + ' → ' + t.cpu_peak, '°C')
+              + _wlMetricRow('GPU base → peak', t.gpu_base + ' → ' + t.gpu_peak, '°C')
+              + pptNote)
         + '<div class="conf-badge" style="margin-top:0.75rem;font-size:0.8rem">'
         + (conf.flag || '') + ' ' + (conf.label || '')
         + '</div>'

@@ -15,6 +15,7 @@ import quality
 from confidence import confidence
 import power
 import energy
+import hosts
 from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 UPLOAD_DIR = Path("/tmp/wattlab_uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -626,10 +627,18 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
     # to-apples comparison is provenance on every result.
     stream = probe_output_stream(output_path)
 
+    _codec = hosts.codec_of_preset(preset_key)
+    _eng = hosts.local_engine(preset_key, gpu.BACKEND.name,
+                              gpu.BACKEND.ffmpeg_encoder(_codec)
+                              if "gpu" in preset_key else None)
+    if custom_cmd and custom_cmd.strip():
+        _eng["custom_cmd"] = True   # visitor-edited command: encoder may differ
     return {
         "preset_key": preset_key,
         "preset_label": preset["label"],
         "preset_detail": preset["detail_fn"](bps),
+        "engine": _eng,             # CR-085 — which engine produced this side
+        "host": hosts.identity(hosts.local_host()),
         "transcode": transcode_result,
         "output_size_mb": out_size_mb,
         "stream": stream,

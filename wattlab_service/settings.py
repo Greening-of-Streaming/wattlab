@@ -290,6 +290,14 @@ DEFAULTS = {
     "bench_run_llm":      True,
     "bench_run_rag":      True,
     "bench_run_image":    True,
+    # CR-085 — compute-host registry (hosts.py). `local_host` overrides the
+    # identity stamped on results measured here (defaults describe GoS1).
+    # `compute_hosts` = remote machines GoS1 drives over SSH, one entry each,
+    # keyed by id: removing GoS2 / adding a GoS3 is a settings edit, no code.
+    # Live state (machine addresses, meters) — never committed; see the
+    # schema in hosts.py's docstring.
+    "local_host":    {},
+    "compute_hosts": {},
 }
 
 

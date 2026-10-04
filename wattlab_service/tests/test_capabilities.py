@@ -271,6 +271,7 @@ def test_required_tier_table_snapshot():
         "prepare_rem":         Tier.Lab,   # REM↔OWL — /prepare-rem run/upload/delete
         "rig_control":         Tier.Lab,   # S59 — /decode rig console switches mains relays
         "lab_session_toggle":  Tier.Lab,   # S59 — /queue-status lab-session flag toggle
+        "video_remote_run":    Tier.Lab,   # CR-085 — encodes on another compute host (GoS2)
     }
     assert capabilities._REQUIRED_TIER == expected
 
