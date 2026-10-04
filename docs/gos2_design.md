@@ -21,6 +21,7 @@ member's office later with configuration changes only.
 | D3 | Mesh coordination (Tailscale vs Headscale) | **Not applicable** — falls away with D2. |
 | D4 | Who is Lab | **Each node's own LAN + anyone arriving over SSH** (today's `ssh -L 8000` practice). See §6 for the cross-node case. |
 | D5 | Location | Co-located with GoS1 now; architecture must allow a **simple move to another member's office**. |
+| D6 | UI (2026-10-04) | **Engines, not hosts.** Visitors compare *encoding engines* (CPU · GPU/NVENC · Apple media engine · ASIC card, which is coming); the machine is provenance on the result, never a form option. The UI covers the common runs; complex runs go through natural language driving the job API. Design of the engine registry and the bulk-data rules is **deferred** until after a working GoS2 encode (done 2026-10-04, §13). |
 
 Rejected models, for the record: *master/slave* and *client/server* both make GoS1 the single point the site
 depends on, which contradicts the "GoS1 goes dark" requirement unless we add master election — too heavy for a
@@ -150,6 +151,7 @@ fallback. Two traps follow:
 
 ## 7. GoS1 sleep / wake
 
+- **Gate:** GoS1 serves the public site today, so it **cannot sleep until Phase 2** moves the front door to GoS2.
 - **Sleep policy:** GoS1 sleeps after N idle minutes when **all** of these hold: queue empty, no Lab session flag,
   no rig hold (`/tmp/owl-rig-hold`), no CLI campaign, no SSH sessions, no overnight benchmark scheduled. A
   measurement box that sleeps mid-campaign is worse than one that never sleeps. The default is to stay awake.
@@ -242,3 +244,46 @@ Each phase stands on its own: stopping after Phase 2 still gives a working failo
 - Don't poll a plug from both nodes: KLAP sessions are exclusive per device.
 - Don't let the front-door path ever default to Lab (§6). Test it from a public-IP header.
 - Every background piece (tunnel, rsync, sleep timer, wake) needs a visible last-success signal.
+
+## 13. Phase 0 log (2026-10-04/05)
+
+### Facts established on the machine
+- **Access:** `ssh gos@192.168.1.29` (GoS1 key `~/.ssh/id_ed25519_gos2`, owner MacBook key). Six standard,
+  key-only accounts copied from GoS1 (tania, simon, dom, marisol, jon, arian; keys from their GoS1
+  `authorized_keys`). Remote access via `ssh -J <user>@gos1.duckdns.org:2222 <user>@192.168.1.29`; no new Bbox port.
+  Scripts kept for new users: `~gos/gos2_collect_keys.sh` (GoS1) → `~gos/gos2_add_users.sh` (GoS2).
+- **Narrow sudo** (`/etc/sudoers.d/owl-gos2`, installer `~gos/gos2_install_sudo.sh`): NOPASSWD for `pmset`,
+  `shutdown -r now` (restart only, never halt), and root-owned argument-checked wrappers
+  `/usr/local/sbin/owl-powermetrics N MS` and `owl-sample PROC SECS`. `powermetrics`/`sample` are not exposed
+  directly because their output-file options would let root write anywhere. Homebrew needs no sudo.
+- **Power:** `sleep 0`, `powernap 0`, `autorestart 1`, `womp 1`; macOS auto-install of updates off.
+  **A cleanly shut-down Mac mini cannot be powered on remotely:** WoL only works from sleep, and cycling G1 did not
+  boot it (`autorestart` only covers an *unexpected* power loss). Rule: never shut GoS2 down unless someone is on site.
+- **Headless rule: GoS2 must have a logged-in console session.** With nobody logged in, `audiomxd` retries
+  Bluetooth audio routing (`BTAudioRoutingRequest _ensureXPCStarted` → `SCDynamicStoreCopyConsoleUser`) and
+  `configd` answers it, burning ~72 % + ~42 % of a core indefinitely (diagnosed with `owl-sample`; 66 min of
+  audiomxd CPU accrued before the fix). Logging in stopped both at once. Fix in place: **auto-login `gos`**,
+  screen locked immediately. Wi-Fi state and an HDMI dummy plug made no difference (the dummy isn't even detected).
+- **Network:** Ethernet `en0` `.29` (1 GbE, reserved), the only path; Wi-Fi `.95` (reserved) is **off**.
+  Screen Sharing (`vnc://gos2.local`) and File Sharing (SMB) are on, LAN only.
+- **Meters, 4 Hz probe:** G1 (fw 1.3.1) produces a new value every **2.0 s**; G2 (fw 1.4.8) every **1.5 s**;
+  both answer in ~27 ms.
+- **Encoders (Homebrew ffmpeg 9.0.2):** `h264_videotoolbox`, `hevc_videotoolbox`, `prores_videotoolbox`, plus
+  libx264/libx265/libsvtav1. **No AV1 hardware encode** exposed.
+- **Feasibility encode** (Meridian 120 s, 4000 kbps, 1080p, OWL's own samplers + `confidence.py`, n = 1 each,
+  not publishable): `h264_videotoolbox` 19.7 s, ΔW +30.2 W, **0.165 Wh** 🟢; `libx264` 40.2 s, ΔW +45.2 W,
+  **0.506 Wh** 🟢. Record: `results/diagnostics/gos2_feasibility_20261004_224620.json`.
+
+### Idle-floor history
+Protocol (fixed, so rows stay comparable): console logged in, no Screen Sharing client, CPU ≥ 97 % idle for 3
+consecutive one-minute checks, then 10-min runs of G1 + G2 at 1 Hz (G2 staggered 0.5 s), CPU idle and Screen
+Sharing logged every minute. A run is excluded if CPU idle drops below 97 % or the Screen Sharing encoder exceeds
+0.5 %. Report G1 mean ± 95 % CI over n = 3 clean runs (t, df = 2). Re-measure after every software or config change.
+
+| # | Date | State / what changed | GoS2 idle (G1) | G1 self-draw | Record |
+|---|---|---|---|---|---|
+| 1 | 2026-10-05 | Near-factory: macOS 27.0.1; Homebrew with 15 formulae (only `ffmpeg` requested), 0 casks; Apple CLT; Remote Login, Screen Sharing, File Sharing; auto-login; 7 accounts; 523 launchd jobs, 701 processes; Ethernet only, Wi-Fi off | **1.352 W ± 0.008 W** (runs 2–4; run 1 excluded: CPU idle 82.5 %, Screen Sharing 3.8 %) | 1.007 W | `results/diagnostics/gos2_idle_ethernet_wifioff_20261005_001817.json` |
+
+Caveats on every row: G1 refreshes only every 2 s at this load, and P110 accuracy around 1 W has not been checked
+against a reference meter. For scale, GoS1 idles at ~79 W display-blanked. That comparison stays an internal
+observation until the low-end meter accuracy is checked.

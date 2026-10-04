@@ -78,7 +78,7 @@ sync. For scale, GoS1's data disk holds 367 GB.
 - **SSH keys created or touched after 2026-04-09 — none are backed up.**
   `~/.ssh/id_ed25519_decodebench` (rig access), `id_ed25519_gh` (GitHub auth),
   `id_ed25519_linode_rem` (REM Linode host), `id_ed25519_macbook`
-  (MacBook↔GoS1). The April snapshot contains only the older `id_ed25519`,
+  (MacBook↔GoS1), plus `id_ed25519_gos2` (GoS1→GoS2 admin, 2026-10-04). The April snapshot contains only the older `id_ed25519`,
   `authorized_keys`, `known_hosts` and `config`. **Losing GoS1 means
   regenerating all four keys and re-authorising each by hand** — GitHub keys,
   the rig's `authorized_keys`, the REM host's `authorized_keys`, the MacBook.
