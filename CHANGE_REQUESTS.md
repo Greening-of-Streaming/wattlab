@@ -1322,6 +1322,37 @@ reported a 1920×1080 mode — that is the UI compositing plane only; the patter
 
 ---
 
+## CR-085 · GoS2 — a second OWL node (Mac Mini): front door + failover + second bench
+
+**Status:** design phase, opened 2026-10-04 (owner). **Design doc: `docs/gos2_design.md`** (decisions, topology,
+state ownership, SSH link, tier trust, phases). Nothing built. Plugs found and identified the same day.
+
+### Ask
+
+A Mac Mini M6 ("GoS2"), metered by lab-G1 (inner, `.165`, fw 1.3.1) → lab-G2 (outer, `.22`, fw 1.4.8), must be able
+to host OWL if GoS1 goes dark, and be movable to another member's office with configuration changes only.
+
+### Decisions (owner, 2026-10-04)
+
+- **Role swap:** GoS2 is the always-on front door (nginx, GoS1 primary upstream / GoS2 backup upstream). GoS1
+  becomes the bench, woken for work. GoS2 is also a second bench (Apple silicon), **never pooled** with GoS1.
+- **SSH first.** No Tailscale, no Linode relay. One outbound tunnel GoS2 → GoS1 `:2222` after the move; revisit
+  triggers are in design §5.3.
+- **Lab = each node's own LAN + SSH-tunnelled loopback.** The front-door path fails closed (missing visitor IP →
+  Anonymous, never Lab).
+
+### Prerequisites (existing CRs)
+
+CR-066 item 2 (trusted-proxy check — **hard gate** before the front door moves), CR-031 §3 pre-work items 1/3/4
+(`OWL_ROOT`, committed units, package imports). Also new here: host-prefixed job IDs + a `host` envelope field.
+
+### Phases
+
+0 bring-up + facts → 1 portability + archive-mode GoS2 + replication → 2 front-door swap → 3 GoS1 sleep/wake
+(measure the saving before claiming it) → 4 GoS2 bench (macOS port) → 5 the move. Open questions: design §11.
+
+---
+
 ## Backlog notes recovered from session memory (2026-08-19, not CRs yet)
 
 *Folded here on the owner's instruction when the per-project session memory was pruned; each is a candidate

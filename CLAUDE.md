@@ -8,7 +8,7 @@
 # See also:
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
-#   - CHANGE_REQUESTS.md — 29 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
+#   - CHANGE_REQUESTS.md — 30 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
 #   - TESTING.md — pytest suite (1107 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - GOS1_DISASTER_RECOVERY.md — rebuild-from-nothing: what is backed up, what is NOT (secrets, SSH keys, REM glue docs)
@@ -144,9 +144,9 @@ TEST-NET 203.0.113.x as private → Lab).
 
 ## Roadmap
 **Phases 1–8 shipped** (research integrity → measurement quality → settings → demo → image gen → public access →
-tour/credibility → RAG). **Active: 29 CRs** in CHANGE_REQUESTS.md — newest CR-078–084 (device×codec reliability
+tour/credibility → RAG). **Active: 30 CRs** in CHANGE_REQUESTS.md — newest CR-078–085 (device×codec reliability
 survey, HD/4K ladder × resolution sweep, decode-pipeline provenance survey, football sports tier + all-night
-campaign [delivered], Demo Content page, Lab-session reservations [delivered 09-04]); each CR carries its own
+campaign [delivered], Demo Content page, Lab-session reservations [delivered 09-04], GoS2 second node — `docs/gos2_design.md`); each CR carries its own
 status; closed archive in CHANGE_REQUESTS_CLOSED.md.
 
 ### Session history & open items (moved out 2026-09-27 — nothing in this file to keep in sync)
