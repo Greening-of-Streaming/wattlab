@@ -202,3 +202,25 @@ What we learned:
 Candidate post line, revised: *"Same model, same script, model already loaded: a 1024-pixel SANA-Sprint image
 took 0.0175 Wh on an NVIDIA RTX 5080 and 0.0157 Wh on an Apple M6 Mac mini (energy above idle, n = 3) — 10 %
 less on the Mac, which took 1.8 s per image against the RTX's 0.27 s."*
+
+### 3c. Lab image buttons switched to the session method; SD-Turbo n = 3 (2026-10-05 afternoon)
+
+Owner, live: a GoS1 run from the public page (first in its default CPU mode, then GPU at the 5-image batch) came
+out ~15× above and then ~½ the GoS2 figure — neither like for like. Case 125a9854 (GoS1 GPU, oneshot): an ≈ 8 s
+polled window containing only 2.2 s of generation (samples 74 → 79 → 102 → 102 → 105 → 113 → 169 → 311 W) →
+0.0051 Wh/img 🟡, understated several-fold. The /image "Other machines" button and its "Run on GoS1 also" companion
+now both run `/image/session` with the visitor's prompt: load + 2 warm-up images outside the window, 30 s settle,
+warm baseline, then **generation until ≥ 30 s is measured** (runner `target_s`), so both machines get ~30 meter
+polls (`586c293`).
+
+SD-Turbo 512 px, owner's prompt ("a lone wind turbine in an open landscape with a European flag flying on it."),
+n = 3, all 🟢, 30 polls each:
+
+| Machine | Images per session | s / image | ΔW | Wh / image (whole window) | Steady state (first 5 s trimmed) | Whole machine |
+|---|---|---|---|---|---|---|
+| RTX 5080 | 75 | 0.401 | 224 W | 0.0250 ± 0.0008 | 0.0265 ± 0.0002 | 0.0334 |
+| Apple M6 | 15 | 2.051 | 29 W | **0.0163 ± 0.0005** | **0.0175 ± 0.0002 (−34 %)** | 0.0171 |
+
+Jobs: GoS1 375e6f67, ca4d02ee, 835006dd · GoS2 gos2-37296fbf, gos2-7ba6bb9c, gos2-57bcc32d. Consistent with §3b:
+across three models the M6 uses **10–34 % less energy per image** (steady state) and is **1.4–2.0× cheaper
+whole-machine**; the RTX is 4.6–6.7× faster. Image draft finding → v3.
