@@ -23,6 +23,29 @@ GoS2's own P110 pair; envelope v2 stamps host + engine on every result).
 like-for-like comparison against a discrete-GPU workstation running identical software and identical inputs.
 Everything published is speed or whole-machine peak power.
 
+### Earlier Apple silicon and related work on video energy (desk research, 2026-10-05, second pass)
+
+All **secondary**; none reports energy per encode at a stated quality, with a stated method and repeats. Listed
+for context and for the "what's already public" claim — not as validation of our numbers.
+
+| Source | What it reports | Relevance / quality |
+|---|---|---|
+| [thescurvydawg.com — Mac mini M2 Pro encode/decode](https://thescurvydawg.com/2025/06/21/mac-mini-m2-pro-video-decoding-encoding/) | M2 Pro HEVC encode: ~18 W average via VideoToolbox (media engine) vs ~52 W software; media engine ~70 % faster | Single blog, method unstated. Same *pattern* as ours on M6 (media engine ~23 W vs x264 ~48 W above idle). |
+| [Hostbor — Mac mini M4 home server](https://hostbor.com/mac-mini-m4-home-server/) | M4 Mac mini 4K HEVC encode peak 11.8 W | Peak power only, method unclear. |
+| [singhkays.com — Apple Silicon M1 power deep dive, local playback](https://singhkays.com/blog/apple-silicon-m1-video-power-consumption-pt-2/) | M1 power during local video playback, per codec | Most rigorous Apple video-power write-up found — but playback, not encode. |
+| [Apple Developer Forums — VideoToolbox quality on M1](https://developer.apple.com/forums/thread/678210) | Hardware encoding trades compression quality for speed vs good software encoders | Qualitative; nobody quantifies the CBR-vs-VBR effect we measured (report §1). |
+| [arXiv 2212.12842 — edge server built from massive mobile SoCs](https://arxiv.org/pdf/2212.12842) | Mobile-SoC transcoding 2.58–3.21× more energy-efficient than an Intel CPU and 1.83–4.53× than an NVIDIA A40 | Closest published analogue to M6 vs RTX; peer-reviewed-style method; not Apple silicon. |
+| [arXiv 2511.18687 — NVENC split-frame encoding, UHD](https://arxiv.org/pdf/2511.18687) | NVENC board power ~38.5–43 W (HEVC), ~42–48 W (AV1); software encoders up to ~150 W | NVIDIA-side reference (board power, not wall). |
+| [arXiv 2405.17866 — Rate-Energy-Distortion codec evaluation](https://arxiv.org/pdf/2405.17866) | Proposes evaluating codecs on rate × energy × distortion jointly | The right frame for our CBR/VBR iso-quality result. |
+| [arXiv 2401.09854 — survey: energy and environmental impact of video streaming](https://arxiv.org/pdf/2401.09854) | Literature survey | Context; no Apple silicon encode data. |
+
+Excluded: several search hits were AI-generated or retail "wiki" pages (AliExpress / Alibaba) with unsourced
+Mac mini wattages — not cited.
+
+**Conclusion of both passes:** no published energy-per-job data for the M6 (encode, token or image), and for
+M1–M4 only blog-grade peak-power figures for encoding. The direction of the M2 Pro blog and of the mobile-SoC
+transcoding paper matches ours.
+
 ## Unified memory — what it can and cannot explain (conjecture section, not claims)
 
 - **Encode (media engine):** frames decoded, scaled and encoded on the M6 never cross a bus — the decoder,
