@@ -745,6 +745,10 @@ def _ui_cfg() -> dict:
         "pre_job_skip_after_s": s.get("pre_job_skip_after_s", 5),
         "meter_name": meter_display_name(),
         "meter_cadence": meter_cadence_label(),
+        # CR-037 / CR-085 — the pinned canonical encode, so AI cards compute
+        # their "≈ N minutes of HD video" anchor against the CURRENT pin at
+        # render time (old results' stored ratios predate the 2026-10-05 re-pin).
+        "video_ref": _video_ref(),
         # Registry/source URLs for wl-carbon.js links — constants above stay
         # the single source; the browser gets them through WL_CFG.
         "urls": {
@@ -754,6 +758,16 @@ def _ui_cfg() -> dict:
             "ember": EMBER_URL,
         },
     }
+
+
+def _video_ref() -> dict | None:
+    import canonical
+    b = canonical.video_baseline()
+    if not b or not b.get("delta_e_wh"):
+        return None
+    return {"wh": b["delta_e_wh"], "s": b.get("source_duration_s", 120),
+            "gpu": (b.get("hardware") or {}).get("gpu"), "pinned_at": b.get("pinned_at"),
+            "detail": b.get("preset_detail")}
 
 
 def _bake_durations(template: str) -> str:

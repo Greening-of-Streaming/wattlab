@@ -282,13 +282,20 @@
   // measured on GoS1, so a cross-machine multiple would mislead.
   function wlAnchorLine(e, r, style){
     var vr = e && e.video_relative;
-    if (!vr || !vr.ratio || (r && r.host && r.host.remote)) return '';
-    var secs = vr.ratio * (vr.source_duration_s || 120);
+    if (r && r.host && r.host.remote) return '';
+    var ref = (window.WL_CFG && WL_CFG.video_ref) || null;
+    var wh = e && Number(e.delta_e_wh);
+    // Ratio against the CURRENT pin when available (consistent across old and
+    // new results); the stored ratio is only a fallback.
+    var ratio = (ref && wh > 0) ? wh / ref.wh : (vr && vr.ratio);
+    if (!ratio) return '';
+    var secs = ratio * ((ref && ref.s) || (vr && vr.source_duration_s) || 120);
     var amt = secs < 60 ? Math.max(1, Math.round(secs)) + ' seconds'
             : secs < 600 ? (secs / 60).toFixed(1) + ' minutes'
             : Math.round(secs / 60) + ' minutes';
-    var tip = 'Reference: a 120 s 1080p clip hardware-encoded on GoS1 = ' + vr.baseline_wh + ' Wh (pinned canonical encode). This run = '
-            + vr.ratio.toFixed(2) + '× that.';
+    var tip = 'Reference: a 120 s 1080p clip hardware-encoded on GoS1'
+            + (ref ? ' (' + (ref.detail || '') + ', ' + (ref.gpu || '') + ', pinned ' + (ref.pinned_at || '') + ') = ' + ref.wh
+                   : ' = ' + (vr && vr.baseline_wh)) + ' Wh. This run = ' + ratio.toFixed(2) + '× that.';
     return '<div title="' + tip + '" style="' + (style || 'margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)')
          + '">This run ≈ the energy of encoding ' + amt + ' of HD video</div>';
   }

@@ -1,0 +1,133 @@
+{
+  "job_id": "dc962963",
+  "saved_at": "2026-05-13T15:03:33.656391",
+  "visitor_key": null,
+  "mode": "both",
+  "cpu": {
+    "preset_key": "h265_cpu",
+    "preset_label": "H.265 CPU",
+    "preset_detail": "libx265 \u00b7 2000 kbps ABR \u00b7 1080p \u00b7 24 cores",
+    "transcode": {
+      "success": true,
+      "duration_s": 66.2,
+      "ffmpeg_cmd": "nice -n -5 /usr/local/bin/ffmpeg-master -y -i /home/gos/wattlab/test_content/meridian_120s.mp4 -c:v libx265 -b:v 2000k -vf scale=-2:1080 -c:a aac -b:a 128k /tmp/wattlab_uploads/dc962963_h265_cpu_out.mp4 -progress pipe:1 -nostats",
+      "ffmpeg_version": "ffmpeg version N-124403-g28ecb07e55-20260507 Copyright (c) 2000-2026 the FFmpeg developers",
+      "stderr": ""
+    },
+    "output_size_mb": 28.58,
+    "energy": {
+      "w_base": 55.59,
+      "w_task": 136.18,
+      "delta_w": 80.59,
+      "delta_t_s": 66.3,
+      "delta_e_wh": 1.4842,
+      "poll_count": 60,
+      "confidence": {
+        "flag": "\ud83d\udfe2",
+        "label": "Repeatable"
+      },
+      "co2e": {
+        "grams": 0.0363629,
+        "intensity": {
+          "g_per_kwh": 24.5,
+          "source": "live",
+          "fetched_at": 1778677300.3311875,
+          "age_s": 1113,
+          "zone": "FR",
+          "zone_label": "Paris (France)",
+          "provider": "Eco2mix (RTE/Etalab)",
+          "provider_url": "https://www.rte-france.com/eco2mix",
+          "mix_mw": {
+            "nucleaire": 37484,
+            "eolien": 10864,
+            "solaire": 11702,
+            "hydraulique": 5682,
+            "bioenergies": 1015,
+            "gaz": 322,
+            "charbon": 0,
+            "fioul": 33,
+            "pompage": -2676
+          }
+        }
+      }
+    },
+    "thermals": {
+      "cpu_base": 49.0,
+      "cpu_peak": 62.1,
+      "cpu_mean": 58.9,
+      "gpu_base": 39.0,
+      "gpu_peak": 40.0,
+      "gpu_mean": 39.0,
+      "gpu_ppt_mean_w": 3.3,
+      "gpu_ppt_peak_w": 12.0
+    }
+  },
+  "gpu": {
+    "preset_key": "h265_gpu",
+    "preset_label": "H.265 GPU",
+    "preset_detail": "hevc_vaapi \u00b7 2000 kbps ABR \u00b7 1080p \u00b7 full pipeline",
+    "transcode": {
+      "success": true,
+      "duration_s": 15.1,
+      "ffmpeg_cmd": "nice -n -5 /usr/local/bin/ffmpeg-master -y -hwaccel vaapi -hwaccel_output_format vaapi -extra_hw_frames 32 -vaapi_device /dev/dri/renderD128 -i /home/gos/wattlab/test_content/meridian_120s.mp4 -vf scale_vaapi=w=-2:h=1080:format=nv12 -c:v hevc_vaapi -b:v 2000k -c:a aac -b:a 128k /tmp/wattlab_uploads/dc962963_h265_gpu_out.mp4 -progress pipe:1 -nostats",
+      "ffmpeg_version": "ffmpeg version N-124403-g28ecb07e55-20260507 Copyright (c) 2000-2026 the FFmpeg developers",
+      "stderr": ""
+    },
+    "output_size_mb": 28.39,
+    "energy": {
+      "w_base": 60.6,
+      "w_task": 127.24,
+      "delta_w": 66.64,
+      "delta_t_s": 15.2,
+      "delta_e_wh": 0.2814,
+      "poll_count": 14,
+      "confidence": {
+        "flag": "\ud83d\udfe2",
+        "label": "Repeatable"
+      },
+      "co2e": {
+        "grams": 0.0068943,
+        "intensity": {
+          "g_per_kwh": 24.5,
+          "source": "live",
+          "fetched_at": 1778677300.3311875,
+          "age_s": 1113,
+          "zone": "FR",
+          "zone_label": "Paris (France)",
+          "provider": "Eco2mix (RTE/Etalab)",
+          "provider_url": "https://www.rte-france.com/eco2mix",
+          "mix_mw": {
+            "nucleaire": 37484,
+            "eolien": 10864,
+            "solaire": 11702,
+            "hydraulique": 5682,
+            "bioenergies": 1015,
+            "gaz": 322,
+            "charbon": 0,
+            "fioul": 33,
+            "pompage": -2676
+          }
+        }
+      }
+    },
+    "thermals": {
+      "cpu_base": 54.0,
+      "cpu_peak": 55.1,
+      "cpu_mean": 55.0,
+      "gpu_base": 39.0,
+      "gpu_peak": 48.0,
+      "gpu_mean": 46.2,
+      "gpu_ppt_mean_w": 49.8,
+      "gpu_ppt_peak_w": 54.0
+    }
+  },
+  "analysis": {
+    "energy_winner": "GPU",
+    "speed_winner": "GPU",
+    "energy_diff_pct": 81.0,
+    "speed_diff_pct": 77.1,
+    "finding": "GPU used 81.0% less energy (1.4842 vs 0.2814 Wh). GPU was 77.1% faster (66.3s vs 15.2s). GPU was both faster and more energy-efficient on this workload. CPU peaked at 62.1\u00b0C (Tctl), GPU junction at 48.0\u00b0C. GPU self-reported mean power (PPT): 49.8W \u2014 cross-check against P110 delta (66.64W total system delta).",
+    "confidence_note": "Both runs \ud83d\udfe2 Repeatable."
+  },
+  "scope": "Device layer only (GoS1 server). Network, CDN, CPE excluded."
+}

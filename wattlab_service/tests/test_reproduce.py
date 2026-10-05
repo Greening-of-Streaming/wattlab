@@ -6,9 +6,10 @@ from pathlib import Path
 
 import reproduce
 
-# A real 'both' video result, committed as the canonical provenance fixture.
+# A real 'both' video result, committed as provenance for the AMD-era pin
+# (archived 2026-10-05 when the canonical encode was re-pinned to the RTX 5080).
 FIXTURE = (Path(__file__).resolve().parent.parent
-           / "canonical" / "source_h265_gpu_meridian_120s.json")
+           / "canonical" / "source_h265_gpu_meridian_120s_amd_2026-05-20.json")
 
 
 def _result():
