@@ -124,6 +124,7 @@ async def image_page(request: Request):
             date_str = (r.get("saved_at") or "")[:16].replace("T", " ")
             saved_at = r.get("saved_at") or ""
             mode = r.get("mode", "cpu")
+            host_tag = f' &nbsp;·&nbsp; {r.get("host") or "GoS1"}'   # CR-085
             # CR-034 Phase B / CR-013 — click-to-expand toggle. Lazy-loads the
             # full result via /results/image/<id>/download.json and renders
             # through window.wlRenderImageCard from _RESULT_JS.
@@ -157,7 +158,7 @@ async def image_page(request: Request):
                 model_lbl = r.get("model_label") or ""
                 model_tag = f' &nbsp;·&nbsp; {model_lbl}' if model_lbl else ""
                 prev_html += f"""<div class="prev-item" style="flex-direction:column;align-items:flex-start">
-                  <span class="prev-meta">{date_str} &nbsp;·&nbsp; CPU vs GPU{model_tag}</span>
+                  <span class="prev-meta">{date_str}{host_tag} &nbsp;·&nbsp; CPU vs GPU{model_tag}</span>
                   {_side_html("CPU", r.get("cpu", {}))}
                   {_side_html("GPU", r.get("gpu", {}))}
                   <div class="prev-prompt" style="color:var(--text-3);font-size:0.75rem;margin-top:0.3rem">{fp[:80]}</div>
@@ -192,7 +193,7 @@ async def image_page(request: Request):
                     rows_html = _mdl_html(r.get("small", {})) + _mdl_html(r.get("large", {}))
                     n_label = "Compare models (GPU)"
                 prev_html += f"""<div class="prev-item" style="flex-direction:column;align-items:flex-start">
-                  <span class="prev-meta">{date_str} &nbsp;·&nbsp; {n_label}</span>
+                  <span class="prev-meta">{date_str}{host_tag} &nbsp;·&nbsp; {n_label}</span>
                   {rows_html}
                   <div class="prev-prompt" style="color:var(--text-3);font-size:0.75rem;margin-top:0.3rem">{fp[:80]}</div>
                   <div style="margin-top:0.3rem">{downloads}</div>
@@ -209,7 +210,7 @@ async def image_page(request: Request):
                     {img_tag}
                     <div>
                       <span class="prev-meta">
-                        {date_str} &nbsp;·&nbsp; {mode_label}
+                        {date_str}{host_tag} &nbsp;·&nbsp; {mode_label}
                         &nbsp;·&nbsp; <span class="conf-badge">{conf.get("flag","")} {conf.get("label","")}</span>
                         &nbsp;·&nbsp; {r.get("delta_e_wh","?")} Wh/image
                         &nbsp;·&nbsp; {r.get("delta_t_s","?")}s
@@ -490,7 +491,7 @@ async function pollJob(jobId) {{
   if (_dispStage === 'cooldown' && j.current_model_idx) {{
     _dispStage = 'cooldown_' + j.current_model_idx;
   }}
-  renderProgress(_dispStage, j.result, powerJ.watts ?? null);
+  renderProgress(_dispStage, j.result, wlLiveWatts(j, powerJ.watts ?? null));
 
   if (j.stage === 'done' && j.result) {{
     clearInterval(pollTimer);
@@ -592,7 +593,7 @@ function renderImageBoth(r) {{
         Prompt: "${{r.full_prompt}}" · modifier: <em>${{r.modifier}}</em>
       </div>
       ${{wlCarbonStrip(_stripWh, 'Image gen · most efficient device', _stripDur, _stripSavedG, _subRuns)}}
-      <p class="scope-note">${{r.scope}}</p>
+      ${{wlHostLine(r)}}<p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
 
@@ -661,13 +662,13 @@ function renderResult(r) {{
         </div>
       </div>
       <div class="conf-badge">${{e.confidence.flag}} ${{e.confidence.label}}</div>
-      ${{e.video_relative ? '<div style="font-size:0.78rem;color:var(--text-3);margin-top:0.5rem">This run ' + e.video_relative.text + '</div>' : ''}}
+      ${{wlAnchorLine(e, r, 'font-size:0.78rem;color:var(--text-3);margin-top:0.5rem')}}
       ${{imgHtml}}
       <div class="modifier-note" style="color:var(--text-4);font-size:0.75rem;margin-top:0.75rem">
         Modifier applied this run: "<em>${{r.modifier}}</em>"
       </div>
       ${{wlCarbonStrip(e.delta_e_wh, 'Image generation total run', e.delta_t_s, e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)}}
-      <p class="scope-note">${{r.scope}}</p>
+      ${{wlHostLine(r)}}<p class="scope-note">${{r.scope}}</p>
     </div>`;
 }}
 const _resumeJob = new URLSearchParams(location.search).get('job');

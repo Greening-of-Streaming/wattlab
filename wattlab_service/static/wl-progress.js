@@ -69,12 +69,19 @@ function _wlTarget(opts) {
     var id = (opts && opts.target) || 'status';
     return document.getElementById(id);
 }
+// CR-085 — a job running on another compute host reports that host's live
+// meter (job_status `watts` + `watts_host`); prefer it over /power (GoS1).
+function wlLiveWatts(data, fallback) {
+    var h = data && data.watts_host;
+    window.WL_LIVE_HOST = h || null;
+    return h ? data.watts : fallback;
+}
 function wlRenderProgress(opts) {
     var w = opts.watts;
     var wHtml = w != null
         ? '<div style="font-size:2.5rem;color:var(--accent);font-family:monospace;font-weight:bold;margin:0.75rem 0 0">'
           + w.toFixed(1) + ' W</div>'
-          + '<div style="color:var(--text-3);font-size:0.72rem;letter-spacing:0.04em;margin-bottom:0.5rem">live wall power · ' + WL_CFG.meter_name + '</div>'
+          + '<div style="color:var(--text-3);font-size:0.72rem;letter-spacing:0.04em;margin-bottom:0.5rem">live wall power · ' + WL_CFG.meter_name + (window.WL_LIVE_HOST ? ' · ' + window.WL_LIVE_HOST : '') + '</div>'
         : '';
     var elHtml = opts.elapsed != null
         ? '<div style="color:var(--text-4);font-size:0.78rem;margin-top:0.4rem">Elapsed: ' + wlFormatElapsed(opts.elapsed) + '</div>'

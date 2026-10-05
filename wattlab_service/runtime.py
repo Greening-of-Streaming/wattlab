@@ -89,8 +89,20 @@ async def sensors_poller():
 
 
 def job_status(job_id: str) -> dict:
-    return {**(jobs.get(job_id) or _recover_from_disk(job_id)),
-            "watts": power_cache["watts"]}
+    job = jobs.get(job_id) or _recover_from_disk(job_id)
+    out = {**job, "watts": power_cache["watts"]}
+    # CR-085 — a remote-host job names its primary meter; while it runs, report
+    # that meter's latest reading (≤10 s old) instead of GoS1's telemetry.
+    ip = job.get("meter_ip")
+    if ip:
+        import power as _power
+        w, t = _power.LAST_READING.get(ip, (None, 0))
+        fresh = w is not None and time.time() - t <= 10
+        # No fresh reading yet → no number at all, never GoS1's figure under
+        # the remote host's name.
+        out.update({"watts": round(w, 2) if fresh else None,
+                    "watts_host": job.get("power_host")})
+    return out
 
 
 def _recover_from_disk(job_id: str) -> dict:

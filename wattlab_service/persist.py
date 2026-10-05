@@ -93,7 +93,9 @@ def save_result(job_type: str, job_id: str, data: dict,
     carbon.walk_and_enrich(payload)
     # CR-037 — anchor AI energy to a real video encode ("≈ N× a 120s encode").
     # AI result types only; video would just read "≈ 1×" of itself.
-    if job_type in ("llm", "image"):
+    # CR-085: not for remote-host results — the reference encode was measured
+    # on GoS1, so a cross-machine multiple would mislead.
+    if job_type in ("llm", "image") and not (payload.get("host") or {}).get("remote"):
         canonical.enrich_result(payload)
     path.write_text(json.dumps(payload, indent=2))
     return path

@@ -48,6 +48,14 @@ def _fmt_ratio(n: float) -> str:
     return f"{round(n, -1):.0f}×"
 
 
+def _fmt_minutes(secs: float) -> str:
+    if secs < 60:
+        return f"{max(1, round(secs))} seconds"
+    if secs < 600:
+        return f"{secs / 60:.1f} minutes"
+    return f"{round(secs / 60)} minutes"
+
+
 def times_vs_video(delta_e_wh):
     """Express an AI job's energy as a multiple of the canonical video encode.
 
@@ -68,7 +76,9 @@ def times_vs_video(delta_e_wh):
     ratio = delta_e_wh / ref
     return {
         "ratio": ratio,
-        "text": f"≈ {_fmt_ratio(ratio)} a 120 s 1080p H.265 GPU encode",
+        # Re-worded 2026-10-05 (owner): video time, no codec in the line.
+        "text": f"≈ the energy of encoding {_fmt_minutes(ratio * base.get('source_duration_s', 120))} of HD video",
+        "source_duration_s": base.get("source_duration_s", 120),
         "baseline_wh": ref,
         "baseline_label": base.get("preset_label", "H.265 GPU"),
     }

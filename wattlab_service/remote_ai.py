@@ -90,7 +90,8 @@ async def run_remote_image(prompt: str, job_id: str, host_id: str,
             "pipeline": cfg_m.get("pipeline")}
 
     if jobs is not None:
-        jobs[job_id].update({"stage": "baseline", "full_prompt": full_prompt})
+        jobs[job_id].update({"stage": "baseline", "full_prompt": full_prompt,
+                             "meter_ip": host["meters"][0], "power_host": host.get("label")})
     baseline = await remote_video._baseline(host, s["baseline_polls"])
     LOCK_FILE.write_text(job_id)
     try:
@@ -195,6 +196,8 @@ async def run_remote_llm(model_key: str, task_key: str, job_id: str, host_id: st
     model = llm.MODELS[model_key]
     task = llm.TASKS[task_key]
     s = cfg.load()
+    if jobs is not None and job_id in jobs:
+        jobs[job_id].update({"meter_ip": host["meters"][0], "power_host": host.get("label")})
     with _Tunnel(host) as tun:
         url = f"{tun.base}/api/generate"
         if jobs is not None: jobs[job_id]["stage"] = "baseline"
@@ -259,7 +262,9 @@ async def _run_remote_mlx(model_key: str, task_key: str, job_id: str, host: dict
     model = llm.MODELS[model_key]
     task = llm.TASKS[task_key]
     s = cfg.load()
-    if jobs is not None: jobs[job_id]["stage"] = "baseline"
+    if jobs is not None:
+        jobs[job_id].update({"stage": "baseline", "meter_ip": host["meters"][0],
+                             "power_host": host.get("label")})
     baseline = await remote_video._baseline(host, s["baseline_polls"])
     LOCK_FILE.write_text(job_id)
     try:
@@ -393,6 +398,8 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
         if jobs is not None and job_id in jobs:
             jobs[job_id]["stage"] = x
 
+    if not local and jobs is not None and job_id in jobs:
+        jobs[job_id].update({"meter_ip": host["meters"][0], "power_host": host.get("label")})
     loop = asyncio.get_event_loop()
     stopped = None
     if local:

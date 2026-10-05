@@ -306,3 +306,43 @@ def test_session_runner_protocol_with_fake_runner(tmp_path, monkeypatch):
     assert r["energy"]["delta_w"] == 170.0                   # 250 − warm 80
     assert len(r["per_prompt"]) == 2 and r["host"]["id"] == "gos1"
     assert r["energy_vs_cold_idle"]["delta_w"] == 170.0     # fake cold == warm here
+
+
+# --- live power follows the job's host ----------------------------------------------
+
+def test_job_status_reports_remote_host_live_power(monkeypatch):
+    import runtime, time as _t
+    runtime.jobs["gos2-live1"] = {"status": "running", "stage": "generating",
+                                  "meter_ip": "10.0.0.1", "power_host": "GoS2"}
+    try:
+        monkeypatch.setitem(power.LAST_READING, "10.0.0.1", (31.5, _t.time()))
+        st = runtime.job_status("gos2-live1")
+        assert st["watts"] == 31.5 and st["watts_host"] == "GoS2"
+        monkeypatch.setitem(power.LAST_READING, "10.0.0.1", (31.5, _t.time() - 60))   # stale
+        st = runtime.job_status("gos2-live1")
+        assert st["watts"] is None and st["watts_host"] == "GoS2"   # never GoS1's number
+    finally:
+        runtime.jobs.pop("gos2-live1", None)
+
+
+def test_local_job_status_unchanged():
+    import runtime
+    runtime.jobs["loc-live"] = {"status": "running"}
+    try:
+        st = runtime.job_status("loc-live")
+        assert "watts_host" not in st and "watts" in st
+    finally:
+        runtime.jobs.pop("loc-live", None)
+
+
+def test_remote_ai_results_get_no_cross_machine_anchor(tmp_path, monkeypatch, registry):
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    for jid, host in (("loc-anc", None), ("gos2-anc", hosts.identity(registry))):
+        data = {"mode": "gpu", "energy": {"delta_e_wh": 0.5}}
+        if host:
+            data["host"] = host
+        persist.save_result("image", jid, data, visitor_key=None)
+    loc = json.loads(next((tmp_path / "image").glob("*_loc-anc.json")).read_text())
+    rem = json.loads(next((tmp_path / "image").glob("*_gos2-anc.json")).read_text())
+    assert "video_relative" in loc["energy"] and "H.265" not in loc["energy"]["video_relative"]["text"]
+    assert "video_relative" not in rem["energy"]

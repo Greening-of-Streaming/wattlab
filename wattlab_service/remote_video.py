@@ -187,7 +187,9 @@ async def run_remote(input_path: Path, job_id: str, host_id: str, codec: str,
             raise ValueError(f"{host['label']}/{engine_id} cannot encode {codec}")
         sequence = [engine_id]
 
-    if jobs is not None: jobs[job_id]["stage"] = "sync"
+    if jobs is not None:
+        jobs[job_id].update({"stage": "sync", "meter_ip": host["meters"][0],
+                             "power_host": host.get("label", host_id)})
     inp = await asyncio.to_thread(hosts.ensure_input, host, Path(input_path))
 
     sides, baselines, cooldown = [], [], None

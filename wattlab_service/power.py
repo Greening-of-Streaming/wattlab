@@ -45,6 +45,10 @@ _config = dotenv_values("/home/gos/wattlab/.env")
 # interleaving requests on one handle.
 _DEVICE_CACHE: dict = {}
 _DEVICE_LOCKS: dict = {}
+# CR-085 — latest reading per meter IP {ip: (watts, epoch_s)}, so a remote
+# host's job can surface ITS live power in the progress widget (the global
+# telemetry poller only ever reads GoS1's meters).
+LAST_READING: dict = {}
 
 
 # CR-085 — a remote host's job measures that host's own plugs. The override is
@@ -98,7 +102,9 @@ async def _read_meter_watts(idx: int = 0, retries: int = 3) -> float:
                     device = await client.p110(ip)
                     _DEVICE_CACHE[ip] = device
                 result = await device.get_energy_usage()
-            return result.current_power / 1000
+            w = result.current_power / 1000
+            LAST_READING[ip] = (w, time.time())
+            return w
         except Exception:
             _DEVICE_CACHE.pop(ip, None)
             if attempt == retries - 1:

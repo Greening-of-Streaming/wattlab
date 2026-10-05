@@ -385,7 +385,7 @@ async def llm_page(request: Request):
                 fetch('/power').catch(() => null),
             ]);
             const data = await resp.json();
-            const watts = powerR ? (await powerR.json().catch(()=>({{}}))).watts ?? null : null;
+            const watts = wlLiveWatts(data, powerR ? (await powerR.json().catch(()=>({{}}))).watts ?? null : null);
             if (data.status === 'done') {{
                 if (streamTimer) {{ clearTimeout(streamTimer); streamTimer = null; }}
                 renderLLMResult(data.result, jobId);
@@ -472,11 +472,11 @@ async def llm_page(request: Request):
                 <div class="metric"><span>GPU (start→end)</span>
                     <span class="val">${{t.gpu_base}}→${{t.gpu_end}}°C</span></div>
                 <div class="conf-badge" style="margin-top:0.75rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
-                ${{e.video_relative ? '<div style="font-size:0.78rem;color:var(--text-3);margin-top:0.5rem">This run ' + e.video_relative.text + '</div>' : ''}}
+                ${{wlAnchorLine(e, r, 'font-size:0.78rem;color:var(--text-3);margin-top:0.5rem')}}
                 <div class="section-title">Response preview</div>
                 <div class="response-box">${{i.response}}</div>
                 ${{wlCarbonStrip(e.delta_e_wh, r.model_label + ' · ' + r.task_label, e.delta_t_s, e.co2e && e.co2e.intensity ? e.co2e.intensity.g_per_kwh : null)}}
-                <div class="scope-note">${{r.scope}}</div>
+                ${{wlHostLine(r)}}<div class="scope-note">${{r.scope}}</div>
             </div>`;
     }}
 
@@ -533,7 +533,7 @@ async def llm_page(request: Request):
                 <div class="section-title">Response preview (last run)</div>
                 <div class="response-box">${{r.runs[r.runs.length-1].inference.response}}</div>
                 ${{wlCarbonStrip(agg.delta_e_wh_mean, r.model_label + ' · ' + r.task_label + ' (mean of ' + r.repeats + ')')}}
-                <div class="scope-note">${{r.scope}}</div>
+                ${{wlHostLine(r)}}<div class="scope-note">${{r.scope}}</div>
             </div>`;
     }}
 
@@ -611,7 +611,7 @@ async def llm_page(request: Request):
             <div class="section-title">GPU response preview</div>
             <div class="response-box">${{gi.response}}</div>
             ${{wlCarbonStrip(_stripWh, _stripLbl, _stripDur, _stripSavedG, _subRuns)}}
-            <div class="scope-note">${{r.scope}}</div>
+            ${{wlHostLine(r)}}<div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
 
@@ -630,7 +630,7 @@ async def llm_page(request: Request):
                 <div class="metric"><span>mWh/token</span><span class="val">${{e.mwh_per_token}}</span></div>
                 <div class="metric"><span>ΔW</span><span class="val">${{e.delta_w}} W</span></div>
                 <div class="conf-badge" style="margin-top:0.5rem;font-size:0.82rem">${{e.confidence.flag}} ${{e.confidence.label}}</div>
-                ${{e.video_relative ? '<div style="font-size:0.76rem;color:var(--text-3);margin-top:0.4rem">This run ' + e.video_relative.text + '</div>' : ''}}
+                ${{wlAnchorLine(e, r, 'font-size:0.76rem;color:var(--text-3);margin-top:0.4rem')}}
                 <div class="section-title" style="margin-top:0.75rem">Response preview</div>
                 <div class="response-box">${{i.response}}</div>
             </div>`;
@@ -658,7 +658,7 @@ async def llm_page(request: Request):
             </div>
             ${{cards}}
             ${{wlCarbonStrip(_t3, r.model_label + ' · T3 long generation', _t3Dur, _t3SavedG, _subRuns)}}
-            <div class="scope-note">${{r.scope}}</div>
+            ${{wlHostLine(r)}}<div class="scope-note">${{r.scope}}</div>
         </div>`;
     }}
 
@@ -742,7 +742,7 @@ async def llm_page(request: Request):
                 fetch('/power').catch(() => null),
             ]);
             const data = await resp.json();
-            const watts = powerR ? (await powerR.json().catch(()=>({{}}))).watts ?? null : null;
+            const watts = wlLiveWatts(data, powerR ? (await powerR.json().catch(()=>({{}}))).watts ?? null : null);
             if (data.status === 'done') {{
                 if (streamTimer) {{ clearTimeout(streamTimer); streamTimer = null; }}
                 renderLLMResult(data.result, jobId);
@@ -799,7 +799,7 @@ async def llm_page(request: Request):
         }}
         const rows = runs.map(r => {{
             const date = r.saved_at ? r.saved_at.slice(0,16).replace('T',' ') : '—';
-            const summary = `${{r.model||''}} · ${{r.task||''}} · ${{r.mwh_per_token}} mWh/tok · ${{r.tokens_per_sec}} tok/s ${{r.confidence ? '<span class="conf-badge">'+r.confidence+'</span>' : ''}}`;
+            const summary = `${{r.host||'GoS1'}} · ${{r.model||''}} · ${{r.task||''}} · ${{r.mwh_per_token}} mWh/tok · ${{r.tokens_per_sec}} tok/s ${{r.confidence ? '<span class="conf-badge">'+r.confidence+'</span>' : ''}}`;
             const base = '/results/llm/' + r.job_id;
             const savedAt = r.saved_at || '';
             return `<div style="border-bottom:1px solid var(--panel);padding:0.6rem 0">

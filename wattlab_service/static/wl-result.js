@@ -267,6 +267,33 @@
       + 'Machine: <span style="color:var(--text-1)">' + (h.label || h.id) + hw + '</span></div>';
   }
 
+  // CR-085 — machine line for any result (pre-v2 results have no host: GoS1).
+  function wlHostLine(r){
+    var h = (r && r.host) || {label: 'GoS1'};
+    return '<div style="color:var(--text-3);font-size:0.74rem;margin:0.35rem 0">Machine: <span style="color:var(--text-1)">'
+      + (h.label || h.id) + (h.chip ? ' (' + h.chip + ')' : '') + '</span></div>';
+  }
+  window.wlHostLine = wlHostLine;
+
+  // CR-037 anchor, re-worded (owner 2026-10-05): "≈ the energy of encoding N
+  // minutes of HD video" — no codec in the visible line (detail in the
+  // tooltip). Rendered from the stored ratio so old results update too.
+  // Omitted for results from another machine: the reference encode was
+  // measured on GoS1, so a cross-machine multiple would mislead.
+  function wlAnchorLine(e, r, style){
+    var vr = e && e.video_relative;
+    if (!vr || !vr.ratio || (r && r.host && r.host.remote)) return '';
+    var secs = vr.ratio * (vr.source_duration_s || 120);
+    var amt = secs < 60 ? Math.max(1, Math.round(secs)) + ' seconds'
+            : secs < 600 ? (secs / 60).toFixed(1) + ' minutes'
+            : Math.round(secs / 60) + ' minutes';
+    var tip = 'Reference: a 120 s 1080p clip hardware-encoded on GoS1 = ' + vr.baseline_wh + ' Wh (pinned canonical encode). This run = '
+            + vr.ratio.toFixed(2) + '× that.';
+    return '<div title="' + tip + '" style="' + (style || 'margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)')
+         + '">This run ≈ the energy of encoding ' + amt + ' of HD video</div>';
+  }
+  window.wlAnchorLine = wlAnchorLine;
+
   function _wlVideoSingleRich(r){
     var e = r.energy;
     if (!e) return _wlBadRecord('Video', r);
@@ -665,7 +692,7 @@
                 ? wlCarbonStrip(bestE.delta_e_wh, (r.model_label || '') + ' · best of CPU vs GPU',
                                 bestE.delta_t_s, bestSavedG, subRuns)
                 : '')
-            + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
+            + '<p class="scope-note">' + (r.scope || 'Device layer only (GoS1). No amortised training cost.') + '</p>'
             + '</div>';
     } else {
       // single or batch summary
@@ -700,7 +727,8 @@
             + '</div>'
             + '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + ' · '
             + (r.model_label || '') + ' · ' + modeNote + '</div>'
-            + (e.video_relative ? '<div style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)">This run ' + e.video_relative.text + '</div>' : '')
+            + wlHostLine(r)
+            + wlAnchorLine(e, r, 'margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)')
             + (inf && inf.response ? '<div class="response-preview">' + inf.response + '</div>' : '')
             + wlCarbonStrip(e.delta_e_wh, stripLabel, e.delta_t_s, savedG)
             + '<p class="scope-note">Device layer only (GoS1). No amortised training cost.</p>'
@@ -1001,7 +1029,8 @@
             +   '<div class="kpi"><div class="val">' + _f(e.delta_w,1) + ' W</div><div class="lbl">delta above idle</div></div>'
             + '</div>'
             + '<div class="conf-badge">' + e.confidence.flag + ' ' + e.confidence.label + '</div>'
-            + (e.video_relative ? '<div style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)">This run ' + e.video_relative.text + '</div>' : '')
+            + wlHostLine(r)
+            + wlAnchorLine(e, r, 'margin-top:0.5rem;font-size:0.78rem;color:var(--text-3)')
             + imgHtml
             + wlCarbonStrip(wh, (r.model_label || 'Image generation') + ' · single', e.delta_t_s, savedG)
             + '</div>';

@@ -700,7 +700,7 @@ async def video_page(request: Request):
                 fetch('/power').catch(() => null),
             ]);
             const data = await resp.json();
-            const watts = powerR ? (await powerR.json().catch(()=>({{}}))).watts ?? null : null;
+            const watts = wlLiveWatts(data, powerR ? (await powerR.json().catch(()=>({{}}))).watts ?? null : null);
             if (data.status === 'done') {{
                 stopProgress();
                 renderResult(data.result, jobId);

@@ -16,7 +16,7 @@ def test_times_vs_video_basic_ratio():
     out = canonical.times_vs_video(ref * 12)
     assert out is not None
     assert round(out["ratio"]) == 12
-    assert "120 s 1080p" in out["text"]
+    assert "of HD video" in out["text"] and "H.265" not in out["text"]   # re-worded 2026-10-05
     assert out["baseline_wh"] == ref
 
 
