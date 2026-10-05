@@ -152,7 +152,13 @@ async def peer_result(job_type: str, job_id: str):
     p = _result_path(job_type, job_id)
     if p is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    return json.loads(p.read_text())
+    d = json.loads(p.read_text())
+    if not (d.get("host") or {}).get("id"):
+        # Pre-envelope-v2 results carry no host: by construction they are this
+        # node's (GoS1). Make the read-time default explicit for the importer.
+        d["host"] = hosts.result_host(d)
+        d["host_inferred"] = True
+    return d
 
 
 @router.get("/peer/results/{job_type}", dependencies=_DEPS)
@@ -170,7 +176,22 @@ async def peer_result_index(job_type: str, since: str = ""):
             d = json.loads(f.read_text())
         except Exception:
             continue
-        if (d.get("host") or {}).get("id") != me or (since and str(d.get("saved_at", "")) <= since):
+        if hosts.result_host(d).get("id") != me or (since and str(d.get("saved_at", "")) <= since):
             continue
         out.append({"job_id": d.get("job_id"), "saved_at": d.get("saved_at")})
     return {"host": me, "type": job_type, "results": out}
+
+
+@router.get("/peer/members", dependencies=_DEPS)
+async def peer_members():
+    """Member allowlist for replication to other nodes (one writer — the node
+    whose peers mark it members_source)."""
+    import auth
+    return {"host": hosts.local_host()["id"], "members": auth.list_members()}
+
+
+@router.post("/peer/replicate-now", dependencies=_DEPS)
+async def peer_replicate_now():
+    """Trigger an immediate pull from this node's peers (drills, tests)."""
+    import asyncio, replication
+    return await asyncio.get_event_loop().run_in_executor(None, replication.pull_all)

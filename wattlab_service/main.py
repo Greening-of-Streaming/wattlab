@@ -201,6 +201,9 @@ async def startup():
             pass
     if s.get("run_carbon_poller", True):
         asyncio.create_task(carbon.poller(zones=[carbon.HOME_ZONE]))
+    if s.get("run_replication", True):
+        import replication
+        asyncio.create_task(replication.poller())
     if s.get("run_rag_check", True):
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, rag_module.check_index)

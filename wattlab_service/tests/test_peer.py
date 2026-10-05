@@ -136,3 +136,34 @@ def test_follow_imports_result_and_marks_done(tmp_path, monkeypatch):
     asyncio.run(peer.follow(PEER_HOST, "gos2-22222222", "video", jobs))
     assert jobs["gos2-22222222"]["status"] == "done"
     assert (tmp_path / "video" / "2026-10-06_gos2-22222222.json").exists()
+
+
+def test_pre_v2_results_export_with_inferred_host(tmp_path, monkeypatch):
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    (tmp_path / "video").mkdir()
+    (tmp_path / "video" / "2026-05-01_old1.json").write_text(json.dumps(
+        {"job_id": "old1", "saved_at": "2026-05-01T10:00:00", "mode": "single"}))
+    idx = client.get("/peer/results/video", headers=_signed("GET", "/peer/results/video")).json()
+    assert [r["job_id"] for r in idx["results"]] == ["old1"]
+    d = client.get("/peer/results/video/old1", headers=_signed("GET", "/peer/results/video/old1")).json()
+    assert d["host"]["id"] == "gos1" and d["host_inferred"] is True
+
+
+def test_replication_pulls_new_and_skips_existing(tmp_path, monkeypatch):
+    import replication
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    envs = {"gos2-a": {"job_id": "gos2-a", "saved_at": "2026-10-06T01:00:00", "host": {"id": "gos2"}},
+            "gos2-b": {"job_id": "gos2-b", "saved_at": "2026-10-06T02:00:00", "host": {"id": "gos2"}}}
+    def fake_call(h, method, path, payload=None, timeout=15):
+        if path.startswith("/peer/results/video?") or path == "/peer/results/video":
+            return {"results": [{"job_id": k, "saved_at": v["saved_at"]} for k, v in envs.items()]}
+        if path.startswith("/peer/results/video/"):
+            return envs[path.rsplit("/", 1)[1]]
+        return {"results": []}
+    monkeypatch.setattr(peer, "call", fake_call)
+    monkeypatch.setattr(peer, "online", lambda h: True)
+    assert replication.pull_once("gos2", PEER_HOST)["video"] == 2
+    assert replication.pull_once("gos2", PEER_HOST)["video"] == 0          # idempotent
+    assert len(list((tmp_path / "video").glob("*.json"))) == 2
+    monkeypatch.setattr(peer, "online", lambda h: False)
+    assert replication.pull_once("gos2", PEER_HOST) == {"offline": True}
