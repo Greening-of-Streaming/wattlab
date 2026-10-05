@@ -171,3 +171,34 @@ Ollama digests identical on both hosts (qwen3:8b 500a1f067a9f).
 per token** than the RTX 5080 while running **3.4–4.7× slower**; MLX on the same Mac takes a further
 **26–47 % off**. Whole-machine, the M6+MLX is **3.4–4.7× cheaper per token**. Every engine scales roughly
 with parameter count.
+
+
+### 3b. Image re-test — warm-model sessions (owner challenge, 2026-10-05) — **supersedes §3's per-image claims**
+
+Owner: "Are we sure we're not confounding model load times?" — yes, we were. New method (`POST /image/session`,
+same runner script on both hosts): load + 2 warm-up images outside the window, 30 s settle, warm baseline, then
+4 prompts × 25 images, window = generation only. n = 3, all 🟢 (`session_manifest.jsonl`).
+
+| Wh / image | Bench (§3, old) | Session, whole window | Session, steady state (blocks 2–4) | s / image |
+|---|---|---|---|---|
+| SANA-Sprint 1024 px — RTX 5080 | 0.0140 | 0.0163 ± 0.0001 (+16 %) | **0.0175 ± 0.0002** | 0.269 |
+| SANA-Sprint 1024 px — M6 | 0.0146 | 0.0154 ± 0.0004 (+5 %) | **0.0157 ± 0.0005 (−10 % vs RTX)** | 1.798 |
+| SDXL-Turbo 512 px — RTX 5080 | 0.0105 | 0.0125 ± 0.0001 (+19 %) | **0.0136 ± 0.0001** | 0.225 |
+| SDXL-Turbo 512 px — M6 | 0.0085 | 0.0091 ± 0.0001 (+7 %) | **0.0093 ± 0.0001 (−31 % vs RTX)** | 1.026 |
+
+Jobs: SANA GoS1 89f7ba16, b87d1d53, 939e5e29 · GoS2 gos2-7b4209cf, gos2-b17ab828, gos2-b376d791 ·
+SDXL GoS1 3cc0f76c, 3e8c9114, 521de028 · GoS2 gos2-131eebb1, gos2-c0d07b7e, gos2-f928b53f.
+
+What we learned:
+1. **Load dilution was material and biased toward the RTX** (+16–19 % on GoS1 vs +5–7 % on GoS2 once removed).
+   The SANA-Sprint "tie" becomes **M6 −10 %**; SDXL-Turbo **M6 −31 %**. Whole machine: M6 1.4× / 1.8× cheaper.
+2. **Warm vs cold idle: no difference after a 30 s settle** (GoS1 74.5 vs 75.6 W, GoS2 1.3 vs 1.5 W). The +34 W
+   seen in a 10 s-settle smoke test was GPU clocks still decaying after warm-up — settle ≥ 30 s.
+3. **Prompt complexity is a non-factor** (control confirmed): identical time per prompt block on both machines,
+   including a prompt longer than CLIP's 77-token window and a text-rendering prompt.
+4. **Meter ramp:** the first prompt block reads 9–27 % low (RTX 22–27 %, M6 9–12 %) with identical time — the P110 lags the power step.
+   Steady state (blocks 2–4) is the better estimate; it matters more for short windows (RTX).
+
+Candidate post line, revised: *"Same model, same script, model already loaded: a 1024-pixel SANA-Sprint image
+took 0.0175 Wh on an NVIDIA RTX 5080 and 0.0157 Wh on an Apple M6 Mac mini (energy above idle, n = 3) — 10 %
+less on the Mac, which took 1.8 s per image against the RTX's 0.27 s."*
