@@ -132,20 +132,23 @@ def image_panel_html(request) -> str:
             blocks.append(_block(h, hid, f'<button class="remote-btn" onclick="runRemoteImage(\'{hid}\')">'
                                          f'Generate on {h.get("label", hid)} GPU (same model files as GoS1)</button>'
                                          + _pair_box(hid, "GPU") +
-                                         f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.35rem">Always the GPU path. '
-                                         f'Tick the box to queue the same model + prompt on GoS1\'s GPU for a like-for-like pair '
-                                         f'(the page\'s own default is CPU).</div>'))
+                                         f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.35rem">GPU path, clean method: model loaded '
+                                         f'and warmed up first, 30 s settle, then ≥30 s of generation measured (~75 s per run). '
+                                         f'Tick the box to run the same on GoS1\'s GPU for a like-for-like pair.</div>'))
     if not blocks:
         return ""
     js = """<script>
 async function runRemoteImage(host) {
-  let body = 'host=' + encodeURIComponent(host) + '&model_key=' + encodeURIComponent(selectedModelKey);
+  // Clean method (owner 2026-10-05): warm-model session — load + warm-up
+  // outside the window, 30 s settle, then ≥30 s of generation-only measurement.
+  const SESSION = '&per_prompt=5&settle_s=30&target_s=30';
+  let body = 'host=' + encodeURIComponent(host) + '&model_key=' + encodeURIComponent(selectedModelKey) + SESSION;
   // Send the prompt box like startMeasurement() does (bug 2026-10-05: the
   // remote button always fell back to the canonical prompt).
   const promptEl = document.getElementById('prompt');
   const prompt = promptEl ? promptEl.value.trim() : '';
   if (CAN_CUSTOM_PROMPT && prompt) body += '&prompt=' + encodeURIComponent(prompt);
-  const resp = await fetch('/image/remote', {method: 'POST',
+  const resp = await fetch('/image/session', {method: 'POST',
       headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body});
   const data = await resp.json().catch(() => ({}));
   if (data.error || !data.job_id) { alert(data.error || ('HTTP ' + resp.status)); return; }
@@ -154,12 +157,12 @@ async function runRemoteImage(host) {
   pollTimer = setInterval(() => pollJob(data.job_id), 1500);
   const also = document.getElementById('also-local-' + host);
   if (also && also.checked) {
-    let b2 = 'device=gpu&model_key=' + encodeURIComponent(selectedModelKey);
+    let b2 = 'host=local&model_key=' + encodeURIComponent(selectedModelKey) + SESSION;
     if (CAN_CUSTOM_PROMPT && prompt) b2 += '&prompt=' + encodeURIComponent(prompt);
-    const d2 = await (await fetch('/image/start', {method: 'POST',
+    const d2 = await (await fetch('/image/session', {method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: b2})).json().catch(() => ({}));
     if (d2.job_id) owlPairRun('image', d2.job_id, wlRenderImageCard);
   }
 }
 </script>"""
-    return _wrap(blocks, "runs the model + prompt selected above on the GPU path") + _PAIR_JS + js
+    return _wrap(blocks, "runs the model + prompt selected above · warm-model session") + _PAIR_JS + js

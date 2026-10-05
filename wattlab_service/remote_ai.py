@@ -329,9 +329,10 @@ def per_prompt_breakdown(readings, events, t_go: float, w_base: float,
     delimited by the arrival time (GoS1 clock) of each prompt's last image
     event; prompt 0 starts at GO. Coarse when a span holds few meter polls —
     `polls` is reported so the reader can judge."""
-    ends = {}
+    ends, counts = {}, {}
     for t, p in events:
         ends[p] = t
+        counts[p] = counts.get(p, 0) + 1
     out, start = [], t_go
     for p in range(n_prompts):
         end = ends.get(p)
@@ -340,16 +341,18 @@ def per_prompt_breakdown(readings, events, t_go: float, w_base: float,
         ws = [w for (t, w) in readings if start <= t <= end]
         dur = end - start
         dw = (sum(ws) / len(ws) - w_base) if ws else None
-        out.append({"prompt_idx": p, "span_s": round(dur, 3), "polls": len(ws),
+        k = counts.get(p) or per_prompt
+        out.append({"prompt_idx": p, "span_s": round(dur, 3), "polls": len(ws), "images": k,
                     "delta_w": round(dw, 2) if dw is not None else None,
-                    "wh_per_image": round(dw * dur / 3600 / per_prompt, 5) if dw is not None else None})
+                    "wh_per_image": round(dw * dur / 3600 / k, 5) if dw is not None else None})
         start = end
     return out
 
 
 async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
                             job_id: str = None, per_prompt: int = 25,
-                            settle_s: int = 30, prompts: list = None) -> dict:
+                            settle_s: int = 30, prompts: list = None,
+                            target_s: float = 0) -> dict:
     import curated
     import sys
     local = host_id == "local"
@@ -364,7 +367,7 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
     prompts = list(prompts or curated.IMAGE_SESSION_PROMPTS)
     s = cfg.load()
     args = {"mode": "session", "repo": cfg_m["repo"], "prompts": prompts,
-            "per_prompt": int(per_prompt), "warmup": 2, "seed": 1234,
+            "per_prompt": int(per_prompt), "target_s": float(target_s), "warmup": 2, "seed": 1234,
             "steps": cfg_m["gpu_steps"], "size_px": cfg_m["size_px"],
             "fp16_variant": bool(cfg_m.get("fp16_variant")),
             "torch_dtype": cfg_m.get("torch_dtype", "float16"),
@@ -491,7 +494,8 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
         "baseline_cold": {"w_base": cold["w_base"], "samples_w": cold["baseline_samples_w"]},
         "baseline_warm": {"w_base": warm["w_base"], "samples_w": warm["baseline_samples_w"]},
         "generation": {"gen_s": round(window_s, 3), "gen_s_runner": done["gen_s"],
-                       "batch_size": n, "n_images": n,
+                       "total_s": round(window_s, 2), "load_s": ready.get("load_s"),
+                       "batch_size": n, "n_images": n, "target_s": float(target_s),
                        "gen_s_per_image": round(window_s / n, 4),
                        "per_prompt_s": done["per_prompt_s"], "device": done["device"],
                        "size": cfg_m["size_px"], "steps": cfg_m["gpu_steps"],

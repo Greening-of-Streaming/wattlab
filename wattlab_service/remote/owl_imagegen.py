@@ -108,16 +108,23 @@ def session(a):
         if line.strip() == "GO":
             break
     per_prompt = int(a["per_prompt"])
-    spans, last = [], None
+    # target_s (Lab buttons, 2026-10-05): keep going until the measured window
+    # reaches target_s, so a fast GPU gets as many meter polls as a slow one.
+    # per_prompt is then the minimum per prompt.
+    target_s = float(a.get("target_s") or 0)
+    spans, last, n = [], None, 0
     t_go = time.time()
     for p_idx, prompt in enumerate(prompts):
         t_p = time.time()
-        for k in range(per_prompt):
+        p_target = target_s * (p_idx + 1) / len(prompts)
+        k = 0
+        while k < per_prompt or (target_s and time.time() - t_go < p_target):
             last = _gen(torch, pipe, device, a, prompt, seed + p_idx * 1000 + k)
             print(json.dumps({"ev": "img", "p": p_idx, "k": k}), flush=True)
+            k += 1
+        n += k
         spans.append(round(time.time() - t_p, 3))
     gen_s = round(time.time() - t_go, 3)
-    n = per_prompt * len(prompts)
     buf = io.BytesIO()
     last.resize((256, 256)).save(buf, format="PNG")
     print(json.dumps({"ev": "done", "gen_s": gen_s, "n_images": n,

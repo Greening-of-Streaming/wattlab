@@ -361,7 +361,7 @@ def test_remote_image_panel_offers_gos1_pair_tickbox(monkeypatch):
     monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**GOS2, "python": "/p"}})
     html = client.get("/image", headers=_LAB).text
     assert 'id="also-local-gos2"' in html and "checked" not in html.split('id="also-local-gos2"')[1][:20]
-    assert "device=gpu&model_key=" in html          # companion run is forced to the GPU path
+    assert "host=local&model_key=" in html and "/image/session" in html   # clean session on both sides
 
 
 def test_llm_panel_offers_gos1_pair_tickbox(monkeypatch):
