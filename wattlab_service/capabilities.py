@@ -70,6 +70,8 @@ RIG_CONTROL        = "rig_control"         # /decode — client-decode rig power
 VIDEO_REMOTE_RUN   = "video_remote_run"    # CR-085 — launch encodes on another compute host (GoS2, …)
                                            # from /video. Lab-only at launch (owner, 2026-10-04); widen
                                            # here, nowhere else.
+AI_REMOTE_RUN      = "ai_remote_run"       # CR-085 Part 3 — LLM inference / image generation on another
+                                           # compute host. Lab-only at launch; widen here, nowhere else.
 LAB_SESSION_TOGGLE = "lab_session_toggle"  # raise/lower the lab-session flag from /queue-status —
                                            # UI twin of bin/lab-session-on|off. CR-083 widened it to
                                            # the reservations calendar (/lab-session/reserve, …/delete,
@@ -115,6 +117,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     RIG_CONTROL:        Tier.Lab,
     LAB_SESSION_TOGGLE: Tier.Lab,
     VIDEO_REMOTE_RUN:   Tier.Lab,
+    AI_REMOTE_RUN:      Tier.Lab,
 }
 
 

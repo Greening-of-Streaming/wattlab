@@ -14,7 +14,7 @@ import audience
 import curated
 import queue_control
 import ui
-from capabilities import (requires, can, gate,
+from capabilities import (requires, can, gate, AI_REMOTE_RUN,
                           BATCH_COMPARE, CUSTOM_PROMPT, IMAGE_RUN,
                           PUBLIC_PAGE, QUEUE_VIEW)
 from image_gen import (run_image_measurement, run_image_both_measurement,
@@ -727,6 +727,37 @@ async def image_start(request: Request,
             LOCK_FILE.unlink(missing_ok=True)
         except Exception as e:
             jobs[job_id]["error"] = str(e)
+            LOCK_FILE.unlink(missing_ok=True)
+
+    position = queue_control.enqueue(job_id, "image", label, coro, request=request)
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}
+
+
+@router.post("/image/remote", dependencies=[Depends(requires(AI_REMOTE_RUN))])
+async def image_remote(request: Request, host: str = Form(...),
+                       model_key: str = Form("sd-turbo"), prompt: str = Form(None)):
+    """CR-085 Part 3 — accelerator image generation on a remote compute host,
+    same model/steps/batch/size as GoS1's GPU path."""
+    import hosts, remote_ai
+    h = hosts.get(host)
+    if h is None or not h.get("python"):
+        return JSONResponse({"error": f"'{host}' is not an image-generation host"}, status_code=400)
+    if model_key not in IMAGE_MODELS:
+        return JSONResponse({"error": f"Unknown model: {model_key}"}, status_code=400)
+    prompt = (prompt or "").strip() or curated.CANONICAL_IMAGE_PROMPT
+    job_id = f"{host}-{uuid.uuid4().hex[:8]}"
+    label = f"Image ({IMAGE_MODELS[model_key]['label']} · {h.get('label', host)}) — {prompt[:35]}"
+
+    async def coro():
+        try:
+            jobs[job_id].update({"status": "running", "stage": "starting"})
+            result = await remote_ai.run_remote_image(prompt, job_id, host, model_key, jobs)
+            save_result("image", job_id, result)
+            jobs[job_id].update({"status": "done", "stage": "done", "result": result})
+        except Exception as e:
+            jobs[job_id].update({"status": "error", "stage": "error", "error": str(e)})
             LOCK_FILE.unlink(missing_ok=True)
 
     position = queue_control.enqueue(job_id, "image", label, coro, request=request)

@@ -926,6 +926,7 @@ async def run_on_remote_host(
     codec: str = Form(...),
     engine: str = Form(...),          # registry engine id, or "both" (CPU vs hardware)
     compute_vmaf: str = Form(""),
+    bitrate_kbps: int = Form(None),   # optional ladder override (iso-quality points), 200–50000
 ):
     """CR-085 — encode a preloaded source on a remote compute host."""
     h = hosts.get(host)
@@ -935,6 +936,8 @@ async def run_on_remote_host(
         return JSONResponse({"error": "Invalid codec"}, status_code=400)
     if engine != "both" and not hosts.codec_spec(h, engine, codec):
         return JSONResponse({"error": f"{h.get('label', host)} has no {engine} engine for {codec}"}, status_code=400)
+    if bitrate_kbps is not None and not 200 <= bitrate_kbps <= 50000:
+        return JSONResponse({"error": "bitrate_kbps must be 200–50000"}, status_code=400)
     source = PRELOADED.get(source_key)
     if not source or not source["path"].exists():
         return JSONResponse({"error": f"Source '{source_key}' not found"}, status_code=404)
@@ -947,7 +950,8 @@ async def run_on_remote_host(
         try:
             jobs[job_id].update({"status": "running", "stage": "starting"})
             result = await remote_video.run_remote(source["path"], job_id, host, codec,
-                                                   engine, jobs, vmaf_override=vmaf_override)
+                                                   engine, jobs, vmaf_override=vmaf_override,
+                                                   bitrate_kbps=bitrate_kbps)
             entry = PRELOADED.get(source_key) or {}
             result["source"] = {"key": source_key, "parent": entry.get("_parent")}
             save_result("video", job_id, result)

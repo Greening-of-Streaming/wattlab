@@ -122,15 +122,16 @@ def read_sensors() -> dict:
 
 # --- Ollama helpers ---
 
-def unload_model(model: str):
-    """Force Ollama to unload model from VRAM before baseline measurement."""
+def unload_model(model: str, url: str = None):
+    """Force Ollama to unload model from VRAM before baseline measurement.
+    `url` (CR-085) targets a remote host's Ollama; default = local."""
     import urllib.request, json
     payload = json.dumps({
         "model": model,
         "keep_alive": 0
     }).encode()
     req = urllib.request.Request(
-        "http://localhost:11434/api/generate",
+        url or OLLAMA_URL,
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST"
@@ -183,14 +184,15 @@ def loaded_models() -> list:
 # --- Ollama inference ---
 
 def run_inference_streaming(model: str, prompt: str, on_token=None,
-                            num_gpu: int = -1) -> dict:
-    """Stream inference token by token. num_gpu=0 forces CPU; -1 = Ollama default (GPU)."""
+                            num_gpu: int = -1, url: str = None) -> dict:
+    """Stream inference token by token. num_gpu=0 forces CPU; -1 = Ollama default (GPU).
+    `url` (CR-085) targets a remote host's Ollama; default = local."""
     payload_dict = {"model": model, "prompt": prompt, "stream": True}
     if num_gpu == 0:
         payload_dict["options"] = {"num_gpu": 0}
     payload = json.dumps(payload_dict).encode()
     req = urllib.request.Request(
-        OLLAMA_URL, data=payload,
+        url or OLLAMA_URL, data=payload,
         headers={"Content-Type": "application/json"}, method="POST"
     )
     t_start = time.time()

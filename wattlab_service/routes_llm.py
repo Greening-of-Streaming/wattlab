@@ -18,7 +18,7 @@ import audience
 import queue_control
 import settings as cfg
 import ui
-from capabilities import (requires, can, gate,
+from capabilities import (AI_REMOTE_RUN, requires, can, gate,
                           BATCH_COMPARE, CUSTOM_PROMPT, LLM_RUN,
                           PUBLIC_PAGE, QUEUE_VIEW)
 from llm import (run_llm_measurement, run_llm_batch_measurement,
@@ -1693,3 +1693,39 @@ async def llm_compare_page(request: Request):
 @router.get("/llm/job/{job_id}", dependencies=[Depends(requires(QUEUE_VIEW))])
 async def llm_job_status(job_id: str):
     return _job_status(job_id)
+
+
+@router.post("/llm/remote", dependencies=[Depends(requires(AI_REMOTE_RUN))])
+async def llm_remote(request: Request, host: str = Form(...),
+                     model_key: str = Form(...), task_key: str = Form("T2"),
+                     runtime: str = Form("ollama")):
+    """CR-085 Part 3 — cold-start inference on a remote host's Ollama (GPU/Metal),
+    same model tag, task prompt and arithmetic as GoS1's /llm/run."""
+    import hosts, remote_ai
+    h = hosts.get(host)
+    if runtime not in ("ollama", "mlx"):
+        return JSONResponse({"error": "runtime must be ollama or mlx"}, status_code=400)
+    if h is None or (runtime == "ollama" and not h.get("ollama")) or \
+            (runtime == "mlx" and model_key not in (h.get("mlx_models") or {})):
+        return JSONResponse({"error": f"'{host}' cannot run {model_key} on {runtime}"}, status_code=400)
+    if model_key not in MODELS:
+        return JSONResponse({"error": "Invalid model"}, status_code=400)
+    if task_key not in TASKS:
+        return JSONResponse({"error": "Invalid task"}, status_code=400)
+    job_id = f"{host}-{str(uuid.uuid4())[:8]}"
+    label = f"LLM — {MODELS[model_key]['label']} · {TASKS[task_key]['label']} · {h.get('label', host)} · {runtime}"
+
+    async def coro():
+        try:
+            jobs[job_id].update({"status": "running", "stage": "baseline", "partial_response": ""})
+            result = await remote_ai.run_remote_llm(model_key, task_key, job_id, host, jobs,
+                                                    runtime=runtime)
+            save_result("llm", job_id, result)
+            jobs[job_id].update({"status": "done", "stage": "done", "result": result})
+        except Exception as e:
+            jobs[job_id] = {"status": "error", "stage": "error", "error": str(e)}
+
+    position = queue_control.enqueue(job_id, "llm", label, coro, request=request)
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}

@@ -180,3 +180,51 @@ def test_analyse_accepts_remote_shaped_sides():
                 "energy": {"delta_e_wh": wh, "delta_t_s": t, "delta_w": 30.0, "w_base": 1.35, "w_task": 31.35, "confidence": {"flag": "🟢"}}}
     a = analyse(side("gos2_h264_cpu", 0.5, 40.0), side("gos2_h264_gpu", 0.17, 20.0))
     assert a["energy_winner"] == "GPU" and a["finding"]
+
+
+# --- Part 3: remote AI routes ------------------------------------------------------
+
+def test_remote_ai_routes_are_lab_only(registry):
+    assert client.post("/image/remote", headers=_ANON,
+                       data={"host": "gos2", "model_key": "sd-turbo"}).status_code == 403
+    assert client.post("/llm/remote", headers=_ANON,
+                       data={"host": "gos2", "model_key": "x", "task_key": "T2"}).status_code == 403
+
+
+def test_remote_ai_routes_need_capable_host(registry):
+    # GOS2 test entry declares neither "python" nor "ollama"
+    assert client.post("/image/remote", headers=_LAB,
+                       data={"host": "gos2", "model_key": "sd-turbo"}).status_code == 400
+    assert client.post("/llm/remote", headers=_LAB,
+                       data={"host": "gos2", "model_key": "x", "task_key": "T2"}).status_code == 400
+
+
+def test_llm_url_param_defaults_to_local(monkeypatch):
+    import llm
+    seen = {}
+    class _Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def __iter__(self): return iter([b'{"response":"hi","done":true,"eval_count":1,"prompt_eval_count":1}'])
+    def fake_urlopen(req, timeout=0):
+        seen["url"] = req.full_url
+        return _Resp()
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+    llm.run_inference_streaming("m", "p")
+    assert seen["url"] == llm.OLLAMA_URL
+    llm.run_inference_streaming("m", "p", url="http://127.0.0.1:5555/api/generate")
+    assert seen["url"].startswith("http://127.0.0.1:5555")
+
+
+def test_llm_remote_runtime_validation(monkeypatch):
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**GOS2, "ollama": True,
+                        "mlx_models": {"qwen3:4b": "mlx-community/Qwen3-4B-4bit"}}})
+    bad = client.post("/llm/remote", headers=_LAB, data={
+        "host": "gos2", "model_key": "qwen3:4b", "task_key": "T2", "runtime": "vllm"})
+    assert bad.status_code == 400
+    import routes_llm
+    monkeypatch.setattr(routes_llm, "MODELS", {"qwen3:4b": {"label": "Qwen3 4B"},
+                                               "qwen3:1.7b": {"label": "Qwen3 1.7B"}})
+    no_mlx = client.post("/llm/remote", headers=_LAB, data={
+        "host": "gos2", "model_key": "qwen3:1.7b", "task_key": "T2", "runtime": "mlx"})
+    assert no_mlx.status_code == 400

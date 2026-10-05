@@ -71,9 +71,9 @@ async def _baseline(host: dict, polls: int) -> dict:
 
 async def _encode_once(host: dict, engine_id: str, codec: str, in_rel: str,
                        input_path: Path, job_id: str, baseline: dict,
-                       jobs: Optional[dict]) -> dict:
+                       jobs: Optional[dict], bitrate_kbps: Optional[int] = None) -> dict:
     s = cfg.load()
-    bps = int(s[_BPS_KEY[codec]])
+    bps = int(bitrate_kbps or s[_BPS_KEY[codec]])
     gop = int(s.get("encode_gop_frames", 120))
     key = preset_key(host["id"], codec, engine_id)
     eng = hosts.engine(host, engine_id)
@@ -163,7 +163,10 @@ def _scope(host: dict) -> str:
 
 async def run_remote(input_path: Path, job_id: str, host_id: str, codec: str,
                      engine_id: str, jobs: dict = None,
-                     vmaf_override: Optional[bool] = None) -> dict:
+                     vmaf_override: Optional[bool] = None,
+                     bitrate_kbps: Optional[int] = None) -> dict:
+    """`bitrate_kbps` (Lab) overrides the codec's ladder bitrate — used for
+    iso-quality operating points; recorded as `bitrate_override_kbps`."""
     """One remote job. `engine_id` = a registry engine id, or "both" for the
     host's CPU engine then its hardware engine (the "both" result shape, so
     the existing pair renderer and analyse() apply unchanged)."""
@@ -207,14 +210,15 @@ async def run_remote(input_path: Path, job_id: str, host_id: str, codec: str,
             baselines.append(baseline)
             if jobs is not None: jobs[job_id]["stage"] = f"{eid}_encode"
             sides.append(await _encode_once(host, eid, codec, inp["rel"], input_path,
-                                            job_id, baseline, jobs))
+                                            job_id, baseline, jobs, bitrate_kbps))
     finally:
         LOCK_FILE.unlink(missing_ok=True)
 
     await _attach_vmaf(sides, Path(input_path), job_id, s, jobs)
     common = {"job_id": job_id, "host": hosts.identity(host),
               "input": {"name": Path(input_path).name, "sha256": inp["sha256"]},
-              "remote_focus": "none", "scope": _scope(host)}
+              "remote_focus": "none", "scope": _scope(host),
+              **({"bitrate_override_kbps": int(bitrate_kbps)} if bitrate_kbps else {})}
     if len(sides) == 1:
         return {"mode": "single", "baseline": baselines[0], "result": sides[0], **common}
     analysis = analyse(sides[0], sides[1])
