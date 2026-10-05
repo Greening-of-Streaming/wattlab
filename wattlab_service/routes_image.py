@@ -764,3 +764,41 @@ async def image_remote(request: Request, host: str = Form(...),
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
+
+
+@router.post("/image/bench", dependencies=[Depends(requires(AI_REMOTE_RUN))])
+async def image_bench(request: Request, host: str = Form("local"),
+                      model_key: str = Form("sd-turbo"), batch: int = Form(50)):
+    """CR-085 Lab bench — GPU image generation with a batch override, on the
+    local host ("local") or a remote compute host, so cross-host comparisons
+    run long enough for the generation window to dominate model load."""
+    import hosts, remote_ai
+    from image_gen import run_image_bench_local
+    if model_key not in IMAGE_MODELS:
+        return JSONResponse({"error": f"Unknown model: {model_key}"}, status_code=400)
+    if not 1 <= batch <= 100:
+        return JSONResponse({"error": "batch must be 1–100"}, status_code=400)
+    if host != "local":
+        h = hosts.get(host)
+        if h is None or not h.get("python"):
+            return JSONResponse({"error": f"'{host}' is not an image-generation host"}, status_code=400)
+    prompt = curated.CANONICAL_IMAGE_PROMPT
+    job_id = f"{host}-{uuid.uuid4().hex[:8]}" if host != "local" else uuid.uuid4().hex[:8]
+    label = f"Image bench ({IMAGE_MODELS[model_key]['label']} ×{batch} · {host})"
+
+    async def coro():
+        try:
+            jobs[job_id].update({"status": "running", "stage": "starting"})
+            result = (await run_image_bench_local(prompt, job_id, jobs, model_key, batch)
+                      if host == "local" else
+                      await remote_ai.run_remote_image(prompt, job_id, host, model_key, jobs, batch=batch))
+            save_result("image", job_id, result)
+            jobs[job_id].update({"status": "done", "stage": "done", "result": result})
+        except Exception as e:
+            jobs[job_id].update({"status": "error", "stage": "error", "error": str(e)})
+            LOCK_FILE.unlink(missing_ok=True)
+
+    position = queue_control.enqueue(job_id, "image", label, coro, request=request)
+    if position is None:
+        return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+    return {"job_id": job_id, "queue_position": position}

@@ -228,3 +228,9 @@ def test_llm_remote_runtime_validation(monkeypatch):
     no_mlx = client.post("/llm/remote", headers=_LAB, data={
         "host": "gos2", "model_key": "qwen3:1.7b", "task_key": "T2", "runtime": "mlx"})
     assert no_mlx.status_code == 400
+
+
+def test_image_bench_is_lab_only_and_validated(registry):
+    assert client.post("/image/bench", headers=_ANON, data={"host": "local"}).status_code == 403
+    assert client.post("/image/bench", headers=_LAB, data={"host": "local", "batch": 500}).status_code == 400
+    assert client.post("/image/bench", headers=_LAB, data={"host": "gos2", "batch": 10}).status_code == 400  # no python

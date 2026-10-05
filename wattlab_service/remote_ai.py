@@ -68,7 +68,8 @@ def _remote_generate(host: dict, args: dict) -> dict:
 
 
 async def run_remote_image(prompt: str, job_id: str, host_id: str,
-                           model_key: str = "sd-turbo", jobs: dict = None) -> dict:
+                           model_key: str = "sd-turbo", jobs: dict = None,
+                           batch: int = None) -> dict:
     host = hosts.get(host_id)
     if host is None:
         raise ValueError(f"unknown or disabled host '{host_id}'")
@@ -81,7 +82,7 @@ async def run_remote_image(prompt: str, job_id: str, host_id: str,
     modifier = random.choice(image_gen.PROMPT_MODIFIERS)
     full_prompt = f"{prompt}, {modifier}"
     args = {"repo": cfg_m["repo"], "prompt": full_prompt, "steps": cfg_m["gpu_steps"],
-            "size_px": cfg_m["size_px"], "batch": cfg_m["gpu_batch"], "seed": None,
+            "size_px": cfg_m["size_px"], "batch": int(batch or cfg_m["gpu_batch"]), "seed": None,
             "fp16_variant": bool(cfg_m.get("fp16_variant"))}
 
     if jobs is not None:
@@ -111,6 +112,7 @@ async def run_remote_image(prompt: str, job_id: str, host_id: str,
         "prompt": prompt, "full_prompt": full_prompt, "modifier": modifier,
         "model_key": model_key, "model_label": cfg_m["label"],
         "generation": gen, "energy": e,
+        **({"bench_batch": int(batch)} if batch else {}),
         "thermals": {"cpu_base": None, "cpu_end": None, "gpu_base": None, "gpu_end": None,
                      "note": "not sampled on remote hosts"},
         "scope": _scope(host, f"GPU (Metal/MPS). Model: {cfg_m['label']} "

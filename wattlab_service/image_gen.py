@@ -694,3 +694,34 @@ def _analyse_image(cpu: dict, gpu: dict) -> dict:
         "speed_diff_pct": speed_diff_pct,
         "finding": finding,
     }
+
+
+async def run_image_bench_local(prompt: str, job_id: str, jobs: dict = None,
+                                model_key: str = "sd-turbo", batch: int = 50) -> dict:
+    """CR-085 — Lab bench: the GPU path with a larger batch so the generation
+    window dominates model load (OWL's convention polls load + generation but
+    divides by generation time only; with GoS1's default 5-image batch the
+    window is ~2 s and load dilutes it). Same steps/size as the GPU preset."""
+    cfg_m = IMAGE_MODELS.get(model_key)
+    if cfg_m is None:
+        raise ValueError(f"Unknown image model: {model_key}")
+    modifier = random.choice(PROMPT_MODIFIERS)
+    full_prompt = f"{prompt}, {modifier}"
+    if jobs is not None:
+        jobs[job_id]["full_prompt"] = full_prompt
+    stopped = focus_mode_enter()
+    LOCK_FILE.write_text(job_id)
+    try:
+        r = await _run_single_image(full_prompt, "gpu", job_id, jobs, "bench", stopped,
+                                    model_key=model_key, steps_override=cfg_m["gpu_steps"],
+                                    batch_override=int(batch))
+    finally:
+        LOCK_FILE.unlink(missing_ok=True)
+        asyncio.get_event_loop().run_in_executor(None, focus_mode_exit, stopped)
+    return {"mode": "gpu", "job_id": job_id, "prompt": prompt, "full_prompt": full_prompt,
+            "modifier": modifier, "model_key": model_key, "model_label": cfg_m["label"],
+            "bench_batch": int(batch), "generation": r["generation"], "energy": r["energy"],
+            "thermals": r["thermals"],
+            "scope": (f"Device layer only (GoS1). GPU ({gpu.BACKEND.device_label()}). "
+                      f"Model: {cfg_m['label']} at {cfg_m['size_px']}px, batch {int(batch)}. "
+                      "No amortised training cost.")}
