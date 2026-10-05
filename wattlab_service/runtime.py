@@ -60,6 +60,7 @@ def watts_age_s():
 
 async def power_poller():
     global _watts_ok_monotonic
+    _fails = 0
     while True:
         try:
             # Back off the meter while paused so a separate measuring process
@@ -67,9 +68,16 @@ async def power_poller():
             if not _PAUSE_FLAG.exists():
                 power_cache["watts"] = await get_power_watts()
                 _watts_ok_monotonic = time.monotonic()
-        except Exception:
+            _fails = 0
+        except Exception as e:
             # Keep the stale value, but leave the timestamp untouched so
             # watts_age_s() grows and /healthz can flag a dead meter path.
+            # CR-085: say so (first failure, then every 60th) — a node whose
+            # meter path is dead (e.g. macOS Local Network privacy) must not
+            # fail silently.
+            _fails += 1
+            if _fails == 1 or _fails % 60 == 0:
+                print(f"WARN power_poller: meter read failed ({_fails}×): {e!r}", flush=True)
             log.debug("power_poller: watts read failed, keeping stale value",
                       exc_info=True)
         await asyncio.sleep(5)
