@@ -372,7 +372,7 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
             "fp16_variant": bool(cfg_m.get("fp16_variant")),
             "torch_dtype": cfg_m.get("torch_dtype", "float16"),
             "guidance_scale": cfg_m.get("guidance_scale", 0.0),
-            "pipeline": cfg_m.get("pipeline"), "device": "cuda" if local else None}
+            "pipeline": cfg_m.get("pipeline"), "device": None}   # runner picks cuda → mps → cpu
     if local:
         cmd = [sys.executable, str(RUNNER_LOCAL), json.dumps(args)]
         env = {**__import__("os").environ, "HF_HUB_OFFLINE": "1"}
