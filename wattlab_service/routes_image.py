@@ -746,6 +746,15 @@ async def image_remote(request: Request, host: str = Form(...),
     same model/steps/batch/size as GoS1's GPU path."""
     import hosts, remote_ai
     h = hosts.get(host)
+    if h is not None and hosts.driver(h) == "peer":
+        import peer
+        if not peer.online(h):
+            return JSONResponse({"error": f"{h.get('label', host)} is offline"}, status_code=503)
+        try:
+            return peer.submit(h, "image", {"model_key": model_key, "prompt": prompt, "device": "gpu"},
+                               "image", jobs)
+        except Exception as e:
+            return JSONResponse({"error": f"{h.get('label', host)}: {e}"}, status_code=502)
     if h is None or not h.get("python"):
         return JSONResponse({"error": f"'{host}' is not an image-generation host"}, status_code=400)
     if model_key not in IMAGE_MODELS:
@@ -825,6 +834,16 @@ async def image_session(request: Request, host: str = Form("local"),
     prompts = [prompt.strip()] if prompt and prompt.strip() else None   # None → curated set
     if host != "local":
         h = hosts.get(host)
+        if h is not None and hosts.driver(h) == "peer":
+            import peer
+            if not peer.online(h):
+                return JSONResponse({"error": f"{h.get('label', host)} is offline"}, status_code=503)
+            try:
+                return peer.submit(h, "image_session",
+                                   {"model_key": model_key, "per_prompt": per_prompt, "settle_s": settle_s,
+                                    "prompt": prompt, "target_s": target_s}, "image", jobs)
+            except Exception as e:
+                return JSONResponse({"error": f"{h.get('label', host)}: {e}"}, status_code=502)
         if h is None or not h.get("python"):
             return JSONResponse({"error": f"'{host}' is not an image-generation host"}, status_code=400)
     job_id = f"{host}-{uuid.uuid4().hex[:8]}" if host != "local" else uuid.uuid4().hex[:8]

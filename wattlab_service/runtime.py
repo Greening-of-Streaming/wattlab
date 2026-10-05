@@ -101,6 +101,10 @@ def job_status(job_id: str) -> dict:
     out = {**job, "watts": power_cache["watts"]}
     # CR-085 — a remote-host job names its primary meter; while it runs, report
     # that meter's latest reading (≤10 s old) instead of GoS1's telemetry.
+    if job.get("peer_host"):
+        # CR-085 Phase 4 — a peer job: the callee reports its own live power.
+        out.update({"watts": job.get("peer_watts"), "watts_host": job["peer_host"]})
+        return out
     ip = job.get("meter_ip")
     if ip:
         import power as _power

@@ -43,7 +43,7 @@ function owlPairRun(kind, jobId, renderCard) {
       clearInterval(t); pair.innerHTML = head + '<div style="color:var(--err)">GoS1 run failed: ' + (j.error || '') + '</div>'; return;
     }
     const w = (p && p.watts != null) ? Number(p.watts).toFixed(1) + ' W' : '—';
-    const st = j.stage === 'queued' ? 'queued (runs after the remote job)' : (j.stage || 'starting');
+    const st = j.stage === 'queued' ? 'queued' : (j.stage || 'starting');
     pair.innerHTML = head + '<div style="font-size:1.6rem;color:var(--accent);font-family:monospace;font-weight:bold">' + w + '</div>'
       + '<div style="color:var(--text-3);font-size:0.72rem">live wall power · GoS1 · ' + st + '</div>';
   }, 2000);
@@ -51,9 +51,29 @@ function owlPairRun(kind, jobId, renderCard) {
 </script>"""
 
 
-def _pair_box(hid: str, what: str) -> str:
+def _pair_box(hid: str, what: str, simultaneous: bool = False) -> str:
+    me = hosts.local_label()
+    txt = f"Run on {me} at the same time ({what})" if simultaneous else f"Run on {me} also ({what})"
     return (f'<label style="color:var(--text-2);font-size:0.78rem;margin-left:0.5rem;cursor:pointer">'
-            f'<input type="checkbox" id="also-local-{hid}"> Run on GoS1 also ({what})</label>')
+            f'<input type="checkbox" id="also-local-{hid}"> {txt}</label>')
+
+
+def offline_block(h: dict, hid: str) -> str:
+    """CR-085: a host that does not answer is shown greyed, never waited on."""
+    sub = " · ".join(x for x in (h.get("chip"), h.get("machine")) if x)
+    return (f'<div class="batch-box" style="padding:0.75rem 1rem;margin-bottom:0.5rem;opacity:0.45">'
+            f'<div style="color:var(--text-3);font-size:0.88rem;font-weight:bold">{h.get("label", hid)} '
+            f'<span style="font-weight:normal;font-size:0.76rem">{sub}</span></div>'
+            f'<div style="color:var(--text-4);font-size:0.75rem;margin-top:0.3rem">⏸ {h.get("label", hid)} is offline — '
+            f'its engines are unavailable; everything on {hosts.local_label()} works as normal.</div></div>')
+
+
+def peer_state(h: dict):
+    """(is_peer, info_or_None). info None for a peer host = offline."""
+    if hosts.driver(h) != "peer":
+        return False, None
+    import peer
+    return True, peer.info({**h})
 
 
 def _wrap(blocks: list, note: str) -> str:
@@ -75,6 +95,13 @@ def llm_panel_html(request) -> str:
         return ""
     blocks, mlx = [], {}
     for hid, h in hosts.remote_hosts().items():
+        is_peer, info = peer_state({**h, "id": hid})
+        if is_peer and info is None:
+            blocks.append(offline_block(h, hid))
+            continue
+        if is_peer:
+            h = {**h, "ollama": bool(info.get("llm_models")),
+                 "mlx_models": {m: True for m in info.get("mlx_models", [])}}
         btns = []
         if h.get("ollama"):
             btns.append(f'<button class="remote-btn" onclick="runRemoteLLM(\'{hid}\',\'ollama\')">'
@@ -84,7 +111,7 @@ def llm_panel_html(request) -> str:
             btns.append(f'<button class="remote-btn" data-mlx-host="{hid}" '
                         f'onclick="runRemoteLLM(\'{hid}\',\'mlx\')">MLX (Apple-native)</button>')
         if btns:
-            btns.append(_pair_box(hid, "GPU, same model + task"))
+            btns.append(_pair_box(hid, "GPU, same model + task", simultaneous=is_peer))
             blocks.append(_block(h, hid, "".join(btns)))
     if not blocks:
         return ""
@@ -128,10 +155,14 @@ def image_panel_html(request) -> str:
         return ""
     blocks = []
     for hid, h in hosts.remote_hosts().items():
-        if h.get("python"):
+        is_peer, info = peer_state({**h, "id": hid})
+        if is_peer and info is None:
+            blocks.append(offline_block(h, hid))
+            continue
+        if is_peer or h.get("python"):
             blocks.append(_block(h, hid, f'<button class="remote-btn" onclick="runRemoteImage(\'{hid}\')">'
                                          f'Generate on {h.get("label", hid)} GPU (same model files as GoS1)</button>'
-                                         + _pair_box(hid, "GPU") +
+                                         + _pair_box(hid, "GPU", simultaneous=is_peer) +
                                          f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.35rem">GPU path, clean method: model loaded '
                                          f'and warmed up first, 30 s settle, then ≥30 s of generation measured (~75 s per run). '
                                          f'Tick the box to run the same on GoS1\'s GPU for a like-for-like pair.</div>'))

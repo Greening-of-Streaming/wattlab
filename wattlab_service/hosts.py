@@ -69,6 +69,12 @@ def local_host() -> dict:
     return {**_LOCAL_DEFAULT, **(s.get("local_host") or {}), "remote": False}
 
 
+def driver(host: dict) -> str:
+    """How this node reaches a host: "peer" (its own OWL via /peer/*, CR-085
+    Phase 4) or "ssh" (interim: GoS1 drives it). Default ssh."""
+    return (host or {}).get("driver", "ssh")
+
+
 def local_label() -> str:
     """This node's name for scope strings ("Device layer only (GoS1)…")."""
     return local_host().get("label", "GoS1")

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Restart GoS2's OWL while it runs under bin/gos2-owl-session (temporary, CR-085):
+# stop the uvicorn ON GoS2; the holder loop starts a fresh one within ~5 s.
+ssh -i /home/gos/.ssh/id_ed25519_gos2 -o IdentitiesOnly=yes -o BatchMode=yes gos@192.168.1.29 \
+  'pkill -f "[u]vicorn main:app"; true'

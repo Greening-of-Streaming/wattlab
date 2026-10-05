@@ -174,8 +174,12 @@ def _remote_mlx(host: dict, repo: str, prompt: str) -> dict:
     wd = host.get("workdir", "owl")
     py = host.get("python", f"{wd}/venv/bin/python")
     args = json.dumps({"repo": repo, "prompt": prompt})
-    r = hosts.run(host, f"cd {shlex.quote(wd)} && HF_HUB_OFFLINE=1 {shlex.quote(py)} "
-                        f"owl_mlxgen.py {shlex.quote(args)}", timeout=1800)
+    cmd = (f"cd {shlex.quote(wd)} && HF_HUB_OFFLINE=1 {shlex.quote(py)} "
+           f"owl_mlxgen.py {shlex.quote(args)}")
+    if host.get("local"):          # CR-085 Phase 4: the node runs MLX itself
+        r = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True, timeout=1800)
+    else:
+        r = hosts.run(host, cmd, timeout=1800)
     if r.returncode != 0:
         raise RuntimeError(f"{host['label']} MLX inference failed: {r.stderr[-400:]}")
     return json.loads(r.stdout.strip().splitlines()[-1])
@@ -507,3 +511,20 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
         "scope": _scope(host, f"GPU, warm model, generation window only. Model: {cfg_m['label']} "
                               f"at {cfg_m['size_px']}px"),
     }
+
+
+
+def local_mlx_host() -> dict:
+    """This node as an MLX 'host' for _run_remote_mlx (CR-085 Phase 4): its own
+    meters, its own runner under ~/owl, results stamped as local."""
+    import os
+    s = cfg.load()
+    lh = hosts.local_host()
+    wd = os.path.expanduser("~/owl")
+    return {**lh, "remote": False, "local": True, "meters": power._meter_ips(),
+            "mlx_models": s.get("local_mlx_models") or {}, "workdir": wd,
+            "python": f"{wd}/venv/bin/python"}
+
+
+async def run_local_mlx(model_key: str, task_key: str, job_id: str, jobs: dict = None) -> dict:
+    return await _run_remote_mlx(model_key, task_key, job_id, local_mlx_host(), jobs)

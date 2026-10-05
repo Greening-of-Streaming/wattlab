@@ -53,10 +53,15 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ENV = dotenv_values(_REPO_ROOT / ".env")
 
 
+SECRET_IS_EPHEMERAL = False   # CR-085: peer calls refuse an ephemeral key
+
+
 def _resolve_secret() -> bytes:
+    global SECRET_IS_EPHEMERAL
     s = _ENV.get("OWL_AUTH_SECRET") or os.environ.get("OWL_AUTH_SECRET")
     if s:
         return s.encode("utf-8")
+    SECRET_IS_EPHEMERAL = True
     log.warning(
         "OWL_AUTH_SECRET not set — using ephemeral key. "
         "Sessions will invalidate on every restart. Set in .env to fix."

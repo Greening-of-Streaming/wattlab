@@ -1709,6 +1709,16 @@ async def llm_remote(request: Request, host: str = Form(...),
     h = hosts.get(host)
     if runtime not in ("ollama", "mlx"):
         return JSONResponse({"error": "runtime must be ollama or mlx"}, status_code=400)
+    if h is not None and hosts.driver(h) == "peer":
+        import peer
+        if not peer.online(h):
+            return JSONResponse({"error": f"{h.get('label', host)} is offline"}, status_code=503)
+        try:
+            jt = "llm_mlx" if runtime == "mlx" else "llm"
+            return peer.submit(h, jt, {"model_key": model_key, "task_key": task_key, "device": "gpu"},
+                               "llm", jobs)
+        except Exception as e:
+            return JSONResponse({"error": f"{h.get('label', host)}: {e}"}, status_code=502)
     if h is None or (runtime == "ollama" and not h.get("ollama")) or \
             (runtime == "mlx" and model_key not in (h.get("mlx_models") or {})):
         return JSONResponse({"error": f"'{host}' cannot run {model_key} on {runtime}"}, status_code=400)

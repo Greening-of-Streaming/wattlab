@@ -72,6 +72,8 @@ VIDEO_REMOTE_RUN   = "video_remote_run"    # CR-085 — launch encodes on anothe
                                            # here, nowhere else.
 AI_REMOTE_RUN      = "ai_remote_run"       # CR-085 Part 3 — LLM inference / image generation on another
                                            # compute host. Lab-only at launch; widen here, nowhere else.
+PEER_API           = "peer_api"            # CR-085 Phase 4 — node-to-node job API (/peer/*). Lab tier
+                                           # (LAN/tunnel only) AND an HMAC signature (peer.py) — both.
 LAB_SESSION_TOGGLE = "lab_session_toggle"  # raise/lower the lab-session flag from /queue-status —
                                            # UI twin of bin/lab-session-on|off. CR-083 widened it to
                                            # the reservations calendar (/lab-session/reserve, …/delete,
@@ -118,6 +120,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     LAB_SESSION_TOGGLE: Tier.Lab,
     VIDEO_REMOTE_RUN:   Tier.Lab,
     AI_REMOTE_RUN:      Tier.Lab,
+    PEER_API:           Tier.Lab,
 }
 
 

@@ -1,0 +1,15 @@
+#!/bin/sh
+# TEMPORARY (CR-085, 2026-10-05): run GoS2's OWL inside an SSH session held by GoS1.
+# macOS Local Network privacy denies LAN access to launchd-started and detached
+# processes until the owner approves Python once (System Settings → Privacy &
+# Security → Local Network) or OWL is installed as a system LaunchDaemon — SSH
+# sessions are exempt. Retire this script after that morning fix.
+LOG=/home/gos/.cache/gos2_owl_session.log
+while true; do
+  ssh -i /home/gos/.ssh/id_ed25519_gos2 -o IdentitiesOnly=yes -o BatchMode=yes \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=4 gos@192.168.1.29 \
+      'cd ~/wattlab/wattlab_service && exec env PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin HF_HUB_OFFLINE=1 ~/owl/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1' >> "$LOG" 2>&1
+  echo "$(date -Is) session ended rc=$? — restarting in 5 s" >> "$LOG"
+  [ -f /tmp/gos2-owl-session.stop ] && exit 0
+  sleep 5
+done

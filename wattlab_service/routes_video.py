@@ -140,8 +140,20 @@ def _remote_hosts_panel_html(request: Request) -> str:
     VIDEO_REMOTE_RUN (Lab-only at launch)."""
     if not can(audience.tier(request), VIDEO_REMOTE_RUN):
         return ""
+    import remote_panels
     blocks = []
     for hid, h in hosts.remote_hosts().items():
+        is_peer, info = remote_panels.peer_state({**h, "id": hid})
+        if is_peer and info is None:
+            blocks.append(remote_panels.offline_block(h, hid))
+            continue
+        if is_peer:
+            # Phase 4: render the host's REAL engines from its own /peer/info.
+            eng = info.get("engines") or {}
+            h = {**h, "engines": {eid: {"kind": "cpu" if eid == "cpu" else "hw", "label": e["label"],
+                                        "codecs": {c: {} for c in e.get("codecs", [])}}
+                                  for eid, e in eng.items()},
+                 "pair": {"cpu": "cpu", "hw": "gpu"}}
         offered = hosts.offered({**h, "id": hid})
         if not offered:
             continue
@@ -160,12 +172,13 @@ def _remote_hosts_panel_html(request: Request) -> str:
                 rows.append(f'<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-top:0.45rem">'
                             f'<span style="color:var(--text-3);font-size:0.8rem;min-width:3.5rem">{hosts.CODEC_LABEL[codec]}</span>{"".join(btns)}</div>')
         sub = " · ".join(x for x in (h.get("chip"), h.get("machine")) if x)
+        pair_box = remote_panels._pair_box(hid, "same source + codec + engine", simultaneous=is_peer) if is_peer else ""
         blocks.append(f'<div class="batch-box" style="padding:0.9rem 1rem;margin-bottom:0.6rem">'
                       f'<div style="color:var(--accent);font-size:0.9rem;font-weight:bold">{h.get("label", hid)}'
                       f' <span style="color:var(--text-3);font-weight:normal;font-size:0.78rem">{sub}</span></div>'
                       f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.2rem">Same source, same bitrate, measured on '
                       f'{h.get("label", hid)}&#39;s own meters · VMAF scored on GoS1 · uses the source selected below (not uploads)</div>'
-                      f'{"".join(rows)}</div>')
+                      f'{"".join(rows)}<div style="margin-top:0.45rem">{pair_box}</div></div>')
     if not blocks:
         return ""
     return ('<div id="remote-hosts-panel" style="margin:0 0 1.5rem 0">'
@@ -174,7 +187,7 @@ def _remote_hosts_panel_html(request: Request) -> str:
             '<style>.remote-btn{background:var(--panel-2);color:var(--text-1);border:1px solid var(--border-2);'
             'padding:0.3rem 0.6rem;font-size:0.78rem;cursor:pointer;font-family:inherit}'
             '.remote-btn:hover{border-color:var(--accent)}.remote-pair{color:var(--accent)}</style>'
-            + "".join(blocks) + '</div>')
+            + "".join(blocks) + '</div>' + remote_panels._PAIR_JS)
 
 
 @router.get("/video", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -689,6 +702,19 @@ async def video_page(request: Request):
             startTime = Date.now();
             renderProgress(data.job_id, mode, 'starting');
             pollJob(data.job_id, mode);
+            // CR-085: same source + codec + engine on this machine, at the same time
+            const also = document.getElementById('also-local-' + host);
+            if (also && also.checked) {{
+                const eng = {{hw: 'gpu', hw_vbr: 'gpu'}}[engine] || engine;
+                const P = {{both: {{h264: 'both', h265: 'h265_both', av1: 'av1_both'}},
+                           cpu: {{h264: 'cpu', h265: 'h265_cpu', av1: 'av1_cpu'}},
+                           gpu: {{h264: 'gpu', h265: 'h265_gpu', av1: 'av1_gpu'}}}};
+                const f2 = new FormData();
+                f2.append('source_key', selectedSource); f2.append('preset', P[eng][codec]);
+                f2.append('compute_vmaf', document.getElementById('vmafToggle').checked ? 'true' : 'false');
+                const d2 = await (await fetch('/video/use-source', {{method: 'POST', body: f2}})).json().catch(() => ({{}}));
+                if (d2.job_id) owlPairRun('video', d2.job_id, wlRenderVideoCard);
+            }}
         }} else {{
             status.innerHTML = '<div style="color:var(--err)">Error: ' + (data.error || ('HTTP ' + resp.status)) + '</div>';
         }}
@@ -933,6 +959,21 @@ async def run_on_remote_host(
     h = hosts.get(host)
     if h is None:
         return JSONResponse({"error": f"Unknown or disabled host '{host}'"}, status_code=400)
+    if hosts.driver(h) == "peer":
+        # Phase 4: the host runs it on its own OWL (own queue/meters/scorer).
+        import peer
+        if not peer.online(h):
+            return JSONResponse({"error": f"{h.get('label', host)} is offline"}, status_code=503)
+        if bitrate_kbps is not None:
+            return JSONResponse({"error": "bitrate override is only available via the ssh driver"},
+                                status_code=400)
+        eng = {"hw": "gpu", "hw_vbr": "gpu"}.get(engine, engine)
+        try:
+            return peer.submit(h, "video", {"source_key": source_key, "codec": codec, "engine": eng,
+                                            "compute_vmaf": None if compute_vmaf == "" else compute_vmaf == "true"},
+                               "video", jobs)
+        except Exception as e:
+            return JSONResponse({"error": f"{h.get('label', host)}: {e}"}, status_code=502)
     if codec not in hosts.CODECS:
         return JSONResponse({"error": "Invalid codec"}, status_code=400)
     if engine != "both" and not hosts.codec_spec(h, engine, codec):

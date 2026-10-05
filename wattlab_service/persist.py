@@ -110,6 +110,25 @@ def save_result(job_type: str, job_id: str, data: dict,
     return path
 
 
+def import_result(job_type: str, envelope: dict) -> Path:
+    """CR-085 Phase 4 — store an envelope produced and stamped by ANOTHER node,
+    verbatim: never re-run save_result (it would overwrite saved_at, owl_version,
+    visitor_key and the host/hardware stamps, and enrich twice). Idempotent."""
+    if job_type not in ("video", "llm", "image"):
+        raise ValueError(f"import_result: unsupported type {job_type!r}")
+    jid = str(envelope.get("job_id") or "")
+    if not jid or "/" in jid or ".." in jid:
+        raise ValueError("import_result: bad job_id")
+    if not (envelope.get("host") or {}).get("id"):
+        raise ValueError("import_result: envelope has no host stamp")
+    date_str = str(envelope.get("saved_at") or datetime.now().isoformat())[:10]
+    out_dir = RESULTS_DIR / job_type
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{date_str}_{jid}.json"
+    path.write_text(json.dumps(envelope, indent=2))
+    return path
+
+
 def append_history_line(category: str, data: dict,
                         filename: str = "history.jsonl") -> Path:
     """Append one JSON line to results/<category>/<filename> (CR-012).

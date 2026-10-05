@@ -307,6 +307,11 @@ DEFAULTS = {
     "run_carbon_poller":  True,
     "run_rag_check":      True,
     "run_sensors_poller": True,
+    # CR-085 — MLX conversions this node can run itself ({ollama_key: hf_repo});
+    # Apple nodes only. Sensors via powermetrics on Apple nodes (off: it loads
+    # the machine being measured).
+    "local_mlx_models":   {},
+    "apple_powermetrics": False,
 }
 
 
