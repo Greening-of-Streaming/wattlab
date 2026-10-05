@@ -124,16 +124,27 @@ def _probe_gop(path) -> dict:
     why CR-029 §2's one-off ffprobe pass couldn't read HEVC/AV1 GOP."""
     blank = {"gop_avg": None, "gop_max": None, "keyframe_count": None, "frame_count": None}
     try:
-        out = subprocess.run(
-            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "packet=flags", "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, timeout=60,
-        )
+        out = subprocess.run([_ffprobe_bin(), *GOP_PROBE_ARGS, str(path)],
+                             capture_output=True, text=True, timeout=60)
         if out.returncode != 0:
             return blank
     except Exception:
         return blank
-    flags = [ln for ln in out.stdout.split() if ln]
+    return gop_from_flags(out.stdout)
+
+
+GOP_PROBE_ARGS = ["-v", "error", "-select_streams", "v:0",
+                  "-show_entries", "packet=flags", "-of", "csv=p=0"]
+STREAM_PROBE_ARGS = ["-v", "error", "-select_streams", "v:0", "-show_entries",
+                     "stream=codec_name,profile,level,width,height,pix_fmt,bit_rate,has_b_frames",
+                     "-of", "json"]
+
+
+def gop_from_flags(text: str) -> dict:
+    """Parse `ffprobe -show_entries packet=flags` output (pure — CR-085 reuses
+    it for probes run on a remote host)."""
+    blank = {"gop_avg": None, "gop_max": None, "keyframe_count": None, "frame_count": None}
+    flags = [ln for ln in (text or "").split() if ln]
     key_idx = [i for i, fl in enumerate(flags) if fl.startswith("K")]
     if len(key_idx) < 2:
         return {**blank, "keyframe_count": len(key_idx), "frame_count": len(flags) or None}
@@ -157,14 +168,17 @@ def probe_output_stream(path) -> Optional[dict]:
     if not Path(path).exists():
         return None
     try:
-        out = subprocess.run(
-            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
-             "-show_entries",
-             "stream=codec_name,profile,level,width,height,pix_fmt,bit_rate,has_b_frames",
-             "-of", "json", str(path)],
-            capture_output=True, text=True, timeout=30,
-        )
-        stream = json.loads(out.stdout).get("streams", [{}])[0]
+        out = subprocess.run([_ffprobe_bin(), *STREAM_PROBE_ARGS, str(path)],
+                             capture_output=True, text=True, timeout=30)
+    except Exception:
+        return None
+    return stream_from_probe(out.stdout, _probe_gop(path))
+
+
+def stream_from_probe(text: str, gop: dict) -> Optional[dict]:
+    """Parse the STREAM_PROBE_ARGS json (pure — CR-085 reuses it remotely)."""
+    try:
+        stream = json.loads(text).get("streams", [{}])[0]
     except Exception:
         return None
     if not stream:
@@ -180,7 +194,7 @@ def probe_output_stream(path) -> Optional[dict]:
         "pix_fmt": stream.get("pix_fmt"),
         "bit_rate_bps": int(br) if br and str(br).isdigit() else None,
         "has_b_frames": stream.get("has_b_frames"),
-        **_probe_gop(path),
+        **gop,
     }
 
 

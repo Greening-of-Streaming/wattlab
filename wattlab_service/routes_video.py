@@ -145,16 +145,17 @@ def _remote_hosts_panel_html(request: Request) -> str:
         offered = hosts.offered({**h, "id": hid})
         if not offered:
             continue
-        kinds = {kind: (eid, lbl, codecs) for eid, lbl, kind, codecs in offered}
+        labels = {eid: lbl for eid, lbl, kind, codecs in offered}
         rows = []
         for codec in hosts.CODECS:
             btns = []
             for eid, lbl, kind, codecs in offered:
                 if codec in codecs:
                     btns.append(f'<button class="remote-btn" onclick="runRemote(\'{hid}\',\'{codec}\',\'{eid}\')">{lbl}</button>')
-            if "cpu" in kinds and "hw" in kinds and codec in kinds["cpu"][2] and codec in kinds["hw"][2]:
+            pair = hosts.pair_engines({**h, "id": hid}, codec)
+            if pair:
                 btns.append(f'<button class="remote-btn remote-pair" onclick="runRemote(\'{hid}\',\'{codec}\',\'both\')">'
-                            f'{kinds["cpu"][1]} vs {kinds["hw"][1]}</button>')
+                            f'{labels[pair[0]]} vs {labels[pair[1]]}</button>')
             if btns:
                 rows.append(f'<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-top:0.45rem">'
                             f'<span style="color:var(--text-3);font-size:0.8rem;min-width:3.5rem">{hosts.CODEC_LABEL[codec]}</span>{"".join(btns)}</div>')

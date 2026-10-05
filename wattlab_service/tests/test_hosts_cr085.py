@@ -369,3 +369,52 @@ def test_llm_panel_offers_gos1_pair_tickbox(monkeypatch):
     html = client.get("/llm", headers=_LAB).text
     assert 'id="also-local-gos2"' in html and "owlPairRun('llm'" in html
     assert "f2.append('device', 'gpu')" in html            # companion forced to GPU
+
+
+# --- VMAF + probe on the host (no file crosses the network) -------------------------
+
+def test_remote_vmaf_uses_the_same_filter_graph_as_gos1(registry, monkeypatch):
+    import quality
+    host = {**registry, "vmaf": {"ffmpeg": "/opt/homebrew/bin/ffmpeg", "model": "/m/vmaf_v1.0.16_3d0h.json"}}
+    seen = {}
+    class R:  # fake ssh result: libvmaf json log on stdout
+        stdout = '{"pooled_metrics": {"vmaf": {"mean": 88.6123}}}'
+    def fake_run(h, cmd, timeout=60):
+        seen["cmd"] = cmd
+        return R()
+    monkeypatch.setattr(hosts, "run", fake_run)
+    out = hosts.remote_vmaf(host, "owl/out/x.mp4", "owl/test_content/r.mp4", (1920, 1080),
+                            {"vmaf_n_threads": 12, "vmaf_n_subsample": 1})
+    assert out == {"vmaf": 88.61, "vmaf_model": "vmaf_v1.0.16_3d0h", "vmaf_scored_on": "gos2",
+                   "vmaf_scorer": "libvmaf (host)"}
+    expected = quality.vmaf_lavfi(1920, 1080, 12, 1, "path=/m/vmaf_v1.0.16_3d0h.json", "LOG")
+    graph = expected.split("log_path=")[0]
+    assert graph in seen["cmd"].replace("'", "")       # identical graph up to the log path
+
+
+def test_vmaf_on_host_skips_fetch_and_cleans_up(registry, monkeypatch):
+    host = {**registry, "vmaf": {"model": "/m/v.json"}}
+    calls = []
+    monkeypatch.setattr(hosts, "remote_vmaf", lambda h, d, r, dims, s: {"vmaf": 90.0, "vmaf_scored_on": "gos2"})
+    monkeypatch.setattr(hosts, "run", lambda h, cmd, timeout=60: calls.append(cmd))
+    sides = [{"stream": {"width": 1920, "height": 1080}, "_remote_out": "owl/out/a.mp4"}]
+    asyncio.run(remote_video._attach_vmaf_on_host(host, sides, "owl/test_content/r.mp4",
+                                                  {"vmaf_enabled": True}, None, "j"))
+    assert sides[0]["vmaf"] == 90.0 and "_remote_out" not in sides[0]
+    assert any("rm -f owl/out/a.mp4" in c for c in calls)
+
+
+def test_probe_parsers_are_shared():
+    import video
+    st = video.stream_from_probe('{"streams":[{"codec_name":"h264","width":1920,"height":1080,"level":40,"bit_rate":"4000000"}]}',
+                                 video.gop_from_flags("K__\n___\n___\nK__\n___\n___\nK__"))
+    assert st["codec"] == "h264" and st["bit_rate_bps"] == 4000000 and st["gop_avg"] == 3.0
+
+
+def test_pair_engines_explicit_and_deterministic():
+    h = {"engines": {"cpu": {"kind": "cpu", "codecs": {"h264": {}}},
+                     "hw": {"kind": "hw", "codecs": {"h264": {}}},
+                     "hw_vbr": {"kind": "hw", "codecs": {"h264": {}}}}}
+    assert hosts.pair_engines(h, "h264") == ("cpu", "hw")                  # first of each kind
+    assert hosts.pair_engines({**h, "pair": {"hw": "hw_vbr"}}, "h264") == ("cpu", "hw_vbr")
+    assert hosts.pair_engines(h, "av1") is None

@@ -92,6 +92,24 @@ def codec_spec(host: dict, engine_id: str, codec: str) -> dict | None:
     return ((e or {}).get("codecs") or {}).get(codec)
 
 
+def pair_engines(host: dict, codec: str):
+    """(cpu_engine_id, hw_engine_id) for the "CPU vs hardware" pair, or None.
+    Explicit via the host's `pair` setting {"cpu": id, "hw": id}; otherwise the
+    FIRST engine of each kind in registry order (deterministic — a later-added
+    variant must never silently replace the pair's engine)."""
+    engines = host.get("engines") or {}
+    ok = lambda eid: eid in engines and codec in (engines[eid].get("codecs") or {})
+    want = host.get("pair") or {}
+    out = {}
+    for kind in ("cpu", "hw"):
+        eid = want.get(kind)
+        if eid and ok(eid):
+            out[kind] = eid
+            continue
+        out[kind] = next((e for e, v in engines.items() if v.get("kind") == kind and ok(e)), None)
+    return (out["cpu"], out["hw"]) if out["cpu"] and out["hw"] else None
+
+
 def offered(host: dict) -> list:
     """[(engine_id, engine_label, kind, [codecs…]), …] in registry order — what
     the /video panel renders for this host."""
@@ -271,3 +289,54 @@ def side_engine(side: dict, result: dict | None = None) -> dict:
         return side["engine"]
     gh = (result or {}).get("gpu_hardware") or {}
     return local_engine((side or {}).get("preset_key", ""), gh.get("name"))
+
+
+# --- Probing and VMAF scoring ON the host (CR-085, owner 2026-10-05) -------------
+#
+# Owner: limit GoS1↔GoS2 coupling — GoS2 should score its own encodes so no
+# encoded file crosses the network. The SAME filter graph (quality.vmaf_lavfi),
+# probe arguments and parsers run here; only the binaries differ (cross-check
+# 2026-10-05: four files scored on both machines agree within 0.05 VMAF —
+# libvmaf 3.2.1 Homebrew vs 3.2.0 BtbN; model JSON byte-identical).
+
+def has_vmaf(host: dict) -> bool:
+    return bool((host.get("vmaf") or {}).get("model"))
+
+
+def _ffprobe(host: dict) -> str:
+    return host.get("ffprobe") or str(Path(host.get("ffmpeg", "ffmpeg")).with_name("ffprobe"))
+
+
+def remote_probe(host: dict, rel: str) -> dict:
+    """{size_mb, stream} for an encoded file on the host — same probes and
+    parsers as video.probe_output_stream."""
+    import video
+    q = shlex.quote(rel)
+    fp = shlex.quote(_ffprobe(host))
+    size = run(host, f"wc -c < {q}", timeout=30).stdout.strip()
+    st = run(host, f"{fp} {shlex.join(video.STREAM_PROBE_ARGS)} {q}", timeout=60).stdout
+    gop = run(host, f"{fp} {shlex.join(video.GOP_PROBE_ARGS)} {q}", timeout=120).stdout
+    size_mb = round(int(size) / 1024 / 1024, 2) if size.isdigit() and int(size) > 0 else None
+    return {"size_mb": size_mb, "stream": video.stream_from_probe(st, video.gop_from_flags(gop))}
+
+
+def remote_vmaf(host: dict, dist_rel: str, ref_rel: str, dims: tuple, s: dict) -> dict:
+    """Score on the host with quality.vmaf_lavfi. Returns {vmaf, vmaf_model,
+    vmaf_scored_on, vmaf_scorer} — vmaf None on failure (fail-soft, like local)."""
+    import quality
+    v = host.get("vmaf") or {}
+    model = v["model"]
+    log = f"{host.get('workdir', 'owl')}/vmaf_log_{hashlib.sha1(dist_rel.encode()).hexdigest()[:10]}.json"
+    lavfi = quality.vmaf_lavfi(dims[0], dims[1], int(s.get("vmaf_n_threads", 12) or 12),
+                               int(s.get("vmaf_n_subsample", 1) or 1), f"path={model}", log)
+    ff = v.get("ffmpeg") or host.get("ffmpeg", "ffmpeg")
+    cmd = (f"{shlex.quote(ff)} -hide_banner -loglevel error -y -i {shlex.quote(dist_rel)} "
+           f"-i {shlex.quote(ref_rel)} -lavfi {shlex.quote(lavfi)} -f null - "
+           f"&& cat {shlex.quote(log)}; rm -f {shlex.quote(log)}")
+    try:
+        r = run(host, cmd, timeout=900)
+        score = quality.vmaf_from_log_text(r.stdout)
+    except Exception:
+        score = None
+    return {"vmaf": score, "vmaf_model": Path(model).stem, "vmaf_scored_on": host.get("id"),
+            "vmaf_scorer": v.get("scorer", "libvmaf (host)")}

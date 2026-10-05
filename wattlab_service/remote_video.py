@@ -119,13 +119,20 @@ async def _encode_once(host: dict, engine_id: str, codec: str, in_rel: str,
                       baseline_samples_w=baseline.get("baseline_samples_w"),
                       task_samples_w=task_samples_w, meters=meters)
 
-    # Pull the encode back for size, ffprobe and the terminal VMAF pass —
-    # all scored on GoS1 so every engine is judged by the same scorer.
-    local_out = UPLOAD_DIR / f"{job_id}_{key}_out.mp4"
-    fetched = await asyncio.to_thread(hosts.fetch, host, out_rel, local_out)
-    hosts.run(host, f"rm -f {shlex.quote(out_rel)}")
-    out_size_mb = round(local_out.stat().st_size / 1024 / 1024, 2) \
-        if fetched and local_out.exists() else None
+    if hosts.has_vmaf(host):
+        # CR-085 (owner 2026-10-05): the host probes and scores its own encode —
+        # no encoded file crosses the network. Output stays on the host until
+        # the terminal VMAF pass, then is deleted there.
+        probe = await asyncio.to_thread(hosts.remote_probe, host, out_rel)
+        out_size_mb, stream, fetched = probe["size_mb"], probe["stream"], None
+    else:
+        # Fallback: pull the encode back for size, ffprobe and VMAF on GoS1.
+        local_out = UPLOAD_DIR / f"{job_id}_{key}_out.mp4"
+        fetched = await asyncio.to_thread(hosts.fetch, host, out_rel, local_out)
+        hosts.run(host, f"rm -f {shlex.quote(out_rel)}")
+        out_size_mb = round(local_out.stat().st_size / 1024 / 1024, 2) \
+            if fetched and local_out.exists() else None
+        stream = probe_output_stream(local_out) if fetched else None
 
     return {
         "preset_key": key,
@@ -136,7 +143,8 @@ async def _encode_once(host: dict, engine_id: str, codec: str, in_rel: str,
         "host": hosts.identity(host),
         "transcode": tr,
         "output_size_mb": out_size_mb,
-        "stream": probe_output_stream(local_out) if fetched else None,
+        "stream": stream,
+        "_remote_out": out_rel if hosts.has_vmaf(host) else None,
         "energy": {
             "w_base": round(w_base, 2),
             "w_task": round(w_task, 2),
@@ -154,6 +162,30 @@ async def _encode_once(host: dict, engine_id: str, codec: str, in_rel: str,
         "thermals": {**{k: None for k in REMOTE_THERMAL_KEYS},
                      "note": "not sampled on remote hosts"},
     }
+
+
+async def _attach_vmaf_on_host(host: dict, sides: list, ref_rel: str, s: dict,
+                               jobs: Optional[dict], job_id: str) -> None:
+    """Terminal VMAF pass ON the host (after the lock is released — never inside
+    a measured window). Serial, like video._attach_vmaf; same progress fields."""
+    try:
+        if s.get("vmaf_enabled", True):
+            if jobs is not None and job_id in jobs:
+                _clear_progress(jobs, job_id)
+                jobs[job_id].update({"stage": "vmaf", "vmaf_total": len(sides), "vmaf_done": 0})
+            for side in sides:
+                st = side.get("stream") or {}
+                dims = (st.get("width"), st.get("height"))
+                if side.get("_remote_out") and all(dims):
+                    side.update(await asyncio.to_thread(hosts.remote_vmaf, host, side["_remote_out"],
+                                                        ref_rel, dims, s))
+                if jobs is not None and job_id in jobs:
+                    jobs[job_id]["vmaf_done"] = jobs[job_id].get("vmaf_done", 0) + 1
+    finally:
+        for side in sides:
+            rel = side.pop("_remote_out", None)
+            if rel:
+                hosts.run(host, f"rm -f {shlex.quote(rel)}")
 
 
 def _scope(host: dict) -> str:
@@ -177,11 +209,10 @@ async def run_remote(input_path: Path, job_id: str, host_id: str, codec: str,
     if vmaf_override is not None:
         s = {**s, "vmaf_enabled": bool(vmaf_override)}
     if engine_id == "both":
-        kinds = {e.get("kind"): eid for eid, e in (host.get("engines") or {}).items()
-                 if codec in (e.get("codecs") or {})}
-        if "cpu" not in kinds or "hw" not in kinds:
+        pair = hosts.pair_engines(host, codec)
+        if pair is None:
             raise ValueError(f"{host['label']} has no CPU+hardware pair for {codec}")
-        sequence = [kinds["cpu"], kinds["hw"]]
+        sequence = list(pair)
     else:
         if not hosts.codec_spec(host, engine_id, codec):
             raise ValueError(f"{host['label']}/{engine_id} cannot encode {codec}")
@@ -216,7 +247,10 @@ async def run_remote(input_path: Path, job_id: str, host_id: str, codec: str,
     finally:
         LOCK_FILE.unlink(missing_ok=True)
 
-    await _attach_vmaf(sides, Path(input_path), job_id, s, jobs)
+    if hosts.has_vmaf(host):
+        await _attach_vmaf_on_host(host, sides, inp["rel"], s, jobs, job_id)
+    else:
+        await _attach_vmaf(sides, Path(input_path), job_id, s, jobs)
     common = {"job_id": job_id, "host": hosts.identity(host),
               "input": {"name": Path(input_path).name, "sha256": inp["sha256"]},
               "remote_focus": "none", "scope": _scope(host),

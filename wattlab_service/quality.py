@@ -129,7 +129,16 @@ def _probe_dims(path) -> Optional[tuple]:
 def _parse_vmaf_log(log_path) -> Optional[float]:
     """Pull the pooled-mean VMAF from a libvmaf json log; None if unparseable."""
     try:
-        data = json.loads(Path(log_path).read_text())
+        return vmaf_from_log_text(Path(log_path).read_text())
+    except Exception:
+        return None
+
+
+def vmaf_from_log_text(text: str) -> Optional[float]:
+    """Pooled-mean VMAF from libvmaf json log TEXT (pure — CR-085 parses logs
+    produced on a remote host with the same code)."""
+    try:
+        data = json.loads(text)
         mean = data.get("pooled_metrics", {}).get("vmaf", {}).get("mean")
         if mean is not None:
             return round(float(mean), 2)
@@ -155,6 +164,17 @@ def _fr_prep(tw: int, th: int) -> str:
     )
 
 
+def vmaf_lavfi(tw: int, th: int, n_threads: int, n_subsample: int,
+               model_opt: Optional[str], log_path) -> str:
+    """The ONE VMAF filter graph (local and CR-085 remote scoring both use it,
+    so a GoS2-scored number is computed exactly like a GoS1-scored one)."""
+    sub_opt = f":n_subsample={n_subsample}" if n_subsample > 1 else ""
+    model_arg = f":model={model_opt}" if model_opt else ""
+    return (_fr_prep(tw, th)
+            + f"[d][r]libvmaf=n_threads={n_threads}{sub_opt}{model_arg}"
+              f":log_fmt=json:log_path={log_path}")
+
+
 def compute_vmaf(distorted, reference, s: Optional[dict] = None,
                  variant: str = "hd") -> Optional[float]:
     """Pooled-mean VMAF of `distorted` vs `reference`, or None on any failure.
@@ -177,18 +197,12 @@ def compute_vmaf(distorted, reference, s: Optional[dict] = None,
 
     sub = int(s.get("vmaf_n_subsample", 1) or 1)
     nt = int(s.get("vmaf_n_threads", 12) or 12)
-    sub_opt = f":n_subsample={sub}" if sub > 1 else ""
     model_opt, _ = _resolve_model(s, variant)
-    model_arg = f":model={model_opt}" if model_opt else ""
 
     fd, log = tempfile.mkstemp(prefix="owl_vmaf_", suffix=".json")
     os.close(fd)
     log = Path(log)
-    lavfi = (
-        _fr_prep(tw, th)
-        + f"[d][r]libvmaf=n_threads={nt}{sub_opt}{model_arg}"
-          f":log_fmt=json:log_path={log}"
-    )
+    lavfi = vmaf_lavfi(tw, th, nt, sub, model_opt, log)
     cmd = [_scoring_bin(s), "-y", "-i", str(distorted), "-i", str(reference),
            "-lavfi", lavfi, "-f", "null", "-"]
     try:
