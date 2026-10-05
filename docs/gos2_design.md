@@ -226,6 +226,9 @@ fallback. Two traps follow:
 
 Each phase stands on its own: stopping after Phase 2 still gives a working failover site.
 
+**Next (2026-10-05):** the path from the interim SSH driver to two autonomous OWL nodes — OWL booting on macOS,
+GoS2 running its own service, a peer job API, replication — is planned in `docs/gos2_autonomy_plan.md`.
+
 ## 11. Open questions
 
 1. ~~Plug model + firmware + cabling~~ answered 2026-10-04 (§8). Still open: fw probe on both, G1 auto-update off,
