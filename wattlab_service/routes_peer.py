@@ -96,8 +96,13 @@ async def peer_submit(request: Request):
         import remote_ai
         async def coro():
             try:
+                import video
                 jobs[job_id].update({"status": "running", "stage": "baseline"})
-                r = await remote_ai.run_local_mlx(p["model_key"], p.get("task_key", "T2"), job_id, jobs)
+                stopped = video.focus_mode_enter()
+                try:
+                    r = await remote_ai.run_local_mlx(p["model_key"], p.get("task_key", "T2"), job_id, jobs)
+                finally:
+                    video.focus_mode_exit(stopped)
                 persist.save_result("llm", job_id, r)
                 jobs[job_id].update({"status": "done", "stage": "done", "result": r})
             except Exception as e:
