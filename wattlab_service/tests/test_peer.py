@@ -190,3 +190,21 @@ def test_all_codecs_skips_unsupported_gpu_codec(monkeypatch):
     av1 = r["codecs"]["av1"]
     assert "gpu" not in av1 and "No hardware AV1" in av1["gpu_unavailable"]
     assert r["analysis"]["most_efficient"] is not None
+
+
+def test_members_replicate_in_allowlist_format(tmp_path, monkeypatch):
+    import replication
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    mf = tmp_path / "members.json"
+    monkeypatch.setattr(auth, "_members_file_path", lambda: mf)
+    monkeypatch.setenv("OWL_MEMBERS_FILE", str(mf))
+    monkeypatch.setattr(peer, "online", lambda h: True)
+    def fake_call(h, method, path, payload=None, timeout=15):
+        return {"members": ["a@x.org"]} if path == "/peer/members" else {"results": []}
+    monkeypatch.setattr(peer, "call", fake_call)
+    try:
+        out = replication.pull_once("gos1", {**PEER_HOST, "members_source": True})
+        assert "members_error" not in out
+        assert auth._load_members(mf) == {"a@x.org"}
+    finally:
+        monkeypatch.undo(); auth.reload_members()

@@ -68,7 +68,9 @@ def pull_once(hid: str, h: dict) -> dict:
                 import auth
                 f = auth._members_file_path()
                 f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text(json.dumps(m["members"], indent=2))
+                f.write_text(json.dumps({"_comment": f"Replicated from {h.get('label', hid)} "
+                                                     f"(members_source) — edit there, not here.",
+                                         "members": m["members"]}, indent=2))
                 out["members"] = auth.reload_members()
         except Exception as e:
             out["members_error"] = repr(e)[:200]
