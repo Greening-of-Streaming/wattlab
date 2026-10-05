@@ -3,6 +3,7 @@ offline greying)."""
 import asyncio
 import json
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -167,3 +168,25 @@ def test_replication_pulls_new_and_skips_existing(tmp_path, monkeypatch):
     assert len(list((tmp_path / "video").glob("*.json"))) == 2
     monkeypatch.setattr(peer, "online", lambda h: False)
     assert replication.pull_once("gos2", PEER_HOST) == {"offline": True}
+
+
+def test_all_codecs_skips_unsupported_gpu_codec(monkeypatch):
+    import video
+    async def fake_single(inp, jid, preset, base, jobs=None):
+        return {"preset_label": preset, "output_size_mb": 1,
+                "energy": {"delta_e_wh": 1.0, "delta_t_s": 10, "delta_w": 5, "confidence": {"flag": "🟢"}},
+                "thermals": {"cpu_peak": None, "gpu_peak": None, "gpu_ppt_mean_w": None}}
+    async def fake_base(polls=5): return {"w_base": 5.0}
+    async def fake_cd(**k): return {"method": "fixed", "waited_s": 0}
+    async def fake_vmaf(*a, **k): return None
+    monkeypatch.setattr(video, "run_single", fake_single)
+    monkeypatch.setattr(video, "measure_baseline", fake_base)
+    monkeypatch.setattr(video, "cooldown_between_runs", fake_cd)
+    monkeypatch.setattr(video, "_attach_vmaf", fake_vmaf, raising=False)
+    monkeypatch.setattr(video, "focus_mode_enter", lambda: [])
+    monkeypatch.setattr(video, "focus_mode_exit", lambda s: None)
+    monkeypatch.setattr(video.gpu, "supports", lambda c: c != "av1")
+    r = asyncio.run(video.run_all_measurement(Path("/dev/null"), "t-av1", jobs=None))
+    av1 = r["codecs"]["av1"]
+    assert "gpu" not in av1 and "No hardware AV1" in av1["gpu_unavailable"]
+    assert r["analysis"]["most_efficient"] is not None

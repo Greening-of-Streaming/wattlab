@@ -454,7 +454,18 @@
     var tableRows = codecOrder.map(function(co){
       var key = co[0], label = co[1];
       var cd = codecs[key];
-      if (!cd || !cd.cpu || !cd.gpu || !cd.cpu.energy || !cd.gpu.energy) return '';
+      if (!cd || !cd.cpu || !cd.cpu.energy) return '';
+      if (!cd.gpu || !cd.gpu.energy) {
+        // CR-085: no hardware encoder for this codec on the measuring machine
+        var c0 = cd.cpu.energy;
+        return '<tr><td style="color:var(--text);font-weight:bold;text-align:left">' + label + '</td>'
+          + '<td style="text-align:right">' + fmt(c0.delta_t_s) + 's</td>'
+          + '<td style="text-align:right">' + fmt(c0.delta_e_wh) + ' Wh</td>'
+          + '<td style="color:var(--text-3);font-size:0.75rem;text-align:right">' + fmt(cd.cpu.output_size_mb) + ' MB</td>'
+          + '<td style="color:var(--text-3);font-size:0.75rem;text-align:right">' + fmt(cd.cpu.vmaf) + '</td>'
+          + '<td colspan="4" style="color:var(--text-4);font-size:0.75rem;text-align:center">' + (cd.gpu_unavailable || 'no hardware encoder') + '</td>'
+          + '<td class="conf-badge" style="font-size:0.78rem;text-align:center">' + ((c0.confidence && c0.confidence.flag) || '') + '</td></tr>';
+      }
       var ce = cd.cpu.energy, ge = cd.gpu.energy;
       var ca = cd.analysis || {};
       var ew = ca.energy_winner, sw = ca.speed_winner;

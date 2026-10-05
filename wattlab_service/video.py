@@ -789,7 +789,9 @@ def analyse_all(codecs: dict) -> dict:
     flat = []
     for codec_name, data in codecs.items():
         for side in ("cpu", "gpu"):
-            r = data.get(side, {})
+            r = data.get(side) or {}
+            if not r:
+                continue                      # CR-085: side not available on this node
             e = r.get("energy", {})
             flat.append({
                 "label": r.get("preset_label", ""),
@@ -885,23 +887,31 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None,
             if jobs: jobs[job_id]["stage"] = f"{codec_name}_cpu_encode"
             cpu_result = await run_single(input_path, job_id, cpu_key, base_cpu, jobs=jobs)
 
-            if jobs: jobs[job_id]["stage"] = f"{codec_name}_rest"
-            cd = await cooldown_between_runs(
-                fixed_seconds=s["video_cooldown_s"], reference_w=base_cpu["w_base"],
-                stage=f"{codec_name}_rest", jobs=jobs, job_id=job_id,
-            )
-            cooldowns.append({"before": f"{codec_name}_gpu", **cd})
+            if not gpu.supports(codec_name):
+                # CR-085: e.g. no AV1 hardware encoder on the Apple M6 — record
+                # why and keep the CPU side; never fail the whole sweep.
+                results[codec_name] = {
+                    "cpu": cpu_result,
+                    "gpu_unavailable": f"No hardware {codec_name.upper()} encoder on {gpu.BACKEND.name}",
+                }
+            else:
+                if jobs: jobs[job_id]["stage"] = f"{codec_name}_rest"
+                cd = await cooldown_between_runs(
+                    fixed_seconds=s["video_cooldown_s"], reference_w=base_cpu["w_base"],
+                    stage=f"{codec_name}_rest", jobs=jobs, job_id=job_id,
+                )
+                cooldowns.append({"before": f"{codec_name}_gpu", **cd})
 
-            if jobs: jobs[job_id]["stage"] = f"{codec_name}_gpu_baseline"
-            base_gpu = await measure_baseline(polls=s["baseline_polls"])
-            if jobs: jobs[job_id]["stage"] = f"{codec_name}_gpu_encode"
-            gpu_result = await run_single(input_path, job_id, gpu_key, base_gpu, jobs=jobs)
+                if jobs: jobs[job_id]["stage"] = f"{codec_name}_gpu_baseline"
+                base_gpu = await measure_baseline(polls=s["baseline_polls"])
+                if jobs: jobs[job_id]["stage"] = f"{codec_name}_gpu_encode"
+                gpu_result = await run_single(input_path, job_id, gpu_key, base_gpu, jobs=jobs)
 
-            results[codec_name] = {
-                "cpu": cpu_result,
-                "gpu": gpu_result,
-                "analysis": analyse(cpu_result, gpu_result),
-            }
+                results[codec_name] = {
+                    "cpu": cpu_result,
+                    "gpu": gpu_result,
+                    "analysis": analyse(cpu_result, gpu_result),
+                }
             if idx < len(codec_pairs) - 1:
                 if jobs: jobs[job_id]["stage"] = f"{codec_name}_inter_rest"
                 cd = await cooldown_between_runs(
@@ -953,6 +963,8 @@ async def run_codecs_single_measurement(input_path: Path, job_id: str,
     if side not in presets_by_side:
         raise ValueError(f"side must be cpu or gpu, got {side!r}")
     codec_steps = presets_by_side[side]
+    if side == "gpu":   # CR-085: only codecs this node has a hardware encoder for
+        codec_steps = [(c, k) for c, k in codec_steps if gpu.supports(c)]
     stopped = focus_mode_enter()
     LOCK_FILE.write_text(job_id)
     results = {}
