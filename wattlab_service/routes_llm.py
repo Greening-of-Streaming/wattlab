@@ -6,6 +6,7 @@ Orchestration (run_llm_job / run_llm_all_job / run_llm_compare_models_job)
 lives here; inference + measurement stay in llm.py. benchmark.py reaches
 run_llm_compare_models_job through the main.py alias. Phase 3 per-feature
 route module — shared state from runtime.py, chrome from ui.py, never
+import hosts
 import main.
 """
 import asyncio
@@ -900,7 +901,7 @@ async def run_llm_all_job(job_id: str, model_key: str, warm: bool, device: str):
                 "device": device,
                 "cpu": dev_results["cpu"],
                 "gpu": dev_results["gpu"],
-                "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+                "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost.",
             }
         else:
             final = {
@@ -911,7 +912,7 @@ async def run_llm_all_job(job_id: str, model_key: str, warm: bool, device: str):
                 "warm": warm,
                 "device": device,
                 "tasks": dev_results[device],
-                "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+                "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost.",
             }
         save_result("llm", job_id, final)
         jobs[job_id] = {"status": "done", "stage": "done", "result": final}
@@ -1052,7 +1053,7 @@ async def run_llm_compare_models_job(job_id: str, prompt: str, expected: str, de
             "panel_pass_rate": round(len(correct) / len(rows), 3) if rows else 0,
             "floor_reference_w": floor_reference_w,
             "cooldowns": cooldowns,
-            "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+            "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost.",
         }
         save_result("llm", job_id, final)
         jobs[job_id] = {"status": "done", "stage": "done", "result": final}

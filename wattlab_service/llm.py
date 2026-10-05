@@ -1,3 +1,4 @@
+import hosts
 import asyncio
 import functools
 import subprocess
@@ -339,7 +340,7 @@ async def run_llm_measurement(model_key: str, task_key: str,
         "inference": result["inference"],
         "energy": result["energy"],
         "thermals": result["thermals"],
-        "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+        "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost.",
     }
 
 
@@ -408,7 +409,7 @@ async def run_llm_both_measurement(model_key: str, task_key: str,
         "gpu": gpu_result,
         "analysis": analysis,
         "cooldown": cd_cpu_gpu,
-        "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+        "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost.",
     }
 
 
@@ -566,5 +567,5 @@ async def run_llm_batch_measurement(model_key: str, task_key: str, repeats: int,
             "cpu_end": sensors_end.get("cpu_tctl"),
             "gpu_end": sensors_end.get("gpu_junction"),
         },
-        "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+        "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost.",
     }

@@ -39,8 +39,29 @@ FOCUS_MODE_UNITS = [
     "owl-maintenance-watchdog.timer",
 ]
 
+_MAC_FOCUS = "/usr/local/sbin/owl-focus"
+
+
+def focus_mode_kind() -> str:
+    """Which focus mode this node can apply — stamped on results (CR-085):
+    'systemd-timers' (Linux), 'macos-owl-focus' (Apple, wrapper installed) or
+    'unavailable' (Apple without the root wrapper — measured as-is)."""
+    import platform
+    if platform.system() != "Darwin":
+        return "systemd-timers"
+    return "macos-owl-focus" if Path(_MAC_FOCUS).exists() else "unavailable"
+
+
 def focus_mode_enter():
-    """Stop background timers before measurement."""
+    """Stop background timers before measurement. On macOS (CR-085) the root-
+    owned wrapper owl-focus pauses Spotlight indexing and the software-update
+    schedule; without it nothing is paused and results say so."""
+    kind = focus_mode_kind()
+    if kind == "unavailable":
+        return []
+    if kind == "macos-owl-focus":
+        r = subprocess.run(["sudo", "-n", _MAC_FOCUS, "on"], capture_output=True, text=True)
+        return ["owl-focus"] if r.returncode == 0 else []
     stopped = []
     for unit in FOCUS_MODE_UNITS:
         result = subprocess.run(
@@ -57,6 +78,9 @@ def focus_mode_exit(stopped: list):
     def start_unit(unit):
         subprocess.run(["sudo", "systemctl", "start", unit],
                       capture_output=True, text=True)
+    if stopped == ["owl-focus"]:
+        subprocess.run(["sudo", "-n", _MAC_FOCUS, "off"], capture_output=True, text=True)
+        return
     with concurrent.futures.ThreadPoolExecutor() as ex:
         list(ex.map(start_unit, stopped))
 
@@ -344,7 +368,11 @@ def _gpu_cmd(codec: str, i, o, bps: int) -> list:
 def _gpu_detail(codec: str, bps: int) -> str:
     """e.g. 'h264_vaapi · 4000 kbps ABR · 1080p · full pipeline' — encoder name
     reflects the installed card (vaapi / nvenc)."""
-    return f"{gpu.BACKEND.ffmpeg_encoder(codec)} · {bps} kbps ABR · 1080p · full pipeline"
+    if not gpu.supports(codec):
+        return f"{codec.upper()} GPU encode unavailable on {gpu.BACKEND.name}"
+    pipe = "full pipeline" if gpu.BACKEND.ffmpeg_hwaccel_args() else "sw decode + CPU scale"
+    rc = "VBR" if gpu.BACKEND.vendor == "apple" else "ABR"
+    return f"{gpu.BACKEND.ffmpeg_encoder(codec)} · {bps} kbps {rc} · 1080p · {pipe}"
 
 
 PRESETS = {
@@ -645,7 +673,7 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
     _codec = hosts.codec_of_preset(preset_key)
     _eng = hosts.local_engine(preset_key, gpu.BACKEND.name,
                               gpu.BACKEND.ffmpeg_encoder(_codec)
-                              if "gpu" in preset_key else None)
+                              if "gpu" in preset_key and gpu.supports(_codec) else None)
     if custom_cmd and custom_cmd.strip():
         _eng["custom_cmd"] = True   # visitor-edited command: encoder may differ
     return {
@@ -899,7 +927,7 @@ async def run_all_measurement(input_path: Path, job_id: str, jobs: dict = None,
         "codecs": results,
         "analysis": analyse_all(results),
         "cooldowns": cooldowns,
-        "scope": "Device layer only (GoS1 server). Network, CDN, CPE excluded.",
+        "scope": f"Device layer only ({hosts.local_label()}). Network, CDN, CPE excluded.",
     }
 
 
@@ -965,7 +993,7 @@ async def run_codecs_single_measurement(input_path: Path, job_id: str,
         "codecs": results,
         "analysis": analyse_all(results),
         "cooldowns": cooldowns,
-        "scope": "Device layer only (GoS1 server). Network, CDN, CPE excluded.",
+        "scope": f"Device layer only ({hosts.local_label()}). Network, CDN, CPE excluded.",
     }
 
 
@@ -993,7 +1021,7 @@ async def run_video_measurement(input_path: Path, job_id: str,
         "job_id": job_id,
         "baseline": baseline,
         "result": result,
-        "scope": "Device layer only (GoS1 server). Network, CDN, CPE excluded.",
+        "scope": f"Device layer only ({hosts.local_label()}). Network, CDN, CPE excluded.",
     }
 
 async def run_both_measurement(input_path: Path, job_id: str, jobs: dict = None,
@@ -1041,7 +1069,7 @@ async def run_both_measurement(input_path: Path, job_id: str, jobs: dict = None,
         "gpu": gpu_result,
         "analysis": analysis,
         "cooldown": cd_cpu_gpu,
-        "scope": "Device layer only (GoS1 server). Network, CDN, CPE excluded.",
+        "scope": f"Device layer only ({hosts.local_label()}). Network, CDN, CPE excluded.",
     }
 
 async def run_video_measurement_path(path: str, job_id: str, preset_key: str,

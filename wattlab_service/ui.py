@@ -803,7 +803,7 @@ def _gpu_video_encoders() -> str:
     """Hardware-Disclosure Video cell GPU-encoder list, vendor-resolved."""
     if gpu.BACKEND.vendor == "none":
         return "(no discrete GPU — CPU encode only)"
-    encs = ", ".join(gpu.BACKEND.ffmpeg_encoder(c) for c in ("h264", "h265", "av1"))
+    encs = ", ".join(gpu.BACKEND.ffmpeg_encoder(c) for c in ("h264", "h265", "av1") if gpu.supports(c))
     pipe = "full VAAPI pipeline" if gpu.BACKEND.vendor == "amd" else "full NVENC/CUDA pipeline"
     return f"{encs} (GPU, {pipe})"
 
@@ -812,7 +812,7 @@ def _gpu_enc(codec: str) -> str:
     """GPU encoder name for `codec` (h264/h265/av1) for UI copy — vendor-
     resolved via gpu.BACKEND so preset/settings labels track the installed
     card and never hardcode a vendor. Safe when no discrete GPU is present."""
-    if gpu.BACKEND.vendor == "none":
+    if gpu.BACKEND.vendor == "none" or not gpu.supports(codec):
         return "GPU encode unavailable"
     return gpu.BACKEND.ffmpeg_encoder(codec)
 

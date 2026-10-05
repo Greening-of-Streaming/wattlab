@@ -1,3 +1,4 @@
+import hosts
 import asyncio
 import base64
 import io
@@ -152,6 +153,18 @@ def _load_flux_nf4(cfg_m: dict, torch):
     return pipe
 
 
+def torch_device(torch) -> str:
+    """The accelerator the GPU path uses: CUDA (GoS1), Metal/MPS (Apple
+    silicon, CR-085), else CPU. The CUDA-only loaders (SDXL-Lightning UNet
+    swap, FLUX NF4) keep "cuda" explicitly — their models are not enabled on
+    non-CUDA hosts."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def generate_image(prompt: str, seed: int = None, device: str = "cpu",
                    model_key: str = "sd-turbo",
                    steps_override: int = None,
@@ -201,7 +214,7 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
                 pipe = DiffusionPipeline.from_pretrained(repo, **kwargs)
             else:
                 pipe = AutoPipelineForText2Image.from_pretrained(repo, **kwargs)
-            pipe = pipe.to("cuda")
+            pipe = pipe.to(torch_device(torch))   # CR-085: cuda → mps → cpu
         else:
             pipe = AutoPipelineForText2Image.from_pretrained(
                 repo,
@@ -258,6 +271,8 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
         gc.collect()
         if use_gpu and torch.cuda.is_available():
             torch.cuda.empty_cache()
+        elif use_gpu and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
 
 
 def _calc_energy(w_base: float, w_task: float, delta_t: float,
@@ -398,8 +413,8 @@ async def run_image_measurement(prompt: str, job_id: str,
     energy = _calc_energy(w_base, w_task, delta_t, readings, batch,
                           baseline_samples_w, baseline_dict=_baseline)
 
-    device_label = f"GPU ({gpu.BACKEND.device_label()})" if device == "gpu" else "CPU (Ryzen 9 7900)"
-    scope = (f"Device layer only (GoS1). {device_label}. "
+    device_label = f"GPU ({gpu.BACKEND.device_label()})" if device == "gpu" else f"CPU ({hosts.local_cpu()})"
+    scope = (f"Device layer only ({hosts.local_label()}). {device_label}. "
              f"Model: {cfg_m['label']} ({cfg_m['params']}) at {cfg_m['size_px']}px. "
              f"No amortised training cost.")
 
@@ -483,7 +498,7 @@ async def run_image_both_measurement(prompt: str, job_id: str,
         "gpu": gpu_result,
         "analysis": analysis,
         "cooldown": cd_cpu_gpu,
-        "scope": (f"Device layer only (GoS1). CPU vs GPU comparison. "
+        "scope": (f"Device layer only ({hosts.local_label()}). CPU vs GPU comparison. "
                   f"Model: {cfg_m['label']} ({cfg_m['params']}). "
                   f"No amortised training cost."),
     }
@@ -604,7 +619,7 @@ async def run_image_compare_models_measurement(prompt: str, job_id: str,
         "analysis": analysis,
         "floor_reference_w": floor_reference_w,
         "cooldowns": cooldowns,
-        "scope": (f"Device layer only (GoS1). GPU ({gpu.BACKEND.device_label()}). "
+        "scope": (f"Device layer only ({hosts.local_label()}). GPU ({gpu.BACKEND.device_label()}). "
                   f"{len(results)} models compared at each model's native "
                   f"compare_steps/compare_batch from the catalog. Same prompt "
                   f"+ seed. Between models the runner waits for the system "
@@ -729,6 +744,6 @@ async def run_image_bench_local(prompt: str, job_id: str, jobs: dict = None,
             "modifier": modifier, "model_key": model_key, "model_label": cfg_m["label"],
             "bench_batch": int(batch), "generation": r["generation"], "energy": r["energy"],
             "thermals": r["thermals"],
-            "scope": (f"Device layer only (GoS1). GPU ({gpu.BACKEND.device_label()}). "
+            "scope": (f"Device layer only ({hosts.local_label()}). GPU ({gpu.BACKEND.device_label()}). "
                       f"Model: {cfg_m['label']} at {cfg_m['size_px']}px, batch {int(batch)}. "
                       "No amortised training cost.")}

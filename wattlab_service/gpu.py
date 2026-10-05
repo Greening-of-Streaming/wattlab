@@ -202,6 +202,94 @@ class NoGpuBackend:
 
 
 # --------------------------------------------------------------------------
+# Apple silicon (macOS) — VideoToolbox media engine + Metal/MPS (CR-085 autonomy
+# Phase 2). Pipeline = software decode + CPU scale + media-engine encode: the
+# exact command shape the SSH-driven M6 campaign measured (2026-10-05), so a
+# standalone GoS2 is parity-checkable against it. Rate control = VBR (owner,
+# 2026-10-05): VideoToolbox CBR pads with filler (−5 VMAF, 50 % slower).
+# No AV1 encoder on the M6 media engine (decode only) → supports("av1") False.
+# --------------------------------------------------------------------------
+class AppleBackend:
+    vendor = "apple"
+    available = True
+
+    def __init__(self, name: str = "Apple silicon GPU"):
+        self.name = name
+
+    _ENCODER = {"h264": "h264_videotoolbox", "h265": "hevc_videotoolbox"}
+
+    def supports(self, codec: str) -> bool:
+        return codec in self._ENCODER
+
+    def read_gpu_sensors(self) -> dict:
+        # powermetrics needs root (narrow wrapper owl-powermetrics) and costs
+        # CPU on every call — sampling it at 1 Hz would load the machine being
+        # measured. Off unless `apple_powermetrics` is enabled.
+        try:
+            import settings as _cfg
+            if not _cfg.load().get("apple_powermetrics", False):
+                return {"gpu_junction": None, "gpu_ppt_w": None}
+        except Exception:
+            return {"gpu_junction": None, "gpu_ppt_w": None}
+        out = _run(["sudo", "-n", "/usr/local/sbin/owl-powermetrics", "1", "200"])
+        return {"gpu_junction": None, "gpu_ppt_w": _apple_gpu_power_w(out)}
+
+    def ffmpeg_hwaccel_args(self) -> list:
+        return []
+
+    def ffmpeg_scale_filter(self, height: int = 1080) -> str:
+        return f"scale=-2:{height}"
+
+    def ffmpeg_encoder(self, codec: str) -> str:
+        if codec not in self._ENCODER:
+            raise RuntimeError(f"{self.name}: no hardware {codec} encoder")
+        return self._ENCODER[codec]
+
+    def ffmpeg_gpu_norm_args(self, codec: str, gop: str) -> list:
+        profile = {"h264": "high", "h265": "main"}[codec]
+        extra = ["-tag:v", "hvc1"] if codec == "h265" else []
+        return ["-g", gop, "-profile:v", profile, *extra, "-bf", "2",
+                "-allow_sw", "0", "-prio_speed", "0"]
+
+    def torch_env_setup(self):
+        pass
+
+    def device_label(self) -> str:
+        return f"{self.name}, Metal"
+
+    def stamp(self) -> dict:
+        return {"vendor": self.vendor, "name": self.name, "encode": "videotoolbox"}
+
+
+def _apple_gpu_power_w(plist_text) -> "float | None":
+    """GPU power (W) from a powermetrics plist sample; None if absent."""
+    if not plist_text:
+        return None
+    try:
+        import plistlib
+        d = plistlib.loads(plist_text.split("\x00")[0].encode())
+        g = d.get("gpu") or {}
+        mw = g.get("gpu_energy") if "gpu_energy" in g else (d.get("processor") or {}).get("gpu_power")
+        return round(float(mw) / 1000, 2) if mw is not None else None
+    except Exception:
+        return None
+
+
+def _detect_apple() -> "AppleBackend | None":
+    import platform
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return None
+    name = (_run(["sysctl", "-n", "machdep.cpu.brand_string"]) or "Apple silicon").strip()
+    return AppleBackend(name=f"{name} GPU")
+
+
+def supports(codec: str) -> bool:
+    """Whether the resolved backend has a hardware encoder for `codec`."""
+    f = getattr(BACKEND, "supports", None)
+    return bool(BACKEND.available) and (f(codec) if f else True)
+
+
+# --------------------------------------------------------------------------
 # Detection — run once at import, cached in BACKEND.
 # --------------------------------------------------------------------------
 def _detect_nvidia() -> "NvidiaBackend | None":
@@ -243,7 +331,9 @@ def detect() -> object:
         return _detect_nvidia() or NvidiaBackend()
     if forced == "none":
         return NoGpuBackend()
-    return _detect_nvidia() or _detect_amd() or NoGpuBackend()
+    if forced == "apple":
+        return _detect_apple() or AppleBackend()
+    return _detect_apple() or _detect_nvidia() or _detect_amd() or NoGpuBackend()
 
 
 BACKEND = detect()

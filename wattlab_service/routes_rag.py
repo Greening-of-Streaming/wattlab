@@ -6,6 +6,7 @@ Orchestration (run_rag_compare_job / run_rag_compare_models_job) lives
 here; retrieval + measurement stay in rag.py. benchmark.py reaches
 run_rag_compare_models_job through the main.py alias. Phase 3 per-feature
 route module — shared state from runtime.py, chrome from ui.py, never
+import hosts
 import main.
 """
 import asyncio
@@ -1207,7 +1208,7 @@ async def run_rag_compare_job(job_id: str, model_key: str, question: str):
             "results": partial_results,
             "floor_reference_w": floor_reference_w,
             "cooldowns": cooldowns,
-            "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+            "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost.",
         }
         save_result("llm", job_id, final)
         jobs[job_id] = {"stage": "done", "result": final}
@@ -1348,7 +1349,7 @@ async def run_rag_compare_models_job(job_id: str, question: str, expected: str):
             "panel_pass_rate": round(len(correct) / len(rows), 3) if rows else 0,
             "floor_reference_w": floor_reference_w,
             "cooldowns": cooldowns,
-            "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost. Retrieval = top-3 chunks (rag mode).",
+            "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost. Retrieval = top-3 chunks (rag mode).",
         }
         save_result("llm", job_id, final)
         jobs[job_id] = {"status": "done", "stage": "done", "result": final}

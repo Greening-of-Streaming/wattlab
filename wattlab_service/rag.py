@@ -14,6 +14,7 @@ Index building is separate from measurement. Call build_index() once
 to disk so subsequent restarts are fast.
 """
 
+import hosts
 import asyncio
 import functools
 import json
@@ -639,5 +640,5 @@ async def run_rag_measurement(model_key: str, rag_mode: str, question: str,
             "cpu_end":  sensors_end.get("cpu_tctl"),
             "gpu_end":  sensors_end.get("gpu_junction"),
         },
-        "scope": "Device layer only (GoS1). Network and CPE excluded. No amortised training cost.",
+        "scope": f"Device layer only ({hosts.local_label()}). Network and CPE excluded. No amortised training cost.",
     }

@@ -51,6 +51,7 @@ bin/rem_timer.sh (settings `rem_timer_script_path`): OWL calls it `<out> <w> <h>
 """
 from __future__ import annotations
 
+import hosts
 import asyncio
 import json
 import os
@@ -856,7 +857,7 @@ async def run_rem_prep_job(job_id: str, *, jobs: Optional[dict] = None,
             # Absolute + public so a link copied from the SSH tunnel still works.
             "share_url": f"{_public_base()}/rem-file/{token}",
         },
-        "scope": "Device layer only (GoS1 server). Production/encode energy of the "
+        "scope": f"Device layer only ({hosts.local_label()}). Production/encode energy of the "
                  "video segment only; markers/timer assembled outside the measurement "
                  "window. Network, CDN, CPE excluded.",
     }

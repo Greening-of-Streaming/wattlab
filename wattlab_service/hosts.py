@@ -52,6 +52,7 @@ _LOCAL_DEFAULT = {
     "id": "gos1",
     "label": "GoS1",
     "chip": "AMD Ryzen 9 7900 + NVIDIA RTX 5080",
+    "cpu": "Ryzen 9 7900",
     "machine": "Tower server",
     "os": "Ubuntu 24.04",
 }
@@ -66,6 +67,16 @@ _SSH_OPTS = ["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
 def local_host() -> dict:
     s = cfg.load()
     return {**_LOCAL_DEFAULT, **(s.get("local_host") or {}), "remote": False}
+
+
+def local_label() -> str:
+    """This node's name for scope strings ("Device layer only (GoS1)…")."""
+    return local_host().get("label", "GoS1")
+
+
+def local_cpu() -> str:
+    """This node's CPU for result labels ("CPU (Ryzen 9 7900)")."""
+    return local_host().get("cpu", "CPU")
 
 
 def all_remote() -> dict:

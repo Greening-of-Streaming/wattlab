@@ -23,6 +23,7 @@ are all REUSED from video.py + power.py — never reimplemented here. Cooldown g
 through `power.cooldown_between_runs` (no raw asyncio.sleep), keeping the
 cooldown-dispatcher audit clean.
 """
+import hosts
 import asyncio
 import json
 import math
@@ -45,7 +46,7 @@ from video import (
     probe_output_stream, _probe_duration, _ffprobe_bin, LOCK_FILE,
 )
 
-SCOPE = "Device layer only (GoS1 server). Network, CDN, CPE excluded."
+SCOPE = "Device layer only (GoS1 server). Network, CDN, CPE excluded."  # pixop runs on GoS1 only (CUDA partner pipeline)
 _TAIL = 2000  # chars of stdout/stderr retained on the result
 
 

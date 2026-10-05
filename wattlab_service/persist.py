@@ -79,6 +79,14 @@ def save_result(job_type: str, job_id: str, data: dict,
     # gpu_hardware. A future PDU/IPMI swap (CR-031 §2) then can't be silently
     # compared against Tapo P110 runs; records meter name + polling resolution.
     payload["power_hardware"] = _hosts.power_stamp(_remote) if _remote else power.stamp()
+    # CR-085 — which focus mode this node applied (Linux systemd timers /
+    # macOS owl-focus / unavailable). Remote-driven results carry their own.
+    if not _remote and "focus_mode" not in payload:
+        try:
+            import video as _video
+            payload["focus_mode"] = _video.focus_mode_kind()
+        except Exception:
+            pass
     # CR-070 — pre-job idle guard provenance. The queue worker's guard outcome
     # (did wall power return to the previous job's floor before this job's
     # first baseline?) rides on the job's FIRST stored result — consume-once,
