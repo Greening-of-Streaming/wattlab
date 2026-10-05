@@ -26,6 +26,22 @@ content config, like settings.json, not application logic.
 # SD-Turbo at 8 steps renders something coherent.
 CANONICAL_IMAGE_PROMPT = "a lone wind turbine in an open landscape"
 
+# CR-085 — /image/session prompt set (warm-model cross-host re-test, owner
+# 2026-10-05). The canonical prompt plus three deliberately "hard" ones: a long
+# multi-object scene (longer than CLIP's 77-token window on purpose — SD/SDXL
+# truncate, SANA's Gemma encoder reads more), a text-rendering prompt, and a
+# high-frequency texture. Diffusion compute is fixed by steps × resolution, so
+# these are a CONTROL: per-prompt time/energy should not differ beyond noise.
+IMAGE_SESSION_PROMPTS = [
+    CANONICAL_IMAGE_PROMPT,
+    ("a crowded night market in a rainy harbour city, dozens of food stalls with steaming woks, "
+     "paper lanterns in red and gold, neon signs reflected in puddles, fishing boats moored behind, "
+     "a tram crossing a stone bridge, people with umbrellas, a cat on a crate, mist over distant "
+     "mountains, cinematic lighting, shallow depth of field, ultra detailed, 35mm photograph"),
+    "a hand-painted wooden shop sign that reads 'GREENING OF STREAMING' above a bakery door",
+    "extreme close-up of woven tweed fabric, individual fibres visible, macro photograph, sharp focus",
+]
+
 # RAG — canonical question for /demo step 4 (3-mode comparison) and any other
 # Anonymous-tier RAG run. Tied to the corpus contents (codec / streaming
 # energy papers) so the answer is corpus-grounded and the mode comparison

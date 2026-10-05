@@ -10,6 +10,7 @@ import hosts
 import main
 import persist
 import power
+import remote_ai
 import remote_video
 import routes_video
 
@@ -245,3 +246,63 @@ def test_llm_and_image_panels_follow_registry(monkeypatch):
     assert "runRemoteImage('gos2')" in img_lab
     for page in ("/llm", "/image"):
         assert 'id="remote-hosts-panel"' not in client.get(page, headers=_ANON).text
+
+
+# --- warm-model image session ------------------------------------------------------
+
+def test_per_prompt_breakdown_assigns_samples_by_span():
+    readings = [(10.5, 30.0), (11.5, 32.0), (12.5, 40.0), (13.5, 42.0)]
+    events = [(11.0, 0), (12.0, 0), (13.0, 1), (14.0, 1)]   # last img of p0 at 12.0, p1 at 14.0
+    out = remote_ai.per_prompt_breakdown(readings, events, t_go=10.0, w_base=2.0,
+                                         n_prompts=2, per_prompt=2)
+    assert [o["polls"] for o in out] == [2, 2]
+    assert out[0]["delta_w"] == 29.0 and out[1]["delta_w"] == 39.0
+    assert out[0]["span_s"] == 2.0
+
+
+def test_image_session_route_is_lab_only_and_validated(registry):
+    assert client.post("/image/session", headers=_ANON, data={"host": "local"}).status_code == 403
+    assert client.post("/image/session", headers=_LAB,
+                       data={"host": "local", "per_prompt": 0}).status_code == 400
+    assert client.post("/image/session", headers=_LAB, data={"host": "gos2"}).status_code == 400
+
+
+def test_session_runner_protocol_with_fake_runner(tmp_path, monkeypatch):
+    """End-to-end over the real subprocess/event plumbing with a fake runner:
+    the warm baseline is taken while the runner waits, and the task window
+    covers only GO → done."""
+    import image_gen, video
+    fake = tmp_path / "fake_runner.py"
+    fake.write_text(
+        "import json,sys,time\n"
+        "a=json.loads(sys.argv[1]); print(json.dumps({'ev':'ready','load_s':1.0,'warmup_s':0.5,'torch':'x','diffusers':'y'}),flush=True)\n"
+        "for l in sys.stdin:\n"
+        "    if l.strip()=='GO': break\n"
+        "for p in range(len(a['prompts'])):\n"
+        "    for k in range(a['per_prompt']):\n"
+        "        time.sleep(0.05); print(json.dumps({'ev':'img','p':p,'k':k}),flush=True)\n"
+        "print(json.dumps({'ev':'done','gen_s':0.2,'n_images':len(a['prompts'])*a['per_prompt'],'s_per_image':0.05,'per_prompt_s':[0.1,0.1],'device':'cuda'}),flush=True)\n")
+    monkeypatch.setattr(remote_ai, "RUNNER_LOCAL", fake)
+    monkeypatch.setattr(image_gen, "IMAGE_MODELS", {"m": {"label": "M", "repo": "r", "gpu_steps": 2,
+                                                          "size_px": 64, "params": "1"}})
+    monkeypatch.setattr(video, "focus_mode_enter", lambda: [])
+    monkeypatch.setattr(video, "focus_mode_exit", lambda s: None)
+    calls = []
+    async def fake_baseline(polls, read_watts, **kw):
+        calls.append("baseline")
+        return {"w_base": 80.0, "samples_w": [80.0] * polls}
+    async def fake_task(stop, read_watts, tuples=False, **kw):
+        out = []
+        while not stop.is_set():
+            out.append((__import__("time").time(), 250.0))
+            await asyncio.sleep(0.02)
+        return out
+    monkeypatch.setattr(power, "sample_baseline", fake_baseline)
+    monkeypatch.setattr(power, "sample_task", fake_task)
+    r = asyncio.run(remote_ai.run_image_session("local", "m", per_prompt=2, settle_s=0,
+                                                prompts=["a", "b"]))
+    assert calls == ["baseline", "baseline"]                 # cold, then warm
+    assert r["mode"] == "session" and r["generation"]["n_images"] == 4
+    assert r["energy"]["delta_w"] == 170.0                   # 250 − warm 80
+    assert len(r["per_prompt"]) == 2 and r["host"]["id"] == "gos1"
+    assert r["energy_vs_cold_idle"]["delta_w"] == 170.0     # fake cold == warm here

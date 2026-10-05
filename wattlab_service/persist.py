@@ -735,6 +735,7 @@ def _sum_decode_panel(summary: dict, data: dict) -> dict:
 _SUMMARISERS = {
     "image": {
         "cpu": _sum_image_single, "gpu": _sum_image_single,
+        "session": _sum_image_single,   # CR-085 warm-model session (Lab)
         "both": _sum_image_both,
         "compare_models": _sum_image_compare_models,
     },

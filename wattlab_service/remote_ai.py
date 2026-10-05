@@ -21,6 +21,7 @@ import shlex
 import socket
 import subprocess
 import time
+from pathlib import Path
 from typing import Optional
 
 import energy
@@ -301,4 +302,197 @@ async def _run_remote_mlx(model_key: str, task_key: str, job_id: str, host: dict
         "thermals": {"cpu_base": None, "gpu_base": None, "cpu_end": None, "gpu_end": None,
                      "note": "not sampled on remote hosts"},
         "scope": _scope(host, f"GPU via MLX ({repo})"),
+    }
+
+
+# --- Image generation, warm-model session (owner request 2026-10-05) ---------------
+#
+# The oneshot paths above follow OWL's convention: power polled across import +
+# load + generation, ΔT = generation only — which can dilute a fast GPU's ΔW
+# with the (lower-power) load phase, and puts first-image warm-up inside the
+# window. A session isolates generation: the SAME runner script on both hosts
+# (GoS1 local subprocess / GoS2 over SSH) loads the model and renders warm-up
+# images, then waits; GoS1 samples a warm-model baseline (weights resident);
+# then the task window runs from GO to done — generation only.
+
+RUNNER_LOCAL = Path(__file__).parent / "remote" / REMOTE_IMAGEGEN
+
+
+def per_prompt_breakdown(readings, events, t_go: float, w_base: float,
+                         n_prompts: int, per_prompt: int) -> list:
+    """Assign timestamped (t, W) samples to each prompt's span. Spans are
+    delimited by the arrival time (GoS1 clock) of each prompt's last image
+    event; prompt 0 starts at GO. Coarse when a span holds few meter polls —
+    `polls` is reported so the reader can judge."""
+    ends = {}
+    for t, p in events:
+        ends[p] = t
+    out, start = [], t_go
+    for p in range(n_prompts):
+        end = ends.get(p)
+        if end is None:
+            break
+        ws = [w for (t, w) in readings if start <= t <= end]
+        dur = end - start
+        dw = (sum(ws) / len(ws) - w_base) if ws else None
+        out.append({"prompt_idx": p, "span_s": round(dur, 3), "polls": len(ws),
+                    "delta_w": round(dw, 2) if dw is not None else None,
+                    "wh_per_image": round(dw * dur / 3600 / per_prompt, 5) if dw is not None else None})
+        start = end
+    return out
+
+
+async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
+                            job_id: str = None, per_prompt: int = 25,
+                            settle_s: int = 30, prompts: list = None) -> dict:
+    import curated
+    import sys
+    local = host_id == "local"
+    host = hosts.local_host() if local else hosts.get(host_id)
+    if host is None or (not local and not host.get("python")):
+        raise ValueError(f"'{host_id}' is not an image-generation host")
+    cfg_m = image_gen.IMAGE_MODELS.get(model_key)
+    if cfg_m is None:
+        raise ValueError(f"Unknown image model: {model_key}")
+    if cfg_m.get("loader"):
+        raise ValueError(f"{cfg_m['label']} uses a CUDA-only loader — not portable")
+    prompts = list(prompts or curated.IMAGE_SESSION_PROMPTS)
+    s = cfg.load()
+    args = {"mode": "session", "repo": cfg_m["repo"], "prompts": prompts,
+            "per_prompt": int(per_prompt), "warmup": 2, "seed": 1234,
+            "steps": cfg_m["gpu_steps"], "size_px": cfg_m["size_px"],
+            "fp16_variant": bool(cfg_m.get("fp16_variant")),
+            "torch_dtype": cfg_m.get("torch_dtype", "float16"),
+            "guidance_scale": cfg_m.get("guidance_scale", 0.0),
+            "pipeline": cfg_m.get("pipeline"), "device": "cuda" if local else None}
+    if local:
+        cmd = [sys.executable, str(RUNNER_LOCAL), json.dumps(args)]
+        env = {**__import__("os").environ, "HF_HUB_OFFLINE": "1"}
+    else:
+        wd = host.get("workdir", "owl")
+        py = host.get("python", f"{wd}/venv/bin/python")
+        cmd = hosts.ssh_base(host) + [f"cd {shlex.quote(wd)} && HF_HUB_OFFLINE=1 {shlex.quote(py)} "
+                                      f"{REMOTE_IMAGEGEN} {shlex.quote(json.dumps(args))}"]
+        env = None
+
+    def meters():
+        import contextlib
+        return contextlib.nullcontext() if local else power.use_meters(host["meters"])
+
+    async def baseline(update_floor: bool) -> dict:
+        if not local:
+            return await remote_video._baseline(host, s["baseline_polls"])
+        saved = power.LAST_W_BASE
+        b = await power.sample_baseline(s["baseline_polls"], read_watts=power.get_power_watts)
+        if not update_floor:                 # warm (weights resident) floor ≠ guard reference
+            power.LAST_W_BASE = saved
+        return {"w_base": b["w_base"], "baseline_samples_w": b["samples_w"],
+                **{k: b[k] for k in ("baseline_samples_w_2", "meter2_degraded") if k in b}}
+
+    def stage(x):
+        if jobs is not None and job_id in jobs:
+            jobs[job_id]["stage"] = x
+
+    loop = asyncio.get_event_loop()
+    stopped = None
+    if local:
+        from video import focus_mode_enter, focus_mode_exit
+        stopped = focus_mode_enter()
+    LOCK_FILE.write_text(job_id or "session")
+    proc = None
+    try:
+        stage("baseline_cold")
+        cold = await baseline(update_floor=True)
+        stage("loading")
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, bufsize=1, env=env)
+
+        def read_until(evname):
+            for line in proc.stdout:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if ev.get("ev") == evname:
+                    return ev
+            raise RuntimeError(f"{host['label']} image session ended before '{evname}': "
+                               f"{proc.stderr.read()[-400:]}")
+        ready = await loop.run_in_executor(None, read_until, "ready")
+        stage("settle")
+        await asyncio.sleep(int(settle_s))
+        stage("baseline_warm")
+        warm = await baseline(update_floor=False)
+
+        stage("generating")
+        events = []
+
+        def read_events():
+            for line in proc.stdout:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if ev.get("ev") == "img":
+                    events.append((time.time(), ev["p"]))
+                    if jobs is not None and job_id in jobs:
+                        jobs[job_id]["images_done"] = len(events)
+                elif ev.get("ev") == "done":
+                    return ev
+            raise RuntimeError(f"{host['label']} image session died: {proc.stderr.read()[-400:]}")
+
+        stop = asyncio.Event()
+        with meters():
+            poll = asyncio.create_task(power.sample_task(stop, read_watts=power.get_power_watts,
+                                                         tuples=True))
+        t_go = time.time()
+        proc.stdin.write("GO\n")
+        proc.stdin.flush()
+        try:
+            done = await loop.run_in_executor(None, read_events)
+        finally:
+            t_done = time.time()
+            stop.set()
+            readings = await poll
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+        LOCK_FILE.unlink(missing_ok=True)
+        if stopped is not None:
+            loop.run_in_executor(None, focus_mode_exit, stopped)
+
+    window_s = t_done - t_go
+    n = done["n_images"]
+    w_base = warm["w_base"]
+    w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
+    e = image_gen._calc_energy(w_base, w_task, window_s, readings, n,
+                               warm["baseline_samples_w"], baseline_dict=warm)
+    # Same window against the COLD floor (no model resident). On GoS1 the warm
+    # floor sits ~+34 W above cold (smoke test 2026-10-05: GPU held in a high
+    # power state with weights resident); the M6's does not move. Warm = the
+    # generation work alone; cold = also charging the cost of holding the model.
+    e_cold = image_gen._calc_energy(cold["w_base"], w_task, window_s, readings, n,
+                                    cold["baseline_samples_w"], baseline_dict=cold)
+    gpu_label = (f"GPU ({__import__('gpu').BACKEND.device_label()})" if local
+                 else f"{host.get('chip', '')} GPU (Metal/MPS)")
+    return {
+        "mode": "session", "job_id": job_id, "host": hosts.identity(host),
+        "engine": {"id": "gpu", "kind": "hw", "label": gpu_label},
+        "model_key": model_key, "model_label": cfg_m["label"],
+        "prompts": prompts, "per_prompt": int(per_prompt), "settle_s": int(settle_s),
+        "warmup_images": 2, "load_s": ready.get("load_s"), "warmup_s": ready.get("warmup_s"),
+        "versions": {k: ready.get(k) for k in ("torch", "diffusers")},
+        "baseline_cold": {"w_base": cold["w_base"], "samples_w": cold["baseline_samples_w"]},
+        "baseline_warm": {"w_base": warm["w_base"], "samples_w": warm["baseline_samples_w"]},
+        "generation": {"gen_s": round(window_s, 3), "gen_s_runner": done["gen_s"],
+                       "batch_size": n, "n_images": n,
+                       "gen_s_per_image": round(window_s / n, 4),
+                       "per_prompt_s": done["per_prompt_s"], "device": done["device"],
+                       "size": cfg_m["size_px"], "steps": cfg_m["gpu_steps"],
+                       "b64_png": done.get("thumb_b64_png")},
+        "per_prompt": per_prompt_breakdown(readings, events, t_go, w_base, len(prompts), int(per_prompt)),
+        "energy": e,
+        "energy_vs_cold_idle": {k: e_cold[k] for k in ("w_base", "delta_w", "delta_e_wh",
+                                                       "wh_per_image", "confidence")},
+        "scope": _scope(host, f"GPU, warm model, generation window only. Model: {cfg_m['label']} "
+                              f"at {cfg_m['size_px']}px"),
     }
