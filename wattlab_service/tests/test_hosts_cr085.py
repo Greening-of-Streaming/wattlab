@@ -346,3 +346,19 @@ def test_remote_ai_results_get_no_cross_machine_anchor(tmp_path, monkeypatch, re
     rem = json.loads(next((tmp_path / "image").glob("*_gos2-anc.json")).read_text())
     assert "video_relative" in loc["energy"] and "H.265" not in loc["energy"]["video_relative"]["text"]
     assert "video_relative" not in rem["energy"]
+
+
+def test_remote_image_button_sends_the_prompt(monkeypatch):
+    """Bug 2026-10-05: the GoS2 image button ignored the prompt box."""
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**GOS2, "python": "/p"}})
+    html = client.get("/image", headers=_LAB).text
+    i = html.index("async function runRemoteImage")
+    js = html[i:i + 1200]
+    assert "getElementById('prompt')" in js and "&prompt=" in js
+
+
+def test_remote_image_panel_offers_gos1_pair_tickbox(monkeypatch):
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**GOS2, "python": "/p"}})
+    html = client.get("/image", headers=_LAB).text
+    assert 'id="also-local-gos2"' in html and "checked" not in html.split('id="also-local-gos2"')[1][:20]
+    assert "device=gpu&model_key=" in html          # companion run is forced to the GPU path

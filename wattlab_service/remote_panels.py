@@ -84,12 +84,22 @@ def image_panel_html(request) -> str:
     for hid, h in hosts.remote_hosts().items():
         if h.get("python"):
             blocks.append(_block(h, hid, f'<button class="remote-btn" onclick="runRemoteImage(\'{hid}\')">'
-                                         f'Generate on {h.get("label", hid)} GPU (same model files as GoS1)</button>'))
+                                         f'Generate on {h.get("label", hid)} GPU (same model files as GoS1)</button>'
+                                         f'<label style="color:var(--text-2);font-size:0.78rem;margin-left:0.5rem;cursor:pointer">'
+                                         f'<input type="checkbox" id="also-local-{hid}"> Run on GoS1 also (GPU)</label>'
+                                         f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.35rem">Always the GPU path. '
+                                         f'Tick the box to queue the same model + prompt on GoS1\'s GPU for a like-for-like pair '
+                                         f'(the page\'s own default is CPU).</div>'))
     if not blocks:
         return ""
     js = """<script>
 async function runRemoteImage(host) {
-  const body = 'host=' + encodeURIComponent(host) + '&model_key=' + encodeURIComponent(selectedModelKey);
+  let body = 'host=' + encodeURIComponent(host) + '&model_key=' + encodeURIComponent(selectedModelKey);
+  // Send the prompt box like startMeasurement() does (bug 2026-10-05: the
+  // remote button always fell back to the canonical prompt).
+  const promptEl = document.getElementById('prompt');
+  const prompt = promptEl ? promptEl.value.trim() : '';
+  if (CAN_CUSTOM_PROMPT && prompt) body += '&prompt=' + encodeURIComponent(prompt);
   const resp = await fetch('/image/remote', {method: 'POST',
       headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body});
   const data = await resp.json().catch(() => ({}));
@@ -97,6 +107,35 @@ async function runRemoteImage(host) {
   document.getElementById('run-btn').disabled = true;
   imgStartTime = Date.now(); renderProgress('baseline', null, null);
   pollTimer = setInterval(() => pollJob(data.job_id), 1500);
+  // "Run on GoS1 also" (owner 2026-10-05): same model + prompt on GoS1's GPU
+  // path, queued behind the remote job; its card renders under the main one.
+  const also = document.getElementById('also-local-' + host);
+  if (also && also.checked) {
+    let b2 = 'device=gpu&model_key=' + encodeURIComponent(selectedModelKey);
+    if (CAN_CUSTOM_PROMPT && prompt) b2 += '&prompt=' + encodeURIComponent(prompt);
+    const r2 = await fetch('/image/start', {method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: b2});
+    const d2 = await r2.json().catch(() => ({}));
+    let pair = document.getElementById('status-pair');
+    if (!pair) {
+      pair = document.createElement('div'); pair.id = 'status-pair'; pair.style.marginTop = '1.5rem';
+      document.getElementById('status').after(pair);
+    }
+    if (!d2.job_id) { pair.innerHTML = '<div style="color:var(--err)">GoS1 run not started: ' + (d2.error || r2.status) + '</div>'; return; }
+    pair.innerHTML = '<div style="color:var(--text-3);font-size:0.8rem">GoS1 (GPU) — same model + prompt — queued…</div>';
+    const t = setInterval(async () => {
+      const j = await (await fetch('/image/job/' + d2.job_id)).json().catch(() => ({}));
+      if (j.result) {
+        clearInterval(t);
+        pair.innerHTML = '<div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem">GoS1 · same model + prompt</div>'
+          + wlRenderImageCard({result: j.result, isPrev: false});
+      } else if (j.error || j.status === 'error') {
+        clearInterval(t); pair.innerHTML = '<div style="color:var(--err)">GoS1 run failed: ' + (j.error || '') + '</div>';
+      } else if (j.stage) {
+        pair.innerHTML = '<div style="color:var(--text-3);font-size:0.8rem">GoS1 (GPU) — same model + prompt — ' + j.stage + '…</div>';
+      }
+    }, 2000);
+  }
 }
 </script>"""
-    return _wrap(blocks, "runs the model selected above on the GPU path") + js
+    return _wrap(blocks, "runs the model + prompt selected above on the GPU path") + js
