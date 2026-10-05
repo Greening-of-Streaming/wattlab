@@ -78,7 +78,7 @@ Jobs: GoS1 dcfe2bf7, 0d5a2c2c, 18ff7f0e · GoS2 Ollama gos2-f079b955, gos2-20206
 GoS2 MLX gos2-154efd8e, gos2-092d00ab, gos2-877b51c2 (`ai_manifest.jsonl`).
 
 Reading: the RTX 5080 is **~4× faster** (GDDR7 bandwidth ≈ 960 GB/s vs 170 GB/s unified memory — token
-generation is bandwidth-bound), but at ~55 W marginal vs ~9 W its energy per token is ~2× higher. On the
+generation is bandwidth-bound), but at ~196 W marginal vs ~27 W (Ollama) / ~21 W (MLX) — measured means, qwen3:4b — its energy per token is ~2× higher. On the
 same Mac, **MLX beats llama.cpp/Ollama by 34 % per token** — the owner's hypothesis (2026-10-05) holds on this
 model/task. Caveats: (a) MLX decodes greedily by default (3046 tokens, identical every run) while Ollama
 samples at its default temperature (3799–4743 tokens) — per-token normalisation absorbs most of this, but
