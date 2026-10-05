@@ -19,6 +19,8 @@ doesn't have to:
 
 Nothing in this module writes an IP, a User-Agent, or a cookie anywhere.
 """
+import paths
+import env
 import hashlib
 import hmac
 import ipaddress
@@ -30,8 +32,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-_REPO_ROOT = Path("/home/gos/wattlab")
-_ENV = dotenv_values(_REPO_ROOT / ".env")
+_REPO_ROOT = paths.REPO_ROOT
+_ENV = env.load()
 
 
 # --- IP pseudonymisation ----------------------------------------------------

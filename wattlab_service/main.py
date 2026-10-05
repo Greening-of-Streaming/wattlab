@@ -11,6 +11,7 @@ page chrome + serve-time UI copy in ui.py. Feature modules never import
 main; benchmark.py and the tests reach a few orchestration callables
 through the main-level aliases kept at the bottom of the assembly block.
 """
+import env
 import asyncio
 import json
 import subprocess
@@ -38,7 +39,7 @@ from capabilities import (
 from power import meter_display_name
 from video import LOCK_FILE
 
-config = dotenv_values("/home/gos/wattlab/.env")
+config = env.load()
 app = FastAPI()
 
 # Phase 3: per-feature route modules. Each owns its routes + page template +
@@ -182,19 +183,26 @@ async def startup():
     # stay wedged until someone removes it by hand.
     LOCK_FILE.unlink(missing_ok=True)
     queue_control.start(jobs, LOCK_FILE)
+    import settings as _cfg
+    s = _cfg.load()   # CR-085 — host-specific services are opt-out per node
     asyncio.create_task(runtime.power_poller())
-    asyncio.create_task(runtime.sensors_poller())
-    asyncio.create_task(rig.rig_poller())
+    if s.get("run_sensors_poller", True):
+        asyncio.create_task(runtime.sensors_poller())
+    if s.get("run_rig_poller", True):
+        asyncio.create_task(rig.rig_poller())
     asyncio.create_task(lab_reservations.ticker())   # CR-083 — due slots raise/lower the flag
-    try:
-        import origin_control
-        print(await asyncio.get_event_loop().run_in_executor(
-            None, origin_control.start), flush=True)
-    except Exception:
-        pass
-    asyncio.create_task(carbon.poller(zones=[carbon.HOME_ZONE]))
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, rag_module.check_index)
+    if s.get("run_origin", True):
+        try:
+            import origin_control
+            print(await asyncio.get_event_loop().run_in_executor(
+                None, origin_control.start), flush=True)
+        except Exception:
+            pass
+    if s.get("run_carbon_poller", True):
+        asyncio.create_task(carbon.poller(zones=[carbon.HOME_ZONE]))
+    if s.get("run_rag_check", True):
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, rag_module.check_index)
 
 
 @app.get("/ui-config.js", dependencies=[Depends(requires(PUBLIC_PAGE))])

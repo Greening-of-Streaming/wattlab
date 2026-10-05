@@ -8,6 +8,7 @@ thermal-recovery chart payload helper.
 
 Phase 3 per-feature route module — never import main.
 """
+import paths
 import json
 from datetime import datetime
 from pathlib import Path
@@ -727,7 +728,7 @@ def _recovery_chart_payload(cooldown_s):
     auth — it's a frozen snapshot baked into a public page at render time,
     re-read from the CSV on each request."""
     import csv as csv_mod
-    diag_dir = Path("/home/gos/wattlab/results/diagnostics")
+    diag_dir = paths.repo("results", "diagnostics")
     summaries = sorted(diag_dir.glob("recovery_*_summary.csv")) if diag_dir.exists() else []
     if not summaries:
         return None

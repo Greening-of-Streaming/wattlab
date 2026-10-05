@@ -42,6 +42,7 @@ All ssh/adb/Shelly subprocess+HTTP calls run via asyncio.to_thread — never on
 the event loop. Tests monkeypatch the module-level IO functions (plug_status,
 plug_set, shelly_status, shelly_set, probe_ready, send_shutdown).
 """
+import env
 import asyncio
 import json
 import logging
@@ -55,7 +56,7 @@ import lg
 
 log = logging.getLogger(__name__)
 
-_config = dotenv_values("/home/gos/wattlab/.env")
+_config = env.load()
 
 # Android platform-tools r37.0.0 (adb 1.0.41, build 37.0.0-14910828), a pinned
 # release unpacked under /srv/data (the data NVMe — survives reboots and /tmp

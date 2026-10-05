@@ -1,7 +1,8 @@
+import paths
 import json
 from pathlib import Path
 
-SETTINGS_FILE = Path("/home/gos/wattlab/settings.json")
+SETTINGS_FILE = paths.repo("settings.json")
 
 DEFAULTS = {
     # Kill switch for anonymous aggregate visit counting (analytics.py — no
@@ -220,8 +221,8 @@ DEFAULTS = {
     "rig_hdmi_inputs": {},           # {device: "HDMI_n" | ""} — which 4 devices are cabled to the C2 (2026-08-26)
     "rig_sinks": {},                 # {device: "dummy" | ""} — boxes on an HDMI dummy/EDID plug rather than the C2 (2026-09-05)
     "rig_idle_off_monitor": False,
-    "rag_corpus_path": "/home/gos/wattlab/corpus/papers",
-    "rag_chroma_path": "/home/gos/wattlab/.chroma",
+    "rag_corpus_path": str(paths.repo("corpus", "papers")),
+    "rag_chroma_path": str(paths.repo(".chroma")),
     # CR-015 — auto-lower the maintenance flag after this many minutes of
     # Lab-tier inactivity. The owl-maintenance-watchdog systemd timer fires
     # every minute and runs `stage-off` if the flag's mtime is older than
@@ -298,10 +299,27 @@ DEFAULTS = {
     # schema in hosts.py's docstring.
     "local_host":    {},
     "compute_hosts": {},
+    # CR-085 autonomy Phase 1 — host-specific background services. Default on
+    # (GoS1 unchanged); a node without the decode rig / origin / RAG corpus
+    # (GoS2) turns them off in its own settings.json.
+    "run_rig_poller":     True,
+    "run_origin":         True,
+    "run_carbon_poller":  True,
+    "run_rag_check":      True,
+    "run_sensors_poller": True,
 }
 
 
+_WARNED_MISSING = False
+
+
 def load() -> dict:
+    global _WARNED_MISSING
+    if not SETTINGS_FILE.exists() and not _WARNED_MISSING:
+        # Loud, once: booting on DEFAULTS means GoS1's paths and devices.
+        print(f"WARN: {SETTINGS_FILE} missing — running on built-in DEFAULTS "
+              "(GoS1 paths/devices). Create this host's settings.json.", flush=True)
+        _WARNED_MISSING = True
     if SETTINGS_FILE.exists():
         try:
             data = json.loads(SETTINGS_FILE.read_text())

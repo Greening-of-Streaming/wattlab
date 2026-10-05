@@ -1,3 +1,4 @@
+import paths
 import csv
 import io
 import json
@@ -10,7 +11,7 @@ import gpu
 import power
 import version
 
-RESULTS_DIR = Path("/home/gos/wattlab/results")
+RESULTS_DIR = paths.repo("results")
 ENVELOPE_VERSION = 2   # see docs/result_envelope.md · absent on disk = 0 · v2 = `host` stamped (CR-085)
 
 

@@ -11,12 +11,13 @@ window, then restart it, attributing the delta.
 Idempotent: if something already listens on 8123, we don't spawn (dev boxes,
 manual runs). Restarted automatically if the child dies while we're up.
 """
+import paths
 import subprocess
 import time
 import urllib.request
 from pathlib import Path
 
-ORIGIN_PY = Path("/home/gos/wattlab/decode_bench/origin.py")
+ORIGIN_PY = paths.repo("decode_bench", "origin.py")
 PORT = 8123
 
 _proc: subprocess.Popen | None = None

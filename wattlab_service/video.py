@@ -1,3 +1,4 @@
+import paths
 import asyncio
 import os
 import shlex
@@ -1086,7 +1087,7 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
     sets variance_pct = mean of the three in settings.json.
     """
     s = cfg.load()
-    meridian = Path("/home/gos/wattlab/test_content/meridian_4k.mp4")
+    meridian = paths.repo('test_content', 'meridian_4k.mp4')
     n_runs = int(s["variance_runs"])
     cooldown = float(s["variance_cooldown_s"])
     n_base = int(s["baseline_polls"])

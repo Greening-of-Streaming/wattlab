@@ -19,6 +19,7 @@ Encoder commands come from video.variance_template (CPU + h265_gpu), so the
 workload is identical to variance calibration and routes through gpu.BACKEND
 (no VAAPI `-t` cap needed post-CR-022 / ffmpeg-master).
 """
+import paths
 import asyncio
 import csv
 import statistics
@@ -35,9 +36,9 @@ from video import (LOCK_FILE, UPLOAD_DIR, POLL_INTERVAL, apply_custom_cmd,
 
 # Same fixed inputs the CLI used: CPU on the 12-min 4K master, GPU on the 120s
 # asset. Module constants for now — CR-031 will lift the hardcoded repo root.
-_DIAG_DIR  = Path("/home/gos/wattlab/results/diagnostics")
-_INPUT_CPU = Path("/home/gos/wattlab/test_content/meridian_4k.mp4")
-_INPUT_GPU = Path("/home/gos/wattlab/test_content/meridian_120s.mp4")
+_DIAG_DIR  = paths.repo('results', 'diagnostics')
+_INPUT_CPU = paths.repo('test_content', 'meridian_4k.mp4')
+_INPUT_GPU = paths.repo('test_content', 'meridian_120s.mp4')
 
 # Dense in 0–15s where the recovery action lives, sparse past 30s.
 DEFAULT_DISTANCES = [0, 2, 5, 8, 12, 18, 25, 35, 50, 70, 95, 120]

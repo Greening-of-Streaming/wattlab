@@ -46,6 +46,8 @@ Core logic is importable: bin/run-encode-parity drives it now; a future
 """
 from __future__ import annotations
 
+import paths
+
 import asyncio
 import json
 import math
@@ -78,9 +80,9 @@ SCHEMA = "encode-parity/v1"
 # (SI~101 / TI~45). Higher complexity correctly needs more bitrate to hit a VMAF
 # target (sport ~12 Mbps h264 for VMAF 92 vs Meridian's ~3 Mbps).
 CLIPS = {
-    "meridian_120s": Path("/home/gos/wattlab/test_content/meridian_120s.mp4"),  # low
-    "bbb_120s":      Path("/home/gos/wattlab/test_content/bbb_120s.mp4"),        # high
-    "kranjska_120s": Path("/home/gos/wattlab/test_content/kranjska_dh_120s.mp4"),  # sport
+    "meridian_120s": paths.repo('test_content', 'meridian_120s.mp4'),  # low
+    "bbb_120s":      paths.repo('test_content', 'bbb_120s.mp4'),        # high
+    "kranjska_120s": paths.repo('test_content', 'kranjska_dh_120s.mp4'),  # sport
 }
 
 CPU_ENCODER = {"h264": "libx264", "h265": "libx265", "av1": "libsvtav1"}

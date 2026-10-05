@@ -33,8 +33,8 @@ from typing import Optional
 
 # Read API token from .env at module import (siblings do the same).
 try:
-    from dotenv import dotenv_values
-    _ENV = dotenv_values("/home/gos/wattlab/.env")
+    import env
+    _ENV = env.load()
 except Exception:
     _ENV = {}
 

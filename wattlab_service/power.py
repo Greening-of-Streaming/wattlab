@@ -26,6 +26,7 @@ To swap in a different power source (PDU, IPMI, another smart plug brand):
   (the fuller PowerBackend protocol is CR-031 §2, deliberately deferred).
 """
 
+import env
 import asyncio
 import contextlib
 import contextvars
@@ -37,7 +38,7 @@ from tapo import ApiClient
 
 import gpu
 
-_config = dotenv_values("/home/gos/wattlab/.env")
+_config = env.load()
 
 # Cached device handles, one per meter IP (KLAP sessions are exclusive — see
 # module docstring). The per-IP lock prevents two coroutines (e.g. the runtime

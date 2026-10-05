@@ -4,6 +4,7 @@ test-data cleanup panel), settings save, /variance/run calibration
 trigger, and /precalibration/data (thermal-recovery probe JSON).
 
 Phase 3 per-feature route module — shared state from runtime.py, chrome
+import paths
 from ui.py, never import main.
 """
 import uuid
@@ -219,7 +220,7 @@ async def precalibration_data():
     `_<timestamp>.csv` (raw per-poll readings) is referenced for download.
     """
     import csv as csv_mod
-    diag_dir = Path("/home/gos/wattlab/results/diagnostics")
+    diag_dir = paths.repo("results", "diagnostics")
     if not diag_dir.exists():
         return {"available": False, "reason": "no diagnostics directory"}
     summaries = sorted(diag_dir.glob("recovery_*_summary.csv"))

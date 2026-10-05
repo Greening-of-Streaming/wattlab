@@ -6,6 +6,7 @@ Phase 3 of the 2026-06 refactor: per-feature route module. Orchestration
 measurement stays in pixop.py. Shared state comes from runtime.py, page
 chrome from ui.py — never import main.
 """
+import paths
 import asyncio
 import html as html_lib
 import json
@@ -44,8 +45,8 @@ uploads.register_dir(pixop._workdir_paths(pixop.config())[0])
 # additions; nothing else.
 
 _VIDEO_ENHANCE_ASSETS = {
-    "meridian_120s.mp4":      Path("/home/gos/wattlab/test_content/meridian_120s.mp4"),
-    "meridian_120s_lowq.mp4": Path("/home/gos/wattlab/test_content/meridian_120s_lowq.mp4"),
+    "meridian_120s.mp4":      paths.repo('test_content', 'meridian_120s.mp4'),
+    "meridian_120s_lowq.mp4": paths.repo('test_content', 'meridian_120s_lowq.mp4'),
 }
 
 
