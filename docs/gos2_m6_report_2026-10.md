@@ -128,3 +128,23 @@ Added to the public `/image` panel (owner-approved), public smoke test 🟢 (893
 **Candidate post line (needs Tania's check, operating point named):** *"This 1024-pixel image took 0.014 Wh to
 generate on an NVIDIA RTX 5080 and 0.015 Wh on an Apple M6 Mac mini (SANA-Sprint 0.6B, 2 steps; energy above
 idle; n = 3). Counting the whole machine, 0.020 vs 0.015 Wh — and the RTX was 6.6× faster."*
+
+### 2b. LLM — three model sizes (qwen3 1.7B / 4B / 8B), task T2, cold start, n = 3
+
+mWh per output token (marginal, mean ± 95 % CI) · tokens/s · whole-machine mWh/token:
+
+| Model | RTX 5080 (Ollama 0.20.2) | M6 · Ollama 0.35.1 (same GGUF) | M6 · MLX (4-bit) |
+|---|---|---|---|
+| qwen3:1.7b | 0.130 ± 0.009 · 308 tok/s · 0.196 — **🟡** (runs ~7 s) | 0.073 ± 0.028 · 91 · 0.077 | **0.039 ± 0.003** · 120 · 0.042 |
+| qwen3:4b | 0.294 ± 0.010 · 185 · 0.412 | 0.160 ± 0.008 · 47 · 0.168 | **0.105 ± 0.001** · 55 · 0.112 |
+| qwen3:8b | 0.496 ± 0.006 · 127 · 0.661 | 0.245 ± 0.010 · 27 · 0.259 | **0.182 ± 0.004** · 32 · 0.195 |
+
+Jobs (ai_manifest.jsonl): 8b GoS1 e3c40ec3, 8423e5dd, 213a6c8f · Ollama gos2-b29364f3, gos2-efb92bf2,
+gos2-61914d6d · MLX gos2-b3c5f2da, gos2-a9d833e5, gos2-bd841599 · 1.7b GoS1 515904d1, 5f5e8d12, 0575b37f ·
+Ollama gos2-afae8350, gos2-4eb06e95, gos2-aee6aeff · MLX gos2-8db534da, gos2-58b8ba54, gos2-117e7169.
+Ollama digests identical on both hosts (qwen3:8b 500a1f067a9f).
+
+**Pattern, consistent across sizes:** same model file, the M6 (Ollama) spends **44–51 % less marginal energy
+per token** than the RTX 5080 while running **3.4–4.7× slower**; MLX on the same Mac takes a further
+**26–47 % off**. Whole-machine, the M6+MLX is **3.4–4.7× cheaper per token**. Every engine scales roughly
+with parameter count.

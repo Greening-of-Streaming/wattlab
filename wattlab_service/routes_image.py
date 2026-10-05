@@ -42,6 +42,8 @@ async def image_page(request: Request):
     # textarea (CUSTOM_PROMPT) and the Both / Compare-Models buttons
     # (BATCH_COMPARE). Anonymous sees the curated CANONICAL_IMAGE_PROMPT
     # rendered read-only with a lock badge; the runtime gate enforces.
+    import remote_panels
+    remote_panel_html = remote_panels.image_panel_html(request)   # CR-085, Lab-only
     can_custom_prompt = can(audience.tier(request), CUSTOM_PROMPT)
     can_batch_compare = can(audience.tier(request), BATCH_COMPARE)
     lk_prompt_class   = _lock_class(request, CUSTOM_PROMPT)
@@ -326,6 +328,7 @@ async def image_page(request: Request):
         "padding:0.75rem 1.5rem;font-family:monospace;font-size:0.95rem;cursor:not-allowed'>"
         "Compare Models — needs ≥ 2 image models enabled</button>")}
     </div>
+    {remote_panel_html}
     <div id="status"></div>
     {prev_html}
     </div>

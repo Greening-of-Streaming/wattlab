@@ -61,6 +61,8 @@ async def llm_page(request: Request):
     # Anonymous sees the same controls dim/disabled with a "Members only ·
     # Join GoS" badge; the runtime gates in /llm/run already enforce the
     # rule — this is the visible product copy.
+    import remote_panels
+    remote_panel_html = remote_panels.llm_panel_html(request)   # CR-085, Lab-only
     can_custom_prompt = can(audience.tier(request), CUSTOM_PROMPT)
     can_batch_compare = can(audience.tier(request), BATCH_COMPARE)
     lk_prompt_class   = _lock_class(request, CUSTOM_PROMPT)
@@ -268,6 +270,7 @@ async def llm_page(request: Request):
             Run All Tasks (T1+T2+T3)
         </button>
     </div>
+    {remote_panel_html}
     <div id="status"></div>
     <div id="prev-runs" style="margin-top:2rem;border-top:1px solid var(--panel);padding-top:1.5rem"></div>
 

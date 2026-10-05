@@ -234,3 +234,14 @@ def test_image_bench_is_lab_only_and_validated(registry):
     assert client.post("/image/bench", headers=_ANON, data={"host": "local"}).status_code == 403
     assert client.post("/image/bench", headers=_LAB, data={"host": "local", "batch": 500}).status_code == 400
     assert client.post("/image/bench", headers=_LAB, data={"host": "gos2", "batch": 10}).status_code == 400  # no python
+
+
+def test_llm_and_image_panels_follow_registry(monkeypatch):
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**GOS2, "ollama": True, "python": "/p",
+                        "mlx_models": {"qwen3:4b": "mlx-community/Qwen3-4B-4bit"}}})
+    llm_lab = client.get("/llm", headers=_LAB).text
+    assert 'id="remote-hosts-panel"' in llm_lab and "runRemoteLLM('gos2','mlx')" in llm_lab
+    img_lab = client.get("/image", headers=_LAB).text
+    assert "runRemoteImage('gos2')" in img_lab
+    for page in ("/llm", "/image"):
+        assert 'id="remote-hosts-panel"' not in client.get(page, headers=_ANON).text
