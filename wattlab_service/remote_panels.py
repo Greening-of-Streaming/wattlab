@@ -24,14 +24,15 @@ _STYLE = ('<style>.remote-btn{background:var(--panel-2);color:var(--text-1);bord
 # progress widget shows the remote host's), and its result card when done.
 # The queue is serial: the GoS1 job runs after the remote one; while it waits,
 # the line shows GoS1 idling.
-_PAIR_JS = """<script>
+_PAIR_JS_T = """<script>
+const OWL_ME = __ME__;
 function owlPairRun(kind, jobId, renderCard) {
   let pair = document.getElementById('status-pair');
   if (!pair) {
     pair = document.createElement('div'); pair.id = 'status-pair'; pair.style.marginTop = '1.5rem';
     document.getElementById('status').after(pair);
   }
-  const head = '<div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem">GoS1 · same model + ' + (kind === 'llm' ? 'task' : 'prompt') + '</div>';
+  const head = '<div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem">' + OWL_ME + ' · same ' + ({llm: 'model + task', image: 'model + prompt', video: 'source + codec + engine'}[kind] || 'job') + '</div>';
   const t = setInterval(async () => {
     const [j, p] = await Promise.all([
       fetch('/' + kind + '/job/' + jobId).then(r => r.json()).catch(() => ({})),
@@ -40,15 +41,19 @@ function owlPairRun(kind, jobId, renderCard) {
       clearInterval(t); pair.innerHTML = head + renderCard({result: j.result, isPrev: false}); return;
     }
     if (j.error || j.status === 'error') {
-      clearInterval(t); pair.innerHTML = head + '<div style="color:var(--err)">GoS1 run failed: ' + (j.error || '') + '</div>'; return;
+      clearInterval(t); pair.innerHTML = head + '<div style="color:var(--err)">' + OWL_ME + ' run failed: ' + (j.error || '') + '</div>'; return;
     }
     const w = (p && p.watts != null) ? Number(p.watts).toFixed(1) + ' W' : '—';
     const st = j.stage === 'queued' ? 'queued' : (j.stage || 'starting');
     pair.innerHTML = head + '<div style="font-size:1.6rem;color:var(--accent);font-family:monospace;font-weight:bold">' + w + '</div>'
-      + '<div style="color:var(--text-3);font-size:0.72rem">live wall power · GoS1 · ' + st + '</div>';
+      + '<div style="color:var(--text-3);font-size:0.72rem">live wall power · ' + OWL_ME + ' · ' + st + '</div>';
   }, 2000);
 }
 </script>"""
+
+
+def pair_js() -> str:
+    return _PAIR_JS_T.replace("__ME__", json.dumps(hosts.local_label()))
 
 
 def _pair_box(hid: str, what: str, simultaneous: bool = False) -> str:
@@ -105,7 +110,7 @@ def llm_panel_html(request) -> str:
         btns = []
         if h.get("ollama"):
             btns.append(f'<button class="remote-btn" onclick="runRemoteLLM(\'{hid}\',\'ollama\')">'
-                        f'Ollama (llama.cpp — same model file as GoS1)</button>')
+                        f'Ollama (llama.cpp — same model file as {hosts.local_label()})</button>')
         if h.get("mlx_models"):
             mlx[hid] = sorted(h["mlx_models"])
             btns.append(f'<button class="remote-btn" data-mlx-host="{hid}" '
@@ -147,7 +152,7 @@ async function runRemoteLLM(host, runtime) {{
   }}
 }}
 </script>"""
-    return _wrap(blocks, "runs the model + task selected above, cold start") + _PAIR_JS + js
+    return _wrap(blocks, "runs the model + task selected above, cold start") + pair_js() + js
 
 
 def image_panel_html(request) -> str:
@@ -161,11 +166,11 @@ def image_panel_html(request) -> str:
             continue
         if is_peer or h.get("python"):
             blocks.append(_block(h, hid, f'<button class="remote-btn" onclick="runRemoteImage(\'{hid}\')">'
-                                         f'Generate on {h.get("label", hid)} GPU (same model files as GoS1)</button>'
+                                         f'Generate on {h.get("label", hid)} GPU (same model files as {hosts.local_label()})</button>'
                                          + _pair_box(hid, "GPU", simultaneous=is_peer) +
                                          f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.35rem">GPU path, clean method: model loaded '
                                          f'and warmed up first, 30 s settle, then ≥30 s of generation measured (~75 s per run). '
-                                         f'Tick the box to run the same on GoS1\'s GPU for a like-for-like pair.</div>'))
+                                         f'Tick the box to run the same on {hosts.local_label()}\'s GPU for a like-for-like pair.</div>'))
     if not blocks:
         return ""
     js = """<script>
@@ -196,4 +201,4 @@ async function runRemoteImage(host) {
   }
 }
 </script>"""
-    return _wrap(blocks, "runs the model + prompt selected above · warm-model session") + _PAIR_JS + js
+    return _wrap(blocks, "runs the model + prompt selected above · warm-model session") + pair_js() + js

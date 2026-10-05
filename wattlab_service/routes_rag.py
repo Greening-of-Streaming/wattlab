@@ -6,9 +6,10 @@ Orchestration (run_rag_compare_job / run_rag_compare_models_job) lives
 here; retrieval + measurement stay in rag.py. benchmark.py reaches
 run_rag_compare_models_job through the main.py alias. Phase 3 per-feature
 route module — shared state from runtime.py, chrome from ui.py, never
-import hosts
 import main.
 """
+import hosts
+import hosts as _hosts
 import asyncio
 import os
 import uuid
@@ -140,7 +141,7 @@ async def rag_page(request: Request):
 """, body=f"""
     {busy_banner}
     <h1>RAG Energy Test {_BETA_CHIP}</h1>
-    <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
+    <div class="subtitle">Greening of Streaming · OWL · {_hosts.local_label()}</div>
 
     <div style="margin-bottom:1.5rem;padding:0.85rem 1rem;border:1px solid var(--accent);
                 background:var(--accent-soft);font-size:0.85rem;line-height:1.5">

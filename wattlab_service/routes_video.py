@@ -8,6 +8,7 @@ main.py alias; tests pin main.run_job / main.video_preview_cmd the same
 way. Phase 3 per-feature route module — shared state from runtime.py,
 chrome from ui.py, never import main.
 """
+import hosts as _hosts
 import uuid
 from pathlib import Path
 
@@ -177,7 +178,7 @@ def _remote_hosts_panel_html(request: Request) -> str:
                       f'<div style="color:var(--accent);font-size:0.9rem;font-weight:bold">{h.get("label", hid)}'
                       f' <span style="color:var(--text-3);font-weight:normal;font-size:0.78rem">{sub}</span></div>'
                       f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.2rem">Same source, same bitrate, measured on '
-                      f'{h.get("label", hid)}&#39;s own meters · VMAF scored on GoS1 · uses the source selected below (not uploads)</div>'
+                      f'{h.get("label", hid)}&#39;s own meters · VMAF scored on {(h.get("label", hid) if is_peer else hosts.local_label())} · uses the source selected below (not uploads)</div>'
                       f'{"".join(rows)}<div style="margin-top:0.45rem">{pair_box}</div></div>')
     if not blocks:
         return ""
@@ -187,7 +188,7 @@ def _remote_hosts_panel_html(request: Request) -> str:
             '<style>.remote-btn{background:var(--panel-2);color:var(--text-1);border:1px solid var(--border-2);'
             'padding:0.3rem 0.6rem;font-size:0.78rem;cursor:pointer;font-family:inherit}'
             '.remote-btn:hover{border-color:var(--accent)}.remote-pair{color:var(--accent)}</style>'
-            + "".join(blocks) + '</div>' + remote_panels._PAIR_JS)
+            + "".join(blocks) + '</div>' + remote_panels.pair_js())
 
 
 @router.get("/video", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -314,7 +315,7 @@ async def video_page(request: Request):
 """, body=f"""
     {busy_banner}
     <h1>Video Transcode Energy Test</h1>
-    <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
+    <div class="subtitle">Greening of Streaming · OWL · {_hosts.local_label()}</div>
 
     <div style="margin-bottom:1rem;font-size:0.78rem;color:var(--text-3)">
         First time here? <a href="/demo" style="color:var(--accent);text-decoration:none">Try the Guided Tour →</a>

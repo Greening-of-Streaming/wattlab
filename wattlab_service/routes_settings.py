@@ -402,7 +402,9 @@ async def settings_page(request: Request):
                   'padding:0.75rem 2rem;cursor:pointer;font-family:monospace;font-size:1rem;margin-top:2rem">'
                   'Save Settings</button><div id="msg" style="margin-top:1rem;font-size:0.85rem"></div>'
                   if local else '')
-    subtitle = 'OWL · GoS1 · Lab mode' if local else 'OWL · GoS1 · Read-only'
+    import hosts as _hosts
+    _me = _hosts.local_label()
+    subtitle = f'OWL · {_me} · Lab mode' if local else f'OWL · {_me} · Read-only'
 
     chart_js = ('<script src="' + CHARTJS_URL + '"></script>'
                 '<script src="/static/wl-charts.js"></script>'

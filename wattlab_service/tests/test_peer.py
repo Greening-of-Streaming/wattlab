@@ -208,3 +208,10 @@ def test_members_replicate_in_allowlist_format(tmp_path, monkeypatch):
         assert auth._load_members(mf) == {"a@x.org"}
     finally:
         monkeypatch.undo(); auth.reload_members()
+
+
+def test_pages_name_the_local_machine(monkeypatch):
+    monkeypatch.setattr(hosts, "local_label", lambda: "GoS2")
+    for page in ("/video", "/llm", "/rag", "/settings"):
+        t = client.get(page, headers=LAB).text
+        assert "OWL · GoS2" in t and "OWL · GoS1" not in t, page

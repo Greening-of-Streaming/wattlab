@@ -6,9 +6,10 @@ Orchestration (run_llm_job / run_llm_all_job / run_llm_compare_models_job)
 lives here; inference + measurement stay in llm.py. benchmark.py reaches
 run_llm_compare_models_job through the main.py alias. Phase 3 per-feature
 route module — shared state from runtime.py, chrome from ui.py, never
-import hosts
 import main.
 """
+import hosts
+import hosts as _hosts
 import asyncio
 import uuid
 
@@ -152,7 +153,7 @@ async def llm_page(request: Request):
         {_LOCK_STYLES}
 """, body=f"""
     <h1>LLM Inference Energy Test {_BETA_CHIP}</h1>
-    <div class="subtitle">Greening of Streaming · OWL · GoS1</div>
+    <div class="subtitle">Greening of Streaming · OWL · {_hosts.local_label()}</div>
 
     <div style="margin-bottom:1.5rem;padding:0.85rem 1rem;border:1px solid var(--accent);
                 background:var(--accent-soft);font-size:0.85rem;line-height:1.5">

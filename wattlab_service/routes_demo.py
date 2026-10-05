@@ -9,6 +9,7 @@ Phase 3 per-feature route module — chrome from ui.py, never import main.
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
+import hosts as _hosts
 import curated
 import findings as findings_mod
 import gpu
@@ -305,7 +306,7 @@ _DEMO_HTML = f"""
 <div class="step active" id="step-0">
   <h1>OWL</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
-    Greening of Streaming · Live energy measurement · GoS1</p>
+    Greening of Streaming · Live energy measurement · {_hosts.local_label()}</p>
 
   {{TIER_INDICATOR}}
 
@@ -854,7 +855,7 @@ _DEMO_HTML = f"""
   <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(8)">&lsaquo; Client decode</button><button class="btn btn-primary" onclick="goStep(1)">&#8635; Start over</button></div>
   <h1>Findings</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
-    Greening of Streaming · OWL · GoS1</p>
+    Greening of Streaming · OWL · {_hosts.local_label()}</p>
 
   <div id="summary-content">
     {{FINDINGS_PANEL}}
