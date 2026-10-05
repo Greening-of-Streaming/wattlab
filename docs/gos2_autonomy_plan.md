@@ -1,7 +1,29 @@
 # GoS2 autonomy plan — from "driven by GoS1" to "two autonomous OWL nodes"
 
-**Status:** plan, drafted 2026-10-05 (owner request). CR-085 follow-on; implements `docs/gos2_design.md` §2
-("two autonomous peers") and replaces the interim SSH mechanism (§14). Nothing in here is built yet.
+**Status:** drafted 2026-10-05 (owner request); **Phases 1–5 built overnight 2026-10-05/06** (owner decisions:
+data root `/Users/gos/owl-data`, GoS2 pages Lab-only, HMAC peer auth, SSH driver retired only after the owner
+tests). CR-085 follow-on; implements `docs/gos2_design.md` §2 ("two autonomous peers").
+
+| Phase | Commit | State |
+|---|---|---|
+| 1 boots anywhere | `e07ce6e` | ✅ `paths.py`/`env.py`, `run_*` startup flags, guard tests |
+| 2 macOS layer | `f4534b9` (+ `eac7193`) | ✅ `gpu.AppleBackend`, mps, `owl-focus` |
+| 3 GoS2 own OWL | — | ⚠ serving from an **SSH-held session** (`bin/gos2-owl-session`): macOS Local Network privacy blocks LAN access from launchd agents *and* the `owl-svc` LaunchDaemon — owner action needed (see §Local Network) |
+| 4 peer API | `2129293` | ✅ `/peer/*`, HMAC, simultaneous runs, offline greying; GoS1's registry now `driver: peer` |
+| 5 replication | `01c2390` | ✅ pull-based both ways + members from one writer |
+
+### Local Network (macOS 15+ privacy) — the one open blocker
+A process started by launchd (user agent, or a LaunchDaemon with `UserName gos`) gets `No route to host` for
+every LAN address (plugs, GoS1) while loopback and internet work. Processes in an SSH session are exempt — hence
+the interim holder on GoS1 (if GoS1 or the SSH link dies, GoS2's OWL stops; the holder restarts it when SSH
+returns). Fix for the morning: in System Settings → Privacy & Security → Local Network, allow the entry for the
+venv's Python (or `uvicorn`) after starting `sudo owl-svc install` once from the desktop session so macOS
+prompts; then `touch /tmp/gos2-owl-session.stop` on GoS1 and `sudo owl-svc restart` on GoS2.
+
+### Nice level
+`nice -n -5` (GoS1 protocol step 5) **never applied** on either node: the service runs as `gos`, and negative
+nice needs root — ffmpeg runs at nice 0 everywhere. Not a parity issue (both equal) but the protocol text
+overstates it.
 
 ## Goal
 
