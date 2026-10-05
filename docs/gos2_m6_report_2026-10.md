@@ -1,0 +1,130 @@
+# Apple M6 (Mac mini) vs GoS1 — encode, LLM and image energy (first look, 2026-10-05)
+
+**Status: DRAFT — measured overnight 2026-10-04/05 by Claude (owner asleep); not reviewed. Nothing here is
+published. Tania checks before anything leaves the room (publication rule 2026-08-17; n=3 bar 2026-09-03).**
+CR-085 Part 2/3. Machines: GoS1 (AMD Ryzen 9 7900 + NVIDIA RTX 5080, Ubuntu 24.04, ~78 W idle) and GoS2
+(Apple M6 Mac mini `Mac18,5`, 12-core CPU 2S+4P+6E, 12-core GPU, 24 GB unified memory, macOS 27.0.1,
+~1.35 W idle — `docs/gos2_design.md` §13). Same OWL code path for both (GoS1 drives GoS2 over SSH and reads
+GoS2's own P110 pair; envelope v2 stamps host + engine on every result).
+
+## What is already public about the M6 (desk research, 2026-10-05)
+
+| Claim | Source | Notes |
+|---|---|---|
+| 2 nm (TSMC N2), 12-core CPU (2 super + 4 performance + 6 efficiency), 12-core GPU, dual 16-core Neural Engine, up to 32 GB unified memory at up to 170 GB/s | [Apple Newsroom, Aug 2026](https://www.apple.com/newsroom/2026/08/apple-introduces-m6-and-m5-ultra-for-a-big-leap-in-performance-and-ai-compute/) | 153.6 GB/s on 16 GB configs, 170 GB/s on 24/32 GB ([Wikipedia](https://en.wikipedia.org/wiki/Apple_M6), [MindStudio](https://www.mindstudio.ai/blog/m6-mac-mini-benchmarks-review)). Our unit is 24 GB → 170 GB/s rated. |
+| Media engine: H.264, HEVC, ProRes, ProRes RAW encode/decode; **AV1 decode only** | [Wikipedia (Apple M6)](https://en.wikipedia.org/wiki/Apple_M6) | Confirmed independently on our unit: Homebrew ffmpeg 9.0.2 exposes `h264/hevc/prores_videotoolbox`, no AV1 encoder. |
+| Mac mini (M6) power: 4 W idle, 70 W max (Apple's test conditions: Finder open, default power settings) | [Apple Support 103253](https://support.apple.com/en-us/103253) | |
+| Idle 0.9–1.0 W with nothing attached; 2.1–2.2 W with keyboard/mouse/monitor via KVM; smart-plug measurement | [note.com (重藤 六)](https://note.com/heavywisteriasix/n/ne8f28ffbc85f?hl=en) | Our 1.352 W ± 0.008 (Ethernet, logged-in session, services on) sits between their two configurations. |
+| ~48 W full-CPU, ~38 W full-GPU (vs 40 W / 44 W on M4); STREAM ~143–145 GB/s measured | [MindStudio](https://www.mindstudio.ai/blog/m6-mac-mini-benchmarks-review) (own tests) | Whole-machine figures; no encode-energy numbers. |
+| LLM: 9B Q4 prompt processing ~740 tok/s, generation ~27 tok/s; FLUX.1-schnell image ~35 s (M4 94 s) | [Wccftech](https://wccftech.com/apple-m6-vs-m4-ai-performance-benchmarks/), [MindStudio](https://www.mindstudio.ai/blog/m6-mac-mini-local-ai-performance) (citing Alex Ziskind's tests) | Speed, not energy per token/image. |
+| CPU efficiency ~13–15 % better than M4/M5 (points per watt) | [Notebookcheck SoC analysis](https://www.notebookcheck.net/Apple-M6-SoC-Analysis-Apple-s-2-nm-chip-crushes-AMD-Intel-Qualcomm.1404057.0.html) (via search summary; page not fetchable by our tooling — verify before citing) | |
+
+**The gap OWL fills:** nothing found reports *energy per encode / per token / per image* for the M6, nor a
+like-for-like comparison against a discrete-GPU workstation running identical software and identical inputs.
+Everything published is speed or whole-machine peak power.
+
+## Unified memory — what it can and cannot explain (conjecture section, not claims)
+
+- **Encode (media engine):** frames decoded, scaled and encoded on the M6 never cross a bus — the decoder,
+  scaler (GPU) and media engine all read the same physical memory. GoS1's NVENC path is *also* all-on-device
+  (CUDA decode → `scale_cuda` → NVENC, frames stay in VRAM), so unified memory is **not** the obvious source of
+  any encode difference here. The large whole-machine gap is mostly the **idle floor** (~78 W vs ~1.4 W: discrete
+  GPU at idle, desktop platform, PSU at low load), which no per-task metric captures.
+- **Software encode (same x264/x265/SVT-AV1 binary family on both):** identical bit-exact output (VMAF equal to
+  2 decimals) at ~26–40 % lower marginal energy on M6. Plausible contributors: 2 nm vs 5 nm-class silicon,
+  wide P-cores at lower clocks, memory controller on-package. We cannot attribute among these with a wall meter.
+- **LLM token generation** is memory-bandwidth bound: per output token the whole active weight set is read.
+  RTX 5080 GDDR7 ≈ 960 GB/s vs M6 ≈ 170 GB/s → expect GoS1 several × faster per token; energy per token then
+  depends on whether the 5080's higher power is offset by its speed. Unified memory's real advantage is
+  **capacity**: a 24 GB M6 can hold a ~18 GB model entirely in GPU-addressable memory, where the 16 GB RTX 5080
+  must spill layers to system RAM over PCIe — a test we did *not* run tonight (needs a >16 GB model on both).
+- **MLX vs llama.cpp on the same Mac:** MLX is designed around unified memory (lazy evaluation, no host↔device
+  copies, Metal kernels tuned for Apple GPUs); llama.cpp/Ollama's Metal backend is a port. Any MLX advantage
+  measured on GoS2 is a *software stack* effect on the same silicon — reported as a separate engine.
+
+## Results
+
+*(filled from stored results below; every number cites a job id)*
+
+### 1. Video encode — Meridian 120 s → 1080p, n = 3 per engine, all 🟢
+
+Campaign manifest: `/srv/data/owl/campaign_2026-10-05_gos2_m6/manifest.jsonl` (12 jobs, 33 sides),
+VBR set `vbr_manifest.jsonl` + `isoq_manifest.jsonl`. Draft finding:
+`docs/findings_drafts/apple-m6-encode-energy-vs-ryzen-rtx5080.md` (all job ids, full table, caveats).
+
+| | Marginal ΔE (energy above own idle) | Whole machine (wall × time) | Speed | Quality |
+|---|---|---|---|---|
+| Same software encoder (x264 / x265 / SVT-AV1) | M6 **−26 % / −40 % / −40 %** vs Ryzen 9 7900 | M6 **2.8× / 3.3× / 3.4×** cheaper | equal (±8 %) | bit-identical output |
+| Hardware, VBR (H.264 4 Mb/s / H.265 2 Mb/s) | M6 media engine **−15 % / −22 %** vs RTX 5080 NVENC | M6 ~2.3–2.5× cheaper | NVENC ~1.5× faster | H.264: VMAF 88.6 vs 89.6 · H.265: 88.0 vs 87.4 (M6 file 20 % smaller) |
+| Hardware, CBR (OWL preset parity) | M6 −1 % / −12 % | M6 2.3× / 2.5× cheaper | NVENC 2.4× / 2.2× faster | M6 **5 VMAF lower** (83.3 vs 88.7) |
+
+**Practical finding (rate control):** on the M6 media engine, CBR (`-constant_bit_rate 1`) at the same file
+size is 50 % slower, uses 15 % more energy and loses 5 VMAF vs VBR; raising the CBR target to 12 Mb/s only
+reaches VMAF 86.3 (bits go to filler: 6 and 8 Mb/s give identical VMAF 84.26). NVENC loses ~0.9 VMAF in CBR.
+**On Apple silicon, the rate-control setting matters more than the silicon comparison.**
+
+AV1: the M6 has no AV1 hardware encoder — SVT-AV1 on the M6 CPU (0.379 Wh) uses 78 % *more* marginal energy
+than NVENC AV1 (0.212 Wh) at equal VMAF (87.8 vs 87.1); whole-machine the M6 is still cheaper (0.39 vs 0.50 Wh).
+
+### 2. LLM inference — qwen3:4b, task T2 (medium reasoning), cold start, n = 3, all 🟢
+
+| Engine | mWh / output token (marginal) | Whole machine mWh/token | tokens/s |
+|---|---|---|---|
+| GoS1 — RTX 5080, Ollama 0.20.2 (CUDA) | 0.294 ± 0.010 | 0.412 | 185 |
+| GoS2 — M6 GPU, Ollama 0.35.1 (Metal, **byte-identical GGUF**, digest 359d7dd4bcda) | 0.160 ± 0.008 (**−46 %**) | 0.168 | 47 |
+| GoS2 — M6 GPU, **MLX** (mlx-lm 0.32.0, mlx-community/Qwen3-4B-4bit) | 0.105 ± 0.001 (**−64 %**) | 0.112 | 55 |
+
+Jobs: GoS1 dcfe2bf7, 0d5a2c2c, 18ff7f0e · GoS2 Ollama gos2-f079b955, gos2-2020644d, gos2-ae79f829 ·
+GoS2 MLX gos2-154efd8e, gos2-092d00ab, gos2-877b51c2 (`ai_manifest.jsonl`).
+
+Reading: the RTX 5080 is **~4× faster** (GDDR7 bandwidth ≈ 960 GB/s vs 170 GB/s unified memory — token
+generation is bandwidth-bound), but at ~55 W marginal vs ~9 W its energy per token is ~2× higher. On the
+same Mac, **MLX beats llama.cpp/Ollama by 34 % per token** — the owner's hypothesis (2026-10-05) holds on this
+model/task. Caveats: (a) MLX decodes greedily by default (3046 tokens, identical every run) while Ollama
+samples at its default temperature (3799–4743 tokens) — per-token normalisation absorbs most of this, but
+longer outputs carry longer contexts; (b) MLX's 4-bit conversion is not the same file as the GGUF Q4_K_M;
+(c) Ollama versions differ (0.20.2 vs 0.35.1 — GoS1 upgrade needs owner sudo).
+
+### 3. Image generation — 512 px, GPU path, batch 50, n = 3, all 🟢
+
+Same model files (copied from GoS1's HF cache), same steps/size/guidance, diffusers 0.37.1 on both
+(GoS1 CUDA fp16, torch 2.11; GoS2 Metal/MPS fp16, torch 2.14.1). Lab route `/image/bench` (`bench_manifest.jsonl`).
+
+| Model | Machine | Wh / image (marginal) | s / image | ΔW | Whole machine Wh / image |
+|---|---|---|---|---|---|
+| SD-Turbo (20 steps) | RTX 5080 | 0.0216 ± 0.0050 | 0.40 | 194 W | 0.0303 |
+| SD-Turbo (20 steps) | Apple M6 | **0.0172 ± 0.0002 (−20 %)** | 2.06 | 30 W | 0.0180 |
+| SDXL-Turbo (4 steps) | RTX 5080 | 0.0105 ± 0.0001 | 0.22 | 172 W | 0.0150 |
+| SDXL-Turbo (4 steps) | Apple M6 | **0.0085 ± 0.0004 (−19 %)** | 1.03 | 30 W | 0.0089 |
+
+Jobs: sd-turbo GoS1 5018ce34, 92297a48, 3bfc4234 · GoS2 gos2-798b85e9, gos2-f2ea1345, gos2-5ae563c5 ·
+sdxl-turbo GoS1 f9bdb51a, 4d4f872f, 2c8eee89 · GoS2 gos2-f10fccbb, gos2-9038f5c6, gos2-fc85b49c.
+
+**Method note that changed the answer (keep this):** OWL's image convention averages wall power over model
+load + generation but multiplies by generation time only. With GoS1's default 5-image GPU batch the generation
+window is ~2 s, so the load phase dominates the mean and the comparison *inverts* — at default batch the RTX
+looked ~2× more efficient per image (0.0056 vs 0.0118 Wh, 🟡 on GoS1). Recomputing from the generation-window
+samples only already pointed the other way; batch 50 settles it (both 🟢, tight CIs). **Any cross-host image
+comparison must use a run long enough that load is negligible.** The public `/image` default batch is fine for
+its own demo purpose but its per-image figures carry this bias on fast GPUs.
+
+Reading: the RTX 5080 is ~5× faster per image; the M6 uses ~20 % less energy per image at the margin and
+~1.7× less counting the whole machine. Diffusion is compute-bound, unlike LLM token generation — the M6's
+per-image advantage is much smaller than its per-token advantage (−20 % vs −46/−64 %), which is the pattern
+you would expect if memory bandwidth is what the RTX is "wasting" power on during token generation.
+
+**The efficient model — SANA-Sprint 0.6B (1024 px, 2 steps, bf16), batch 50, n = 3, all 🟢:**
+
+| Machine | Wh / image (marginal) | s / image | Whole machine Wh / image |
+|---|---|---|---|
+| RTX 5080 | **0.0140 ± 0.0004** | 0.27 | 0.0198 |
+| Apple M6 | 0.0146 ± 0.0005 (+4 %, ≈ tie) | 1.79 | **0.0153** |
+
+Jobs: GoS1 3b671420, 4b306d84, b156d048 · GoS2 gos2-d90790a4, gos2-82a3de95, gos2-ee130afb.
+A 1024 px SANA-Sprint image costs about what a 512 px SD-Turbo image does — the model choice moves energy per
+image far more than the machine does. On this modern bf16 DiT the RTX closes the per-image gap entirely.
+Added to the public `/image` panel (owner-approved), public smoke test 🟢 (89307e04).
+
+**Candidate post line (needs Tania's check, operating point named):** *"This 1024-pixel image took 0.014 Wh to
+generate on an NVIDIA RTX 5080 and 0.015 Wh on an Apple M6 Mac mini (SANA-Sprint 0.6B, 2 steps; energy above
+idle; n = 3). Counting the whole machine, 0.020 vs 0.015 Wh — and the RTX was 6.6× faster."*

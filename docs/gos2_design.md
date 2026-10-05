@@ -283,7 +283,42 @@ Sharing logged every minute. A run is excluded if CPU idle drops below 97 % or t
 | # | Date | State / what changed | GoS2 idle (G1) | G1 self-draw | Record |
 |---|---|---|---|---|---|
 | 1 | 2026-10-05 | Near-factory: macOS 27.0.1; Homebrew with 15 formulae (only `ffmpeg` requested), 0 casks; Apple CLT; Remote Login, Screen Sharing, File Sharing; auto-login; 7 accounts; 523 launchd jobs, 701 processes; Ethernet only, Wi-Fi off | **1.352 W ± 0.008 W** (runs 2–4; run 1 excluded: CPU idle 82.5 %, Screen Sharing 3.8 %) | 1.007 W | `results/diagnostics/gos2_idle_ethernet_wifioff_20261005_001817.json` |
+| 2 | 2026-10-05 | Row 1 + Homebrew python@3.12 venv (torch 2.14.1, diffusers 0.37.1, mlx-lm 0.32.0), **Ollama 0.35.1 brew service running** (idle, no model loaded), ~22 GB HF cache + 3.6 GB Ollama models, 6 standard user accounts, narrow sudo wrappers; 25 formulae (leaves: ffmpeg, ollama, python@3.12), 523 launchd jobs, 717 processes | **1.360 W ± 0.073 W** (runs 1–3, all clean) — no measurable change vs row 1 | 1.021 W | `results/diagnostics/gos2_idle_row2_20261005_043016.json` |
 
 Caveats on every row: G1 refreshes only every 2 s at this load, and P110 accuracy around 1 W has not been checked
 against a reference meter. For scale, GoS1 idles at ~79 W display-blanked. That comparison stays an internal
 observation until the low-end meter accuracy is checked.
+
+## 14. Overnight build — 2026-10-05 (interim mechanism, owner-approved)
+
+**Owner decisions (2026-10-04, before bed):** GoS2 engines Lab-only · old results read as GoS1 at read time
+(files never rewritten) · interim mechanism = GoS1 drives GoS2 over SSH and polls GoS2's plugs over the LAN
+(the peer job API of §2 replaces it before any move) · new efficient models may go on GoS1 and the panel.
+
+**What shipped (all tests green, 1156):**
+- `hosts.py` — the compute-host registry (`compute_hosts` setting; one entry per machine: identity, SSH,
+  meters, ffmpeg, engines × codecs with encoder args, `python`, `ollama`, `mlx_models`). Removing GoS2 or
+  adding GoS3 is a settings edit. `power.use_meters()` routes meter reads to a host's plugs context-locally;
+  per-host idle floor so GoS1's CR-070 reference is never moved.
+- Envelope **v2**: every result carries `host`; video sides carry `engine`. Remote results carry the remote
+  host's own `gpu_hardware`/`power_hardware` stamps. Pre-v2 results read as GoS1 (`hosts.result_host`), and
+  per-side engine derives from preset + that result's own GPU stamp (AMD-era runs read as AMD).
+- `/video`: Lab-only "Other machines" panel rendered from the registry — engines, not hosts (D6) — plus
+  `POST /video/remote` (optional `bitrate_kbps` for iso-quality points).
+- `remote_ai.py`: `POST /llm/remote` (`runtime=ollama|mlx`), `POST /image/remote`, `POST /image/bench` (batch
+  override, local or remote). API-only (no UI panel yet). Host-side runners in `wattlab_service/remote/`.
+
+**Facts learned (keep):**
+- **VideoToolbox CBR is a trap:** `-constant_bit_rate 1` on the M6 pads with filler — 5 VMAF lower, 50 %
+  slower, 15 % more energy than VBR at the same size. The registry keeps `hw` (CBR, NVENC-parity) and adds
+  `hw_vbr`; quote hardware comparisons in VBR.
+- **OWL image convention + short runs = wrong answer:** load-diluted mean × generation-only ΔT inverts
+  cross-host image comparisons at the default 5-image batch. Use `/image/bench` batch ≥ 50.
+- **GoS1 Ollama 0.20.2 image models are broken:** `x/flux2-klein` panics in the runner's Qwen3 text encoder
+  (`applyRoPEQwen3` index out of range); `x/z-image-turbo` returns nothing. GoS2 has Ollama 0.35.1. An
+  Ollama-image like-for-like needs GoS1's Ollama upgraded (owner sudo).
+- Software on GoS2 (2026-10-05): Homebrew python@3.12 venv `~/owl/venv` (torch 2.14.1, diffusers 0.37.1,
+  transformers 5.5.0, accelerate 1.13.0, mlx-lm 0.32.0), Ollama 0.35.1 (brew service, defaults — no
+  flash-attention/KV env, same as GoS1), models copied byte-identically from GoS1 (Ollama digests
+  359d7dd4bcda / 8f68893c685c; HF caches sd-turbo, sdxl-turbo, SANA-Sprint).
+- Version gaps to remember when comparing: Ollama 0.20.2 vs 0.35.1, torch 2.11 vs 2.14.1, ffmpeg-master vs 9.0.2.

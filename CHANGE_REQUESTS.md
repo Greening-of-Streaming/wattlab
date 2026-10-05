@@ -1324,8 +1324,11 @@ reported a 1920×1080 mode — that is the UI compositing plane only; the patter
 
 ## CR-085 · GoS2 — a second OWL node (Mac Mini): front door + failover + second bench
 
-**Status:** design phase, opened 2026-10-04 (owner). **Design doc: `docs/gos2_design.md`** (decisions, topology,
-state ownership, SSH link, tier trust, phases). Nothing built. Plugs found and identified the same day.
+**Status:** opened 2026-10-04 (owner). **Design doc: `docs/gos2_design.md`** (decisions, topology, state
+ownership, SSH link, tier trust, phases; §13 Phase 0 log, §14 overnight build 2026-10-05). **Shipped 2026-10-05
+(interim, SSH-driven, Lab-only):** GoS2 encode engines on `/video` (`78a0aa1`), envelope v2 host/engine stamps,
+remote LLM (Ollama + MLX) and image generation (`2ace75c`), Lab image bench (`6f7c06c`), SANA-Sprint family
+(`9908693`). First data: `docs/gos2_m6_report_2026-10.md`; draft finding in `docs/findings_drafts/` (unpublished).
 
 ### Ask
 
