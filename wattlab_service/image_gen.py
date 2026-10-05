@@ -192,10 +192,15 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
             # 12B FLUX.1-schnell via bitsandbytes NF4 4-bit (CUDA-only).
             pipe = _load_flux_nf4(cfg_m, torch)
         elif use_gpu:
-            kwargs = {"torch_dtype": torch.float16}
+            # Per-family dtype (CR-085: SANA-Sprint needs bf16); default fp16.
+            kwargs = {"torch_dtype": getattr(torch, cfg_m.get("torch_dtype", "float16"))}
             if cfg_m.get("fp16_variant"):
                 kwargs["variant"] = "fp16"
-            pipe = AutoPipelineForText2Image.from_pretrained(repo, **kwargs)
+            if cfg_m.get("pipeline") == "diffusion":
+                from diffusers import DiffusionPipeline
+                pipe = DiffusionPipeline.from_pretrained(repo, **kwargs)
+            else:
+                pipe = AutoPipelineForText2Image.from_pretrained(repo, **kwargs)
             pipe = pipe.to("cuda")
         else:
             pipe = AutoPipelineForText2Image.from_pretrained(
@@ -210,7 +215,9 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
             result = pipe(
                 prompt=prompt,
                 num_inference_steps=steps,
-                guidance_scale=0.0,
+                # 0 for the ADD/turbo families; distilled-guidance families
+                # (SANA-Sprint) carry their own value in the catalog.
+                guidance_scale=cfg_m.get("guidance_scale", 0.0),
                 height=size_px,
                 width=size_px,
                 generator=gen,

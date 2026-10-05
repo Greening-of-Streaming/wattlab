@@ -298,6 +298,20 @@ _IMAGE_FAMILIES = {
         "compare_steps": 8, "compare_batch": 8,
         "size_px": 512, "fp16_variant": False,
     },
+    "sana-sprint": {
+        # CR-085 Part 3 — the "much more efficient model": SANA-Sprint 0.6B, a
+        # 2-step distilled DiT at native 1024 px. Needs bf16 (fp16 risks
+        # overflow) and its distilled embedded guidance (4.5, not 0).
+        "label": "SANA-Sprint 0.6B (1024 px)", "repo": "Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers",
+        "params": "~0.6B", "native_px": 1024, "cpu_ok": False,
+        "cpu_steps": None, "gpu_steps": 2, "gpu_batch": 10,
+        "compare_steps": 2, "compare_batch": 10,
+        "size_px": 1024, "fp16_variant": False,
+        "torch_dtype": "bfloat16", "guidance_scale": 4.5,
+        # AutoPipelineForText2Image has no SanaSprintPipeline mapping (diffusers
+        # 0.37.1) — load via DiffusionPipeline, which reads model_index.json.
+        "pipeline": "diffusion",
+    },
     "flux-schnell": {
         "label": "FLUX.1-schnell (NF4)", "repo": "black-forest-labs/FLUX.1-schnell",
         "params": "~12B", "native_px": 1024, "cpu_ok": False,

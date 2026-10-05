@@ -83,7 +83,10 @@ async def run_remote_image(prompt: str, job_id: str, host_id: str,
     full_prompt = f"{prompt}, {modifier}"
     args = {"repo": cfg_m["repo"], "prompt": full_prompt, "steps": cfg_m["gpu_steps"],
             "size_px": cfg_m["size_px"], "batch": int(batch or cfg_m["gpu_batch"]), "seed": None,
-            "fp16_variant": bool(cfg_m.get("fp16_variant"))}
+            "fp16_variant": bool(cfg_m.get("fp16_variant")),
+            "torch_dtype": cfg_m.get("torch_dtype", "float16"),
+            "guidance_scale": cfg_m.get("guidance_scale", 0.0),
+            "pipeline": cfg_m.get("pipeline")}
 
     if jobs is not None:
         jobs[job_id].update({"stage": "baseline", "full_prompt": full_prompt})

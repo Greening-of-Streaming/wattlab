@@ -25,10 +25,15 @@ def main():
 
     device = a.get("device") or ("mps" if torch.backends.mps.is_available() else "cpu")
     t_start = time.time()
-    kwargs = {"torch_dtype": torch.float16 if device != "cpu" else torch.float32}
+    kwargs = {"torch_dtype": getattr(torch, a.get("torch_dtype") or "float16")
+              if device != "cpu" else torch.float32}
     if a.get("fp16_variant") and device != "cpu":
         kwargs["variant"] = "fp16"
-    pipe = AutoPipelineForText2Image.from_pretrained(a["repo"], **kwargs).to(device)
+    if a.get("pipeline") == "diffusion":
+        from diffusers import DiffusionPipeline
+        pipe = DiffusionPipeline.from_pretrained(a["repo"], **kwargs).to(device)
+    else:
+        pipe = AutoPipelineForText2Image.from_pretrained(a["repo"], **kwargs).to(device)
     if device == "mps":
         torch.mps.synchronize()
     t_load = time.time()
@@ -38,7 +43,8 @@ def main():
     for i in range(int(a["batch"])):
         gen = torch.Generator().manual_seed(seed + i) if seed is not None else None
         r = pipe(prompt=a["prompt"], num_inference_steps=int(a["steps"]),
-                 guidance_scale=0.0, height=int(a["size_px"]), width=int(a["size_px"]),
+                 guidance_scale=float(a.get("guidance_scale", 0.0)),
+                 height=int(a["size_px"]), width=int(a["size_px"]),
                  generator=gen)
         images.append(r.images[0])
     if device == "mps":
