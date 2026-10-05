@@ -89,7 +89,7 @@ def _load_members(path: Path) -> set[str]:
     except json.JSONDecodeError as e:
         log.error("Members file %s is malformed: %s — allowlist empty", path, e)
         return set()
-    raw = data.get("members") or []
+    raw = data if isinstance(data, list) else (data.get("members") or [])
     return {e.strip().lower() for e in raw if isinstance(e, str) and e.strip()}
 
 
