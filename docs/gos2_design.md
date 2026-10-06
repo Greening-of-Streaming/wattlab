@@ -279,12 +279,12 @@ GoS2 running its own service, a peer job API, replication — is planned in `doc
   **0.506 Wh** 🟢. Record: `results/diagnostics/gos2_feasibility_20261004_224620.json`.
 
 ### Idle-floor history
-Protocol (fixed, so rows stay comparable): console logged in, no Screen Sharing client, CPU ≥ 97 % idle for 3
+Protocol (fixed, so rows stay comparable): console logged in, no Screen Sharing client, **10-min settle (from row 4)**, CPU ≥ 97 % idle for 3
 consecutive one-minute checks, then 10-min runs of G1 + G2 at 1 Hz (G2 staggered 0.5 s), CPU idle and Screen
 Sharing logged every minute. A run is excluded if CPU idle drops below 97 % or the Screen Sharing encoder exceeds
 0.5 %. Report G1 mean ± 95 % CI over n = 3 clean runs (t, df = 2). Re-measure after every software or config change.
-**Proposed amendment (after row 3):** wait 10 min after any Screen Sharing disconnect before the pre-checks — row 3 run 1 shows a
-~0.6 W non-CPU transient that the CPU-idle gate cannot see. Script: `bin/gos2-idle-row` (rows 1–2 used an equivalent ad-hoc script).
+**Amendment (owner-approved 2026-10-06, applies from row 4):** a 10-min settle precedes the pre-checks — always, not only after a
+Screen Sharing disconnect. Reason: row 3 run 1 showed a ~0.6 W non-CPU transient after a disconnect that the CPU-idle gate cannot see. Script: `bin/gos2-idle-row` (rows 1–2 used an equivalent ad-hoc script).
 
 | # | Date | State / what changed | GoS2 idle (G1) | G1 self-draw | Record |
 |---|---|---|---|---|---|

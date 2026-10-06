@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """GoS2 idle-floor row (protocol: docs/gos2_design.md §13 "Idle-floor history").
-Console logged in, no Screen Sharing client; CPU >= 97 % idle for 3 consecutive one-minute checks; then
+Console logged in, no Screen Sharing client; a 10-min settle first (amendment 2026-10-06: row 3 run 1 showed a
+~0.6 W non-CPU transient after a Screen Sharing disconnect that the CPU gate cannot see); CPU >= 97 % idle for 3 consecutive one-minute checks; then
 3 x 10-min runs of inner + outer at 1 Hz (outer staggered 0.5 s); CPU idle and the Screen Sharing encoder
 logged every minute; a run is excluded if CPU idle < 97 % or Screen Sharing > 0.5 %. Reports inner mean
 ± 95 % CI over the clean runs (t, df = n-1). GoS2's own OWL poller is paused for the duration (KLAP).
@@ -42,10 +43,13 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--row", type=int, required=True); ap.add_argument("--state", required=True)
     ap.add_argument("--inner", default="192.168.1.11"); ap.add_argument("--outer", default="192.168.1.22")
+    ap.add_argument("--settle-min", type=int, default=10, help="wait before the pre-checks (protocol amendment 2026-10-06)")
     ap.add_argument("--runs", type=int, default=3); ap.add_argument("--minutes", type=int, default=10)
     a = ap.parse_args()
     cfg = dotenv_values(HERE / ".env"); c = ApiClient(cfg["TAPO_EMAIL"], cfg["TAPO_PASSWORD"])
-    gos2("touch /tmp/owl-paused"); time.sleep(12)
+    gos2("touch /tmp/owl-paused")
+    print(time.strftime("%H:%M:%S"), f"settling {a.settle_min} min (protocol amendment 2026-10-06)", flush=True)
+    time.sleep(max(12, a.settle_min * 60))
     try:
         ok = 0
         while ok < 3:                               # 3 consecutive quiet one-minute checks
