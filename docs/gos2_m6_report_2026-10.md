@@ -1,7 +1,8 @@
 # Apple M6 (Mac mini) vs GoS1 — encode, LLM and image energy (first look, 2026-10-05)
 
-**Status: DRAFT — measured overnight 2026-10-04/05 by Claude (owner asleep); not reviewed. Nothing here is
-published. Tania checks before anything leaves the room (publication rule 2026-08-17; n=3 bar 2026-09-03).**
+**Status: DRAFT — measured overnight 2026-10-04/05 by Claude (owner asleep); method checks added 2026-10-06
+(§0). Not reviewed. Nothing here is published. Tania checks before anything leaves the room (publication rule
+2026-08-17; n=3 bar 2026-09-03).**
 CR-085 Part 2/3. Machines: GoS1 (AMD Ryzen 9 7900 + NVIDIA RTX 5080, Ubuntu 24.04, ~78 W idle) and GoS2
 (Apple M6 Mac mini `Mac18,5`, 12-core CPU 2S+4P+6E, 12-core GPU, 24 GB unified memory, macOS 27.0.1,
 ~1.35 W idle — `docs/gos2_design.md` §13). Same OWL code path for both (GoS1 drives GoS2 over SSH and reads
@@ -68,6 +69,49 @@ transcoding paper matches ours.
 ## Results
 
 *(filled from stored results below; every number cites a job id)*
+
+### 0. Method checks (2026-10-06) — read before the numbers
+
+**Measurement path.** §1–3c were measured with GoS1 driving GoS2 over SSH and reading GoS2's plugs. Since
+2026-10-06 GoS2 runs its own OWL (own queue, meters and VMAF; `docs/gos2_autonomy_plan.md`). An interleaved
+parity test (n = 3 per driver, order alternated, identical machine state; data
+`/srv/data/owl/campaign_2026-10-06_gos2_autonomy/parity_interleaved.jsonl`) found **no difference between the
+two paths**: x264 CPU +2.5 %, Apple H.264 VBR +1.6 %, Apple H.265 VBR +2.0 %, qwen3:4b Ollama −0.8 %, MLX 0.0 %,
+SDXL-Turbo session +0.4 %, all |t| < 1.6 and all 36 runs 🟢. The SSH-era figures below stand.
+
+**Day-to-day reproducibility** (2026-10-06 runs vs the 2026-10-04/05 figures below; same jobs, n = 3+3):
+
+| Job | Oct 5 (below) | Oct 6 (both drivers) | Drift |
+|---|---|---|---|
+| Apple H.264 VBR | 0.170 Wh | 0.176–0.179 Wh | +4–5 % |
+| Apple H.265 VBR | 0.174 Wh | 0.179–0.183 Wh | +3–5 % |
+| qwen3:4b Ollama | 0.160 mWh/tok | 0.154–0.156 | −3 % |
+| qwen3:4b MLX | 0.105 mWh/tok | 0.103 | −2 % |
+| SDXL-Turbo session | 0.0091–0.0093 Wh/img | 0.0091–0.0092 | ~0 % |
+| x264 CPU | 0.532 Wh | 0.483–0.495 | **−7 to −9 %** (noisiest; 9 % sd across all runs) |
+
+Machine state differed between the days: Spotlight indexing was on during the Oct 5 runs and is permanently
+off since Oct 6 (below). Read the hardware and AI figures as ±5 % across days and x264 CPU as ±10 %. The
+headline ratios vs GoS1 (2–4×) are far outside this.
+
+**Background-activity control (focus mode).** On GoS1, stopping the systemd timers made no measurable
+difference to 5-minute idle windows (74–76 W either way, CV ~2 %). On GoS2, letting Spotlight index raised idle
+by ~0.55 W (+35 %), with bursts to 4–7 W, and re-enabling it after each job caused catch-up indexing between
+jobs. Spotlight indexing is therefore **permanently off on GoS2** (`docs/gos2_design.md` change log). GoS2's
+absolute idle noise (sd ~0.12 W) is ~15× smaller than GoS1's (~1.5–2 W).
+
+**Meters** (`docs/dual_meter_pretest_findings.md` § Follow-up 2026-10-06):
+- GoS2's inner plug (fw 1.3.1, earthless variant) refreshes every **2 s below ~12 W**, so GoS2 baselines carry
+  only ~55 % fresh samples at 1 s polling, and their SE is understated. Task windows (20–50 W) are ~97 % fresh.
+  On that day's 62 GoS2 results, recomputing the SE on fresh samples changed no flag. Proposal for Tania:
+  `docs/confidence_fresh_samples_proposal_2026-10.md`.
+- Dual-meter combine: across 79 GoS2 runs, the outer meter's ΔW exceeds the inner's by **+0.60 W (+1.9 %)**,
+  roughly constant, so the averaged ΔW sits ~1 % above inner-only. The cause is either the inner plug drawing more
+  under load or a ~2 % calibration difference between the two plugs. Only a reference-meter check can tell.
+  GoS1 shows −3.4 % ± 7.5 % (calibration-dominated). State **±2–3 % meter uncertainty** on any cross-machine
+  figure.
+- Inner meter swapped 2026-10-06: lab-G1 → lab-G3 (same variant, identical behaviour). All §1–3c runs used
+  lab-G1.
 
 ### 1. Video encode — Meridian 120 s → 1080p, n = 3 per engine, all 🟢
 
