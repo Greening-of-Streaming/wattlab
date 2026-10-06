@@ -283,11 +283,14 @@ Protocol (fixed, so rows stay comparable): console logged in, no Screen Sharing 
 consecutive one-minute checks, then 10-min runs of G1 + G2 at 1 Hz (G2 staggered 0.5 s), CPU idle and Screen
 Sharing logged every minute. A run is excluded if CPU idle drops below 97 % or the Screen Sharing encoder exceeds
 0.5 %. Report G1 mean ± 95 % CI over n = 3 clean runs (t, df = 2). Re-measure after every software or config change.
+**Proposed amendment (after row 3):** wait 10 min after any Screen Sharing disconnect before the pre-checks — row 3 run 1 shows a
+~0.6 W non-CPU transient that the CPU-idle gate cannot see. Script: `bin/gos2-idle-row` (rows 1–2 used an equivalent ad-hoc script).
 
 | # | Date | State / what changed | GoS2 idle (G1) | G1 self-draw | Record |
 |---|---|---|---|---|---|
 | 1 | 2026-10-05 | Near-factory: macOS 27.0.1; Homebrew with 15 formulae (only `ffmpeg` requested), 0 casks; Apple CLT; Remote Login, Screen Sharing, File Sharing; auto-login; 7 accounts; 523 launchd jobs, 701 processes; Ethernet only, Wi-Fi off | **1.352 W ± 0.008 W** (runs 2–4; run 1 excluded: CPU idle 82.5 %, Screen Sharing 3.8 %) | 1.007 W | `results/diagnostics/gos2_idle_ethernet_wifioff_20261005_001817.json` |
 | 2 | 2026-10-05 | Row 1 + Homebrew python@3.12 venv (torch 2.14.1, diffusers 0.37.1, mlx-lm 0.32.0), **Ollama 0.35.1 brew service running** (idle, no model loaded), ~22 GB HF cache + 3.6 GB Ollama models, 6 standard user accounts, narrow sudo wrappers; 25 formulae (leaves: ffmpeg, ollama, python@3.12), 523 launchd jobs, 717 processes | **1.360 W ± 0.073 W** (runs 1–3, all clean) — no measurable change vs row 1 | 1.021 W | `results/diagnostics/gos2_idle_row2_20261005_043016.json` |
+| 3 | 2026-10-06 | Row 2 + OWL's own always-on service (`owl-svc` LaunchDaemon → loopback ssh → uvicorn; its pollers paused for the row) + **Spotlight indexing permanently off** + **inner meter lab-G3 `.11`** (was lab-G1) | **1.525 W ± 0.856 W** (runs 1–3, all clean per protocol). Runs 2–3: **1.326 W** (1.329, 1.323; sd 0.12) — matches rows 1–2. Run 1: 1.923 W (sd 0.41), a transient straight after a Screen Sharing session + Activity Monitor were closed; CPU stayed ≥ 99 % idle, so the CPU gate could not catch it | 0.984 W | `results/diagnostics/gos2_idle_row3_20261006_204559.json` (script `bin/gos2-idle-row`) |
 
 **Change log since row 2** (each change ⇒ re-measure; row 3 due — Spotlight off AND new inner meter):
 - 2026-10-06 — **inner meter swapped: lab-G1 `.165` → lab-G3 `.11`** (fw 1.3.1, same earthless variant; refresh

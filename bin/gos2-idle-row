@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""GoS2 idle-floor row (protocol: docs/gos2_design.md §13 "Idle-floor history").
+Console logged in, no Screen Sharing client; CPU >= 97 % idle for 3 consecutive one-minute checks; then
+3 x 10-min runs of inner + outer at 1 Hz (outer staggered 0.5 s); CPU idle and the Screen Sharing encoder
+logged every minute; a run is excluded if CPU idle < 97 % or Screen Sharing > 0.5 %. Reports inner mean
+± 95 % CI over the clean runs (t, df = n-1). GoS2's own OWL poller is paused for the duration (KLAP).
+Usage: gos2-idle-row --row 3 --state "what changed"   → results/diagnostics/gos2_idle_row<N>_<ts>.json"""
+import argparse, asyncio, json, statistics as st, subprocess, sys, time
+from datetime import datetime
+from pathlib import Path
+from dotenv import dotenv_values
+from tapo import ApiClient
+HERE = Path("/home/gos/wattlab")
+SSH = ["ssh", "-i", "/home/gos/.ssh/id_ed25519_gos2", "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "gos@192.168.1.29"]
+T = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776}
+
+def gos2(cmd): return subprocess.run(SSH + [cmd], capture_output=True, text=True, timeout=60).stdout
+
+def cpu_ss():
+    out = gos2("top -l 2 -n 0 -s 1 | grep 'CPU usage' | tail -1; "
+               "ps -Aceo %cpu,comm | awk '/screensharingd|ScreensharingAgent|VTEncoderXPC/ {s+=$1} END {print s+0}'")
+    lines = out.strip().splitlines()
+    idle = float(lines[0].split(",")[-1].strip().split("%")[0])
+    return idle, float(lines[-1])
+
+async def run10(c, inner, outer, minutes):
+    d1, d2 = await c.p110(inner), await c.p110(outer)
+    a, b, idles, sss = [], [], [], []
+    t0 = time.monotonic()
+    for i in range(minutes * 60):
+        nxt = t0 + i
+        await asyncio.sleep(max(0, nxt - time.monotonic()))
+        a.append((await d1.get_energy_usage()).current_power / 1000)
+        await asyncio.sleep(max(0, nxt + 0.5 - time.monotonic()))
+        b.append((await d2.get_energy_usage()).current_power / 1000)
+        if i % 60 == 30:
+            idle, ss = await asyncio.get_event_loop().run_in_executor(None, cpu_ss)
+            idles.append(idle); sss.append(ss)
+    return a, b, idles, sss
+
+async def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--row", type=int, required=True); ap.add_argument("--state", required=True)
+    ap.add_argument("--inner", default="192.168.1.11"); ap.add_argument("--outer", default="192.168.1.22")
+    ap.add_argument("--runs", type=int, default=3); ap.add_argument("--minutes", type=int, default=10)
+    a = ap.parse_args()
+    cfg = dotenv_values(HERE / ".env"); c = ApiClient(cfg["TAPO_EMAIL"], cfg["TAPO_PASSWORD"])
+    gos2("touch /tmp/owl-paused"); time.sleep(12)
+    try:
+        ok = 0
+        while ok < 3:                               # 3 consecutive quiet one-minute checks
+            idle, ss = cpu_ss(); ok = ok + 1 if idle >= 97 and ss <= 0.5 else 0
+            print(time.strftime("%H:%M:%S"), f"pre-check idle {idle}% ss {ss}% ({ok}/3)", flush=True)
+            if ok < 3: time.sleep(60)
+        runs = []
+        for r in range(1, a.runs + 1):
+            g1, g2, idles, sss = await run10(c, a.inner, a.outer, a.minutes)
+            clean = min(idles) >= 97 and max(sss) <= 0.5
+            runs.append({"run": r, "clean": clean, "g1_mean_w": round(st.mean(g1), 3), "g1_sd_w": round(st.stdev(g1), 3),
+                         "g2_mean_w": round(st.mean(g2), 3), "cpu_idle_min_pct": min(idles),
+                         "screen_sharing_max_pct": max(sss), "g1_samples_w": g1, "g2_samples_w": g2})
+            print(time.strftime("%H:%M:%S"), {k: v for k, v in runs[-1].items() if "samples" not in k}, flush=True)
+    finally:
+        gos2("rm -f /tmp/owl-paused")
+    used = [x for x in runs if x["clean"]]
+    m = [x["g1_mean_w"] for x in used]
+    res = {"g1_mean_w": round(st.mean(m), 3) if m else None,
+           "ci95_halfwidth_w": round(T.get(len(m) - 1, 2.0) * st.stdev(m) / len(m) ** 0.5, 3) if len(m) > 1 else None,
+           "n_runs": len(m), "runs_used": [x["run"] for x in used],
+           "g1_self_draw_w": round(st.mean(x["g2_mean_w"] - x["g1_mean_w"] for x in used), 3) if used else None,
+           "inner_ip": a.inner, "outer_ip": a.outer}
+    out = HERE / "results" / "diagnostics" / f"gos2_idle_row{a.row}_{datetime.now():%Y%m%d_%H%M%S}.json"
+    out.write_text(json.dumps({"host": "gos2", "row": a.row, "state": a.state, "result": res, "runs": runs}, indent=2))
+    print("RESULT", json.dumps(res), "→", out, flush=True)
+
+asyncio.run(main())
