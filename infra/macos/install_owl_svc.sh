@@ -48,6 +48,9 @@ case "$1" in
 PL
     chown root:wheel "$P"; chmod 644 "$P"
     launchctl bootout system/$L 2>/dev/null || true
+    # bootout is asynchronous: bootstrapping while the old job is still
+    # registered fails with "5: Input/output error" (seen 2026-10-06).
+    i=0; while launchctl print system/$L >/dev/null 2>&1 && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
     launchctl bootstrap system "$P" && echo "owl daemon installed" ;;
   restart) launchctl kickstart -k system/$L && echo "owl restarted" ;;
   stop)    launchctl bootout system/$L && echo "owl stopped" ;;
