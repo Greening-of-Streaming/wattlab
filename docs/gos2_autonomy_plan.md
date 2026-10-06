@@ -8,9 +8,27 @@ tests). CR-085 follow-on; implements `docs/gos2_design.md` §2 ("two autonomous 
 |---|---|---|
 | 1 boots anywhere | `e07ce6e` | ✅ `paths.py`/`env.py`, `run_*` startup flags, guard tests |
 | 2 macOS layer | `f4534b9` (+ `eac7193`) | ✅ `gpu.AppleBackend`, mps, `owl-focus` |
-| 3 GoS2 own OWL | `d3cfa47` | ✅ own service (`owl-svc` LaunchDaemon → loopback ssh → OWL), calibrated (2.1 %), parity n=3 (2 of 6 to re-check), focus benchmark pending |
+| 3 GoS2 own OWL | `d3cfa47` | ✅ own service (`owl-svc` → loopback ssh → OWL), calibrated (2.1 %), **parity gate PASSED 2026-10-06** (below), focus benchmark done |
 | 4 peer API | `2129293` | ✅ `/peer/*`, HMAC, simultaneous runs, offline greying; GoS1's registry now `driver: peer` |
 | 5 replication | `01c2390` | ✅ pull-based both ways + members from one writer |
+
+### Parity gate — passed 2026-10-06
+Interleaved, n=3 per driver, order alternated per rep, Spotlight permanently off, same GoS1 routes; only
+`compute_hosts.gos2.driver` differed (`ssh` = GoS1 drives + meters GoS2; `peer` = GoS2's own OWL). Data:
+`/srv/data/owl/campaign_2026-10-06_gos2_autonomy/parity_interleaved.jsonl` (+ `parity_analyse.py`).
+
+| Job | peer | ssh | Δ | t |
+|---|---|---|---|---|
+| x264 CPU (Wh) | 0.4948 ± 0.0441 | 0.4826 ± 0.0351 | +2.5 % | 0.37 |
+| Apple H.264 VBR (Wh) | 0.1788 ± 0.0035 | 0.1761 ± 0.0040 | +1.6 % | 0.88 |
+| Apple H.265 VBR (Wh) | 0.1828 ± 0.0033 | 0.1792 ± 0.0025 | +2.0 % | 1.54 |
+| qwen3:4b Ollama (mWh/tok) | 0.1544 ± 0.0023 | 0.1556 ± 0.0022 | −0.8 % | −0.68 |
+| qwen3:4b MLX (mWh/tok) | 0.1028 ± 0.0022 | 0.1028 ± 0.0018 | 0.0 % | 0.00 |
+| SDXL-Turbo session (Wh/img) | 0.0092 ± 0.0001 | 0.0091 ± 0.0001 | +0.4 % | 0.71 |
+
+All 36 runs 🟢; no difference distinguishable (|t| < 1.6). The ±6 % seen in the morning's non-interleaved
+comparison was Spotlight on/off churn, not the driver. GoS2's own-OWL figures are its numbers from here on;
+the SSH driver may be retired once the owner has tested.
 
 ### Local Network (macOS 15+ privacy) — solved 2026-10-06
 Anything launchd starts as user `gos` — a user agent, or a LaunchDaemon with `UserName gos` — gets
