@@ -1417,6 +1417,8 @@ experiment or chore with its evidence pointer. Promote to a CR when picked up.*
   (<12 W: 77 of 98 changes at 2 s; 20–60 W: ~90 % at 1 s, ~10 % skipped refreshes) — it is the variant/firmware,
   not a faulty unit. Still unknown: the EARTHED variant (`CFA3B64E…`, GoS1 .91) below 12 W — answer it from the
   stored rig samples during the audit (some Lab plugs may be earthed).
+  Owner 2026-10-06: **earthed P110s ordered** — on arrival, run the low-power wobble test on one at fw 1.3.1
+  (`bin/owl-load-wobble 220 1` + `bin/probe-p110-refresh`) and revisit the polling-frequency question with it.
 
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
   (server stamps vmaf_done/vmaf_total; verify `-progress` works on the scoring pass, else render the counters);
