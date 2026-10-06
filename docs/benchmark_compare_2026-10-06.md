@@ -7,7 +7,8 @@
 > `003ec0f`). x264 CPU baselines read GoS1 94–111 W vs 78–92 W for the other passes, and GoS2 11–30 W vs ~2 W.
 > **All x264 CPU rows below understate ΔE, on both machines, Sep 5 included**, and the "x264 −41/−48 %" GoS2-vs-GoS1
 > line and the "x264 +6–7 % since Sep 5" line are **not valid**. The other passes (x265, SVT-AV1, all hardware)
-> were preceded by the in-job idle wait and stand. A video-only rerun with the fix ran overnight, see § 4. Script + raw tables:
+> were preceded by the in-job idle wait, but see § 4: the bad first baseline also loosened the next in-job wait,
+> so x265 CPU (−4–6 %) and some hardware rows (−1–4 %) were also understated. Corrected figures are in § 4. Script + raw tables:
 `/srv/data/owl/campaign_2026-10-06_gos2_autonomy/compare.{py,_out.txt}`.
 
 | Run | Benchmark | Config | Duration |
@@ -50,3 +51,39 @@ The compare panels are **one cold run per model** (n = 1), mostly 🟡/🔴. Val
 on the same machine (GoS1 mistral-nemo 8.3 → 0.9 mWh/token, phi4 8.95 → 1.3), and GoS2's qwen3:1.7b came out
 negative (ΔW below noise). Use them as smoke tests that the panels run, never as figures. The dedicated n = 3
 runs in the GoS2 report are the reference for AI workloads.
+
+## 4. Clean rerun, 2026-10-06/07 overnight (after the fix)
+
+Video-only benchmarks, 10 reps × {meridian, bbb} on **both** nodes, with the pre-step idle guard (`003ec0f`) and
+GoS2's idle criteria tightened to 0.5 W / 6 polls (was GoS1's 3 W / 3, which accepted 2–3× GoS2's idle).
+GoS1 `44549e35`, GoS2 `bb05eda7`. Script and full table:
+`/srv/data/owl/campaign_2026-10-07_bench_rerun/{analyse.py,analyse_out.txt}`.
+
+**Baselines are now clean**: x264 CPU baseline GoS1 80 W (was 102–106), GoS2 1.8 W (was 18–28).
+
+| ΔE Wh, mean ± sd (n=10) | GoS1 meridian | GoS1 bbb | GoS2 meridian | GoS2 bbb | GoS2 vs GoS1 |
+|---|---|---|---|---|---|
+| x264 CPU | **0.736 ± 0.012** | **0.657 ± 0.007** | **0.509 ± 0.011** | **0.411 ± 0.005** | −31 % / −37 % |
+| x265 CPU | 1.241 ± 0.020 | 1.252 ± 0.008 | 0.735 ± 0.006 | 0.695 ± 0.004 | −41 % / −45 % |
+| SVT-AV1 CPU | 0.632 ± 0.007 | 0.806 ± 0.011 | 0.383 ± 0.002 | 0.449 ± 0.002 | −39 % / −44 % |
+| H.264 hardware | 0.199 ± 0.003 | 0.218 ± 0.012 | 0.180 ± 0.002 | 0.185 ± 0.002 | −9 % / −15 % |
+| H.265 hardware | 0.225 ± 0.003 | 0.234 ± 0.004 | 0.185 ± 0.002 | 0.191 ± 0.003 | −18 % / −19 % |
+| AV1 hardware | 0.213 ± 0.005 | 0.220 ± 0.002 | — (no AV1 encoder) | — | — |
+
+(GoS1 hardware = OWL's NVENC preset; GoS2 hardware = Apple media engine in VBR. Rate control differs, so the
+hardware rows are not the matched-VBR comparison: that is the report's §1, re-checked separately.)
+
+What changed vs the contaminated runs (Welch t, rerun vs Oct 6):
+- **x264 CPU** +44–46 % (GoS1), +70–73 % (GoS2); t = 4.6–21. The old figures were wrong.
+- **x265 CPU** GoS1 +4–6 % (t 3.8–6.6): cascade from the bad first baseline. AV1 CPU unchanged (+0.4–0.6 %).
+- **Hardware rows** GoS1 −1.5 … +3.7 %; GoS2 +0.7 … +3.6 % (the loose 3 W tolerance).
+- Run-to-run spread collapsed: x264 sd 6–9 % → **1–2 %**. The "x264 is noisy" impression came from the
+  contamination, not from the encoder.
+
+**GoS2 AI re-check** under the tight idle criteria (n=3, clean baselines 1.3–1.65 W): qwen3:4b Ollama
+0.1536 ± 0.0043 mWh/token, MLX 0.1044 ± 0.0010, SDXL-Turbo session 0.0092 ± 0.0001 Wh/img, all 🟢, **unchanged**
+from the earlier figures. The AI results stand.
+
+**Not rerun (method, owner's call):** the benchmark's LLM panel (prompt gives 1.7–6 s windows, 2-token answers)
+and image panel (2.7–3.7 s windows on GoS1, model load in the window). Proposal: run the LLM panel on task T2,
+and the image panel as the warm-model session the Lab buttons already use.
