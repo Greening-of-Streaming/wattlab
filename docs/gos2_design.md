@@ -173,7 +173,8 @@ fallback. Two traps follow:
 
   | Plug | IP (DHCP, not yet reserved) | MAC | Model / fw | Reading | Role |
   |---|---|---|---|---|---|
-  | lab-G1 | `.165` | `C0:3A:55:58:94:64` | P110 hw 1.0 · **fw 1.3.1** (Build 240621) | 0.92–0.97 W | **inner / primary**: Mac Mini only |
+  | lab-G3 | `.11` (reserved 2026-10-06) | `C0:3A:55:58:A9:92` | P110 hw 1.0 · **fw 1.3.1** (Build 240621), earthless variant | ~2.2 W (Mini idle) | **inner / primary since 2026-10-06**: Mac Mini only |
+  | ~~lab-G1~~ | ~~`.165`~~ | `C0:3A:55:58:94:64` | P110 hw 1.0 · fw 1.3.1, earthless variant | 0.92–0.97 W | retired 2026-10-06 (same 2 s low-power refresh as G3 — not faulty; spare) |
   | lab-G2 | `.22` | `EC:75:0C:96:D6:5D` | P110 hw 1.0 · **fw 1.4.8** (Build 260804) | 1.94–1.99 W | outer: Mini + G1 self-draw |
 
   The owner's "3.1" / "4.8" are 1.3.1 / 1.4.8, normal P110 lines, and `tapo 0.8.12` talks to both. G2 reads
@@ -290,7 +291,7 @@ Sharing logged every minute. A run is excluded if CPU idle drops below 97 % or t
 
 **Change log since row 2** (each change ⇒ re-measure; row 3 due — Spotlight off AND new inner meter):
 - 2026-10-06 — **inner meter swapped: lab-G1 `.165` → lab-G3 `.11`** (fw 1.3.1, same earthless variant; refresh
-  behaviour identical). GoS2 `.env` `TAPO_P110_IP=192.168.1.11`. ⚠ `.11` needs a Bbox reservation.
+  behaviour identical). GoS2 `.env` `TAPO_P110_IP=192.168.1.11`; `.11` reserved on the Bbox 2026-10-06.
 - 2026-10-06 — OWL's own service (`owl-svc` LaunchDaemon → loopback ssh → uvicorn, see
   `docs/gos2_autonomy_plan.md` §Local Network); 5 s power poller, replication poller.
 - 2026-10-06 — **Spotlight indexing permanently OFF** (owner decision; `sudo mdutil -a -i off`, once;

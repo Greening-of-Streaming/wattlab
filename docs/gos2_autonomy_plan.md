@@ -123,7 +123,7 @@ Portability blockers for running OWL itself on macOS (survey): 28 `/home/gos/wat
 ### Phase 3 — GoS2 runs its own OWL · ~1 session
 - launchd **user agent** for uvicorn (auto-login `gos` exists, required anyway — §13 headless rule); log to
   `~/Library/Logs/owl/`; restart via the narrow sudo/launchctl path.
-- GoS2 `.env`: Tapo credentials + **G1/G2 as its own meters** (`TAPO_P110_IP=.165`, `_2=.22`).
+- GoS2 `.env`: Tapo credentials + **G1/G2 as its own meters** (`TAPO_P110_IP=.165`, `_2=.22`; inner meter is lab-G3 `.11` since 2026-10-06).
   GoS1 stops polling them (no KLAP contention).
 - GoS2 `settings.json`: Homebrew ffmpeg/ffprobe, VMAF model path, data root, startup flags off, its own
   `local_host` identity (so persist stamps `host: GoS2` natively), Lab = GoS2's LAN (§6).
