@@ -1413,8 +1413,10 @@ experiment or chore with its evidence pointer. Promote to a CR when picked up.*
   `/findings` (`hw-decoder-cuts-client-energy-4x`, `codec-decode-energy-depends-on-silicon-and-regime`,
   `streaming-box-plays-4-7x-cheaper…`, `stb-decode-and-play-content-over-codec`,
   `appletv-a10x-av1-vp9-software-fallback`, `looped-excerpt-measures-as-continuous`) and the SMPTE 2026 tables.
-  Pending first: whether the 2 s low-power refresh is lab-G1 being faulty or the earthless 1.3.1 variant
-  (lab-G3 swap test running 2026-10-06).
+  Unit vs variant — SETTLED 2026-10-06: a fresh earthless 1.3.1 plug (lab-G3) behaves identically to lab-G1
+  (<12 W: 77 of 98 changes at 2 s; 20–60 W: ~90 % at 1 s, ~10 % skipped refreshes) — it is the variant/firmware,
+  not a faulty unit. Still unknown: the EARTHED variant (`CFA3B64E…`, GoS1 .91) below 12 W — answer it from the
+  stored rig samples during the audit (some Lab plugs may be earthed).
 
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
   (server stamps vmaf_done/vmaf_total; verify `-progress` works on the scoring pass, else render the counters);

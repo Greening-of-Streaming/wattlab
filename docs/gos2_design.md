@@ -288,7 +288,9 @@ Sharing logged every minute. A run is excluded if CPU idle drops below 97 % or t
 | 1 | 2026-10-05 | Near-factory: macOS 27.0.1; Homebrew with 15 formulae (only `ffmpeg` requested), 0 casks; Apple CLT; Remote Login, Screen Sharing, File Sharing; auto-login; 7 accounts; 523 launchd jobs, 701 processes; Ethernet only, Wi-Fi off | **1.352 W ± 0.008 W** (runs 2–4; run 1 excluded: CPU idle 82.5 %, Screen Sharing 3.8 %) | 1.007 W | `results/diagnostics/gos2_idle_ethernet_wifioff_20261005_001817.json` |
 | 2 | 2026-10-05 | Row 1 + Homebrew python@3.12 venv (torch 2.14.1, diffusers 0.37.1, mlx-lm 0.32.0), **Ollama 0.35.1 brew service running** (idle, no model loaded), ~22 GB HF cache + 3.6 GB Ollama models, 6 standard user accounts, narrow sudo wrappers; 25 formulae (leaves: ffmpeg, ollama, python@3.12), 523 launchd jobs, 717 processes | **1.360 W ± 0.073 W** (runs 1–3, all clean) — no measurable change vs row 1 | 1.021 W | `results/diagnostics/gos2_idle_row2_20261005_043016.json` |
 
-**Change log since row 2** (each change ⇒ re-measure; row 3 due once Spotlight is off):
+**Change log since row 2** (each change ⇒ re-measure; row 3 due — Spotlight off AND new inner meter):
+- 2026-10-06 — **inner meter swapped: lab-G1 `.165` → lab-G3 `.11`** (fw 1.3.1, same earthless variant; refresh
+  behaviour identical). GoS2 `.env` `TAPO_P110_IP=192.168.1.11`. ⚠ `.11` needs a Bbox reservation.
 - 2026-10-06 — OWL's own service (`owl-svc` LaunchDaemon → loopback ssh → uvicorn, see
   `docs/gos2_autonomy_plan.md` §Local Network); 5 s power poller, replication poller.
 - 2026-10-06 — **Spotlight indexing permanently OFF** (owner decision; `sudo mdutil -a -i off`, once;
@@ -299,7 +301,7 @@ Sharing logged every minute. A run is excluded if CPU idle drops below 97 % or t
   (`mds` at up to 555 % CPU, peak 7.2 W). Spotlight search on GoS2 no longer works — nothing on a headless OWL
   node uses it. Undo: `sudo mdutil -a -i on` and re-run an older `install_owl_focus.sh`.
 
-Caveats on every row: G1 refreshes only every 2 s at this load, and P110 accuracy around 1 W has not been checked
+Caveats on every row: the inner meter (fw 1.3.1, earthless variant) refreshes every 2 s below ~12 W — a variant property, confirmed 2026-10-06 on a second unit (`docs/dual_meter_pretest_findings.md` follow-up), and P110 accuracy around 1 W has not been checked
 against a reference meter. For scale, GoS1 idles at ~79 W display-blanked. That comparison stays an internal
 observation until the low-end meter accuracy is checked.
 

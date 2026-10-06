@@ -150,3 +150,25 @@ the service cannot share a plug concurrently).
    honest cadence copy ("fresh samples/s", never "0.5-second intervals").
 3. Run a variance recalibration after Phase 2 lands (primary meter changed
    units; recal is hygiene — normal ambient only).
+
+
+## Follow-up 2026-10-06 — refresh depends on power (fw 1.3.1, earthless variant)
+
+Method: `bin/owl-load-wobble` (all cores jump to a random duty level every 0.1–0.5 s, non-periodic) makes wall
+power change continuously, so every refresh yields a new reading; `bin/probe-p110-refresh` polls at 0.25 s with
+OWL's own call (`get_energy_usage().current_power`) and reports the interval between changed readings. OWL's
+pollers paused (KLAP exclusivity). Data: `results/diagnostics/p110_refresh_*_20261006_*`.
+
+| Plug | fw / variant | ~W | refresh |
+|---|---|---|---|
+| GoS1 inner .91 | 1.3.1 / earthed `CFA3B64E` | 147 | **1.00 s** (298/304) |
+| GoS1 outer .159 | 1.4.0 / earthed | 147 | **1.50 s** (202/202) |
+| GoS2 outer .22 | 1.4.8 / earthed | 7 · 33 | **1.50 s** at both |
+| GoS2 inner lab-G1 .165 | 1.3.1 / earthless `2FB30EF5` | <12 · 20–60 | **2.0 s** (84/96) · 1.0 s with ~10 % skips |
+| GoS2 inner lab-G3 .11 (fresh unit) | 1.3.1 / earthless | <12 · 20–60 | **2.0 s** (77/98) · 1.0 s with ~10 % skips |
+
+Conclusions: (1) fw 1.4.x refreshes every 1.5 s regardless of power; (2) earthless 1.3.1 refreshes every 2 s
+below ~12 W and every 1 s above ~20 W — a variant/firmware property, reproduced on a second unit; (3) no plug
+refreshed faster than 1.0 s (no "0.8 s"); (4) earthed 1.3.1 below 12 W is untested. Consequence: 1 s polls at
+low power contain stale repeats — means unbiased, SE understated up to √2 (CHANGE_REQUESTS.md §Deferred, decode
+re-assessment). GoS2's inner meter is lab-G3 `.11` since 2026-10-06 (lab-G1 retired, behaviour identical).
