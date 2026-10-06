@@ -236,6 +236,24 @@ def cancel_queued(bid: str) -> None:
     _persist(m)
 
 
+async def _pre_step_idle_guard(jobs: dict, sub_id: str):
+    """Wait for the rolling idle floor before a benchmark step — the
+    queue_control._pre_job_idle_guard contract (job N+1 may not start hotter
+    than job N's baseline), applied per step. Returns the cooldown record,
+    or None when there is no reference yet or the guard itself fails."""
+    try:
+        import power
+        ref = power.LAST_W_BASE
+        if ref is None:
+            return None
+        cd = await power.cooldown_between_runs(
+            fixed_seconds=0, reference_w=ref, stage="pre-step idle",
+            jobs=jobs, job_id=sub_id, allow_dialog=False)
+        return {**cd, "reference_w": round(ref, 2)}
+    except Exception as ex:
+        return {"error": repr(ex)[:200]}
+
+
 async def run_benchmark_job(bid: str, jobs: dict, s: dict) -> dict:
     """The benchmark coroutine. Sequences steps, reports progress on
     jobs[bid]['stage'], persists the manifest after every step, and checks
@@ -278,6 +296,13 @@ async def run_benchmark_job(bid: str, jobs: dict, s: dict) -> dict:
         jobs[sub_id] = {"stage": "queued", "type": step["kind"], "label": step["label"],
                         "benchmark_run_id": bid, "result": None, "error": None,
                         "interactive_eligible": False}
+        # Pre-step idle guard (2026-10-06): benchmark steps bypass the queue, so
+        # they never got CR-070's pre-job guard — each video step's first
+        # baseline (x264 CPU) caught the previous step's tail (VMAF pass):
+        # GoS1 +20 W, GoS2 up to +28 W over idle, ΔE understated by up to a
+        # third. Same dispatcher and reference as queue_control's guard; the
+        # outcome is recorded on the step. Fail-soft, like the queue guard.
+        step["pre_step_cooldown"] = await _pre_step_idle_guard(jobs, sub_id)
         try:
             step["result_ref"] = await m.run(step, jobs, sub_id, s)
             step["status"] = "done"

@@ -216,3 +216,41 @@ def test_detail_tolerates_unknown_kind(monkeypatch, tmp_path):
     resp = c.get("/benchmark/view01", headers={"x-real-ip": "127.0.0.1"})
     assert resp.status_code == 200
     assert "Retired measure" in resp.text   # rendered, didn't crash on unknown kind
+
+
+# ── pre-step idle guard (2026-10-06) ─────────────────────────────────────────
+
+def test_every_step_waits_for_idle_before_running(monkeypatch):
+    """Benchmark steps bypass the queue, so they need their own CR-070-style
+    guard: before each step, wait for the rolling idle floor and record it."""
+    import power
+    order = []
+    async def fake_cd(**k):
+        order.append(("guard", k["stage"], k["reference_w"], k["allow_dialog"]))
+        return {"method": "idle", "waited_s": 1.0, "settled": True}
+    async def run(step, jobs_, sub_id, s):
+        order.append(("run", step["id"]))
+        return None
+    monkeypatch.setattr(power, "LAST_W_BASE", 80.0)
+    monkeypatch.setattr(power, "cooldown_between_runs", fake_cd)
+    M = {"a": benchmark.Measure("a", "x", "A", None, "on", run),
+         "b": benchmark.Measure("b", "x", "B", None, "on", run)}
+    monkeypatch.setattr(benchmark, "MEASURES", M)
+    monkeypatch.setattr(benchmark, "ORDER", ["a", "b"])
+    monkeypatch.setattr(benchmark, "load_manifest", lambda b: None)
+    captured = {}
+    monkeypatch.setattr(benchmark, "_persist", lambda m: captured.update(m=m))
+    asyncio.run(benchmark.run_benchmark_job("guard01", {"guard01": {}}, {"on": True}))
+    assert [o[0] for o in order] == ["guard", "run", "guard", "run"]
+    assert order[0][1:] == ("pre-step idle", 80.0, False)
+    steps = captured["m"]["steps"]
+    assert all(st["pre_step_cooldown"]["reference_w"] == 80.0 for st in steps)
+
+
+def test_pre_step_guard_is_fail_soft(monkeypatch):
+    import power
+    async def boom(**k): raise RuntimeError("meter down")
+    monkeypatch.setattr(power, "LAST_W_BASE", 80.0)
+    monkeypatch.setattr(power, "cooldown_between_runs", boom)
+    out = asyncio.run(benchmark._pre_step_idle_guard({}, "x"))
+    assert "meter down" in out["error"]
