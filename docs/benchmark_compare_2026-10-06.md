@@ -1,6 +1,13 @@
 # Full-benchmark comparison — GoS1 (Sep 5 vs Oct 6) and GoS2 (Oct 6)
 
-**Status:** internal check, 2026-10-06. Not for publication (Tania reviews first). Script + raw tables:
+**Status:** internal check, 2026-10-06. Not for publication (Tania reviews first).
+
+> **⚠ Correction (same night, 22:35):** every all-codecs step's **first** pass (x264 CPU) took its baseline
+> while the previous step was still winding down. Benchmark steps bypassed the pre-job idle guard (fixed in
+> `003ec0f`). x264 CPU baselines read GoS1 94–111 W vs 78–92 W for the other passes, and GoS2 11–30 W vs ~2 W.
+> **All x264 CPU rows below understate ΔE, on both machines, Sep 5 included**, and the "x264 −41/−48 %" GoS2-vs-GoS1
+> line and the "x264 +6–7 % since Sep 5" line are **not valid**. The other passes (x265, SVT-AV1, all hardware)
+> were preceded by the in-job idle wait and stand. A video-only rerun with the fix ran overnight, see § 4. Script + raw tables:
 `/srv/data/owl/campaign_2026-10-06_gos2_autonomy/compare.{py,_out.txt}`.
 
 | Run | Benchmark | Config | Duration |
