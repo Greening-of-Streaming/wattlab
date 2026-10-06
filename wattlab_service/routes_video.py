@@ -698,11 +698,7 @@ async def video_page(request: Request):
         const resp = await fetch('/video/remote', {{ method: 'POST', body: form }});
         const data = await resp.json().catch(() => ({{}}));
         if (data.job_id) {{
-            const mode = engine === 'both' ? 'both' : 'cpu';
-            document.getElementById('runBtn').disabled = true;
-            startTime = Date.now();
-            renderProgress(data.job_id, mode, 'starting');
-            pollJob(data.job_id, mode);
+            const runs = [owlRunOf(host, data.job_id)];
             // CR-085: same source + codec + engine on this machine, at the same time
             const also = document.getElementById('also-local-' + host);
             if (also && also.checked) {{
@@ -714,8 +710,10 @@ async def video_page(request: Request):
                 f2.append('source_key', selectedSource); f2.append('preset', P[eng][codec]);
                 f2.append('compute_vmaf', document.getElementById('vmafToggle').checked ? 'true' : 'false');
                 const d2 = await (await fetch('/video/use-source', {{method: 'POST', body: f2}})).json().catch(() => ({{}}));
-                if (d2.job_id) owlPairRun('video', d2.job_id, wlRenderVideoCard);
+                if (d2.job_id) runs.push(owlRunLocal(d2.job_id));
             }}
+            document.getElementById('runBtn').disabled = true;
+            owlRunTiles('video', runs, () => {{ document.getElementById('runBtn').disabled = false; }});
         }} else {{
             status.innerHTML = '<div style="color:var(--err)">Error: ' + (data.error || ('HTTP ' + resp.status)) + '</div>';
         }}

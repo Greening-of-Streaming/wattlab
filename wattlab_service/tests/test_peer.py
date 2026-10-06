@@ -215,3 +215,19 @@ def test_pages_name_the_local_machine(monkeypatch):
     for page in ("/video", "/llm", "/rag", "/settings"):
         t = client.get(page, headers=LAB).text
         assert "OWL · GoS2" in t and "OWL · GoS1" not in t, page
+
+
+def test_other_machine_runs_render_as_machine_tiles(monkeypatch):
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": dict(PEER_HOST)})
+    monkeypatch.setattr(peer, "info", lambda h, max_age=20: {
+        "engines": {"cpu": {"label": "CPU (software)", "codecs": ["h264"]}},
+        "llm_models": ["qwen3:4b"], "mlx_models": [], "image_models": ["sd-turbo"]})
+    for page in ("/video", "/llm", "/image"):
+        t = client.get(page, headers=LAB).text
+        assert "function owlRunTiles" in t and "owlRunTiles('" in t, page
+        assert '"label": "GoS2"' in t and "owlPairRun" not in t, page
+
+
+def test_image_page_routes_session_results_to_shared_renderer():
+    t = client.get("/image", headers=LAB).text
+    assert "j.result.mode === 'session'" in t and "wlMachineResult('image', j.result)" in t

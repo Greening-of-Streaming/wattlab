@@ -503,6 +503,12 @@ async function pollJob(jobId) {{
       document.getElementById('status').innerHTML =
         wlRenderImageCard({{result: j.result, isPrev: false}});
     }}
+    else if (j.result.mode === 'session') {{
+      // CR-085: warm-model session result — not the single-shot card (which
+      // reads modifier/load fields a session doesn't have → "undefined").
+      document.getElementById('status').innerHTML = '<div class="result-box"><h2>Result</h2>'
+        + wlMachineResult('image', j.result) + wlHostLine(j.result) + '<p class="scope-note">' + (j.result.scope || '') + '</p></div>';
+    }}
     else renderResult(j.result);
     document.getElementById('run-btn').disabled = false;
     document.getElementById('compare-btn').disabled = false;

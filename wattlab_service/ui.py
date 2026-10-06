@@ -767,7 +767,10 @@ def _video_ref() -> dict | None:
         return None
     return {"wh": b["delta_e_wh"], "s": b.get("source_duration_s", 120),
             "gpu": (b.get("hardware") or {}).get("gpu"), "pinned_at": b.get("pinned_at"),
-            "detail": b.get("preset_detail")}
+            "detail": b.get("preset_detail"),
+            # CR-085: the machine the reference was measured on; results from
+            # any other machine get no cross-machine multiple.
+            "host": ((b.get("host") or {}).get("id") or "gos1")}
 
 
 def _bake_durations(template: str) -> str:

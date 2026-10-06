@@ -275,6 +275,62 @@
   }
   window.wlHostLine = wlHostLine;
 
+  // CR-085 — one compact result per machine, for the machine tiles of a
+  // paired / Other-machines run (owner 2026-10-06: decode-style boxes). Reads
+  // every shape those runs produce: image single|session, llm single, video
+  // single|both. Always names the machine; links the stored JSON.
+  window.wlMachineResult = function(kind, r){
+    if (!r) return '';
+    var f = function(v, d){ return (v == null || isNaN(v)) ? '—' : Number(v).toFixed(d); };
+    var flag = function(e){ return (e && e.confidence && e.confidence.flag) || ''; };
+    var row = function(val, lbl){ return '<div class="kpi"><div class="val" style="font-size:1.15rem">' + val
+      + '</div><div class="lbl">' + lbl + '</div></div>'; };
+    var h = '', e = r.energy || {};
+    if (kind === 'image') {
+      var g = r.generation || {};
+      var n = g.n_images || g.batch_size || 1;
+      var prompt = (r.prompts && r.prompts.length) ? r.prompts[0] : (r.full_prompt || r.prompt || '');
+      h += '<div class="kpis">' + row(f(e.wh_per_image, 4) + ' Wh', 'per image')
+         + row(f(g.gen_s_per_image, 2) + ' s', 'per image') + row(f(e.delta_w, 1) + ' W', 'above idle')
+         + row(n, r.mode === 'session' ? 'images measured' : 'images') + '</div>'
+         + '<div style="font-size:0.78rem;color:var(--text-3);margin-top:0.4rem">' + flag(e) + ' '
+         + ((e.confidence && e.confidence.label) || '') + ' · ' + (r.model_label || g.model_label || r.model_key || '')
+         + (r.mode === 'session' ? ' · warm model, generation only' : '') + '</div>';
+      if (g.b64_png)
+        h += '<img src="data:image/png;base64,' + g.b64_png + '" alt="" style="max-width:100%;margin-top:0.6rem;border:1px solid var(--border)">';
+      if (prompt) h += '<div style="font-size:0.74rem;color:var(--text-4);margin-top:0.3rem">"' + prompt + '"</div>';
+    } else if (kind === 'llm') {
+      var inf = r.inference || {};
+      h += '<div class="kpis">' + row(f(e.mwh_per_token, 3) + ' mWh', 'per token')
+         + row(f(e.delta_e_wh, 3) + ' Wh', 'total') + row(f(inf.tokens_per_sec, 1), 'tokens/s')
+         + row(inf.output_tokens != null ? inf.output_tokens : '—', 'tokens') + '</div>'
+         + '<div style="font-size:0.78rem;color:var(--text-3);margin-top:0.4rem">' + flag(e) + ' '
+         + ((e.confidence && e.confidence.label) || '') + ' · ' + (r.model_label || r.model_key || '')
+         + (r.task_label ? ' · ' + r.task_label : '') + '</div>';
+    } else {
+      var sides = [];
+      ['cpu', 'gpu'].forEach(function(s){ if (r[s] && r[s].energy) sides.push(r[s]); });
+      if (!sides.length && r.result && r.result.energy) sides.push(r.result);
+      h += '<table style="width:100%;font-size:0.82rem;border-collapse:collapse">'
+         + '<tr style="color:var(--text-3);font-size:0.72rem"><td>engine</td><td style="text-align:right">energy</td>'
+         + '<td style="text-align:right">time</td><td style="text-align:right">VMAF</td><td></td></tr>';
+      sides.forEach(function(sd){
+        var se = sd.energy || {};
+        h += '<tr><td>' + ((sd.engine && sd.engine.label) || sd.preset_label || '') + '</td>'
+           + '<td style="text-align:right;color:var(--accent)">' + f(se.delta_e_wh, 4) + ' Wh</td>'
+           + '<td style="text-align:right">' + f(se.delta_t_s, 1) + ' s</td>'
+           + '<td style="text-align:right">' + (sd.vmaf != null ? f(sd.vmaf, 2) : '…') + '</td>'
+           + '<td style="text-align:center">' + flag(se) + '</td></tr>';
+      });
+      h += '</table>';
+    }
+    var t = {image: 'image', llm: 'llm', video: 'video'}[kind];
+    if (r.job_id)
+      h += '<div style="margin-top:0.5rem;font-size:0.74rem"><a style="color:var(--accent)" href="/results/' + t + '/'
+         + r.job_id + '/download.json">⬇ result JSON</a> <span style="color:var(--text-4)">· ' + r.job_id + '</span></div>';
+    return h;
+  };
+
   // CR-037 anchor, re-worded (owner 2026-10-05): "≈ the energy of encoding N
   // minutes of HD video" — no codec in the visible line (detail in the
   // tooltip). Rendered from the stored ratio so old results update too.
@@ -284,6 +340,10 @@
     var vr = e && e.video_relative;
     if (r && r.host && r.host.remote) return '';
     var ref = (window.WL_CFG && WL_CFG.video_ref) || null;
+    // CR-085: the reference encode was measured on one machine (GoS1); never
+    // express another machine's run as a multiple of it.
+    var refHost = (ref && ref.host) || 'gos1';
+    if (r && r.host && r.host.id && r.host.id !== refHost) return '';
     var wh = e && Number(e.delta_e_wh);
     // Ratio against the CURRENT pin when available (consistent across old and
     // new results); the stored ratio is only a fallback.

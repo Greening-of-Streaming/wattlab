@@ -19,41 +19,79 @@ _STYLE = ('<style>.remote-btn{background:var(--panel-2);color:var(--text-1);bord
           '.remote-btn:hover{border-color:var(--accent)}.remote-btn:disabled{opacity:0.4;cursor:default}</style>')
 
 
-# "Run on GoS1 also" (owner 2026-10-05): the companion job's status, GoS1's
-# live wall power (so both machines' power is visible during a pair — the main
-# progress widget shows the remote host's), and its result card when done.
-# The queue is serial: the GoS1 job runs after the remote one; while it waits,
-# the line shows GoS1 idling.
+# Machine tiles (owner 2026-10-06: "each job in a separate box, like /decode").
+# Every Other-machines run — one machine, or a pair ticked to run at the same
+# time — renders as one tile per machine in #status: the machine's name and
+# chip, its OWN live wall power (job_status gives the callee's meter for a peer
+# job, this node's for a local one), elapsed time, the stage trail (✓ done /
+# ▶ current), then that machine's result (wlMachineResult) — never a single
+# merged card, so a result can't be read without knowing where it ran.
 _PAIR_JS_T = """<script>
 const OWL_ME = __ME__;
-function owlPairRun(kind, jobId, renderCard) {
-  let pair = document.getElementById('status-pair');
-  if (!pair) {
-    pair = document.createElement('div'); pair.id = 'status-pair'; pair.style.marginTop = '1.5rem';
-    document.getElementById('status').after(pair);
-  }
-  const head = '<div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem">' + OWL_ME + ' · same ' + ({llm: 'model + task', image: 'model + prompt', video: 'source + codec + engine'}[kind] || 'job') + '</div>';
-  const t = setInterval(async () => {
-    const [j, p] = await Promise.all([
-      fetch('/' + kind + '/job/' + jobId).then(r => r.json()).catch(() => ({})),
-      fetch('/power').then(r => r.json()).catch(() => ({}))]);
-    if (j.result && (j.status === 'done' || j.stage === 'done' || kind === 'image')) {
-      clearInterval(t); pair.innerHTML = head + renderCard({result: j.result, isPrev: false}); return;
-    }
-    if (j.error || j.status === 'error') {
-      clearInterval(t); pair.innerHTML = head + '<div style="color:var(--err)">' + OWL_ME + ' run failed: ' + (j.error || '') + '</div>'; return;
-    }
-    const w = (p && p.watts != null) ? Number(p.watts).toFixed(1) + ' W' : '—';
-    const st = j.stage === 'queued' ? 'queued' : (j.stage || 'starting');
-    pair.innerHTML = head + '<div style="font-size:1.6rem;color:var(--accent);font-family:monospace;font-weight:bold">' + w + '</div>'
-      + '<div style="color:var(--text-3);font-size:0.72rem">live wall power · ' + OWL_ME + ' · ' + st + '</div>';
-  }, 2000);
+const OWL_HOSTS = __HOSTS__;
+function owlStageLabel(s) {
+  return String(s || 'starting').replace(/_/g, ' ');
+}
+function owlRunTiles(kind, runs, onAllDone) {
+  const box = document.getElementById('status');
+  box.innerHTML = '<div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.5rem">'
+    + (runs.length > 1 ? runs.length + ' machines · same job · running at the same time' : 'Running on ' + runs[0].label) + '</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:0.9rem">'
+    + runs.map(r => '<div class="batch-box" id="tile-' + r.id + '" style="flex:1 1 18rem;min-width:0;padding:0.9rem 1rem;margin:0"></div>').join('')
+    + '</div>';
+  let open = runs.length;
+  runs.forEach(r => {
+    r.t0 = Date.now(); r.seen = [];
+    const el = document.getElementById('tile-' + r.id);
+    const head = '<div style="color:var(--accent);font-weight:bold;font-size:0.95rem">' + r.label
+      + ' <span style="color:var(--text-3);font-weight:normal;font-size:0.76rem">' + (r.sub || '') + '</span></div>';
+    const tick = async () => {
+      const j = await fetch('/' + kind + '/job/' + r.id).then(x => x.json()).catch(() => null);
+      const secs = Math.round((Date.now() - r.t0) / 1000);
+      if (!j) { el.innerHTML = head + '<div style="color:var(--text-4);font-size:0.78rem;margin-top:0.4rem">no answer — retrying… (' + secs + ' s)</div>'; return false; }
+      if (j.status === 'error' || j.error) {
+        el.innerHTML = head + '<div style="color:var(--err);margin-top:0.5rem">✗ ' + (j.error || 'failed') + '</div>'; return true;
+      }
+      if (j.result && (j.status === 'done' || j.stage === 'done')) {
+        el.innerHTML = head + '<div style="color:var(--text-3);font-size:0.74rem;margin:0.2rem 0 0.5rem">✓ done · ' + secs + ' s on the page clock</div>'
+          + wlMachineResult(kind, j.result) + (typeof wlHostLine === 'function' ? wlHostLine(j.result) : '');
+        return true;
+      }
+      const st = j.stage || 'starting';
+      if (st !== 'queued' && r.seen[r.seen.length - 1] !== st) r.seen.push(st);
+      const w = j.watts != null ? Number(j.watts).toFixed(1) + ' W' : '—';
+      let trail = r.seen.slice(-6).map((s, i, a) => '<div style="font-size:0.78rem;color:' + (i === a.length - 1 ? 'var(--warn)' : 'var(--text-3)') + '">'
+        + (i === a.length - 1 ? '▶ ' : '✓ ') + owlStageLabel(s) + '</div>').join('');
+      if (st === 'queued') trail = '<div style="font-size:0.78rem;color:var(--warn)">… queued on ' + r.label + ' — position ' + (j.queue_position || '?') + '</div>';
+      el.innerHTML = head
+        + '<div style="font-size:1.6rem;color:var(--accent);font-family:monospace;font-weight:bold;margin-top:0.4rem">⚡ ' + w + '</div>'
+        + '<div style="color:var(--text-4);font-size:0.72rem;margin-bottom:0.4rem">live wall power · ' + r.label + '’s own meter · ' + secs + ' s</div>'
+        + trail;
+      return false;
+    };
+    const loop = async () => {
+      if (await tick()) { if (--open === 0 && onAllDone) onAllDone(); return; }
+      setTimeout(loop, 2000);
+    };
+    loop();
+  });
+}
+function owlRunOf(hid, jobId) {
+  const h = OWL_HOSTS[hid] || {label: hid};
+  return {id: jobId, label: h.label, sub: h.chip || ''};
+}
+function owlRunLocal(jobId) {
+  return {id: jobId, label: OWL_ME.label, sub: OWL_ME.chip || ''};
 }
 </script>"""
 
 
 def pair_js() -> str:
-    return _PAIR_JS_T.replace("__ME__", json.dumps(hosts.local_label()))
+    lh = hosts.local_host()
+    me = {"label": hosts.local_label(), "chip": lh.get("chip") or ""}
+    peers = {hid: {"label": h.get("label", hid), "chip": h.get("chip") or ""}
+             for hid, h in hosts.remote_hosts().items()}
+    return _PAIR_JS_T.replace("__ME__", json.dumps(me)).replace("__HOSTS__", json.dumps(peers))
 
 
 def _pair_box(hid: str, what: str, simultaneous: bool = False) -> str:
@@ -137,16 +175,17 @@ async function runRemoteLLM(host, runtime) {{
   const resp = await fetch('/llm/remote', {{method: 'POST', body: form}});
   const data = await resp.json().catch(() => ({{}}));
   if (data.job_id) {{
-    document.getElementById('runBtn').disabled = true;
-    startTime = Date.now(); renderProgress('baseline'); pollLLM(data.job_id);
+    const runs = [owlRunOf(host, data.job_id)];
     const also = document.getElementById('also-local-' + host);
     if (also && also.checked) {{
       const f2 = new FormData();
       f2.append('model_key', selectedModel); f2.append('task_key', selectedTask);
       f2.append('device', 'gpu');
       const d2 = await (await fetch('/llm/run', {{method: 'POST', body: f2}})).json().catch(() => ({{}}));
-      if (d2.job_id) owlPairRun('llm', d2.job_id, wlRenderLLMCard);
+      if (d2.job_id) runs.push(owlRunLocal(d2.job_id));
     }}
+    document.getElementById('runBtn').disabled = true;
+    owlRunTiles('llm', runs, () => {{ document.getElementById('runBtn').disabled = false; }});
   }} else {{
     document.getElementById('status').innerHTML = '<div style="color:var(--err)">Error: ' + (data.error || resp.status) + '</div>';
   }}
@@ -188,17 +227,17 @@ async function runRemoteImage(host) {
       headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body});
   const data = await resp.json().catch(() => ({}));
   if (data.error || !data.job_id) { alert(data.error || ('HTTP ' + resp.status)); return; }
-  document.getElementById('run-btn').disabled = true;
-  imgStartTime = Date.now(); renderProgress('baseline', null, null);
-  pollTimer = setInterval(() => pollJob(data.job_id), 1500);
+  const runs = [owlRunOf(host, data.job_id)];
   const also = document.getElementById('also-local-' + host);
   if (also && also.checked) {
     let b2 = 'host=local&model_key=' + encodeURIComponent(selectedModelKey) + SESSION;
     if (CAN_CUSTOM_PROMPT && prompt) b2 += '&prompt=' + encodeURIComponent(prompt);
     const d2 = await (await fetch('/image/session', {method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: b2})).json().catch(() => ({}));
-    if (d2.job_id) owlPairRun('image', d2.job_id, wlRenderImageCard);
+    if (d2.job_id) runs.push(owlRunLocal(d2.job_id));
   }
+  document.getElementById('run-btn').disabled = true;
+  owlRunTiles('image', runs, () => { document.getElementById('run-btn').disabled = false; });
 }
 </script>"""
     return _wrap(blocks, "runs the model + prompt selected above · warm-model session") + pair_js() + js
