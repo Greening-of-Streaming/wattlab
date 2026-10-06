@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Randomly wobbling CPU load (owner 2026-10-06) — makes wall power change
+continuously so a plug's refresh period can be read off the changes in its
+readings (a steady load can't distinguish "not refreshed" from "same value").
+Every 0.1–0.5 s (random, non-periodic — no aliasing with a plug's clock) all
+workers jump to a new random duty level in [lo, hi]; each worker spins for that
+fraction of every 20 ms slot. Stdlib only; runs on Linux and macOS.
+Usage: owl-load-wobble [seconds=300] [workers=all cores]"""
+import multiprocessing as mp, os, random, sys, time
+
+def worker(level, stop):
+    while not stop.is_set():
+        t = time.perf_counter(); busy = 0.02 * level.value
+        while time.perf_counter() - t < busy:
+            pass
+        rest = 0.02 - (time.perf_counter() - t)
+        if rest > 0:
+            time.sleep(rest)
+
+if __name__ == "__main__":
+    secs = float(sys.argv[1]) if len(sys.argv) > 1 else 300
+    n = int(sys.argv[2]) if len(sys.argv) > 2 else os.cpu_count()
+    level, stop = mp.Value("d", 0.5), mp.Event()
+    ps = [mp.Process(target=worker, args=(level, stop), daemon=True) for _ in range(n)]
+    for p in ps: p.start()
+    end = time.time() + secs
+    while time.time() < end:
+        level.value = random.uniform(0.1, 1.0)
+        time.sleep(random.uniform(0.1, 0.5))
+    stop.set()
+    for p in ps: p.join(2)

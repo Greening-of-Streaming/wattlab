@@ -1397,6 +1397,25 @@ experiment or chore with its evidence pointer. Promote to a CR when picked up.*
 
 ## Deferred items moved from CLAUDE.md (2026-09-27, verbatim — not CRs; promote when picked up)
 
+- **⚠ Re-assess every `/decode` result for P110 refresh vs 1 s polling** (owner, 2026-10-06 — open, high
+  priority before any further decode publication). The 2026-10-06 wobble-load probes (`bin/probe-p110-refresh`,
+  `bin/owl-load-wobble`; data `results/diagnostics/p110_refresh_*`) showed a fw **1.3.1** plug of the
+  **earthless** variant (hw_id `2FB30EF5…`, lab-G1) refreshes `current_power` every **2.0 s below ~12 W** (1.0 s
+  above ~20 W), and fw 1.4.x every 1.5 s at all levels. The rig plugs are all fw 1.3.1 and the boxes run at
+  **~1–3 W**, polled at 1 s — so decode rows may carry ~half as many fresh samples as polls. What that means:
+  (1) per-phase **means are not biased** by stale repeats, but (2) the **SE/CI is understated by up to √2** and
+  the traffic-light flags may be over-optimistic — which matters most exactly where decode ΔW is small
+  (0.1–1 W, codec-vs-codec deltas); (3) phase-boundary timing has ±2 s granularity. Steps: (a) record each Lab
+  plug's hw variant (`hw_id`) and refresh period at its box's real power (the stored raw samples already show
+  it — consecutive byte-identical mW readings = stale polls, no re-measurement needed for the audit);
+  (b) recompute CIs on fresh-sample counts (the same correction proposed for `confidence.py`); (c) re-flag rows
+  and list any published decode claim whose flag or CI changes. Findings at risk: every decode slug in
+  `/findings` (`hw-decoder-cuts-client-energy-4x`, `codec-decode-energy-depends-on-silicon-and-regime`,
+  `streaming-box-plays-4-7x-cheaper…`, `stb-decode-and-play-content-over-codec`,
+  `appletv-a10x-av1-vp9-software-fallback`, `looped-excerpt-measures-as-continuous`) and the SMPTE 2026 tables.
+  Pending first: whether the 2 s low-power refresh is lab-G1 being faulty or the earthless 1.3.1 variant
+  (lab-G3 swap test running 2026-10-06).
+
 - **VMAF-stage polish bundle on `/video`** (owner notes 2026-06-10): (1) progress bar during the VMAF stage
   (server stamps vmaf_done/vmaf_total; verify `-progress` works on the scoring pass, else render the counters);
   (2) spurious "Wait for Idle" after first/second VMAF run (suspect stage-strip index vs extra cooldown call — cf.

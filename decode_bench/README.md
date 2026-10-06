@@ -74,6 +74,9 @@ Two arms per condition, don't mix them:
 Both Pis have been in service since 2026-07; the flash/SSH/plug checklist moved to JOURNAL.md (Addenda, 2026-09-03).
 
 ## Known infra caveats
+- **⚠ P110 refresh at box power (2026-10-06, open):** fw 1.3.1 (earthless variant at least) refreshes every
+  **2.0 s below ~12 W** — the boxes' regime — so 1 s polls include stale repeats: means OK, CIs understated up to
+  √2. Every decode result is to be re-assessed — see CHANGE_REQUESTS.md §Deferred items (top entry).
 - **adb** (2026-08-26): Android platform-tools **r37.0.0** (adb 1.0.41, build 37.0.0-14910828) lives at
   `/srv/data/owl/decode-bench/tools/platform-tools/` on the data NVMe — durable across reboots; NOT the
   apt `adb` (34.x, not installed). `rig.py`/`decode_run.py`/`c2_hunt.py` name that path; `decode_bench/tools`

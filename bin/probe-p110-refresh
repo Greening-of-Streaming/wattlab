@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""P110 local-API refresh-period probe (owner 2026-10-06: settle the 1.3.1
+"≥1 Hz / ~0.8 s" vs GoS2 "2 s" contradiction).
+
+Polls the given plugs CONCURRENTLY at --period (default 0.25 s — fine enough to
+resolve 0.5–2 s refresh clocks) with the exact call OWL uses
+(get_energy_usage().current_power, raw mW), for --seconds, and reports per plug:
+the change intervals (time between successive DIFFERENT readings), their median
+and histogram, dup rate, latency, fw + hw_id. A clock-driven refresh shows as a
+tight cluster of change intervals; coincidental equal readings would scatter.
+
+Pause OWL's own pollers first (KLAP sessions are exclusive per plug):
+touch /tmp/owl-paused on the node that owns the plugs.
+Usage: probe-p110-refresh --label gos2_idle --ip 192.168.1.165 --ip 192.168.1.22
+Writes results/diagnostics/p110_refresh_<label>_<ts>.{csv,json}.
+"""
+import argparse, asyncio, csv, json, statistics, sys, time
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+HERE = Path("/home/gos/wattlab")
+sys.path.insert(0, str(HERE / "wattlab_service"))
+from dotenv import dotenv_values  # noqa: E402
+from tapo import ApiClient        # noqa: E402
+
+CFG = dotenv_values(HERE / ".env")
+
+
+async def probe(ip, period, seconds, t0, offset, rows):
+    client = ApiClient(CFG["TAPO_EMAIL"], CFG["TAPO_PASSWORD"])
+    dev = await client.p110(ip)
+    info = await dev.get_device_info()
+    meta = {"ip": ip, "nickname": info.nickname, "fw_ver": info.fw_ver, "hw_ver": info.hw_ver,
+            "hw_id": getattr(info, "hw_id", None), "errors": 0}
+    await asyncio.sleep(offset)
+    nxt = time.monotonic()
+    end = t0 + seconds
+    while time.monotonic() < end:
+        ts = time.monotonic()
+        try:
+            e = await asyncio.wait_for(dev.get_energy_usage(), timeout=3)
+            tr = time.monotonic()
+            rows.append({"ip": ip, "t_rel_s": round(tr - t0, 3), "power_mw": e.current_power,
+                         "latency_ms": round((tr - ts) * 1000, 1)})
+        except Exception:
+            meta["errors"] += 1
+            try:
+                dev = await client.p110(ip)
+            except Exception:
+                await asyncio.sleep(1)
+        nxt += period
+        d = nxt - time.monotonic()
+        if d > 0:
+            await asyncio.sleep(d)
+        else:
+            nxt = time.monotonic()
+    return meta
+
+
+def summarise(meta, rows, period):
+    xs = [r for r in rows if r["ip"] == meta["ip"]]
+    ch = [xs[i]["t_rel_s"] for i in range(1, len(xs)) if xs[i]["power_mw"] != xs[i - 1]["power_mw"]]
+    iv = [round(b - a, 2) for a, b in zip(ch, ch[1:])]
+    lat = sorted(r["latency_ms"] for r in xs)
+    # histogram of change intervals in units of the poll period
+    hist = Counter(round(v / period) * period for v in iv)
+    return {**meta, "n": len(xs), "mean_w": round(statistics.mean(r["power_mw"] for r in xs) / 1000, 3),
+            "dup_rate": round(1 - (len(ch) / max(1, len(xs) - 1)), 4),
+            "changes": len(ch), "change_interval_median_s": statistics.median(iv) if iv else None,
+            "change_interval_mean_s": round(statistics.mean(iv), 3) if iv else None,
+            "change_interval_hist_s": {f"{k:.2f}": v for k, v in sorted(hist.items())},
+            "latency_ms_p50": lat[len(lat) // 2] if lat else None,
+            "latency_ms_p95": lat[int(len(lat) * .95)] if lat else None}
+
+
+async def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ip", action="append", required=True)
+    ap.add_argument("--label", required=True)
+    ap.add_argument("--period", type=float, default=0.25)
+    ap.add_argument("--seconds", type=float, default=300)
+    a = ap.parse_args()
+    rows = []
+    t0 = time.monotonic() + 3
+    metas = await asyncio.gather(*[probe(ip, a.period, a.seconds + 3, t0, i * a.period / len(a.ip), rows)
+                                   for i, ip in enumerate(a.ip)])
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out = HERE / "results" / "diagnostics"
+    base = out / f"p110_refresh_{a.label}_{stamp}"
+    with open(f"{base}.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["ip", "t_rel_s", "power_mw", "latency_ms"]); w.writeheader(); w.writerows(rows)
+    res = {"label": a.label, "ts": datetime.now().isoformat(timespec="seconds"), "period_s": a.period,
+           "seconds": a.seconds, "plugs": [summarise(m, rows, a.period) for m in metas]}
+    Path(f"{base}.json").write_text(json.dumps(res, indent=2))
+    for p in res["plugs"]:
+        print(json.dumps({k: p[k] for k in ("ip", "fw_ver", "mean_w", "n", "dup_rate", "change_interval_median_s",
+                                            "change_interval_hist_s", "latency_ms_p50", "errors")}), flush=True)
+
+asyncio.run(main())
