@@ -26,6 +26,16 @@ Everything about a remote machine lives in ONE settings entry under
       }
     }
 
+Networking — ONE place per peer (CR-085, owner 2026-10-06): with `driver: "peer"`
+everything node-to-node (jobs, live status, results, replication, members) goes
+through peer.call() to that entry's `url`, and the receiving node admits a caller
+whose address is the host of a registered `url` (peer.source_allowed) — LAN,
+SSH tunnel (http://127.0.0.1:<fwd port>), Tailscale (http://100.x… or a
+MagicDNS name), VPN or a public HTTPS name all work by changing `url` on each
+side; no code, no second policy edit. HMAC signing is network-independent. The
+legacy `ssh`/`meters` fields are only read by the SSH driver (retired after the
+owner's test).
+
 Interim mechanism (owner, 2026-10-04): GoS1's service runs the remote encode
 over SSH and reads the remote host's plugs directly over the LAN. Valid while
 the machines share a LAN; the peer job API in docs/gos2_design.md §2 replaces

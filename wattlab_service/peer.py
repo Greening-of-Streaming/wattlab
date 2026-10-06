@@ -71,6 +71,58 @@ def verify(method: str, path: str, body: bytes, header: str) -> bool:
     return True
 
 
+# --- who may call (receiving side) -------------------------------------------
+
+def _url_hosts() -> set:
+    """Addresses of every registered peer's `url` (names resolved). The SAME
+    entry that says how to reach a peer says who that peer is when it calls
+    back — so moving a node to another network (Tailscale, VPN, public host)
+    is one edit: its `url` in compute_hosts."""
+    import ipaddress, socket
+    from urllib.parse import urlparse
+    import hosts
+    out = set()
+    for h in hosts.all_remote().values():
+        name = urlparse(h.get("url") or "").hostname
+        if not name:
+            continue
+        try:
+            out.add(str(ipaddress.ip_address(name)))
+        except ValueError:
+            try:
+                out.update(i[4][0] for i in socket.getaddrinfo(name, None))
+            except OSError:
+                pass
+    return out
+
+
+_SRC_CACHE = {"ts": 0, "ips": set()}
+
+
+def source_allowed(ip: str) -> bool:
+    """LAN / loopback (incl. an SSH tunnel) always; otherwise only a
+    registered peer's address, or a CIDR in settings `peer_source_networks`."""
+    import ipaddress
+    import settings as cfg
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if addr.is_loopback or addr.is_private:
+        return True
+    if time.time() - _SRC_CACHE["ts"] > 60:
+        _SRC_CACHE.update(ts=time.time(), ips=_url_hosts())
+    if ip in _SRC_CACHE["ips"]:
+        return True
+    for net in cfg.load().get("peer_source_networks") or []:
+        try:
+            if addr in ipaddress.ip_network(net, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 # --- client ---------------------------------------------------------------------
 
 def call(host: dict, method: str, path: str, payload=None, timeout: float = 15):

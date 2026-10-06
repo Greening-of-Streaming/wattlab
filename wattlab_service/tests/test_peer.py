@@ -49,9 +49,18 @@ def test_ephemeral_secret_refuses_peer(monkeypatch):
 
 # --- callee routes ----------------------------------------------------------------
 
-def test_peer_routes_need_signature_and_lab():
+def test_peer_routes_need_signature_and_a_peer_address(monkeypatch):
     assert client.get("/peer/info", headers=LAB).status_code == 403          # no signature
     assert client.get("/peer/info", headers={**ANON, peer.HEADER: peer.sign("GET", "/peer/info")}).status_code == 403
+    # A peer on another network (e.g. Tailscale 100.64/10 — not "private") is
+    # admitted because its address is the host of its registered url.
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**PEER_HOST, "url": "http://100.101.1.2:8000"}})
+    peer._SRC_CACHE["ts"] = 0
+    ts = {"x-real-ip": "100.101.1.2"}
+    assert client.get("/peer/info", headers={**ts, peer.HEADER: peer.sign("GET", "/peer/info")}).status_code == 200
+    assert client.get("/peer/info", headers={"x-real-ip": "100.101.9.9",
+                      peer.HEADER: peer.sign("GET", "/peer/info")}).status_code == 403
+    peer._SRC_CACHE["ts"] = 0
     r = client.get("/peer/info", headers=_signed("GET", "/peer/info"))
     assert r.status_code == 200
     d = r.json()

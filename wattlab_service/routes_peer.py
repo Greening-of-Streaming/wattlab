@@ -1,8 +1,8 @@
 """
 routes_peer.py — the node-to-node job API (CR-085 autonomy Phase 4).
 
-Served by every OWL node. Lab tier (LAN/tunnel only) AND an HMAC signature
-(peer.verify) on every call. Jobs run on THIS node's own queue, meters and
+Served by every OWL node. Every call needs an HMAC signature (peer.verify)
+AND a caller address that is a registered peer (peer.source_allowed). Jobs run on THIS node's own queue, meters and
 scorer, and are stamped by this node's persist.save_result; the caller mirrors
 progress and imports the envelope verbatim (peer.follow / persist.import_result).
 Feature modules never import main.
@@ -28,6 +28,9 @@ router = APIRouter()
 
 
 async def require_peer(request: Request):
+    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+    if not peer.source_allowed(ip):
+        raise HTTPException(status_code=403, detail="not a registered peer address")
     body = await request.body()
     path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
     if not peer.verify(request.method, path, body, request.headers.get(peer.HEADER, "")):

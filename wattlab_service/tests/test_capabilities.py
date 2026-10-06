@@ -273,7 +273,7 @@ def test_required_tier_table_snapshot():
         "lab_session_toggle":  Tier.Lab,   # S59 — /queue-status lab-session flag toggle
         "video_remote_run":    Tier.Lab,   # CR-085 — encodes on another compute host (GoS2)
         "ai_remote_run":       Tier.Lab,   # CR-085 Part 3 — LLM / image gen on another host
-        "peer_api":            Tier.Lab,   # CR-085 Phase 4 — node-to-node job API (+ HMAC)
+        "peer_api":            Tier.Anonymous,   # CR-085 — gate is signature + peer address (require_peer)
     }
     assert capabilities._REQUIRED_TIER == expected
 

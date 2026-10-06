@@ -310,6 +310,9 @@ DEFAULTS = {
     # CR-085 — MLX conversions this node can run itself ({ollama_key: hf_repo});
     # Apple nodes only. Sensors via powermetrics on Apple nodes (off: it loads
     # the machine being measured).
+    # CR-085 — extra caller networks for /peer/* beyond LAN/loopback and the
+    # registered peers' url hosts (normally empty: a peer's url is enough).
+    "peer_source_networks": [],
     "run_replication":    True,    # CR-085 Phase 5 — pull peers' results (no-op without peers)
     "replication_interval_s": 600,
     "local_mlx_models":   {},
