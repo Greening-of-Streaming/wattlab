@@ -1,8 +1,13 @@
 #!/bin/sh
 # OWL as a macOS system LaunchDaemon (CR-085). Run once: sudo sh install_owl_svc.sh
-# Why a daemon: macOS Local Network privacy blocks LAN access (the Tapo plugs) for
-# launchd *agents* and detached processes; system daemons are not subject to it.
-# The daemon runs as user `gos` (UserName), never root. Installs a narrow wrapper
+# Why the loopback ssh: macOS Local Network privacy blocks LAN access (the Tapo
+# plugs, GoS1) for anything launchd starts as user gos — agents AND this daemon
+# (tested 2026-10-06: Python direct → "No route to host"), and toggling the
+# Local Network entry didn't help. Processes started by sshd are exempt, so the
+# daemon runs `ssh gos@127.0.0.1` with a key that is (authorized_keys) limited to
+# from=127.0.0.1 and forced to /Users/gos/owl/owl-serve.sh — it can do nothing
+# but start OWL. -tt gives the session a tty so OWL dies with it (no orphan
+# holding :8000). Runs as user `gos` (UserName), never root. Installs a narrow wrapper
 #   /usr/local/sbin/owl-svc install|restart|stop|status
 # and a sudo rule allowing ONLY that wrapper without a password (like GoS1's
 # wattlab-restart rule).
@@ -23,11 +28,13 @@ case "$1" in
   <key>Label</key><string>org.greeningofstreaming.owl</string>
   <key>UserName</key><string>gos</string>
   <key>ProgramArguments</key><array>
-    <string>/Users/gos/owl/venv/bin/python</string><string>-m</string><string>uvicorn</string>
-    <string>main:app</string><string>--host</string><string>0.0.0.0</string>
-    <string>--port</string><string>8000</string><string>--workers</string><string>1</string>
+    <string>/usr/bin/ssh</string><string>-tt</string>
+    <string>-i</string><string>/Users/gos/.ssh/id_owl_local</string>
+    <string>-o</string><string>BatchMode=yes</string>
+    <string>-o</string><string>ServerAliveInterval=30</string>
+    <string>gos@127.0.0.1</string>
   </array>
-  <key>WorkingDirectory</key><string>/Users/gos/wattlab/wattlab_service</string>
+  <key>ThrottleInterval</key><integer>10</integer>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key><string>/Users/gos</string>
