@@ -10,7 +10,7 @@ tests). CR-085 follow-on; implements `docs/gos2_design.md` §2 ("two autonomous 
 | 2 macOS layer | `f4534b9` (+ `eac7193`) | ✅ `gpu.AppleBackend`, mps, `owl-focus` |
 | 3 GoS2 own OWL | `d3cfa47` | ✅ own service (`owl-svc` → loopback ssh → OWL), calibrated (2.1 %), **parity gate PASSED 2026-10-06** (below), focus benchmark done |
 | 4 peer API | `2129293` | ✅ `/peer/*`, HMAC, simultaneous runs, offline greying; GoS1's registry now `driver: peer` |
-| 5 replication | `01c2390` | ✅ pull-based both ways + members from one writer |
+| 5 replication | `01c2390` | ✅ pull-based both ways + members from one writer; **outage drills passed 2026-10-06** (below) |
 
 ### Parity gate — passed 2026-10-06
 Interleaved, n=3 per driver, order alternated per rep, Spotlight permanently off, same GoS1 routes; only
@@ -29,6 +29,16 @@ Interleaved, n=3 per driver, order alternated per rep, Spotlight permanently off
 All 36 runs 🟢; no difference distinguishable (|t| < 1.6). The ±6 % seen in the morning's non-interleaved
 comparison was Spotlight on/off churn, not the driver. GoS2's own-OWL figures are its numbers from here on;
 the SSH driver may be retired once the owner has tested.
+
+### Outage drills — passed 2026-10-06 (`campaign_2026-10-06_gos2_autonomy/drills.{py,jsonl}`)
+- **A — GoS1 down** (process frozen with SIGSTOP — only `restart` is in sudoers; to a peer a hung node looks
+  dead; public visitors saw the nginx maintenance page): GoS2's /video, /llm, /image grey GoS1 out; GoS2 ran
+  and stored a job alone; GoS1 thawed → its pull imported GoS2's new result.
+- **B — GoS2 down** (`owl-svc stop`): GoS1's three pages grey GoS2 out; GoS2's engines refused (HTTP 503);
+  GoS1 measured normally; GoS2 reinstalled → GoS1 saw it online within one cache period (20 s); GoS2 pulled
+  GoS1's new result + the 94-member allowlist.
+- Also 2026-10-06: an unplanned hard power cut of GoS2 (inner-meter swap) — `autorestart` booted it, auto-login,
+  OWL service and Ollama all came up unattended within ~1 min.
 
 ### Local Network (macOS 15+ privacy) — solved 2026-10-06
 Anything launchd starts as user `gos` — a user agent, or a LaunchDaemon with `UserName gos` — gets
