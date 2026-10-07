@@ -146,9 +146,25 @@ def test_panel_renders_from_registry_for_lab(registry):
     assert "CPU (software) vs Apple media engine" in html
 
 
-def test_panel_hidden_for_anonymous(registry):
+def test_panel_visible_but_locked_for_anonymous(registry):
+    """Owner 2026-10-07: every tier sees the Other-machines panel; only Lab can
+    use it. Locked = dimmed, every button disabled, a plain Lab-only badge
+    (no Join-GoS pitch: membership doesn't unlock it), no pair tick-box/JS."""
+    import re
     html = client.get("/video", headers=_ANON).text
-    assert 'id="remote-hosts-panel"' not in html and "runRemote('gos2'" not in html
+    assert 'id="remote-hosts-panel" class="lock-block"' in html and "🔒 Lab only" in html
+    start = html.rindex("<div", 0, html.index('id="remote-hosts-panel"'))
+    depth, i = 0, start
+    for m in re.finditer(r"<div\b|</div>", html[start:]):
+        depth += 1 if m.group(0) != "</div>" else -1
+        if depth == 0:
+            i = start + m.end(); break
+    panel = html[start:i]
+    btns = re.findall(r'<button class="remote-btn[^"]*"([^>]*)>', panel)
+    assert btns and all("disabled" in b for b in btns)
+    assert "Join GoS" not in panel and "also-local-gos2" not in panel
+    lab = client.get("/video", headers=_LAB).text
+    assert 'class="lock-block"' not in lab[lab.index('id="remote-hosts-panel"'):][:80]
 
 
 def test_panel_absent_without_hosts(monkeypatch):

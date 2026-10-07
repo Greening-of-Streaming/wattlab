@@ -137,10 +137,13 @@ def _remote_hosts_panel_html(request: Request) -> str:
     """CR-085 — one block per enabled remote compute host, rendered from the
     hosts.py registry (adding/removing a host is a settings edit). Engines,
     not hosts (D6): each button names a codec + engine; the host is the block
-    header and provenance on the result. Hidden entirely without
-    VIDEO_REMOTE_RUN (Lab-only at launch)."""
-    if not can(audience.tier(request), VIDEO_REMOTE_RUN):
-        return ""
+    header and provenance on the result. Shown on every tier (owner
+    2026-10-07) so visitors see which other machines and engines OWL measures;
+    operational only with VIDEO_REMOTE_RUN — otherwise dimmed, buttons
+    disabled, a plain "Lab only" badge (membership does not unlock it, so no
+    Join-GoS pitch). /video/remote itself stays gated by requires(...)."""
+    locked = not can(audience.tier(request), VIDEO_REMOTE_RUN)
+    dis = " disabled" if locked else ""
     import remote_panels
     blocks = []
     for hid, h in hosts.remote_hosts().items():
@@ -164,16 +167,16 @@ def _remote_hosts_panel_html(request: Request) -> str:
             btns = []
             for eid, lbl, kind, codecs in offered:
                 if codec in codecs:
-                    btns.append(f'<button class="remote-btn" onclick="runRemote(\'{hid}\',\'{codec}\',\'{eid}\')">{lbl}</button>')
+                    btns.append(f'<button class="remote-btn"{dis} onclick="runRemote(\'{hid}\',\'{codec}\',\'{eid}\')">{lbl}</button>')
             pair = hosts.pair_engines({**h, "id": hid}, codec)
             if pair:
-                btns.append(f'<button class="remote-btn remote-pair" onclick="runRemote(\'{hid}\',\'{codec}\',\'both\')">'
+                btns.append(f'<button class="remote-btn remote-pair"{dis} onclick="runRemote(\'{hid}\',\'{codec}\',\'both\')">'
                             f'{labels[pair[0]]} vs {labels[pair[1]]}</button>')
             if btns:
                 rows.append(f'<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-top:0.45rem">'
                             f'<span style="color:var(--text-3);font-size:0.8rem;min-width:3.5rem">{hosts.CODEC_LABEL[codec]}</span>{"".join(btns)}</div>')
         sub = " · ".join(x for x in (h.get("chip"), h.get("machine")) if x)
-        pair_box = remote_panels._pair_box(hid, "same source + codec + engine", simultaneous=is_peer) if is_peer else ""
+        pair_box = remote_panels._pair_box(hid, "same source + codec + engine", simultaneous=is_peer) if is_peer and not locked else ""
         blocks.append(f'<div class="batch-box" style="padding:0.9rem 1rem;margin-bottom:0.6rem">'
                       f'<div style="color:var(--accent);font-size:0.9rem;font-weight:bold">{h.get("label", hid)}'
                       f' <span style="color:var(--text-3);font-weight:normal;font-size:0.78rem">{sub}</span></div>'
@@ -182,13 +185,15 @@ def _remote_hosts_panel_html(request: Request) -> str:
                       f'{"".join(rows)}<div style="margin-top:0.45rem">{pair_box}</div></div>')
     if not blocks:
         return ""
-    return ('<div id="remote-hosts-panel" style="margin:0 0 1.5rem 0">'
+    badge = ('<span class="lock-badge" title="Runs from the lab network only">🔒 Lab only</span>' if locked
+             else '<span style="color:var(--text-5);text-transform:none;letter-spacing:0">· Lab only</span>')
+    return (f'<div id="remote-hosts-panel" class="{"lock-block" if locked else ""}" style="margin:0 0 1.5rem 0">'
             '<div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.6rem">'
-            'Other machines <span style="color:var(--text-5);text-transform:none;letter-spacing:0">· Lab only</span></div>'
+            f'Other machines {badge}</div>'
             '<style>.remote-btn{background:var(--panel-2);color:var(--text-1);border:1px solid var(--border-2);'
             'padding:0.3rem 0.6rem;font-size:0.78rem;cursor:pointer;font-family:inherit}'
             '.remote-btn:hover{border-color:var(--accent)}.remote-pair{color:var(--accent)}</style>'
-            + "".join(blocks) + '</div>' + remote_panels.pair_js())
+            + "".join(blocks) + '</div>' + ("" if locked else remote_panels.pair_js()))
 
 
 @router.get("/video", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
