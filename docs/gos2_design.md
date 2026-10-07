@@ -293,6 +293,10 @@ Screen Sharing disconnect. Reason: row 3 run 1 showed a ~0.6 W non-CPU transient
 | 3 | 2026-10-06 | Row 2 + OWL's own always-on service (`owl-svc` LaunchDaemon → loopback ssh → uvicorn; its pollers paused for the row) + **Spotlight indexing permanently off** + **inner meter lab-G3 `.11`** (was lab-G1) | **1.525 W ± 0.856 W** (runs 1–3, all clean per protocol). Runs 2–3: **1.326 W** (1.329, 1.323; sd 0.12) — matches rows 1–2. Run 1: 1.923 W (sd 0.41), a transient straight after a Screen Sharing session + Activity Monitor were closed; CPU stayed ≥ 99 % idle, so the CPU gate could not catch it | 0.984 W | `results/diagnostics/gos2_idle_row3_20261006_204559.json` (script `bin/gos2-idle-row`) |
 
 **Change log since row 2** (each change ⇒ re-measure; row 3 due — Spotlight off AND new inner meter):
+- 2026-10-07 — **chip temperature on the home page** via `owl-temps` (`infra/macos/owl-temps.m`: IOHID die
+  sensors, no sudo, ~0.2 s), polled every 30 s and never while a measurement holds the lock. Cost check
+  (alternating 5-min idle windows, n=3 each, after a 10-min settle): off 1.315 W vs on 1.312 W, **diff −0.003 ±
+  0.011 W, not measurable** (`/srv/data/owl/campaign_2026-10-07_gos2_temps/`).
 - 2026-10-06 (night) — **idle criteria tightened: `cooldown_idle_tolerance_w` 3 → 0.5 W,
   `cooldown_idle_settle_polls` 3 → 6** (GoS2 `settings.json`). GoS1's 3 W accepted 2–3× GoS2's idle as settled,
   and 3 polls at the inner plug's 2 s refresh can be one stale reading. Baselines now ~1.8 W between jobs (were
