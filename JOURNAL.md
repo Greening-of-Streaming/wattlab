@@ -82,6 +82,7 @@ remote/Tania operation. Do not run display arms on two boxes at once.
   comment); `lab_reservations.py` ticker raises/lowers the same `/tmp/owl-lab-session` flag, owns only what it raised,
   never re-raises after a hand end; banner shows "reserved until", `/decode` shows who is next. Queue page polls
   instead of `<meta refresh>`. CR-067 items 3/4 found already live and marked. Tests 1107. Uncommitted.
+- S78 (10-04→07): **GoS2 (Mac mini M6) brought up and made autonomous** — own OWL via a loopback-ssh LaunchDaemon (macOS Local Network blocks launchd-started Python), signed peer API (one setting per peer: its `url`), simultaneous runs, replication, outage drills, parity gate passed (±2.5 %); SSH driver kept as fallback. **P110 fw 1.3.1 refreshes every 2 s below ~12 W** (decode audit: 42/2,381 flags at stake, no published claim). **Pre-existing benchmark bug** (no idle guard between steps → x264 understated ~31 %) fixed + clean rerun; corrected M6 headline (hw −9/−18 %, CPU −31/−41 %); relative idle tolerance; GoS2 visible to members via gateway `gos2.wattlab…` on GoS1 (DNS pending). Tests 1237.
 - S77 (09-21→22, unattended; committed as "S75" in fac9405 — numbering collision with JOURNAL S75/S76): **TV Box W5 onboarded** (no-brand Allwinner H618, Android 12, legacy OMX, 32-bit
   userland; Lab-F3 + HDMI_1) — `ro.product.*` is SPOOFED as a Google ADT-3, so provenance must come from
   `ro.board.platform`/logcat. **It cannot play AV1: 1.7 fps vs 60.0 for its three hw codecs, yet PLAYING + flat
@@ -106,6 +107,54 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 #   ladder; 4K/HDR arms; loop-validity finding; headless = no-sink regime; football sports tier.
 #   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
 ```
+
+## Session 78 — 2026-10-04 → 10-07 (GoS2: second OWL node, autonomy Phases 1–5, measurement-hygiene fixes)
+
+*70 commits (`67d8b91` → `3315660`), mostly CR-085. Owner present 10-04/05, away overnight 10-05→06 (goal
+missed: a self-matching `pgrep` wait idled the run from ~00:20), present 10-06/07. Tests 1107 → 1237.*
+
+**GoS2 brought up.** Mac mini M6 (`Mac18,5`, 12-core CPU/GPU, 24 GB, macOS 27.0.1) at `.29`, metered by a P110
+daisy-chain (outer lab-G2 `.22` fw 1.4.8 → inner lab-G1 `.165`, swapped 10-06 to lab-G3 `.11`, both fw 1.3.1
+earthless). Headless rule (auto-login), narrow sudo wrappers (`owl-focus`, `owl-powermetrics`, `owl-svc`),
+idle floor rows 1–3 (1.352 / 1.360 / 1.326 W on clean runs). First SSH-driven campaign 10-04/05 (encode, LLM
+Ollama + MLX, image), plus the owner's load-dilution challenge → warm-model image *session* method (load +
+warm-up outside the window, 30 s settle, ≥30 s generation). Canonical anchor re-pinned to the RTX 5080
+(0.2245 Wh). Report `docs/gos2_m6_report_2026-10.md`, drafts in `docs/findings_drafts/`.
+
+**Autonomy Phases 1–5 (`docs/gos2_autonomy_plan.md`).** P1 `paths.py`/`env.py` (no repo-path literals, `run_*`
+startup flags). P2 macOS layer (`gpu.AppleBackend` VideoToolbox VBR, mps, `owl-focus`). P3 GoS2 runs its own
+OWL; **macOS Local Network privacy blocks LAN for anything launchd starts as `gos`** (agents and the
+LaunchDaemon alike; toggling the entry does nothing) → `owl-svc` daemon runs OWL through a loopback ssh session
+(key forced to `~/owl/owl-serve.sh`, `-tt`); unattended power-cut recovery verified. P4 signed peer API
+(`peer.py`, `routes_peer.py`: HMAC from `OWL_AUTH_SECRET`, nonce, source = registered peer `url` host, so a
+peer's `url` is the **one** networking setting), jobs run on the callee's queue/meters → "Run on <me> at the
+same time" tick-box; Other-machines runs render as decode-style tiles. P5 pull-based replication
+(video/llm/image/decode) + members from one writer; outage drills both ways passed. **Parity gate passed**
+(interleaved SSH vs peer, n=3, all within ±2.5 %, |t|<1.6). SSH driver **kept as a documented fallback**.
+
+**Measurement findings / fixes.** (1) **P110 refresh**: fw 1.3.1 (earthless; earthed untested <70 W) refreshes
+every **2 s below ~12 W**, 1 s above ~20 W; fw 1.4.x 1.5 s always — wobble-load method (`bin/owl-load-wobble`
++ `bin/probe-p110-refresh`), reproduced on a fresh unit. Decode audit step 1: rig plugs ~50 % fresh at box
+power; fresh-sample SE changes 42/2,381 flags, **no published claim**; proposal for Tania
+(`docs/confidence_fresh_samples_proposal_2026-10.md`). Earthed P110s ordered. (2) **Benchmark bug
+(pre-existing)**: steps bypassed the pre-job idle guard → every all-codecs first baseline caught the previous
+step's tail; x264 CPU understated ~31 % in all past benchmarks (Sep 5 too), x265 4–6 % via cascade. Fixed
+`003ec0f`; clean rerun n=10 both nodes. (3) GoS2 inherited GoS1's 3 W idle tolerance → now **relative,
+max(0.5 W, 4 % of floor)** for every node. (4) **Corrected M6 headline**: hardware VBR −9 %/−18 % (was
+−15/−22), x264 −31 %, x265 −41 %; AI figures unchanged. (5) Spotlight indexing permanently off on GoS2 (+0.55 W
+idle when allowed). (6) Benchmark AI panels: LLM on T2, image as warm sessions — all 🟢.
+
+**UI / ops.** Pages name the machine they run on; machine switch from the registry (home + guided tour);
+Other-machines panels visible to all tiers, operational for Lab; /decode on GoS2 drives GoS1's rig (one rig
+owner, GoS1's queue the reservation authority); AV1 GPU presets greyed where unsupported; macOS chip
+temperature via `owl-temps` (IOHID, no sudo; poller cost −0.003 ± 0.011 W); /methodology hardware table per
+machine; **member gateway** `gos2.wattlab.greeningofstreaming.org` served by GoS1 (anonymous → greyed page,
+zero requests to GoS2; members/Lab forwarded with a vouched identity) — **pending owner DNS + certbot**.
+GoS1 Ollama 0.20.2 → 0.35.1 (owner, 10-07, matches GoS2). Deck: GoS1↔GoS2 architecture (artifact).
+
+**Open:** DNS + `certbot --expand` for gos2.wattlab; Tania on fresh-sample SE (then re-flag 42 runs) and the
+calibrated-SE question; draft encode finding headline rewrite; earthed P110 test; SDXL-Lightning in the
+session runner; GoS2 public front door/role swap re-scoped by the gateway.
 
 ## Session 77 — 2026-09-21 → 09-22 (TV Box W5 onboarded, unattended)
 

@@ -9,7 +9,7 @@
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
 #   - CHANGE_REQUESTS.md — 30 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (1107 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - TESTING.md — pytest suite (1237 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - GOS1_DISASTER_RECOVERY.md — rebuild-from-nothing: what is backed up, what is NOT (secrets, SSH keys, REM glue docs)
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
@@ -56,6 +56,16 @@
   Ambient-sensitive (2–6× swing in heat waves) — calibrate under normal ambient only.
 - Location: **basement since 2026-06-19** (cooler, steadier ambient; idle floor there still to re-confirm; see GOS1_INFRA.md).
 
+## GoS2 (second OWL node, CR-085)
+- Mac mini M6 at `192.168.1.29`; own OWL (`owl-svc` LaunchDaemon → loopback ssh → uvicorn — macOS Local Network
+  privacy blocks launchd-started LAN access); restart from GoS1 `bin/gos2-owl-restart`; deploy
+  `git push gos2 main:deploy` + `git merge --ff-only deploy` on GoS2. Meters: inner lab-G3 `.11`, outer lab-G2 `.22`.
+- Nodes talk only through the signed peer API (`peer.py`); a peer's `url` in `compute_hosts` is the one networking
+  setting. SSH driver = documented fallback (`hosts.py`). Decode rig: GoS1 is the only owner; GoS2's /decode
+  forwards to it. Members reach GoS2 via GoS1's gateway `gos2.wattlab.greeningofstreaming.org`.
+- Idle ~1.3 W: anything running on GoS2 shows at the wall — Spotlight off, sensors poller 30 s and paused
+  during measurements, no tests/heavy work on GoS2 during idle windows.
+
 ## Network Topology
 Bbox Wi-Fi 7 (192.168.1.x) ── GoS1 ethernet `.62` · MacBook Wi-Fi · Tapo P110 ×2 daisy-chained (CR-065):
 wall → `.159` (outer, original) → `.91` (inner, primary, "GoS1b-server") → GoS1
@@ -80,7 +90,7 @@ table in decode_bench/README.md §Network. External-access incidents + DuckDNS u
 - Python: fastapi/uvicorn, tapo 0.8.12, **torch 2.11.0+cu128**, diffusers/transformers/accelerate, chroma.
 - System: lm-sensors, ffmpeg 6.1.1 + `/usr/local/bin/ffmpeg-master` (driven by `ffmpeg_bin`; ships NVENC
   encoders + `scale_cuda`; `av1_nvenc` has no `-profile` knob, `-rc cbr` is the ABR-equivalent).
-- Ollama 0.20.2 (port 11434). Ladder (S30): tinyllama (anchor, **off the default panel**), qwen3:1.7b/4b/8b,
+- Ollama 0.35.1 (port 11434; upgraded 2026-10-07, same version as GoS2). Ladder (S30): tinyllama (anchor, **off the default panel**), qwen3:1.7b/4b/8b,
   mistral-nemo:12b, phi4, gpt-oss:20b. Live panel = `llm_enabled_models` in settings.json (currently the 6
   non-tinyllama ones). CANONICAL_RAG_MODEL = qwen3:4b. **MODELS dicts are live views (CR-050) — never edit as
   literals; add/remove via `ollama pull` or settings.**
@@ -115,6 +125,7 @@ binds a name, not main.
 8. Write result JSON to results/{type}/{date}_{job_id}.json
 9. Focus exit: parallel timer restart (ThreadPoolExecutor + run_in_executor)
 
+Idle-wait tolerance is relative: max(0.5 W, 4 % of the floor); benchmark steps run the same pre-job idle guard as queued jobs.
 Focus-mode timers: sysstat-collect, anacron, fwupd-refresh, apt-daily{,-upgrade}, man-db, motd-news,
 update-notifier-download.
 Cooldowns route through ONE dispatcher: execution `power.cooldown_between_runs`, wording `_bake_durations`
