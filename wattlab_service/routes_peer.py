@@ -234,7 +234,10 @@ async def _dispatch(request: Request, target_prefix: str, path: str):
     for h in ("content-type", "accept"):
         if request.headers.get(h):
             headers[h] = request.headers[h]
-    token = audience.PEER_VISITOR.set({"tier": tier, "email": meta.get("_owl_member")})
+    # via_gateway: the visitor arrived on a PUBLIC name (the member gateway), so
+    # this node's links (machine switch) must stay on public names too.
+    token = audience.PEER_VISITOR.set({"tier": tier, "email": meta.get("_owl_member"),
+                                       "via_gateway": target_prefix == ""})
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=request.app),
                                      base_url="http://owner") as c:
@@ -276,11 +279,30 @@ async def peer_view(path: str, request: Request):
 # public front door). Online state comes from the cached peer.info, fetched in
 # a worker thread so the page that asks never waits on an offline peer.
 
+def _arrived_on_public_name(request: Request) -> bool:
+    import audience, ipaddress
+    pv = audience.PEER_VISITOR.get()
+    if pv is not None:
+        return bool(pv.get("via_gateway"))
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(":")[0].lower()
+    if not host or host in ("localhost", "testserver") or host.endswith(".local"):
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        return True
+
+
 @router.get("/nodes.json", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def nodes_json(request: Request):
     import asyncio
     import audience
     lan = can(audience.tier(request), NODE_LAN_LINKS)
+    # Keep visitors on the kind of address they arrived on (owner 2026-10-07: a Lab
+    # visitor who came in by the public name was sent to raw LAN addresses):
+    # public name, or the member gateway → prefer peers' public_url; LAN/IP → url.
+    public_ctx = _arrived_on_public_name(request)
     me = hosts.local_host()
     out = [{"id": me["id"], "label": me.get("label", me["id"]), "chip": me.get("chip", ""),
             "self": True, "online": True, "url": None}]
@@ -288,7 +310,10 @@ async def nodes_json(request: Request):
     for hid, h in hosts.remote_hosts().items():
         if hosts.driver(h) != "peer":
             continue
-        url = h.get("url") if lan else h.get("public_url")
+        if lan and not public_ctx:
+            url = h.get("url")
+        else:
+            url = h.get("public_url") or (h.get("url") if lan else None)
         if not url:
             continue
         # public_tier "member" (owner 2026-10-07): visitors below it see the

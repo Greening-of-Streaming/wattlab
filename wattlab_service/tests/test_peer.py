@@ -540,3 +540,17 @@ def test_session_cookie_scoped_to_configured_domain(monkeypatch):
                    follow_redirects=False)
     sc = r.headers.get("set-cookie", "")
     assert "owl_session=" in sc and "Domain=" not in sc
+
+
+def test_switch_keeps_visitor_on_the_kind_of_address_they_arrived_on(monkeypatch):
+    """Owner 2026-10-07: a Lab visitor on the public name was switched to raw LAN addresses."""
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**PEER_HOST, "public_url": "https://" + GW_HOST,
+                                                               "public_tier": "member"}})
+    monkeypatch.setattr(peer, "info", lambda h, max_age=20: {})
+    pub = client.get("/nodes.json", headers={**LAB, "host": "wattlab.greeningofstreaming.org"}).json()["nodes"]
+    assert pub[1]["url"] == f"https://{GW_HOST}/"
+    lan = client.get("/nodes.json", headers={**LAB, "host": "192.168.1.62:8000"}).json()["nodes"]
+    assert lan[1]["url"] == "http://10.0.0.9:8000/"
+    p = "/peer/view/nodes.json?_owl_tier=lab"                      # through the gateway → public names
+    d = client.get(p, headers=_signed("GET", p)).json()["nodes"]
+    assert d[1]["url"] == f"https://{GW_HOST}/"
