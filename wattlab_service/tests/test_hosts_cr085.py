@@ -260,8 +260,8 @@ def test_llm_and_image_panels_follow_registry(monkeypatch):
     assert 'id="remote-hosts-panel"' in llm_lab and "runRemoteLLM('gos2','mlx')" in llm_lab
     img_lab = client.get("/image", headers=_LAB).text
     assert "runRemoteImage('gos2')" in img_lab
-    for page in ("/llm", "/image"):
-        assert 'id="remote-hosts-panel"' not in client.get(page, headers=_ANON).text
+    for page in ("/llm", "/image"):   # owner 2026-10-07: shown to all tiers, locked without Lab
+        assert 'id="remote-hosts-panel" class="lock-block"' in client.get(page, headers=_ANON).text
 
 
 # --- warm-model image session ------------------------------------------------------
@@ -434,3 +434,31 @@ def test_pair_engines_explicit_and_deterministic():
     assert hosts.pair_engines(h, "h264") == ("cpu", "hw")                  # first of each kind
     assert hosts.pair_engines({**h, "pair": {"hw": "hw_vbr"}}, "h264") == ("cpu", "hw_vbr")
     assert hosts.pair_engines(h, "av1") is None
+
+
+
+def _panel_html(html):
+    import re
+    start = html.rindex("<div", 0, html.index('id="remote-hosts-panel"'))
+    depth = 0
+    for m in re.finditer(r"<div\b|</div>", html[start:]):
+        depth += 1 if m.group(0) != "</div>" else -1
+        if depth == 0:
+            return html[start:start + m.end()]
+    return html[start:]
+
+
+def test_ai_panels_visible_but_locked_for_anonymous(monkeypatch):
+    """Owner 2026-10-07: /llm and /image get the /video treatment."""
+    import re
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**GOS2, "ollama": True, "python": "/p"}})
+    for page in ("/llm", "/image"):
+        html = client.get(page, headers=_ANON).text
+        assert 'id="remote-hosts-panel" class="lock-block"' in html and "🔒 Lab only" in html, page
+        panel = _panel_html(html)
+        btns = re.findall(r'<button class="remote-btn"([^>]*)>', panel)
+        assert btns and all("disabled" in b for b in btns), page
+        assert "Join GoS" not in panel and "also-local-gos2" not in panel and "Tick the box" not in panel, page
+        assert "function runRemote" not in html and "function owlRunTiles" not in html, page
+        lab = client.get(page, headers=_LAB).text
+        assert 'id="remote-hosts-panel" class=""' in lab and "function owlRunTiles" in lab, page

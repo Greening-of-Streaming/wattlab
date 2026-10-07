@@ -5,7 +5,8 @@ Rendered from the hosts.py registry like the /video panel: one block per
 enabled remote host, one button per runtime the host offers. The buttons act on
 whatever the page already has selected (model, task) and hand the job id to the
 page's own poller/renderer, so remote results display exactly like local ones —
-with the machine named on the result. Hidden entirely without AI_REMOTE_RUN.
+with the machine named on the result. Shown on every tier; operational only
+with AI_REMOTE_RUN (locked otherwise — see _wrap).
 No main import (feature-module rule).
 """
 import json
@@ -119,11 +120,17 @@ def peer_state(h: dict):
     return True, peer.info({**h})
 
 
-def _wrap(blocks: list, note: str) -> str:
-    return ('<div id="remote-hosts-panel" style="margin:1rem 0 1.25rem 0">'
+def _wrap(blocks: list, note: str, locked: bool = False) -> str:
+    """Owner 2026-10-07: shown on every tier, operational only with the
+    capability — locked = dimmed + plain Lab-only badge (membership doesn't
+    unlock it, so no Join-GoS pitch); buttons are rendered disabled by the
+    caller and the page JS is omitted. The routes stay gated by requires()."""
+    badge = ('<span class="lock-badge" title="Runs from the lab network only">🔒 Lab only</span>'
+             f'<span style="color:var(--text-5);text-transform:none;letter-spacing:0"> · {note}</span>') if locked else \
+            (f'<span style="color:var(--text-5);text-transform:none;letter-spacing:0">· Lab only · {note}</span>')
+    return (f'<div id="remote-hosts-panel" class="{"lock-block" if locked else ""}" style="margin:1rem 0 1.25rem 0">'
             '<div style="color:var(--text-3);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;'
-            'margin-bottom:0.5rem">Other machines <span style="color:var(--text-5);text-transform:none;'
-            f'letter-spacing:0">· Lab only · {note}</span></div>' + _STYLE + "".join(blocks) + '</div>')
+            f'margin-bottom:0.5rem">Other machines {badge}</div>' + _STYLE + "".join(blocks) + '</div>')
 
 
 def _block(h: dict, hid: str, inner: str) -> str:
@@ -134,8 +141,8 @@ def _block(h: dict, hid: str, inner: str) -> str:
 
 
 def llm_panel_html(request) -> str:
-    if not can(audience.tier(request), AI_REMOTE_RUN):
-        return ""
+    locked = not can(audience.tier(request), AI_REMOTE_RUN)
+    dis = " disabled" if locked else ""
     blocks, mlx = [], {}
     for hid, h in hosts.remote_hosts().items():
         is_peer, info = peer_state({**h, "id": hid})
@@ -147,14 +154,15 @@ def llm_panel_html(request) -> str:
                  "mlx_models": {m: True for m in info.get("mlx_models", [])}}
         btns = []
         if h.get("ollama"):
-            btns.append(f'<button class="remote-btn" onclick="runRemoteLLM(\'{hid}\',\'ollama\')">'
+            btns.append(f'<button class="remote-btn"{dis} onclick="runRemoteLLM(\'{hid}\',\'ollama\')">'
                         f'Ollama (llama.cpp — same model file as {hosts.local_label()})</button>')
         if h.get("mlx_models"):
             mlx[hid] = sorted(h["mlx_models"])
-            btns.append(f'<button class="remote-btn" data-mlx-host="{hid}" '
+            btns.append(f'<button class="remote-btn"{dis} data-mlx-host="{hid}" '
                         f'onclick="runRemoteLLM(\'{hid}\',\'mlx\')">MLX (Apple-native)</button>')
-        if btns:
+        if btns and not locked:
             btns.append(_pair_box(hid, "GPU, same model + task", simultaneous=is_peer))
+        if btns:
             blocks.append(_block(h, hid, "".join(btns)))
     if not blocks:
         return ""
@@ -191,12 +199,14 @@ async function runRemoteLLM(host, runtime) {{
   }}
 }}
 </script>"""
+    if locked:
+        return _wrap(blocks, "runs the model + task selected above, cold start", locked=True)
     return _wrap(blocks, "runs the model + task selected above, cold start") + pair_js() + js
 
 
 def image_panel_html(request) -> str:
-    if not can(audience.tier(request), AI_REMOTE_RUN):
-        return ""
+    locked = not can(audience.tier(request), AI_REMOTE_RUN)
+    dis = " disabled" if locked else ""
     blocks = []
     for hid, h in hosts.remote_hosts().items():
         is_peer, info = peer_state({**h, "id": hid})
@@ -204,12 +214,12 @@ def image_panel_html(request) -> str:
             blocks.append(offline_block(h, hid))
             continue
         if is_peer or h.get("python"):
-            blocks.append(_block(h, hid, f'<button class="remote-btn" onclick="runRemoteImage(\'{hid}\')">'
+            blocks.append(_block(h, hid, f'<button class="remote-btn"{dis} onclick="runRemoteImage(\'{hid}\')">'
                                          f'Generate on {h.get("label", hid)} GPU (same model files as {hosts.local_label()})</button>'
-                                         + _pair_box(hid, "GPU", simultaneous=is_peer) +
+                                         + ("" if locked else _pair_box(hid, "GPU", simultaneous=is_peer)) +
                                          f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.35rem">GPU path, clean method: model loaded '
                                          f'and warmed up first, 30 s settle, then ≥30 s of generation measured (~75 s per run). '
-                                         f'Tick the box to run the same on {hosts.local_label()}\'s GPU for a like-for-like pair.</div>'))
+                                         + ("" if locked else f'Tick the box to run the same on {hosts.local_label()}\'s GPU for a like-for-like pair.') + '</div>'))
     if not blocks:
         return ""
     js = """<script>
@@ -240,4 +250,6 @@ async function runRemoteImage(host) {
   owlRunTiles('image', runs, () => { document.getElementById('run-btn').disabled = false; });
 }
 </script>"""
+    if locked:
+        return _wrap(blocks, "runs the model + prompt selected above · warm-model session", locked=True)
     return _wrap(blocks, "runs the model + prompt selected above · warm-model session") + pair_js() + js
