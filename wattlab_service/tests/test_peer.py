@@ -253,3 +253,75 @@ def test_home_demo_queue_name_the_local_machine(monkeypatch):
         assert "GoS2" in t and "GoS1" not in t, page
         assert "{OWL_ME}" not in t and "__OWL_ME__" not in t, page
     assert "GoS2 is a Mac mini (Apple M6)." in client.get("/demo", headers=LAB).text
+
+
+# --- /decode remote control (owner 2026-10-07: one rig owner) -------------------
+
+def test_peer_info_reports_rig():
+    d = client.get("/peer/info", headers=_signed("GET", "/peer/info")).json()
+    assert d["rig"] is True                                   # test settings: run_rig_poller default on
+
+
+def test_owner_dispatches_decode_in_process_with_visitor_tier():
+    p = "/peer/decode/status.json?_owl_tier=lab"
+    r = client.get(p, headers=_signed("GET", p))
+    assert r.status_code == 200 and isinstance(r.json(), dict)
+    # unsigned → refused; the proxy is allowlisted to /decode
+    assert client.get("/peer/decode/status.json", headers=LAB).status_code == 403
+
+
+def test_owner_maps_non_lab_visitor_to_public_identity(monkeypatch):
+    p = "/peer/decode/device/pi5/power?_owl_tier=anonymous"
+    body = b'{"on": true}'
+    r = client.post(p, content=body, headers={**_signed("POST", p, body), "content-type": "application/json"})
+    assert r.status_code in (403, 404)                       # RIG_CONTROL refused for a non-Lab visitor
+
+
+def _no_rig(monkeypatch, owner=True):
+    import routes_decode, settings as cfg
+    real = cfg.load
+    monkeypatch.setattr(cfg, "load", lambda: {**real(), "run_rig_poller": False})
+    monkeypatch.setattr(peer, "rig_owner", lambda: ({**PEER_HOST, "id": "gos1", "label": "GoS1"} if owner else None))
+    calls = []
+    def fake_forward(h, method, path, body=b"", content_type=None, timeout=60):
+        calls.append((method, path, body, content_type))
+        if "status.json" in path:
+            return 200, "application/json", b'{"devices": {}}'
+        if path.startswith("/peer/decode/?") :
+            return 200, "text/html; charset=utf-8", b"<html><body class=x><h1>Decode Rig</h1></body></html>"
+        return 200, "application/json", b'{"job_id": "abc", "queue_position": 1}'
+    monkeypatch.setattr(peer, "forward", fake_forward)
+    return calls
+
+
+def test_node_without_rig_forwards_api_and_pages(monkeypatch):
+    calls = _no_rig(monkeypatch)
+    assert client.get("/decode/status.json", headers=LAB).json() == {"devices": {}}
+    m, path, _, _ = calls[-1]
+    assert m == "GET" and path.startswith("/peer/decode/status.json?") and "_owl_tier=lab" in path
+    r = client.post("/decode/run", headers=LAB, data={"template": "x"})
+    assert r.json()["job_id"] == "abc" and calls[-1][0] == "POST" and calls[-1][1].startswith("/peer/decode/run?")
+    assert "multipart" in (calls[-1][3] or "") or "urlencoded" in (calls[-1][3] or "")
+    page = client.get("/decode", headers=LAB).text
+    assert "The decode rig is wired to <b>GoS1</b>" in page and "<h1>Decode Rig</h1>" in page
+
+
+def test_node_without_rig_applies_its_own_gates_before_forwarding(monkeypatch):
+    calls = _no_rig(monkeypatch)
+    r = client.post("/decode/run", headers=ANON, data={"template": "x"})
+    assert r.status_code in (403, 404) and not calls           # refused locally, never forwarded
+    client.get("/decode/status.json", headers=ANON)            # public read → forwarded as anonymous
+    assert "_owl_tier=anonymous" in calls[-1][1]
+
+
+def test_node_without_rig_owner_offline(monkeypatch):
+    _no_rig(monkeypatch, owner=False)
+    assert client.get("/decode/status.json", headers=LAB).status_code == 503
+    r = client.get("/decode", headers=LAB)
+    assert r.status_code == 503 and "offline" in r.text and "lock-block" in r.text
+
+
+def test_replication_carries_decode_results(tmp_path, monkeypatch):
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    p = persist.import_result("decode", {"job_id": "d1", "saved_at": "2026-10-07T01:00:00", "host": {"id": "gos1"}})
+    assert p.parent.name == "decode"

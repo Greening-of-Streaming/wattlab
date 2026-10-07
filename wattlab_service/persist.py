@@ -114,7 +114,7 @@ def import_result(job_type: str, envelope: dict) -> Path:
     """CR-085 Phase 4 — store an envelope produced and stamped by ANOTHER node,
     verbatim: never re-run save_result (it would overwrite saved_at, owl_version,
     visitor_key and the host/hardware stamps, and enrich twice). Idempotent."""
-    if job_type not in ("video", "llm", "image"):
+    if job_type not in ("video", "llm", "image", "decode"):
         raise ValueError(f"import_result: unsupported type {job_type!r}")
     jid = str(envelope.get("job_id") or "")
     if not jid or "/" in jid or ".." in jid:

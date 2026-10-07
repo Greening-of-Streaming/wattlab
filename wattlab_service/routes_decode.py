@@ -11,6 +11,7 @@ Page JS polls /decode/status.json every 2.5 s; layout is flex-wrap so the
 tiles stack single-column on a phone. All rig state/IO lives in rig.py —
 this module is routes + HTML only.
 """
+import asyncio
 import datetime
 import re
 import time
@@ -18,6 +19,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 import audience
@@ -32,7 +34,84 @@ from capabilities import (requires, can, LIVE_TELEMETRY, PUBLIC_PAGE,
                           RESULTS_DOWNLOAD, RIG_CONTROL)
 from runtime import job_status as _job_status
 
-router = APIRouter()
+# --- CR-085 remote control (owner 2026-10-07: one rig owner) -----------------
+# A node without the rig (run_rig_poller false — GoS2) forwards EVERY /decode
+# request, pages included, to the rig owner's /peer/decode/… after running this
+# route's own capability gates, so this node's visitors get exactly this node's
+# access policy; the owner's queue stays the single reservation authority, so
+# a decode run from any node never overlaps another measurement on the owner.
+# The visitor's tier rides in the signed query (_owl_tier) so the owner renders
+# the controls that visitor may use. Pages get a banner naming both machines.
+
+def _has_rig() -> bool:
+    import settings as _cfg
+    return bool(_cfg.load().get("run_rig_poller", True))
+
+
+_BANNER_MARK = "<body"
+
+
+def _remote_banner(owner_label: str) -> str:
+    import hosts as _hosts
+    return ('<div style="border:1px solid var(--accent);color:var(--accent);border-radius:4px;'
+            'padding:0.5rem 0.8rem;margin:0.75rem auto;max-width:1100px;font-size:0.85rem">'
+            f'⇄ The decode rig is wired to <b>{owner_label}</b> — you are driving it from '
+            f'<b>{_hosts.local_label()}</b>; runs join {owner_label}&#39;s queue.</div>')
+
+
+async def _forward_to_owner(request: Request):
+    import peer
+    from fastapi.responses import Response
+    from urllib.parse import urlencode, parse_qsl
+    owner = peer.rig_owner()
+    is_page = request.method == "GET" and "json" not in request.url.path and \
+        not request.url.path.endswith((".csv",))
+    if owner is None:
+        msg = "The decode rig's owner node is offline — the rig can only be driven while it is up."
+        if is_page:
+            return HTMLResponse(ui.render_page(request, "Decode Rig", body=(
+                '<div class="lock-block" style="padding:1.5rem"><h1>Decode rig</h1>'
+                f'<p style="color:var(--text-3)">⏸ {msg}</p></div>')), status_code=503)
+        return JSONResponse({"error": msg}, status_code=503)
+    tier = audience.tier(request).name.lower()
+    q = parse_qsl(request.url.query, keep_blank_values=True) + [("_owl_tier", tier)]
+    sub = request.url.path[len("/decode"):].lstrip("/")
+    path = f"/peer/decode/{sub}?{urlencode(q)}"
+    body = await request.body()
+    loop = asyncio.get_event_loop()
+    try:
+        status, ctype, data = await loop.run_in_executor(None, lambda: peer.forward(
+            owner, request.method, path, body, request.headers.get("content-type"), timeout=120))
+    except Exception as e:
+        return JSONResponse({"error": f"{owner.get('label')} unreachable: {e!r}"[:300]}, status_code=502)
+    if is_page and ctype and ctype.startswith("text/html") and status == 200:
+        html = data.decode("utf-8", "replace")
+        i = html.find(_BANNER_MARK)
+        j = html.find(">", i) + 1 if i >= 0 else 0
+        html = html[:j] + _remote_banner(owner.get("label", owner["id"])) + html[j:]
+        return HTMLResponse(html, status_code=status)
+    return Response(content=data, status_code=status, media_type=ctype)
+
+
+class _RigRoute(APIRoute):
+    """Wraps every /decode route: rig owner → unchanged; otherwise run this
+    route's own dependencies (capability gates) and forward to the owner."""
+    def get_route_handler(self):
+        original = super().get_route_handler()
+        deps = list(self.dependencies)
+
+        async def handler(request: Request):
+            if _has_rig():
+                return await original(request)
+            for d in deps:
+                r = d.dependency(request)
+                if asyncio.iscoroutine(r):
+                    await r
+            return await _forward_to_owner(request)
+        return handler
+
+
+router = APIRouter(route_class=_RigRoute)
 
 _UPLOAD_EXTS = {".mp4", ".mkv", ".mov", ".m4v", ".webm"}
 

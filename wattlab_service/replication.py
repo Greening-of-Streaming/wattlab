@@ -21,7 +21,7 @@ import peer
 import persist
 import settings as cfg
 
-TYPES = ("video", "llm", "image")
+TYPES = ("video", "llm", "image", "decode")   # decode: the rig owner's results (CR-085, 2026-10-07)
 
 
 def _state_file(hid: str):

@@ -135,6 +135,37 @@ def call(host: dict, method: str, path: str, payload=None, timeout: float = 15):
         return json.load(r)
 
 
+def forward(host: dict, method: str, path: str, body: bytes = b"",
+            content_type: str | None = None, timeout: float = 60):
+    """Signed raw forward (CR-085 /decode remote control): returns
+    (status, content_type, body_bytes) for any status, incl. the callee's
+    errors; raises only when the callee is unreachable."""
+    headers = {HEADER: sign(method, path, body)}
+    if content_type:
+        headers["Content-Type"] = content_type
+    req = urllib.request.Request(host["url"].rstrip("/") + path, method=method,
+                                 data=body if method not in ("GET", "HEAD") else None,
+                                 headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.headers.get("Content-Type"), r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Type"), e.read()
+
+
+def rig_owner():
+    """The online peer whose /peer/info reports the decode rig (its
+    run_rig_poller), or None. Uses the cached peer.info."""
+    import hosts
+    for hid, h in hosts.remote_hosts().items():
+        if hosts.driver(h) != "peer":
+            continue
+        inf = info({**h, "id": hid})
+        if inf and inf.get("rig"):
+            return {**h, "id": hid}
+    return None
+
+
 _INFO: dict = {}          # host id -> (ts, info | None)
 
 

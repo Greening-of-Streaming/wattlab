@@ -60,6 +60,7 @@ async def peer_info():
             "llm_models": list(llm.MODELS.keys()),
             "mlx_models": sorted((s.get("local_mlx_models") or {}).keys()),
             "queue_depth": queue_control.depth(),
+            "rig": bool(s.get("run_rig_poller", True)),
             "version": version.version_dict()}
 
 
@@ -149,7 +150,7 @@ async def peer_cancel(job_id: str):
 
 
 def _result_path(job_type: str, job_id: str):
-    if job_type not in ("video", "llm", "image") or "/" in job_id or ".." in job_id:
+    if job_type not in ("video", "llm", "image", "decode") or "/" in job_id or ".." in job_id:
         return None
     m = sorted(glob.glob(str(persist.RESULTS_DIR / job_type / f"*_{job_id}.json")))
     return Path(m[-1]) if m else None
@@ -173,7 +174,7 @@ async def peer_result(job_type: str, job_id: str):
 async def peer_result_index(job_type: str, since: str = ""):
     """Replication index (Phase 5): envelopes THIS node produced (host = this
     node), saved after `since` (ISO), oldest first."""
-    if job_type not in ("video", "llm", "image"):
+    if job_type not in ("video", "llm", "image", "decode"):
         return JSONResponse({"error": "bad type"}, status_code=400)
     me = hosts.local_host()["id"]
     out = []
@@ -203,3 +204,39 @@ async def peer_replicate_now():
     """Trigger an immediate pull from this node's peers (drills, tests)."""
     import asyncio, replication
     return await asyncio.get_event_loop().run_in_executor(None, replication.pull_all)
+
+
+# --- /decode remote control (CR-085, owner 2026-10-07: one rig owner) ---------
+# A node without the rig forwards every /decode request here; the owner runs it
+# through its OWN /decode handlers in-process, so its queue stays the single
+# reservation authority for the rig. `_owl_tier` (inside the signed query)
+# carries the visitor's tier from the caller: lab → loopback identity, anything
+# else → a public-IP identity, so pages render exactly the controls that
+# visitor may use. Allowlisted to the /decode prefix.
+
+_TIER_IP = {"lab": "127.0.0.1", "member": "1.1.1.1", "anonymous": "1.1.1.1"}
+
+
+@router.api_route("/peer/decode/{path:path}", methods=["GET", "POST"], dependencies=_DEPS)
+async def peer_decode(path: str, request: Request):
+    import httpx
+    from urllib.parse import parse_qsl, urlencode
+    from fastapi.responses import Response
+    q = [(k, v) for k, v in parse_qsl(request.url.query, keep_blank_values=True)]
+    tier = next((v for k, v in q if k == "_owl_tier"), "anonymous")
+    q = [(k, v) for k, v in q if k != "_owl_tier"]
+    target = "/decode" + (f"/{path}" if path else "") + (f"?{urlencode(q)}" if q else "")
+    try:
+        import rig
+        rig.touch_activity("peer /decode")
+    except Exception:
+        pass
+    headers = {"x-real-ip": _TIER_IP.get(tier, "1.1.1.1")}
+    if request.headers.get("content-type"):
+        headers["content-type"] = request.headers["content-type"]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=request.app),
+                                 base_url="http://owner") as c:
+        r = await c.request(request.method, target, content=await request.body(), headers=headers,
+                            timeout=120)
+    return Response(content=r.content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type"))
