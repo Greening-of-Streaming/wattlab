@@ -1,6 +1,8 @@
 # Full-benchmark comparison — GoS1 (Sep 5 vs Oct 6) and GoS2 (Oct 6)
 
-**Status:** internal check, 2026-10-06. Not for publication (Tania reviews first).
+**Status:** internal check, 2026-10-06/07. Not for publication (Tania reviews first). Sections: §1–3 the first
+full benchmarks (§1 and §2's x264 rows superseded); **§4 the clean video rerun on both nodes (current figures)**;
+**§5 the AI panels on both nodes with the corrected methods (current figures)**.
 
 > **⚠ Correction (same night, 22:35):** every all-codecs step's **first** pass (x264 CPU) took its baseline
 > while the previous step was still winding down. Benchmark steps bypassed the pre-job idle guard (fixed in
@@ -87,3 +89,33 @@ from the earlier figures. The AI results stand.
 **Not rerun (method, owner's call):** the benchmark's LLM panel (prompt gives 1.7–6 s windows, 2-token answers)
 and image panel (2.7–3.7 s windows on GoS1, model load in the window). Proposal: run the LLM panel on task T2,
 and the image panel as the warm-model session the Lab buttons already use.
+
+## 5. AI panels on both nodes, corrected methods (2026-10-07)
+
+Panels-only benchmarks after `8536d55`: **LLM** = task T2 (~300-token answer, graded on mentioning AV1) instead
+of the one-word factoid; **image** = a warm-model session per model (load + warm-up outside the window, 30 s
+settle, ≥30 s of generation) instead of one-shot runs with model load in a 3 s window. GoS1 `8839d3ef`, GoS2
+`c5a8e18b`, run in parallel 19:22–19:32 (separate meters). **Every row 🟢**, every LLM answer correct. These are
+**single panel runs (n = 1 per model)**: indicative only, below the n = 3 bar for anything that leaves the room.
+The n = 3 figures are in `docs/gos2_m6_report_2026-10.md`.
+
+| LLM, task T2 (marginal mWh/token) | GoS1 (RTX 5080) | GoS2 (M6) | GoS2 vs GoS1 |
+|---|---|---|---|
+| qwen3:1.7b | 0.126 (9 s) | 0.069 (28 s) | −46 % |
+| qwen3:4b | 0.315 (22 s) | 0.156 (83 s) | −50 % |
+| qwen3:8b | 0.498 (19 s) | 0.253 (103 s) | −49 % |
+| mistral-nemo:12b · phi4 · gpt-oss:20b | 0.531 · 0.765 · 0.411 | — (not on GoS2) | — |
+
+| Image, warm session (Wh/image) | GoS1 | GoS2 | GoS2 vs GoS1 |
+|---|---|---|---|
+| SD-Turbo | 0.0247 | 0.0172 | −30 % |
+| SDXL-Turbo | 0.0130 | 0.0087 | −33 % |
+| SANA-Sprint | 0.0164 | 0.0144 | −12 % |
+| SANA-600m | 0.0167 | — (not on GoS2) | — |
+| SDXL-Lightning | not measured: its loader is not supported by the session runner yet | — | — |
+
+Caveats: (1) **GoS1 ran Ollama 0.20.2**, upgraded to 0.35.1 (GoS2's version) at 19:44, after this run.
+Re-measure GoS1's LLM row before any cross-machine LLM claim. (2) Each machine runs at its own speed: GoS1 is
+3–5× faster on LLM and 2–4× on images; the energy figures are marginal (above each machine's own idle). (3) The
+image figures sit in the same range as the report's n = 3 session results: SDXL-Turbo GoS2 0.0092 there vs 0.0087
+here.
