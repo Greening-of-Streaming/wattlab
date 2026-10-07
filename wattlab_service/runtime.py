@@ -87,13 +87,22 @@ async def sensors_poller():
     """Cheap subprocess call into lm-sensors; 2s cadence so temperature changes
     during a workload are visible in near-real-time on the live badge."""
     loop = asyncio.get_event_loop()
+    import settings as _cfg
+    from pathlib import Path as _P
     while True:
-        try:
-            d = await loop.run_in_executor(None, read_sensors_dict)
-            power_cache.update(d)
-        except Exception:
-            pass
-        await asyncio.sleep(2)
+        s = _cfg.load()
+        period = float(s.get("sensors_poll_s", 2) or 0)
+        # CR-085: on a node where even a tiny poll is visible at the wall
+        # (GoS2 idles at ~1.3 W), skip while a measurement holds the lock —
+        # results take their own start/end thermal snapshots. 0 s = paused.
+        busy = s.get("sensors_skip_during_measure") and _P("/tmp/gos-measure.lock").exists()
+        if period > 0 and not busy:
+            try:
+                d = await loop.run_in_executor(None, read_sensors_dict)
+                power_cache.update(d)
+            except Exception:
+                pass
+        await asyncio.sleep(period if period > 0 else 5)
 
 
 def job_status(job_id: str) -> dict:

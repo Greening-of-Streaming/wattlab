@@ -31,6 +31,7 @@ import asyncio
 import contextlib
 import contextvars
 import json
+import platform as _platform
 import subprocess
 import time
 from dotenv import dotenv_values
@@ -381,6 +382,23 @@ def meters_summary(baseline: dict, readings, task_samples_w: list):
     }
 
 
+def _apple_die_temp() -> "float | None":
+    """CR-085 (owner 2026-10-07): Apple-silicon die temperature without sudo.
+    `owl-temps` (infra/macos/owl-temps.m, built on the Mac) prints the IOHID
+    temperature sensors as JSON in ~0.2 s with negligible CPU; the hottest
+    `PMU tdie*` sensor is reported as the chip temperature (the cpu_tctl slot —
+    the GPU shares the die and has no separately labelled sensor). Fail-soft."""
+    import os
+    import settings as _cfg
+    exe = os.path.expanduser(_cfg.load().get("apple_temps_bin") or "~/owl/owl-temps")
+    try:
+        out = subprocess.run([exe], capture_output=True, text=True, timeout=5).stdout
+        temps = [v for k, v in json.loads(out).items() if "tdie" in k and isinstance(v, (int, float))]
+        return round(max(temps), 1) if temps else None
+    except Exception:
+        return None
+
+
 def read_sensors_dict() -> dict:
     """One-shot read of telemetry: CPU Tctl (lm-sensors) + GPU temp/power
     (delegated to the resolved GPU backend — AMD via sensors amdgpu, NVIDIA
@@ -393,12 +411,15 @@ def read_sensors_dict() -> dict:
     GPU swap needs no change here (see gpu.py / CR-060).
     """
     cpu = None
-    try:
-        result = subprocess.run(['sensors', '-j'], capture_output=True, text=True)
-        data = json.loads(result.stdout)
-        cpu = data.get('k10temp-pci-00c3', {}).get('Tctl', {}).get('temp1_input')
-    except Exception:
-        cpu = None
+    if _platform.system() == "Darwin":
+        cpu = _apple_die_temp()
+    else:
+        try:
+            result = subprocess.run(['sensors', '-j'], capture_output=True, text=True)
+            data = json.loads(result.stdout)
+            cpu = data.get('k10temp-pci-00c3', {}).get('Tctl', {}).get('temp1_input')
+        except Exception:
+            cpu = None
     g = gpu.read_gpu_sensors()
     return {
         "cpu_tctl": cpu,

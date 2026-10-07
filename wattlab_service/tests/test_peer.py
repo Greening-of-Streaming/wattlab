@@ -325,3 +325,42 @@ def test_replication_carries_decode_results(tmp_path, monkeypatch):
     monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
     p = persist.import_result("decode", {"job_id": "d1", "saved_at": "2026-10-07T01:00:00", "host": {"id": "gos1"}})
     assert p.parent.name == "decode"
+
+
+# --- macOS temperatures (owl-temps) ------------------------------------------------
+
+def test_apple_die_temp_takes_hottest_tdie(monkeypatch, tmp_path):
+    import power, settings as cfg
+    fake = tmp_path / "owl-temps"
+    fake.write_text('#!/bin/sh\necho \'{"PMU tdie1": 28.5, "PMU tdie7": 31.2, "PMU tdev1": 40.0, "NAND CH0 temp": 50}\'\n')
+    fake.chmod(0o755)
+    real = cfg.load
+    monkeypatch.setattr(cfg, "load", lambda: {**real(), "apple_temps_bin": str(fake)})
+    assert power._apple_die_temp() == 31.2
+    monkeypatch.setattr(cfg, "load", lambda: {**real(), "apple_temps_bin": str(tmp_path / "missing")})
+    assert power._apple_die_temp() is None                   # fail-soft
+
+
+def test_sensors_poller_skips_during_measurement(monkeypatch, tmp_path):
+    import runtime, settings as cfg
+    real = cfg.load
+    monkeypatch.setattr(cfg, "load", lambda: {**real(), "sensors_poll_s": 30, "sensors_skip_during_measure": True})
+    reads = []
+    monkeypatch.setattr(runtime, "read_sensors_dict", lambda: reads.append(1) or {"cpu_tctl": 30.0})
+    lock = __import__("pathlib").Path("/tmp/gos-measure.lock")
+    existed = lock.exists()
+    async def one_cycle():
+        t = asyncio.create_task(runtime.sensors_poller())
+        await asyncio.sleep(0.05); t.cancel()
+    try:
+        lock.write_text("test")
+        asyncio.run(one_cycle())
+        assert reads == []                                    # locked → no poll
+        lock.unlink()
+        asyncio.run(one_cycle())
+        assert reads == [1]
+    finally:
+        if existed and not lock.exists():
+            lock.write_text("restored")
+        elif not existed:
+            lock.unlink(missing_ok=True)
