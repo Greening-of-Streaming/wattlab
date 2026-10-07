@@ -41,6 +41,15 @@ runs on it, or a peer whose OWL is broken (when and how: `hosts.py` module docst
 - Also 2026-10-06: an unplanned hard power cut of GoS2 (inner-meter swap) — `autorestart` booted it, auto-login,
   OWL service and Ollama all came up unattended within ~1 min.
 
+### Member gateway — live 2026-10-07 (`3315660`, `b673521`)
+GoS2 is visible outside the LAN only through GoS1, at **https://gos2.greeningofstreaming.org** (Wix DNS A record
+→ GoS1's public IP; nginx `server_name` + certbot `--expand` on GoS1). Anonymous visitors and crawlers get a
+greyed, noindex "members only" page from GoS1 itself (`robots.txt` Disallow), so **no request reaches GoS2**.
+Members and Lab are forwarded over the signed peer link with the identity GoS1 verified, and GoS2 dispatches
+in-process under `audience.PEER_VISITOR`. Members sign in on that name. The `wattlab.*` shared cookie only
+applies to `wattlab.*` sub-names, which Wix could not create. Verified from a phone on mobile data: greyed box
+→ sign-in → GoS2's pages. Moving GoS2 changes only its peer `url`.
+
 ### Decode rig from any node — one rig owner (owner decision 2026-10-07, `dfe378f`)
 Both machines may use the decode devices; neither may spoil the other's measurement. **GoS1 is the only node
 that touches the rig** (plugs, boxes, the `:8123` origin): its queue is the single reservation authority, so
