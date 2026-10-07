@@ -531,5 +531,12 @@ def test_session_cookie_scoped_to_configured_domain(monkeypatch):
     monkeypatch.setattr(cfg, "load", lambda: {**real(), "session_cookie_domain": "wattlab.greeningofstreaming.org"})
     monkeypatch.setattr(auth, "is_member", lambda e: True)
     tok = auth.issue_magic_token("ben@example.org")
-    r = client.get(f"/auth/verify?t={tok}", headers=ANON, follow_redirects=False)
+    r = client.get(f"/auth/verify?t={tok}", headers={**ANON, "host": "gos2.wattlab.greeningofstreaming.org"},
+                   follow_redirects=False)
     assert "Domain=wattlab.greeningofstreaming.org" in r.headers.get("set-cookie", "")
+    # a gateway name outside wattlab.… (e.g. gos2.greeningofstreaming.org) → host-only cookie
+    tok = auth.issue_magic_token("ben@example.org")
+    r = client.get(f"/auth/verify?t={tok}", headers={**ANON, "host": "gos2.greeningofstreaming.org"},
+                   follow_redirects=False)
+    sc = r.headers.get("set-cookie", "")
+    assert "owl_session=" in sc and "Domain=" not in sc

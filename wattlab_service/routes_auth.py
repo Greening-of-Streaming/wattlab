@@ -34,6 +34,18 @@ router = APIRouter()
 # emailed link, RedirectResponse). Do NOT interpolate a raw request value into
 # any of those contexts again — the auth origin is the highest-trust surface.
 
+def _cookie_domain(request) -> "str | None":
+    """CR-085 member gateway: the configured cookie Domain only when the visitor
+    is on that domain or one of its sub-names (a browser rejects any other);
+    otherwise host-only — e.g. a gateway name outside wattlab.… signs in on
+    its own name."""
+    dom = (cfg.load().get("session_cookie_domain") or "").strip().lower().lstrip(".")
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(":")[0].lower()
+    if dom and (host == dom or host.endswith("." + dom)):
+        return dom
+    return None
+
+
 def _safe_next(next_url: str) -> str:
     """Allow-list `next` down to a site-local path so it can never drive an
     open redirect or break out of an attribute / href / email link.
@@ -198,7 +210,7 @@ async def auth_sign_in_submit(request: Request, email: str = Form(...), next: st
 
 
 @router.get("/auth/verify", dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def auth_verify(t: str = "", next: str = "/"):
+async def auth_verify(request: Request, t: str = "", next: str = "/"):
     safe_next = _safe_next(next)
     next_q = quote(safe_next, safe="")
     email = auth.verify_magic_token(t) if t else None
@@ -228,16 +240,16 @@ async def auth_verify(t: str = "", next: str = "/"):
         # safe and stops the 30-day session riding a plaintext http:// request.
         secure=True,
         # CR-085 member gateway: scoped to the site and its sub-names only.
-        domain=(cfg.load().get("session_cookie_domain") or None),
+        domain=_cookie_domain(request),
     )
     return response
 
 
 @router.post("/auth/sign-out", dependencies=[Depends(requires(PUBLIC_PAGE))])
-async def auth_sign_out():
+async def auth_sign_out(request: Request):
     response = RedirectResponse(url="/", status_code=302)
     response.delete_cookie(auth.SESSION_COOKIE_NAME)
-    _dom = cfg.load().get("session_cookie_domain")
+    _dom = _cookie_domain(request)
     if _dom:
         response.delete_cookie(auth.SESSION_COOKIE_NAME, domain=_dom)
     return response
