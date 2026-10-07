@@ -72,6 +72,23 @@ transcoding paper matches ours.
 
 ### 0. Method checks (2026-10-06) — read before the numbers
 
+> **⚠ Correction 2026-10-07 (overnight clean rerun): the §1 hardware headline overstated the M6's advantage.**
+> GoS2's Oct 5 figures were taken with no idle guard on GoS2's own baseline. In the SSH era GoS1's guard watched
+> GoS1's meters, and on its own OWL the idle tolerance was GoS1's 3 W (2–3× GoS2's idle). Re-measured with
+> both fixed (n = 5 per node and codec, meridian 120 s, all 🟢, baselines GoS1 ~79 W / GoS2 1.8 W;
+> `/srv/data/owl/campaign_2026-10-07_bench_rerun/vbr_clean.{py,jsonl}`):
+>
+> | Same settings as §1 | GoS1 | GoS2 (M6) | M6 vs GoS1 | §1 said |
+> |---|---|---|---|---|
+> | x264 CPU | 0.738 ± 0.013 Wh | 0.509 ± 0.006 | **−31 %** | −26 % |
+> | x265 CPU | 1.242 ± 0.013 | 0.729 ± 0.002 | **−41 %** | −40 % |
+> | H.264 hardware, VBR 4 Mb/s (NVENC vs media engine) | 0.200 ± 0.007 | 0.182 ± 0.002 | **−9 %** | −15 % |
+> | H.265 hardware, VBR 2 Mb/s | 0.226 ± 0.005 | 0.186 ± 0.002 | **−18 %** | −22 % |
+>
+> VMAF unchanged (H.264 88.6 vs 89.6, H.265 88.0 vs 87.4; CPU encodes bit-identical). Read §1's hardware rows
+> with these corrected percentages. Also corrected below: the "x264 drift −7 to −9 %" was the same baseline
+> contamination, not day-to-day drift (clean x264 spread is 1–2 %).
+
 **Measurement path.** §1–3c were measured with GoS1 driving GoS2 over SSH and reading GoS2's plugs. Since
 2026-10-06 GoS2 runs its own OWL (own queue, meters and VMAF; `docs/gos2_autonomy_plan.md`). An interleaved
 parity test (n = 3 per driver, order alternated, identical machine state; data
@@ -88,7 +105,7 @@ SDXL-Turbo session +0.4 %, all |t| < 1.6 and all 36 runs 🟢. The SSH-era figur
 | qwen3:4b Ollama | 0.160 mWh/tok | 0.154–0.156 | −3 % |
 | qwen3:4b MLX | 0.105 mWh/tok | 0.103 | −2 % |
 | SDXL-Turbo session | 0.0091–0.0093 Wh/img | 0.0091–0.0092 | ~0 % |
-| x264 CPU | 0.532 Wh | 0.483–0.495 | **−7 to −9 %** (noisiest; 9 % sd across all runs) |
+| x264 CPU | 0.532 Wh | 0.483–0.495 | ~~−7 to −9 %~~ **contamination, not drift**: clean rerun 0.509 ± 0.006 (sd 1 %) |
 
 Machine state differed between the days: Spotlight indexing was on during the Oct 5 runs and is permanently
 off since Oct 6 (below). Read the hardware and AI figures as ±5 % across days and x264 CPU as ±10 %. The
