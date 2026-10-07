@@ -19,7 +19,10 @@ import main
 client = TestClient(main.app)
 
 # Pages whose copy names GPU encoders / the card, with the helper that feeds them.
-_ENCODER_PAGES = ["/video", "/settings", "/methodology"]
+# /methodology left this list 2026-10-07: its Hardware Disclosure is now a fixed
+# per-machine table (GoS1 / GoS2 columns), so GoS1's NVENC encoders appear there
+# whichever node serves the page — see test_methodology_hardware_table_is_per_machine.
+_ENCODER_PAGES = ["/video", "/settings"]
 
 
 @pytest.fixture
@@ -99,3 +102,14 @@ def test_compare_pages_show_live_card_not_stale_literal(as_nvidia):
     for p in ["/rag/compare", "/llm/compare"]:
         t = client.get(p).text
         assert "RX 7800" not in t, f"{p} still shows the retired AMD card"
+
+
+
+def test_methodology_hardware_table_is_per_machine(as_amd):
+    """Owner 2026-10-07: one column per machine, shared rows span both, and the
+    machine columns never follow the serving node's backend."""
+    t = client.get("/methodology").text
+    tbl = t[t.index('class="hw-table hw-two"'):t.index("</table>", t.index('class="hw-table hw-two"'))]
+    assert "<th>GoS1</th><th>GoS2</th>" in tbl
+    assert "h264_nvenc" in tbl and "h264_videotoolbox" in tbl and "no AV1 encoder" in tbl
+    assert tbl.count('colspan="2"') >= 3 and "Each machine is measured only by its own pair" in tbl

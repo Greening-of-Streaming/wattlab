@@ -226,6 +226,16 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     border-bottom: 1px solid var(--border);
     vertical-align: top;
   }
+  .hw-two th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+  }
+  .hw-two td:not(:first-child) { width: 42%; }
+  .hw-two td[colspan] { width: auto; }
   .hw-table td:first-child {
     font-family: var(--mono);
     font-size: 12px;
@@ -604,17 +614,24 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 
   <p>All results are tied to specific hardware. Different CPUs, GPUs, RAM configurations, and PSU efficiencies will produce different numbers. OWL results should always be cited with their hardware context.</p>
 
-  <table class="hw-table">
-    <tr><td>Server</td><td>GoS1 &mdash; custom build, Ubuntu 24, kernel 6.17</td></tr>
-    <tr><td>CPU</td><td>AMD Ryzen 9 7900, 24 cores (12C/24T), 65W TDP</td></tr>
-    <tr><td>GPU</td><td>{GPU_HW}</td></tr>
-    <tr><td>RAM</td><td>61 GB DDR5</td></tr>
-    <tr><td>Storage</td><td>500 GB NVMe SSD (OS + working set) + 4 TB NVMe SSD (test media &amp; result archive, mounted <code>/srv/data</code>)</td></tr>
-    <tr><td>Idle power</td><td>~79W at the wall (settled, display-blanked). The mid-2026 RTX 5080 swap raised idle ~+20W over the prior AMD 7800 XT (~57&ndash;59W) &mdash; intrinsic to the larger card, not a fault. The 5080 idle is display-state-sensitive: a blanked desktop sits at ~79W, an active (non-blanked) desktop ~101W; GoS1 blanks ~15&nbsp;min after the last input, so the like-for-like figure is ~79W</td></tr>
-    <tr><td>Measurement</td><td>{METER_NAME}, polled at {METER_CADENCE} via local API (tapo 0.8.12)</td></tr>{METER_TOPOLOGY_ROW}
-    <tr><td>Video</td><td>ffmpeg current master build (<code>/usr/local/bin/ffmpeg-master</code> &mdash; ships the NVENC encoders + <code>scale_cuda</code> filter) &mdash; libx264, libx265, libsvtav1 (CPU); {VIDEO_GPU_ENCODERS}</td></tr>
-    <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; model ladder ~1B&ndash;20B, CPU + CUDA GPU (live panel on <a href="/llm" style="color:var(--accent);text-decoration:none">/llm</a>); Qwen3 4B is the canonical RAG model</td></tr>
-    <tr><td>Image</td><td>PyTorch + diffusers &mdash; panel of distilled diffusion models ~0.6B&ndash;3.5B, CPU + CUDA GPU, larger models GPU-only (live panel on <a href="/image" style="color:var(--accent);text-decoration:none">/image</a>)</td></tr>
+  <table class="hw-table hw-two">
+    <tr><th></th><th>GoS1</th><th>GoS2</th></tr>
+    <tr><td>Role</td><td>Tower server (since 2025): hosts the public site, the decode rig and its clip origin</td><td>Apple Mac mini (since October 2026): second bench, co-located; built to run on its own or elsewhere</td></tr>
+    <tr><td>Machine &amp; OS</td><td>Custom build &mdash; Ubuntu 24, kernel 6.17</td><td>Mac mini <code>Mac18,5</code> &mdash; macOS 27.0.1, headless (HDMI dummy plug)</td></tr>
+    <tr><td>CPU</td><td>AMD Ryzen 9 7900, 12 cores / 24 threads, 65W TDP</td><td>Apple M6, 12-core CPU (2 super + 4 performance + 6 efficiency cores)</td></tr>
+    <tr><td>GPU &amp; media</td><td>NVIDIA GeForce RTX 5080, 16 GB &mdash; NVENC (H.264, HEVC, AV1) + CUDA</td><td>12-core Apple GPU on the same chip &mdash; media engine for H.264 and HEVC (VideoToolbox); <strong>no AV1 encoder</strong> + Metal</td></tr>
+    <tr><td>Memory</td><td>61 GB DDR5</td><td>24 GB unified (shared by CPU and GPU)</td></tr>
+    <tr><td>Storage</td><td>500 GB NVMe (OS + working set) + 4 TB NVMe (media &amp; results, <code>/srv/data</code>)</td><td>512 GB internal SSD</td></tr>
+    <tr><td>Idle power</td><td>~79W at the wall, display blanked (~101W with an active desktop). The mid-2026 RTX 5080 swap raised idle ~+20W over the prior AMD 7800 XT (~57&ndash;59W) &mdash; intrinsic to the larger card</td><td>~1.3W at the wall (inner meter, settled)</td></tr>
+    <tr><td>Meters</td><td>Inner P110 fw 1.3.1 (earthed variant) &middot; outer P110 fw 1.4.0</td><td>Inner P110 fw 1.3.1 (earthless variant) &middot; outer P110 fw 1.4.8</td></tr>
+    <tr><td>Video</td><td>ffmpeg current master build (ships the NVENC encoders + <code>scale_cuda</code>) &mdash; libx264, libx265, libsvtav1 (CPU); h264_nvenc, hevc_nvenc, av1_nvenc (GPU)</td><td>ffmpeg 9.0.2 (Homebrew) &mdash; libx264, libx265, libsvtav1 (CPU); h264_videotoolbox, hevc_videotoolbox in VBR (media engine)</td></tr>
+    <tr><td>LLM</td><td>Ollama 0.20.2 &mdash; model ladder ~1B&ndash;20B, CPU + CUDA GPU (live panel on <a href="/llm" style="color:var(--accent);text-decoration:none">/llm</a>); Qwen3 4B is the canonical RAG model</td><td>Ollama 0.35.1 (Metal) and MLX (mlx-lm 0.32.0) &mdash; Qwen3 1.7B / 4B / 8B, the same model files as GoS1 for Ollama</td></tr>
+    <tr><td>Image</td><td>PyTorch + diffusers &mdash; distilled diffusion models ~0.6B&ndash;3.5B, CPU + CUDA GPU (live panel on <a href="/image" style="color:var(--accent);text-decoration:none">/image</a>)</td><td>PyTorch 2.14.1 + diffusers 0.37.1 on Metal (MPS) &mdash; SD-Turbo, SDXL-Turbo, SANA-Sprint</td></tr>
+    <tr><td>Telemetry</td><td>CPU Tctl (lm-sensors) + GPU temperature &amp; power (nvidia-smi)</td><td>Chip die temperature (IOHID sensors, every 30&thinsp;s, never during a measurement); no separate GPU sensor</td></tr>
+    <tr><td>Focus mode</td><td>Background systemd timers paused for every measurement</td><td>Spotlight indexing permanently off; software-update schedule off</td></tr>
+    <tr><td>Measurement</td><td colspan="2">{METER_NAME}, <strong>two per machine</strong>, daisy-chained wall &rarr; outer &rarr; inner &rarr; machine, polled at {METER_CADENCE} via the local API (tapo 0.8.12), staggered 0.5&thinsp;s. Absolute watts come from the inner meter only. The outer meter also sees the inner plug&rsquo;s self-draw, which cancels in the per-meter &Delta;W combine (confidence method <code>ci2</code>). <strong>Each machine is measured only by its own pair.</strong> Refresh: fw 1.3.1 updates its reading every 1&thinsp;s above ~20W but every 2&thinsp;s below ~12W; fw 1.4.x every 1.5&thinsp;s (measured October 2026). Polls between refreshes repeat the last value.</td></tr>
+    <tr><td>Software</td><td colspan="2">The same OWL codebase on both. Each machine runs its own OWL (queue, meters, VMAF scoring, results) and they exchange jobs and results over a signed peer link; the same job can run on both at once. Every result names the machine and engine that produced it. Results from one machine are never expressed as multiples of a reference measured on the other.</td></tr>
+    <tr><td>Location</td><td colspan="2">Same basement room, wired Ethernet to the same router. The decode rig and its clip origin are wired to GoS1; GoS2 drives them through GoS1&rsquo;s queue.</td></tr>
   </table>
 
   <div class="callout">
