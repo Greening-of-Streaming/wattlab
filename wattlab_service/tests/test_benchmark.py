@@ -254,3 +254,38 @@ def test_pre_step_guard_is_fail_soft(monkeypatch):
     monkeypatch.setattr(power, "cooldown_between_runs", boom)
     out = asyncio.run(benchmark._pre_step_idle_guard({}, "x"))
     assert "meter down" in out["error"]
+
+
+# ── AI panel methods (owner 2026-10-07) ───────────────────────────────────────
+
+def test_llm_panel_uses_task_t2(monkeypatch):
+    import main, llm
+    seen = {}
+    async def fake(sub_id, prompt, expected, device):
+        seen.update(prompt=prompt, expected=expected, device=device)
+    monkeypatch.setattr(main, "run_llm_compare_models_job", fake)
+    asyncio.run(benchmark._run_llm({}, {}, "s1", {}))
+    assert seen["prompt"] == llm.TASKS["T2"]["prompt"] and seen["expected"] == "AV1"
+
+
+def test_image_panel_runs_a_warm_session_per_model(monkeypatch):
+    import image_gen, llm, persist, remote_ai
+    monkeypatch.setattr(image_gen, "IMAGE_MODELS", {"sd-turbo": {}, "sdxl-turbo": {}})
+    monkeypatch.setattr(llm, "unload_all_loaded_models", lambda: None)
+    monkeypatch.setattr(llm, "loaded_models", lambda: [])
+    async def no_sleep(_): return None
+    monkeypatch.setattr(benchmark.asyncio, "sleep", no_sleep)
+    calls = []
+    async def fake_session(host, mk, jobs, job_id, per_prompt, settle_s, target_s):
+        calls.append((host, mk, per_prompt, settle_s, target_s))
+        return {"mode": "session", "model_label": mk.upper(), "energy": {"wh_per_image": 0.01},
+                "generation": {}, "prompts": ["p"]}
+    monkeypatch.setattr(remote_ai, "run_image_session", fake_session)
+    saved = {}
+    monkeypatch.setattr(persist, "save_result", lambda t, j, r: saved.update(t=t, j=j, r=r))
+    ref = asyncio.run(benchmark._run_image({}, {"s2": {}}, "s2", {}))
+    assert [c[1] for c in calls] == ["sd-turbo", "sdxl-turbo"] and calls[0][0] == "local"
+    assert calls[0][2:] == (5, 30, 30)
+    r = saved["r"]
+    assert r["mode"] == "compare_models" and r["panel_method"] == "warm_session" and len(r["models"]) == 2
+    assert r["models"][0]["generation"]["model_label"] == "SD-TURBO" and ref == {"type": "image", "job_id": "s2"}

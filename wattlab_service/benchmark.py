@@ -37,8 +37,12 @@ import version
 # Fixed AI fixtures — the benchmark exercises the panels' logic; exact
 # correctness is not the point (a model failing still produces energy data).
 DEFAULT_SOURCES = ["meridian_120s", "bbb_120s"]
-LLM_PROMPT = "What is the capital of France? Reply with just the city name."
-LLM_EXPECTED = "Paris"
+# LLM panel task (owner 2026-10-07): task T2 (~300-token answer), not a
+# one-word factoid — the old "capital of France" prompt gave 1.7–6 s windows
+# (2–6 meter polls) and 2-token answers, so mWh/token was mostly start-up cost.
+# Graded on mentioning AV1 (the panel keeps a correctness column).
+LLM_TASK_KEY = "T2"
+LLM_EXPECTED = "AV1"
 RAG_QUESTION = "What does OWL measure, and in what unit?"
 RAG_EXPECTED = "energy"
 
@@ -68,7 +72,8 @@ async def _run_video(step, jobs, sub_id, s):
 
 async def _run_llm(step, jobs, sub_id, s):
     import main
-    await main.run_llm_compare_models_job(sub_id, LLM_PROMPT, LLM_EXPECTED, "gpu")
+    import llm
+    await main.run_llm_compare_models_job(sub_id, llm.TASKS[LLM_TASK_KEY]["prompt"], LLM_EXPECTED, "gpu")
     return {"type": "llm", "job_id": sub_id}
 
 
@@ -97,7 +102,31 @@ async def _run_image(step, jobs, sub_id, s):
         await asyncio.sleep(int(s.get("llm_unload_settle_s", 3)) + 3)  # VRAM reclaim buffer
     except Exception:
         pass
-    result = await image_gen.run_image_compare_models_measurement(None, sub_id, jobs)
+    # Image panel method (owner 2026-10-07): a warm-model session per enabled
+    # model (remote_ai.run_image_session — the Lab buttons' method: load +
+    # warm-up outside the window, 30 s settle, ≥30 s of generation measured),
+    # not the old one-shot run whose 2.7–3.7 s windows on GoS1 carried model
+    # load. Stored in the compare_models shape so the viewer/summaries are
+    # unchanged; `panel_method` records the method.
+    import remote_ai
+    models, errors = [], {}
+    for mk in list(image_gen.IMAGE_MODELS.keys()):
+        if jobs is not None and sub_id in jobs:
+            jobs[sub_id]["stage"] = f"session · {mk}"
+        try:
+            r = await remote_ai.run_image_session("local", mk, jobs, sub_id, per_prompt=5,
+                                                  settle_s=30, target_s=30)
+            g = r.setdefault("generation", {})
+            g.setdefault("model_label", r.get("model_label"))
+            g.setdefault("model", mk)
+            r["model_key"] = mk
+            models.append(r)
+        except Exception as ex:
+            errors[mk] = str(ex)[:300]
+    result = {"mode": "compare_models", "panel_method": "warm_session",
+              "models": models, "model_errors": errors,
+              "prompt": (models[0].get("prompts") or [None])[0] if models else None,
+              "scope": models[0].get("scope") if models else None}
     persist.save_result("image", sub_id, result)
     return {"type": "image", "job_id": sub_id}
 
