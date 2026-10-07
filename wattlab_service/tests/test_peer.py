@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 import auth
@@ -424,3 +425,111 @@ def test_idle_tolerance_is_relative_with_a_floor():
     assert power.idle_tolerance_w(78.0, {"cooldown_idle_tolerance_mode": "absolute",
                                          "cooldown_idle_tolerance_w": 3.0}) == 3.0
     assert power.idle_tolerance_w(200.0, {"cooldown_idle_tolerance_pct": 2.0}) == 4.0
+
+
+# --- member gateway: gos2.wattlab… served through GoS1 (owner 2026-10-07) --------
+
+GW_HOST = "gos2.wattlab.greeningofstreaming.org"
+
+
+def _gateway(monkeypatch):
+    import settings as cfg
+    real = cfg.load
+    monkeypatch.setattr(cfg, "load", lambda: {**real(), "gateway_hosts": {GW_HOST: "gos2"}})
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": dict(PEER_HOST)})
+    calls = []
+    def fake_forward(h, method, path, body=b"", content_type=None, timeout=60):
+        calls.append((method, path, body, content_type))
+        return 200, "text/html; charset=utf-8", "<html><body>Online WattLab · GoS2</body></html>".encode()
+    monkeypatch.setattr(peer, "forward", fake_forward)
+    return calls
+
+
+def test_gateway_anonymous_gets_greyed_page_and_peer_sees_nothing(monkeypatch):
+    calls = _gateway(monkeypatch)
+    r = client.get("/video", headers={**ANON, "host": GW_HOST})
+    assert r.status_code == 200 and "members only" in r.text and "noindex" in r.text
+    assert r.headers.get("x-robots-tag", "").startswith("noindex") and calls == []
+    assert "Disallow: /" in client.get("/robots.txt", headers={**ANON, "host": GW_HOST}).text
+    assert calls == []
+
+
+def test_gateway_member_is_forwarded_with_verified_identity(monkeypatch):
+    import auth
+    calls = _gateway(monkeypatch)
+    monkeypatch.setattr(auth, "member_email_from_request", lambda req: "ben@example.org")
+    r = client.post("/video/use-source?x=1", headers={**ANON, "host": GW_HOST},
+                    data={"source_key": "meridian_120s", "preset": "cpu"})
+    assert r.status_code == 200 and "GoS2" in r.text
+    m, path, body, ctype = calls[-1]
+    assert m == "POST" and path.startswith("/peer/view/video/use-source?") and "x=1" in path
+    assert "_owl_tier=member" in path and "_owl_member=ben%40example.org" in path
+    assert b"meridian_120s" in body and "urlencoded" in ctype
+
+
+def test_gateway_lab_forwarded_as_lab_and_offline_is_greyed(monkeypatch):
+    calls = _gateway(monkeypatch)
+    client.get("/", headers={**LAB, "host": GW_HOST})
+    assert calls[-1][1].startswith("/peer/view/?") and "_owl_tier=lab" in calls[-1][1]
+    def boom(*a, **k): raise OSError("down")
+    monkeypatch.setattr(peer, "forward", boom)
+    r = client.get("/", headers={**LAB, "host": GW_HOST})
+    assert r.status_code == 503 and "offline" in r.text
+
+
+def test_gateway_off_without_setting(monkeypatch):
+    calls = _gateway(monkeypatch)
+    import settings as cfg
+    real = cfg.load
+    monkeypatch.setattr(cfg, "load", lambda: {**real(), "gateway_hosts": {}})
+    t = client.get("/", headers={**ANON, "host": GW_HOST}).text
+    assert "members only" not in t and calls == []
+
+
+def test_peer_view_dispatches_under_the_vouched_identity():
+    import audience
+    seen = {}
+    @main.app.get("/_test_whoami")
+    async def whoami(request: Request):
+        import auth
+        return {"tier": audience.tier(request).name, "email": auth.member_email_from_request(request)}
+    try:
+        p = "/peer/view/_test_whoami?_owl_tier=member&_owl_member=ben%40example.org"
+        d = client.get(p, headers=_signed("GET", p)).json()
+        assert d == {"tier": "Member", "email": "ben@example.org"}
+        p = "/peer/view/_test_whoami?_owl_tier=root"
+        assert client.get(p, headers=_signed("GET", p)).json()["tier"] == "Anonymous"
+        p = "/peer/view/_test_whoami"
+        assert client.get(p, headers=_signed("GET", p)).json()["tier"] == "Anonymous"
+        assert audience.PEER_VISITOR.get() is None                    # reset after dispatch
+    finally:
+        main.app.router.routes[:] = [r for r in main.app.router.routes if getattr(r, "path", "") != "/_test_whoami"]
+
+
+def test_peer_view_refuses_peer_api_and_lab_only_for_members():
+    p = "/peer/view/peer/info?_owl_tier=lab"
+    assert client.get(p, headers=_signed("GET", p)).status_code == 404
+    p = "/peer/view/settings?_owl_tier=member&_owl_member=a%40b.org"
+    body = b'{"baseline_polls": 7}'
+    r = client.post(p, content=body, headers={**_signed("POST", p, body), "content-type": "application/json"})
+    assert r.status_code in (403, 404)                                # SETTINGS_WRITE is Lab-only
+
+
+def test_nodes_json_member_only_peer_is_locked_for_anonymous(monkeypatch):
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**PEER_HOST, "public_url": "https://" + GW_HOST,
+                                                               "public_tier": "member"}})
+    monkeypatch.setattr(peer, "info", lambda h, max_age=20: {})
+    n = client.get("/nodes.json", headers=ANON).json()["nodes"]
+    assert n[1]["locked"] is True and n[1]["url"] is None
+    t = client.get("/", headers=ANON).text
+    assert "· members</span>" in t
+
+
+def test_session_cookie_scoped_to_configured_domain(monkeypatch):
+    import auth, settings as cfg
+    real = cfg.load
+    monkeypatch.setattr(cfg, "load", lambda: {**real(), "session_cookie_domain": "wattlab.greeningofstreaming.org"})
+    monkeypatch.setattr(auth, "is_member", lambda e: True)
+    tok = auth.issue_magic_token("ben@example.org")
+    r = client.get(f"/auth/verify?t={tok}", headers=ANON, follow_redirects=False)
+    assert "Domain=wattlab.greeningofstreaming.org" in r.headers.get("set-cookie", "")

@@ -319,6 +319,12 @@ DEFAULTS = {
     "sensors_poll_s":     2,       # sensors poller period; 0 = paused (CR-085: GoS2 uses 30)
     "sensors_skip_during_measure": False,   # GoS2: no polls while the measurement lock is held
     "apple_temps_bin":    "",      # macOS: path to owl-temps (default ~/owl/owl-temps)
+    # CR-085 member gateway: public host name → peer id served through this
+    # node (e.g. {"gos2.wattlab.greeningofstreaming.org": "gos2"}); {} = off.
+    "gateway_hosts":      {},
+    # Session-cookie Domain ("" = host-only). GoS1: "wattlab.greeningofstreaming.org"
+    # so a member signed in there is recognised on its gateway sub-names.
+    "session_cookie_domain": "",
     "run_replication":    True,    # CR-085 Phase 5 — pull peers' results (no-op without peers)
     "replication_interval_s": 600,
     "local_mlx_models":   {},

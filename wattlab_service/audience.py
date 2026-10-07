@@ -45,6 +45,15 @@ def _is_loopback_or_private(ip_str: str) -> bool:
     return addr.is_loopback or addr.is_private
 
 
+# CR-085 member gateway (owner 2026-10-07): when GoS1 forwards a member's or a
+# Lab visitor's request to GoS2 over the signed peer link, GoS2 dispatches it
+# in-process (routes_peer._dispatch) with the identity GoS1 verified held here.
+# Only that dispatcher sets it; a client can never set a ContextVar, so this is
+# not a spoofable header. Unset (None) everywhere else → tier() as before.
+import contextvars
+PEER_VISITOR: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar("owl_peer_visitor", default=None)
+
+
 def tier(request: Request) -> Tier:
     """Resolve the audience tier for a request.
 
@@ -56,6 +65,9 @@ def tier(request: Request) -> Tier:
       2. Member — valid `owl_session` cookie whose email is in the allowlist.
       3. Anonymous — everything else.
     """
+    pv = PEER_VISITOR.get()
+    if pv is not None:
+        return {"lab": Tier.Lab, "member": Tier.Member}.get(pv.get("tier"), Tier.Anonymous)
     ip_str = request.headers.get("x-real-ip") or (
         request.client.host if request.client else ""
     )

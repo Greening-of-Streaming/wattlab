@@ -307,6 +307,7 @@ _DEMO_HTML = f"""
   <h1>OWL</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
     Greening of Streaming · Live energy measurement · {{OWL_ME}}</p>
+  {{NODE_SWITCH}}
 
   {{TIER_INDICATOR}}
 
@@ -1851,6 +1852,7 @@ async def demo_page(request: Request):
             .replace("{GPU_RUNTIME}",        _gpu_runtime())
             .replace("{OWL_MACHINE_SENTENCE}", _machine_sentence())
             .replace("{OWL_ME}",             _hosts.local_label())
+            .replace("{NODE_SWITCH}",        ui.node_switch_html())
             .replace("{GPU_DISPLAY_NAME}",   _gpu_display_name())
             .replace("{DEMO_LLM_MODEL_KEY}",   DEMO_LLM_MODEL)
             .replace("{DEMO_LLM_MODEL_LABEL}", _llm_model_label(DEMO_LLM_MODEL))

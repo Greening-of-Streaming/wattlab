@@ -18,12 +18,14 @@ import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request, Depends
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
 
 import analytics
 import audience
+import auth
+import settings as _cfg
 import carbon
 import lab_reservations   # CR-083 — reserve a Lab session in advance (courtesy calendar)
 import queue_control
@@ -32,7 +34,7 @@ import rig
 import runtime
 import hosts
 import ui
-from capabilities import (
+from capabilities import (NODE_GATEWAY_VIEW, 
     requires, can, CapabilityError,
     PUBLIC_PAGE, QUEUE_VIEW, LIVE_TELEMETRY, WORKING_NAV,
     SETTINGS_WRITE, BENCHMARK_RUN, LAB_SESSION_TOGGLE,
@@ -126,6 +128,68 @@ async def _maintenance_keepalive(request: Request, call_next):
             # Never let the keepalive crash a real request.
             pass
     return await call_next(request)
+
+
+# --- CR-085 member gateway (owner 2026-10-07) --------------------------------
+# A public host name in settings `gateway_hosts` (e.g. gos2.wattlab.…) is served
+# by THIS node on behalf of a peer: GoS1 is the only public entry point, the
+# peer (GoS2) is never exposed. Below NODE_GATEWAY_VIEW (Member) this node
+# answers itself with a greyed, noindex page — crawlers and anonymous traffic
+# never reach the peer. Members and Lab are forwarded over the signed peer link
+# with the identity verified HERE (tier + member email in the signed query);
+# the peer dispatches in-process under that identity (routes_peer._dispatch).
+# /auth/* and /static/* stay local so sign-in works on the gateway name.
+
+def _gateway_page(request: Request, label: str, why: str, status: int = 200):
+    body = (f'<div class="lock-block" style="max-width:640px;margin:3rem auto;padding:2rem;'
+            f'border:1px solid var(--border-2);border-radius:6px;text-align:center">'
+            f'<h1 style="font-size:1.4rem">{label}</h1><p style="color:var(--text-3)">{why}</p></div>')
+    r = HTMLResponse(ui.render_page(request, label, body=body,
+                                    head='<meta name="robots" content="noindex, nofollow">'),
+                     status_code=status)
+    r.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return r
+
+
+@app.middleware("http")
+async def _node_gateway(request: Request, call_next):
+    gw = _cfg.load().get("gateway_hosts") or {}
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    hid = gw.get(host) if gw else None
+    if not hid:
+        return await call_next(request)
+    path = request.url.path
+    if path == "/robots.txt":
+        return PlainTextResponse("User-agent: *\nDisallow: /\n")
+    if path.startswith(("/static/", "/auth/")) or path in ("/ui-config.js", "/favicon.ico"):
+        return await call_next(request)
+    h = hosts.get(hid)
+    label = (h or {}).get("label", hid)
+    t = audience.tier(request)
+    if not can(t, NODE_GATEWAY_VIEW):
+        return _gateway_page(request, f"{label} · members only",
+                             f'🔒 {label} is a second OWL measurement machine, open to Greening of Streaming '
+                             f'members. <a href="/auth/sign-in?next=/" style="color:var(--accent)">Members: sign in</a> '
+                             f'to see it.')
+    if h is None or hosts.driver(h) != "peer":
+        return _gateway_page(request, label, f"⏸ {label} is not available.", 503)
+    import peer
+    from urllib.parse import parse_qsl, urlencode
+    tier = "lab" if t == audience.Tier.Lab else "member"
+    q = parse_qsl(request.url.query, keep_blank_values=True) + [("_owl_tier", tier)]
+    if tier == "member":
+        email = auth.member_email_from_request(request)
+        if email:
+            q.append(("_owl_member", email))
+    ppath = f"/peer/view{path}?{urlencode(q)}"
+    body = await request.body()
+    loop = asyncio.get_event_loop()
+    try:
+        status, ctype, data = await loop.run_in_executor(None, lambda: peer.forward(
+            {**h, "id": hid}, request.method, ppath, body, request.headers.get("content-type"), timeout=120))
+    except Exception:
+        return _gateway_page(request, label, f"⏸ {label} is offline right now — it will be back.", 503)
+    return Response(content=data, status_code=status, media_type=ctype)
 
 
 @app.middleware("http")
@@ -295,22 +359,7 @@ async def index(request: Request):
             <span class="tagline">Online WattLab · {hosts.local_label()}</span>
         </div>
     </div>
-    <div id="node-switch" style="display:flex;gap:0.4rem;flex-wrap:wrap;justify-content:center;margin:0.4rem 0 0.2rem"></div>
-    <script>
-    // CR-085 machine switch: built from /nodes.json (the registry), so a new,
-    // moved or offline machine needs no change here. Renders nothing when
-    // this node has no reachable peers.
-    fetch('/nodes.json').then(r => r.json()).then(d => {{
-      const n = (d && d.nodes) || [];
-      if (n.length < 2) return;
-      const pill = 'font-family:monospace;font-size:0.75rem;padding:0.2rem 0.6rem;border:1px solid var(--border-2);border-radius:999px;text-decoration:none;';
-      document.getElementById('node-switch').innerHTML = n.map(x => x.self
-        ? '<span style="' + pill + 'color:var(--accent);border-color:var(--accent)" title="' + x.chip + '">● ' + x.label + '</span>'
-        : (x.online
-          ? '<a href="' + x.url + '" style="' + pill + 'color:var(--text-2)" title="' + x.chip + ' — switch to ' + x.label + '">⇄ ' + x.label + '</a>'
-          : '<span style="' + pill + 'color:var(--text-5);opacity:0.6" title="' + x.label + ' is offline">⏸ ' + x.label + '</span>')).join('');
-    }}).catch(() => {{}});
-    </script>
+    {ui.node_switch_html()}
     <div class="watts"><span data-live="watts">{watts_str} W</span></div>
     <div class="label">{hosts.local_label()} live telemetry</div>
     <div class="scope">Device layer only · {meter_display_name()} + lm-sensors · updates every 3s</div>

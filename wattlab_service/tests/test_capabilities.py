@@ -275,6 +275,7 @@ def test_required_tier_table_snapshot():
         "ai_remote_run":       Tier.Lab,   # CR-085 Part 3 — LLM / image gen on another host
         "peer_api":            Tier.Anonymous,   # CR-085 — gate is signature + peer address (require_peer)
         "node_lan_links":      Tier.Lab,   # CR-085 machine switch: peers' lab addresses
+        "node_gateway_view":   Tier.Member,  # CR-085 member gateway (gos2.wattlab…)
     }
     assert capabilities._REQUIRED_TIER == expected
 

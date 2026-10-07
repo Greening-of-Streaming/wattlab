@@ -21,7 +21,7 @@ import peer
 import persist
 import queue_control
 import settings as cfg
-from capabilities import PEER_API, PUBLIC_PAGE, NODE_LAN_LINKS, can, requires
+from capabilities import PEER_API, PUBLIC_PAGE, NODE_LAN_LINKS, NODE_GATEWAY_VIEW, can, requires
 from runtime import jobs, job_status as _job_status
 
 router = APIRouter()
@@ -214,32 +214,59 @@ async def peer_replicate_now():
 # else → a public-IP identity, so pages render exactly the controls that
 # visitor may use. Allowlisted to the /decode prefix.
 
-_TIER_IP = {"lab": "127.0.0.1", "member": "1.1.1.1", "anonymous": "1.1.1.1"}
+async def _dispatch(request: Request, target_prefix: str, path: str):
+    """Run a forwarded request through THIS node's own app in-process, with
+    the visitor identity the calling node verified (signed query: _owl_tier,
+    _owl_member) held in audience.PEER_VISITOR for the duration. Shared by
+    /peer/decode (rig remote control) and /peer/view (member gateway)."""
+    import httpx
+    import audience
+    from urllib.parse import parse_qsl, urlencode
+    from fastapi.responses import Response
+    q = parse_qsl(request.url.query, keep_blank_values=True)
+    meta = {k: v for k, v in q if k in ("_owl_tier", "_owl_member")}
+    q = [(k, v) for k, v in q if k not in meta]
+    tier = meta.get("_owl_tier", "anonymous")
+    tier = tier if tier in ("lab", "member", "anonymous") else "anonymous"
+    target = target_prefix + (f"/{path}" if path else "") + (f"?{urlencode(q)}" if q else "")
+    # x-real-ip is public on purpose: without the ContextVar the request is anonymous.
+    headers = {"x-real-ip": "1.1.1.1"}
+    for h in ("content-type", "accept"):
+        if request.headers.get(h):
+            headers[h] = request.headers[h]
+    token = audience.PEER_VISITOR.set({"tier": tier, "email": meta.get("_owl_member")})
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=request.app),
+                                     base_url="http://owner") as c:
+            r = await c.request(request.method, target or "/", content=await request.body(),
+                                headers=headers, timeout=120)
+    finally:
+        audience.PEER_VISITOR.reset(token)
+    out_headers = {k: v for k, v in r.headers.items()
+                   if k.lower() in ("content-disposition", "cache-control", "location")}
+    return Response(content=r.content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type"), headers=out_headers)
 
 
 @router.api_route("/peer/decode/{path:path}", methods=["GET", "POST"], dependencies=_DEPS)
 async def peer_decode(path: str, request: Request):
-    import httpx
-    from urllib.parse import parse_qsl, urlencode
-    from fastapi.responses import Response
-    q = [(k, v) for k, v in parse_qsl(request.url.query, keep_blank_values=True)]
-    tier = next((v for k, v in q if k == "_owl_tier"), "anonymous")
-    q = [(k, v) for k, v in q if k != "_owl_tier"]
-    target = "/decode" + (f"/{path}" if path else "") + (f"?{urlencode(q)}" if q else "")
     try:
         import rig
         rig.touch_activity("peer /decode")
     except Exception:
         pass
-    headers = {"x-real-ip": _TIER_IP.get(tier, "1.1.1.1")}
-    if request.headers.get("content-type"):
-        headers["content-type"] = request.headers["content-type"]
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=request.app),
-                                 base_url="http://owner") as c:
-        r = await c.request(request.method, target, content=await request.body(), headers=headers,
-                            timeout=120)
-    return Response(content=r.content, status_code=r.status_code,
-                    media_type=r.headers.get("content-type"))
+    return await _dispatch(request, "/decode", path)
+
+
+@router.api_route("/peer/view/{path:path}", methods=["GET", "POST"], dependencies=_DEPS)
+async def peer_view(path: str, request: Request):
+    """Member gateway (owner 2026-10-07): any page or API of this node, for a
+    visitor the forwarding node has verified. Never the peer API itself."""
+    from fastapi.responses import JSONResponse as _J
+    p = "/" + path.lstrip("/")
+    if p == "/peer" or p.startswith("/peer/") or ".." in p:
+        return _J({"error": "not available through the gateway"}, status_code=404)
+    return await _dispatch(request, "", path)
 
 
 # --- machine switch (CR-085, owner 2026-10-07) --------------------------------
@@ -264,7 +291,12 @@ async def nodes_json(request: Request):
         url = h.get("url") if lan else h.get("public_url")
         if not url:
             continue
+        # public_tier "member" (owner 2026-10-07): visitors below it see the
+        # machine greyed and locked, never its address.
+        locked = (not lan and h.get("public_tier") == "member"
+                  and not can(audience.tier(request), NODE_GATEWAY_VIEW))
         inf = await loop.run_in_executor(None, lambda h=h, hid=hid: peer.info({**h, "id": hid}))
         out.append({"id": hid, "label": h.get("label", hid), "chip": h.get("chip", ""),
-                    "self": False, "online": inf is not None, "url": url.rstrip("/") + "/"})
+                    "self": False, "online": inf is not None, "locked": locked,
+                    "url": None if locked else url.rstrip("/") + "/"})
     return {"nodes": out}

@@ -268,6 +268,12 @@ def member_email_from_request(request) -> Optional[str]:
     allowlist. Returns the email if the request is from a current member,
     else None. `request` is duck-typed (anything with .cookies dict-access)
     so this is testable without FastAPI."""
+    import audience as _aud
+    pv = _aud.PEER_VISITOR.get()
+    if pv is not None:
+        # Gateway visitor vouched for by the forwarding node (see audience.py).
+        e = (pv.get("email") or "").strip().lower()
+        return e if pv.get("tier") == "member" and e else None
     cookie = request.cookies.get(SESSION_COOKIE_NAME)
     if not cookie:
         return None

@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 import audience
 import auth
+import settings as cfg
 import email_send
 from capabilities import requires, CapabilityError, PUBLIC_PAGE
 from ui import JOIN_GOS_URL, OWL_CONTACT_EMAIL, _BASE_STYLES
@@ -226,6 +227,8 @@ async def auth_verify(t: str = "", next: str = "/"):
         # granted by LAN origin and never relies on this cookie — so Secure is
         # safe and stops the 30-day session riding a plaintext http:// request.
         secure=True,
+        # CR-085 member gateway: scoped to the site and its sub-names only.
+        domain=(cfg.load().get("session_cookie_domain") or None),
     )
     return response
 
@@ -234,4 +237,7 @@ async def auth_verify(t: str = "", next: str = "/"):
 async def auth_sign_out():
     response = RedirectResponse(url="/", status_code=302)
     response.delete_cookie(auth.SESSION_COOKIE_NAME)
+    _dom = cfg.load().get("session_cookie_domain")
+    if _dom:
+        response.delete_cookie(auth.SESSION_COOKIE_NAME, domain=_dom)
     return response

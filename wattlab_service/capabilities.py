@@ -80,6 +80,10 @@ PEER_API           = "peer_api"            # CR-085 Phase 4 — node-to-node job
                                            # another network is not refused by the private-IP Lab test.
 NODE_LAN_LINKS     = "node_lan_links"      # CR-085 machine switch (owner 2026-10-07): see each peer's lab
                                            # `url`. Others see only peers that declare a `public_url`.
+NODE_GATEWAY_VIEW  = "node_gateway_view"   # CR-085 member gateway (owner 2026-10-07): view another node
+                                           # (e.g. GoS2) through this node's public name. Below this tier
+                                           # the gateway answers itself with a greyed page — the peer
+                                           # never sees the request.
 LAB_SESSION_TOGGLE = "lab_session_toggle"  # raise/lower the lab-session flag from /queue-status —
                                            # UI twin of bin/lab-session-on|off. CR-083 widened it to
                                            # the reservations calendar (/lab-session/reserve, …/delete,
@@ -128,6 +132,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     AI_REMOTE_RUN:      Tier.Lab,
     PEER_API:           Tier.Anonymous,   # gated by require_peer (signature + peer address)
     NODE_LAN_LINKS:     Tier.Lab,
+    NODE_GATEWAY_VIEW:  Tier.Member,
 }
 
 

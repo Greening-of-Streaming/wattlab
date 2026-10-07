@@ -852,3 +852,31 @@ def _model_date_line(v: dict) -> str:
     cut_str = cut if cut else "—"
     return (f'<p title="{src}" style="color:var(--text-5);font-size:0.65rem;margin-top:0.15rem">'
             f'released {rel_str} · cutoff {cut_str}</p>')
+
+
+# CR-085 machine switch (owner 2026-10-07), shared by the home page and the
+# guided tour (where anonymous visitors land). Built client-side from
+# /nodes.json, i.e. the peer registry, so a new, moved, offline or members-only
+# machine needs no change here; renders nothing when only this node is known.
+_NODE_SWITCH = """    <div id="node-switch" style="display:flex;gap:0.4rem;flex-wrap:wrap;justify-content:center;margin:0.4rem 0 0.2rem"></div>
+    <script>
+    // CR-085 machine switch: built from /nodes.json (the registry), so a new,
+    // moved or offline machine needs no change here. Renders nothing when
+    // this node has no reachable peers.
+    fetch('/nodes.json').then(r => r.json()).then(d => {
+      const n = (d && d.nodes) || [];
+      if (n.length < 2) return;
+      const pill = 'font-family:monospace;font-size:0.75rem;padding:0.2rem 0.6rem;border:1px solid var(--border-2);border-radius:999px;text-decoration:none;';
+      document.getElementById('node-switch').innerHTML = n.map(x => x.self
+        ? '<span style="' + pill + 'color:var(--accent);border-color:var(--accent)" title="' + x.chip + '">● ' + x.label + '</span>'
+        : x.locked
+        ? '<span style="' + pill + 'color:var(--text-5);opacity:0.6" title="' + x.label + ' is open to Greening of Streaming members — sign in">🔒 ' + x.label + ' · members</span>'
+        : (x.online
+          ? '<a href="' + x.url + '" style="' + pill + 'color:var(--text-2)" title="' + x.chip + ' — switch to ' + x.label + '">⇄ ' + x.label + '</a>'
+          : '<span style="' + pill + 'color:var(--text-5);opacity:0.6" title="' + x.label + ' is offline">⏸ ' + x.label + '</span>')).join('');
+    }).catch(() => {});
+    </script>"""
+
+
+def node_switch_html() -> str:
+    return _NODE_SWITCH
