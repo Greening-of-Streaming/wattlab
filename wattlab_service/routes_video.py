@@ -20,6 +20,7 @@ import queue_control
 import settings as cfg
 import ui
 import uploads
+import gpu
 import hosts
 import remote_video
 from capabilities import (requires, can, gate, VIDEO_REMOTE_RUN,
@@ -131,6 +132,29 @@ def _video_source_picker_html() -> str:
                 f'</label>'
             )
     return "".join(parts)
+
+
+# Presets that need a hardware encoder, by codec (CR-085, owner 2026-10-07: GoS2
+# offered AV1 GPU/Both and failed mid-run — the M6 has no AV1 encoder). The
+# page greys them and the routes refuse them up front, from gpu.supports() — so
+# any node, card or future backend gets the right set with no per-machine code.
+_GPU_PRESET_CODEC = {"gpu": "h264", "both": "h264", "h265_gpu": "h265", "h265_both": "h265",
+                     "av1_gpu": "av1", "av1_both": "av1"}
+
+
+def _preset_unavailable(preset: str) -> "str | None":
+    codec = _GPU_PRESET_CODEC.get(preset)
+    if codec is None or gpu.supports(codec):
+        return None
+    return f"No hardware {codec.upper().replace('H26', 'H.26')} encoder on this machine ({gpu.BACKEND.name})"
+
+
+def _preset_attrs(key: str) -> str:
+    why = _preset_unavailable(key)
+    if why is None:
+        return f'onclick="selectPreset(\'{key}\')"'
+    return (f'style="opacity:0.4;cursor:not-allowed" title="{why}" aria-disabled="true" '
+            f'onclick="alert(\'{why}\')"')
 
 
 def _remote_hosts_panel_html(request: Request) -> str:
@@ -355,12 +379,12 @@ async def video_page(request: Request):
             <p class="pspec">libx264 · ABR · 1080p</p>
             <details class="pdesc"><summary>details</summary>Software encode across all 24 cores.</details>
         </div>
-        <div class="preset" id="preset-gpu" onclick="selectPreset('gpu')">
+        <div class="preset" id="preset-gpu" {_preset_attrs('gpu')}>
             <h3>H.264 GPU</h3>
             <p class="pspec">{_gpu_enc('h264')} · ABR · 1080p · full pipeline</p>
             <details class="pdesc"><summary>details</summary>Hardware decode + encode. Full GPU pipeline — representative of live encoding.</details>
         </div>
-        <div class="preset selected" id="preset-both" onclick="selectPreset('both')">
+        <div class="preset selected" id="preset-both" {_preset_attrs('both')}>
             <h3>H.264 Both</h3>
             <p class="pspec">CPU then GPU · same file</p>
             <details class="pdesc"><summary>details</summary>Side-by-side energy + thermal report with analysis.</details>
@@ -374,12 +398,12 @@ async def video_page(request: Request):
             <p class="pspec">libx265 · ABR · 1080p</p>
             <details class="pdesc"><summary>details</summary>Software HEVC encode.</details>
         </div>
-        <div class="preset" id="preset-h265_gpu" onclick="selectPreset('h265_gpu')">
+        <div class="preset" id="preset-h265_gpu" {_preset_attrs('h265_gpu')}>
             <h3>H.265 GPU</h3>
             <p class="pspec">{_gpu_enc('h265')} · ABR · 1080p · full pipeline</p>
             <details class="pdesc"><summary>details</summary>Hardware decode + encode. Full GPU pipeline.</details>
         </div>
-        <div class="preset" id="preset-h265_both" onclick="selectPreset('h265_both')">
+        <div class="preset" id="preset-h265_both" {_preset_attrs('h265_both')}>
             <h3>H.265 Both</h3>
             <p class="pspec">CPU then GPU · same file</p>
             <details class="pdesc"><summary>details</summary>Side-by-side H.265 CPU vs GPU comparison.</details>
@@ -393,12 +417,12 @@ async def video_page(request: Request):
             <p class="pspec">libsvtav1 · ABR · 1080p</p>
             <details class="pdesc"><summary>details</summary>SVT-AV1 software encode.</details>
         </div>
-        <div class="preset" id="preset-av1_gpu" onclick="selectPreset('av1_gpu')">
+        <div class="preset" id="preset-av1_gpu" {_preset_attrs('av1_gpu')}>
             <h3>AV1 GPU</h3>
             <p class="pspec">{_gpu_enc('av1')} · ABR · 1080p · full pipeline</p>
             <details class="pdesc"><summary>details</summary>Hardware decode + AV1 encode on the GPU's dedicated AV1 engine.</details>
         </div>
-        <div class="preset" id="preset-av1_both" onclick="selectPreset('av1_both')">
+        <div class="preset" id="preset-av1_both" {_preset_attrs('av1_both')}>
             <h3>AV1 Both</h3>
             <p class="pspec">CPU then GPU · same file</p>
             <details class="pdesc"><summary>details</summary>Side-by-side AV1 CPU vs GPU comparison.</details>
@@ -920,6 +944,8 @@ async def use_preloaded_source(
 ):
     if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs", "codecs_cpu", "codecs_gpu"):
         return JSONResponse({"error": "Invalid preset"}, status_code=400)
+    if _preset_unavailable(preset) and not (custom_cmd_gpu or "").strip():
+        return JSONResponse({"error": _preset_unavailable(preset)}, status_code=400)
     # CR-001 capability dispatch: all-codecs sweep is BATCH_COMPARE; any
     # custom ffmpeg arg is CUSTOM_PROMPT.
     if preset in ("all_codecs", "codecs_cpu", "codecs_gpu"):
@@ -1024,6 +1050,8 @@ async def upload_video(
 ):
     if preset not in ("cpu", "gpu", "both", "h265_cpu", "h265_gpu", "h265_both", "av1_cpu", "av1_gpu", "av1_both", "all_codecs", "codecs_cpu", "codecs_gpu"):
         return JSONResponse({"error": "Invalid preset"}, status_code=400)
+    if _preset_unavailable(preset) and not (custom_cmd_gpu or "").strip():
+        return JSONResponse({"error": _preset_unavailable(preset)}, status_code=400)
     # CR-001 capability dispatch — same shape as /video/use-source.
     if preset in ("all_codecs", "codecs_cpu", "codecs_gpu"):
         gate(request, BATCH_COMPARE)

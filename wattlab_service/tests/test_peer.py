@@ -389,3 +389,25 @@ def test_nodes_json_public_only_sees_public_urls(monkeypatch):
 def test_home_page_has_registry_driven_switch():
     t = client.get("/", headers=LAB).text
     assert 'id="node-switch"' in t and "fetch('/nodes.json')" in t
+
+
+# --- unsupported GPU presets (owner 2026-10-07: AV1 GPU on the M6) ---------------
+
+def test_video_page_greys_presets_without_a_hardware_encoder(monkeypatch):
+    import gpu
+    monkeypatch.setattr(gpu, "supports", lambda c: c != "av1")
+    t = client.get("/video", headers=LAB).text
+    for k in ("av1_gpu", "av1_both"):
+        card = t[t.index(f'id="preset-{k}"'):][:400]
+        assert 'aria-disabled="true"' in card and "No hardware AV1 encoder" in card and "selectPreset" not in card
+    assert "selectPreset('h265_gpu')" in t and "selectPreset('av1_cpu')" in t
+
+
+def test_video_routes_refuse_unsupported_gpu_preset(monkeypatch):
+    import gpu
+    monkeypatch.setattr(gpu, "supports", lambda c: c != "av1")
+    r = client.post("/video/use-source", headers=LAB, data={"source_key": "meridian_120s", "preset": "av1_both"})
+    assert r.status_code == 400 and "No hardware AV1 encoder" in r.json()["error"]
+    monkeypatch.setattr(gpu, "supports", lambda c: True)
+    t = client.get("/video", headers=LAB).text
+    assert "selectPreset('av1_both')" in t                       # GoS1 (NVENC) unchanged
