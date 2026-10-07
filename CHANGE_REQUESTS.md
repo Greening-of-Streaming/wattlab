@@ -1366,6 +1366,16 @@ CR-066 item 2 (trusted-proxy check — **hard gate** before the front door moves
 0 bring-up + facts → 1 portability + archive-mode GoS2 + replication → 2 front-door swap → 3 GoS1 sleep/wake
 (measure the saving before claiming it) → 4 GoS2 bench (macOS port) → 5 the move. Open questions: design §11.
 
+### Portability notes (external audit, ChatGPT Astra, 2026-10-07) — reference only, no work scheduled
+Acted on: `X-Real-IP` is now trusted only from a loopback peer (`audience.client_ip`). Before this, anyone
+reaching :8000 directly could claim Lab. Parked until a cloud/PDU deployment is actually decided (board steer:
+lightweight): (a) the meter backend has no PDU/outlet abstraction; the CR-065 dual meter averages *one* load and
+cannot sum feeds or dual PSUs; decode/rig plugs use separate Tapo code; (b) `auth.py` reads `.env` before
+`os.environ` (container-injected secrets lose); (c) there is no container definition, and host control uses
+`sudo systemctl`; Ollama is assumed on localhost; (d) startup deletes the measurement lock, which is safe only
+with one process per server (no overlapping blue/green restarts); (e) the decode rig hardcodes subnet/origin
+(`decode_run.STREAM_BASE_URL`). That is by design, because the rig is tied to GoS1.
+
 ---
 
 ## Backlog notes recovered from session memory (2026-08-19, not CRs yet)

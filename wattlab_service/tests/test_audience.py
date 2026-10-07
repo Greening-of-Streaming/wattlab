@@ -88,10 +88,23 @@ def test_tier_x_real_ip_takes_precedence_over_client_host():
     assert audience.tier(req) == Tier.Anonymous
 
 
-def test_tier_x_real_ip_loopback_overrides_public_client_host():
-    """Inverse case: SSH tunnel from outside back to localhost. Header is
-    loopback (real source), client.host might be anything. Lab wins."""
+def test_tier_spoofed_header_from_untrusted_peer_is_ignored():
+    """Astra audit 2026-10-07: a client reaching :8000 directly can't claim
+    Lab by sending X-Real-IP — the header counts only via loopback nginx."""
     req = make_request(x_real_ip="127.0.0.1", client_host="8.8.8.8")
+    assert audience.tier(req) == Tier.Anonymous
+
+
+def test_client_ip_trusts_header_only_from_loopback():
+    assert audience.client_ip(make_request("8.8.8.8", "127.0.0.1")) == "8.8.8.8"
+    assert audience.client_ip(make_request("8.8.8.8", "::1")) == "8.8.8.8"
+    assert audience.client_ip(make_request("127.0.0.1", "192.168.1.50")) == "192.168.1.50"
+    assert audience.client_ip(make_request(None, "192.168.1.50")) == "192.168.1.50"
+
+
+def test_lan_direct_client_stays_lab_whatever_the_header():
+    """LAN visitors on :8000 are judged by their own private address."""
+    req = make_request(x_real_ip="8.8.8.8", client_host="192.168.1.50")
     assert audience.tier(req) == Tier.Lab
 
 
@@ -158,7 +171,7 @@ def test_lab_beats_member(monkeypatch):
     import auth
     monkeypatch.setattr(auth, "_members", {"member@example.org"})
     cookies = _make_session_cookie_for("member@example.org")
-    req = make_request(x_real_ip="127.0.0.1", cookies=cookies)
+    req = make_request(x_real_ip="127.0.0.1", client_host="127.0.0.1", cookies=cookies)
     assert audience.tier(req) == Tier.Lab
 
 

@@ -321,7 +321,7 @@ def test_visitor_key_anonymous_pseudonymises_x_real_ip():
     # GDPR: the raw IP must never become the key — it's truncated + keyed-hashed
     # (analytics.hash_ip), so the token is stable but not the address.
     import analytics
-    req = _stub_request(headers={"x-real-ip": "8.8.8.8"})
+    req = _stub_request(headers={"x-real-ip": "8.8.8.8"}, client_host="127.0.0.1")
     key = queue_control.visitor_key(req)
     assert key == f"a:{analytics.hash_ip('8.8.8.8')}"
     assert "8.8.8.8" not in key
@@ -338,7 +338,7 @@ def test_visitor_key_anonymous_falls_back_to_client_host():
 
 def test_visitor_key_lab_returns_none():
     """Loopback IP → Lab tier → None (uncapped)."""
-    req = _stub_request(headers={"x-real-ip": "127.0.0.1"})
+    req = _stub_request(headers={"x-real-ip": "127.0.0.1"}, client_host="127.0.0.1")
     assert queue_control.visitor_key(req) is None
 
 

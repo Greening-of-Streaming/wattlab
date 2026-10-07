@@ -45,6 +45,30 @@ def _is_loopback_or_private(ip_str: str) -> bool:
     return addr.is_loopback or addr.is_private
 
 
+# Peers whose X-Real-IP header we believe: the local nginx (loopback) — and
+# Starlette's TestClient, whose client.host is this literal (a real ASGI server
+# always reports an IP, so it can never match in production).
+_TRUSTED_PROXY_HOSTS = {"testclient"}
+
+
+def client_ip(request) -> str:
+    """The visitor's IP. X-Real-IP is honoured only when the direct peer is a
+    trusted proxy (loopback nginx); anyone reaching :8000 directly is judged by
+    their own socket address, so the header can't be spoofed to claim Lab."""
+    host = request.client.host if getattr(request, "client", None) else ""
+    trusted = host in _TRUSTED_PROXY_HOSTS
+    if not trusted:
+        try:
+            trusted = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            pass
+    if trusted:
+        hdr = request.headers.get("x-real-ip") if request.headers else None
+        if hdr:
+            return hdr
+    return host
+
+
 # CR-085 member gateway (owner 2026-10-07): when GoS1 forwards a member's or a
 # Lab visitor's request to GoS2 over the signed peer link, GoS2 dispatches it
 # in-process (routes_peer._dispatch) with the identity GoS1 verified held here.
@@ -68,9 +92,7 @@ def tier(request: Request) -> Tier:
     pv = PEER_VISITOR.get()
     if pv is not None:
         return {"lab": Tier.Lab, "member": Tier.Member}.get(pv.get("tier"), Tier.Anonymous)
-    ip_str = request.headers.get("x-real-ip") or (
-        request.client.host if request.client else ""
-    )
+    ip_str = client_ip(request)
     if _is_loopback_or_private(ip_str):
         return Tier.Lab
 

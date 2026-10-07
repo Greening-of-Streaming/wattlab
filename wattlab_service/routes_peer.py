@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+import audience
 import gpu
 import hosts
 import peer
@@ -28,7 +29,7 @@ router = APIRouter()
 
 
 async def require_peer(request: Request):
-    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+    ip = audience.client_ip(request)
     if not peer.source_allowed(ip):
         raise HTTPException(status_code=403, detail="not a registered peer address")
     body = await request.body()

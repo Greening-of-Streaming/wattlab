@@ -82,8 +82,8 @@ def visitor_key(request) -> Optional[str]:
     # (GDPR). analytics.hash_ip truncates to /24 (v4) / /48 (v6) then keyed-
     # hashes, giving a stable-per-subnet token that still scopes a visitor to
     # their own results (CR-026) without being reversible to the address.
-    ip = (request.headers.get("x-real-ip") if request.headers else None) or (
-        request.client.host if request.client else "")
+    import audience as _aud
+    ip = _aud.client_ip(request)
     import analytics as _an
     return f"a:{_an.hash_ip(ip)}"
 
