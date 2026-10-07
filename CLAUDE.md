@@ -62,7 +62,7 @@
   `git push gos2 main:deploy` + `git merge --ff-only deploy` on GoS2. Meters: inner lab-G3 `.11`, outer lab-G2 `.22`.
 - Nodes talk only through the signed peer API (`peer.py`); a peer's `url` in `compute_hosts` is the one networking
   setting. SSH driver = documented fallback (`hosts.py`). Decode rig: GoS1 is the only owner; GoS2's /decode
-  forwards to it. Members reach GoS2 via GoS1's gateway `https://gos2.greeningofstreaming.org` (Wix A record → GoS1; anonymous get a greyed box, never reach GoS2).
+  forwards to it. Members reach GoS2 via GoS1's gateway `https://gos2.wattlab.greeningofstreaming.org` (Wix A record → GoS1; members' main-site sign-in carries over; anonymous get a greyed box, never reach GoS2).
 - Idle ~1.3 W: anything running on GoS2 shows at the wall — Spotlight off, sensors poller 30 s and paused
   during measurements, no tests/heavy work on GoS2 during idle windows.
 

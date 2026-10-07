@@ -42,12 +42,13 @@ runs on it, or a peer whose OWL is broken (when and how: `hosts.py` module docst
   OWL service and Ollama all came up unattended within ~1 min.
 
 ### Member gateway — live 2026-10-07 (`3315660`, `b673521`)
-GoS2 is visible outside the LAN only through GoS1, at **https://gos2.greeningofstreaming.org** (Wix DNS A record
-→ GoS1's public IP; nginx `server_name` + certbot `--expand` on GoS1). Anonymous visitors and crawlers get a
+GoS2 is visible outside the LAN only through GoS1, at **https://gos2.wattlab.greeningofstreaming.org** (Wix DNS A
+record → GoS1's public IP; nginx `server_name` + certificate for the main name and this one on GoS1). Anonymous visitors and crawlers get a
 greyed, noindex "members only" page from GoS1 itself (`robots.txt` Disallow), so **no request reaches GoS2**.
 Members and Lab are forwarded over the signed peer link with the identity GoS1 verified, and GoS2 dispatches
-in-process under `audience.PEER_VISITOR`. Members sign in on that name. The `wattlab.*` shared cookie only
-applies to `wattlab.*` sub-names, which Wix could not create. Verified from a phone on mobile data: greyed box
+in-process under `audience.PEER_VISITOR`. A member's sign-in on the main site carries over (the session cookie's
+Domain is `wattlab.greeningofstreaming.org`); a name outside `wattlab.*` would need its own sign-in, so the
+interim `gos2.greeningofstreaming.org` was dropped the same day. Verified from a phone on mobile data: greyed box
 → sign-in → GoS2's pages. Moving GoS2 changes only its peer `url`.
 
 ### Decode rig from any node — one rig owner (owner decision 2026-10-07, `dfe378f`)

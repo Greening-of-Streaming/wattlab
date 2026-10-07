@@ -1332,7 +1332,7 @@ remote LLM (Ollama + MLX) and image generation (`2ace75c`), Lab image bench (`6f
 **Shipped 2026-10-06/07 (S78) — GoS2 autonomous:** autonomy Phases 1–5 done (own OWL under `owl-svc`, signed peer
 API, simultaneous runs, replication incl. decode, outage drills, parity gate ±2.5 %); SSH driver kept as a
 documented fallback; decode rig driven from either node (GoS1 the single owner); machine switch; **member gateway
-live at https://gos2.greeningofstreaming.org** (served by GoS1; anonymous never reach GoS2). **Re-scoped:** GoS1
+live at https://gos2.wattlab.greeningofstreaming.org** (served by GoS1; anonymous never reach GoS2). **Re-scoped:** GoS1
 stays the only public entry point. The "GoS2 = always-on front door" role swap below is superseded for now: it
 conflicts with GoS2 as a 1.3 W precision bench. Still open: GoS1 sleep/wake, moving GoS2 off-site (change its
 peer `url` only).
