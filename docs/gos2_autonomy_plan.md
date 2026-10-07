@@ -40,6 +40,19 @@ the SSH driver may be retired once the owner has tested.
 - Also 2026-10-06: an unplanned hard power cut of GoS2 (inner-meter swap) — `autorestart` booted it, auto-login,
   OWL service and Ollama all came up unattended within ~1 min.
 
+### Decode rig from any node — one rig owner (owner decision 2026-10-07, `dfe378f`)
+Both machines may use the decode devices; neither may spoil the other's measurement. **GoS1 is the only node
+that touches the rig** (plugs, boxes, the `:8123` origin): its queue is the single reservation authority, so
+a decode run, from either machine, never overlaps another measurement on GoS1, whose origin traffic would
+otherwise disturb it. A node without the rig (`run_rig_poller: false`) forwards every `/decode` request,
+pages included, to the owner's signed `/peer/decode/…` after running the route's own capability gates. The
+owner runs it through its own handlers in-process, with the visitor's tier carried in the signed query. Owner
+offline → the rig shows greyed out. Decode results replicate to every node.
+*Rejected alternative (kept for the record):* per-device leases (box + plug + HDMI input, with TTL) handed out
+by a lease authority, plus a single shared meter service and a cross-node "quiet window" lease. This would let
+two decode jobs on different boxes run at once from different machines, but it is a much bigger change, and
+the rig is physically wired to GoS1's LAN and origin anyway.
+
 ### Local Network (macOS 15+ privacy) — solved 2026-10-06
 Anything launchd starts as user `gos` — a user agent, or a LaunchDaemon with `UserName gos` — gets
 `No route to host` for every LAN address (plugs, GoS1); loopback and internet work, Apple-signed binaries
