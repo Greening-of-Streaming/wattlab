@@ -156,7 +156,7 @@ GoS1 Ollama 0.20.2 → 0.35.1 (owner, 10-07, matches GoS2). Deck: GoS1↔GoS2 ar
 
 **Open:** Tania on fresh-sample SE (then re-flag 42 runs) and the
 calibrated-SE question; draft encode finding headline rewrite; earthed P110 test; SDXL-Lightning in the
-session runner; GoS2 public front door/role swap re-scoped by the gateway.
+session runner; re-run GoS1's LLM rows on Ollama 0.35.1; GoS2 public front door/role swap re-scoped by the gateway.
 
 ## Session 77 — 2026-09-21 → 09-22 (TV Box W5 onboarded, unattended)
 

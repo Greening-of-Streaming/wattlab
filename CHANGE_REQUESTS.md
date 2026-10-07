@@ -1335,7 +1335,12 @@ documented fallback; decode rig driven from either node (GoS1 the single owner);
 live at https://gos2.wattlab.greeningofstreaming.org** (served by GoS1; anonymous never reach GoS2). **Re-scoped:** GoS1
 stays the only public entry point. The "GoS2 = always-on front door" role swap below is superseded for now: it
 conflicts with GoS2 as a 1.3 W precision bench. Still open: GoS1 sleep/wake, moving GoS2 off-site (change its
-peer `url` only).
+peer `url` only); **follow-ups from S78:** (1) rewrite the headline + claim of
+`docs/findings_drafts/apple-m6-encode-energy-vs-ryzen-rtx5080.md` to the corrected figures (hw −9 %/−18 %,
+x264 −31 %, x265 −41 %) before Tania reviews it; (2) re-run GoS1's LLM panel / n=3 LLM rows on Ollama 0.35.1
+(GoS1 was upgraded from 0.20.2 on 2026-10-07, after the last runs) before any cross-machine LLM claim;
+(3) SDXL-Lightning is not supported by the warm-session image runner (`remote/owl_imagegen.py`: CUDA-only loader)
+— missing from the benchmark image panel on GoS1.
 
 ### Ask
 
