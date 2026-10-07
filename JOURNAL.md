@@ -49,7 +49,7 @@ remote/Tania operation. Do not run display arms on two boxes at once.
    no auto-updates during runs (`sudo systemctl stop apt-daily.timer` etc. — Pi-side
    focus-mode equivalent, manual for now).
 
-## Condensed session index S26–S77 (S26–S66 moved here from CLAUDE.md on 2026-09-03, S69–S77 on 2026-09-27; full entries below)
+## Condensed session index S26–S79 (S26–S66 moved here from CLAUDE.md on 2026-09-03, S69–S77 on 2026-09-27; full entries below)
 
 - S26–S45 (05-20→06-11): credibility bundle, VMAF+CI confidence, compare trilogy, findings catalog, benchmark orchestrator, GPU swap → RTX 5080, CR-062 cooldown omnibus, Pixop /enhance-run (CR-063/064), refactor to routes_*.py + runtime.py.
 - S46–S53 (06-11→06-19): CR-065 dual P110 (ci2), P110 fw facts, upscale sweet-spot finding, anon-landing audit + TEMP mockups, GDPR analytics + /audience, HDR→4K throttle, encode-parity calibration harness + /video/budget measured.
@@ -82,6 +82,7 @@ remote/Tania operation. Do not run display arms on two boxes at once.
   comment); `lab_reservations.py` ticker raises/lowers the same `/tmp/owl-lab-session` flag, owns only what it raised,
   never re-raises after a hand end; banner shows "reserved until", `/decode` shows who is next. Queue page polls
   instead of `<meta refresh>`. CR-067 items 3/4 found already live and marked. Tests 1107. Uncommitted.
+- S79 (10-07): **External audit (ChatGPT Astra) reviewed** — every code claim accurate, but framed for cloud portability (off the board steer); one fix shipped: **`X-Real-IP` trusted only from a loopback peer** (`audience.client_ip`, replaces 3 copies — a client reaching :8000 directly could claim Lab); the rest parked as reference-only portability notes on CR-085. Tests 1240.
 - S78 (10-04→07): **GoS2 (Mac mini M6) brought up and made autonomous** — own OWL via a loopback-ssh LaunchDaemon (macOS Local Network blocks launchd-started Python), signed peer API (one setting per peer: its `url`), simultaneous runs, replication, outage drills, parity gate passed (±2.5 %); SSH driver kept as fallback. **P110 fw 1.3.1 refreshes every 2 s below ~12 W** (decode audit: 42/2,381 flags at stake, no published claim). **Pre-existing benchmark bug** (no idle guard between steps → x264 understated ~31 %) fixed + clean rerun; corrected M6 headline (hw −9/−18 %, CPU −31/−41 %); relative idle tolerance; GoS2 visible to members via a gateway on GoS1, **live at https://gos2.wattlab.greeningofstreaming.org** (verified from outside; sign-in carries over from the main site). Tests 1237.
 - S77 (09-21→22, unattended; committed as "S75" in fac9405 — numbering collision with JOURNAL S75/S76): **TV Box W5 onboarded** (no-brand Allwinner H618, Android 12, legacy OMX, 32-bit
   userland; Lab-F3 + HDMI_1) — `ro.product.*` is SPOOFED as a Google ADT-3, so provenance must come from
@@ -107,6 +108,28 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 #   ladder; 4K/HDR arms; loop-validity finding; headless = no-sink regime; football sports tier.
 #   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
 ```
+
+## Session 79 — 2026-10-07 (external audit reviewed; X-Real-IP trust closed)
+
+*1 commit (`7a541c3`). Owner present. Tests 1237 → 1240.*
+
+**External audit (ChatGPT Astra) reviewed.** Ben asked for a second opinion on a quick Astra audit framed as
+"ready OWL for reusable cloud deployment". Every cited code claim checked out against the tree (lock deleted at
+startup, dual meter averages one load, `auth.py` `.env`-before-environ, hardcoded decode-rig origin, no container
+definition, unchecked `X-Real-IP`). The framing does not fit the board steer (lightweight, loss-leader), so only
+one item was acted on. The rest is parked as reference-only "Portability notes" under CR-085: no new CRs unless
+a cloud/PDU deployment is decided.
+
+**Fix: `X-Real-IP` trusted only from a loopback peer.** `audience.tier`, `routes_peer.require_peer` and
+`queue_control.visitor_key` each read the header unconditionally, and uvicorn listens on `0.0.0.0:8000`, so any
+direct client could claim Lab by sending `X-Real-IP: 127.0.0.1`. This was latent on GoS1: only the LAN reaches
+:8000, and the LAN is Lab anyway. It would become live behind any other proxy or on a cloud node. One helper,
+`audience.client_ip()`, now honours the header only when the socket peer is loopback (nginx), or the literal
+`testclient` (Starlette's TestClient, which never matches a real ASGI peer). The three copies now call it. Three
+stub-based tests that sent the header with no client host now model the nginx hop. The old test that pinned the
+spoof ("loopback header overrides public client host → Lab") was replaced by its inverse. Verified live after
+restart: a LAN client on :8000 with `X-Real-IP: 8.8.8.8` still gets Lab, and loopback + 8.8.8.8 still reads
+Anonymous (read-only `/settings`).
 
 ## Session 78 — 2026-10-04 → 10-07 (GoS2: second OWL node, autonomy Phases 1–5, measurement-hygiene fixes)
 

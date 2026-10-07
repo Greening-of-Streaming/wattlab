@@ -9,7 +9,7 @@
 #   - ARCHITECTURE.md — module map + request/job flows (the orientation doc; READ FIRST for code work)
 #   - JOURNAL.md — session-by-session change log (full detail; newest first)
 #   - CHANGE_REQUESTS.md — 30 active CRs (+ backlog notes + groupings appendix); CHANGE_REQUESTS_CLOSED.md — closed archive
-#   - TESTING.md — pytest suite (1237 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
+#   - TESTING.md — pytest suite (1240 tests) + manual checklist · WATTLAB_SPEC.md — historical design intent
 #   - GOS1_INFRA.md — server infra, backups, incident log · docs/result_envelope.md — mode→renderer contract
 #   - GOS1_DISASTER_RECOVERY.md — rebuild-from-nothing: what is backed up, what is NOT (secrets, SSH keys, REM glue docs)
 #   - docs/architecture_review_2026-06.md (refactor rationale, executed S41–42) · AUDIT_BRIEF/RESPONSE.md (2026-05 audit)
@@ -149,6 +149,7 @@ Pages: `/video /llm /rag /image /demo /findings /benchmark /enhance-run /enhance
 /decode/batches /decode/batch/{id} /prepare-rem /settings /queue-status /methodology /carbon /privacy`.
 Hidden: `/audience` (Lab-only visit dashboard — anonymous aggregate counts from analytics.py; not in any nav).
 Auth tiers (CR-001): Anonymous (public) · Member (magic-link, allowlist `data/members.json`) · Lab (LAN/loopback).
+`X-Real-IP` is honoured only from a loopback peer (nginx) — `audience.client_ip()`; direct :8000 clients are judged by their socket address.
 Policy lives ONLY in `capabilities.py`; routes never compare tiers. Tests run as Lab — reason about
 Anonymous/Member explicitly; probe Anonymous with a real public IP header like 8.8.8.8 (Python ≥3.12.4 counts
 TEST-NET 203.0.113.x as private → Lab).
