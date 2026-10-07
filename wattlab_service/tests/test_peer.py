@@ -364,3 +364,28 @@ def test_sensors_poller_skips_during_measurement(monkeypatch, tmp_path):
             lock.write_text("restored")
         elif not existed:
             lock.unlink(missing_ok=True)
+
+
+# --- machine switch (owner 2026-10-07) ------------------------------------------
+
+def test_nodes_json_lab_sees_lan_peers_with_online_state(monkeypatch):
+    monkeypatch.setattr(hosts, "all_remote", lambda: {
+        "gos2": dict(PEER_HOST), "gos3": {**PEER_HOST, "label": "GoS3", "url": "http://10.0.0.10:8000"},
+        "sshbox": {"enabled": True, "label": "Old", "ssh": "x@y"}})            # ssh driver: no pages
+    monkeypatch.setattr(peer, "info", lambda h, max_age=20: {"rig": False} if h["id"] == "gos2" else None)
+    n = client.get("/nodes.json", headers=LAB).json()["nodes"]
+    assert [x["id"] for x in n] == ["gos1", "gos2", "gos3"]
+    assert n[0]["self"] and n[1]["online"] and n[1]["url"] == "http://10.0.0.9:8000/" and not n[2]["online"]
+
+
+def test_nodes_json_public_only_sees_public_urls(monkeypatch):
+    monkeypatch.setattr(hosts, "all_remote", lambda: {
+        "gos2": dict(PEER_HOST), "gos3": {**PEER_HOST, "label": "GoS3", "public_url": "https://gos3.example.org"}})
+    monkeypatch.setattr(peer, "info", lambda h, max_age=20: {})
+    n = client.get("/nodes.json", headers=ANON).json()["nodes"]
+    assert [x["id"] for x in n] == ["gos1", "gos3"] and n[1]["url"] == "https://gos3.example.org/"
+
+
+def test_home_page_has_registry_driven_switch():
+    t = client.get("/", headers=LAB).text
+    assert 'id="node-switch"' in t and "fetch('/nodes.json')" in t

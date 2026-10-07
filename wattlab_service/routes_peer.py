@@ -21,7 +21,7 @@ import peer
 import persist
 import queue_control
 import settings as cfg
-from capabilities import PEER_API, requires
+from capabilities import PEER_API, PUBLIC_PAGE, NODE_LAN_LINKS, can, requires
 from runtime import jobs, job_status as _job_status
 
 router = APIRouter()
@@ -240,3 +240,31 @@ async def peer_decode(path: str, request: Request):
                             timeout=120)
     return Response(content=r.content, status_code=r.status_code,
                     media_type=r.headers.get("content-type"))
+
+
+# --- machine switch (CR-085, owner 2026-10-07) --------------------------------
+# Derived entirely from the registry: this node + every peer (driver "peer")
+# that has an address the visitor can reach. Lab visitors get the peer's `url`;
+# everyone else only peers declaring a `public_url` (none until a node has a
+# public front door). Online state comes from the cached peer.info, fetched in
+# a worker thread so the page that asks never waits on an offline peer.
+
+@router.get("/nodes.json", dependencies=[Depends(requires(PUBLIC_PAGE))])
+async def nodes_json(request: Request):
+    import asyncio
+    import audience
+    lan = can(audience.tier(request), NODE_LAN_LINKS)
+    me = hosts.local_host()
+    out = [{"id": me["id"], "label": me.get("label", me["id"]), "chip": me.get("chip", ""),
+            "self": True, "online": True, "url": None}]
+    loop = asyncio.get_event_loop()
+    for hid, h in hosts.remote_hosts().items():
+        if hosts.driver(h) != "peer":
+            continue
+        url = h.get("url") if lan else h.get("public_url")
+        if not url:
+            continue
+        inf = await loop.run_in_executor(None, lambda h=h, hid=hid: peer.info({**h, "id": hid}))
+        out.append({"id": hid, "label": h.get("label", hid), "chip": h.get("chip", ""),
+                    "self": False, "online": inf is not None, "url": url.rstrip("/") + "/"})
+    return {"nodes": out}

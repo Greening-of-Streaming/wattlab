@@ -78,6 +78,8 @@ PEER_API           = "peer_api"            # CR-085 Phase 4 — node-to-node job
                                            # (peer.source_allowed: LAN/loopback/tunnel, or a peer's `url`
                                            # host, e.g. a Tailscale IP). Tier stays Anonymous so a peer on
                                            # another network is not refused by the private-IP Lab test.
+NODE_LAN_LINKS     = "node_lan_links"      # CR-085 machine switch (owner 2026-10-07): see each peer's lab
+                                           # `url`. Others see only peers that declare a `public_url`.
 LAB_SESSION_TOGGLE = "lab_session_toggle"  # raise/lower the lab-session flag from /queue-status —
                                            # UI twin of bin/lab-session-on|off. CR-083 widened it to
                                            # the reservations calendar (/lab-session/reserve, …/delete,
@@ -125,6 +127,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     VIDEO_REMOTE_RUN:   Tier.Lab,
     AI_REMOTE_RUN:      Tier.Lab,
     PEER_API:           Tier.Anonymous,   # gated by require_peer (signature + peer address)
+    NODE_LAN_LINKS:     Tier.Lab,
 }
 
 

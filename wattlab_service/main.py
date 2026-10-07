@@ -295,6 +295,22 @@ async def index(request: Request):
             <span class="tagline">Online WattLab · {hosts.local_label()}</span>
         </div>
     </div>
+    <div id="node-switch" style="display:flex;gap:0.4rem;flex-wrap:wrap;justify-content:center;margin:0.4rem 0 0.2rem"></div>
+    <script>
+    // CR-085 machine switch: built from /nodes.json (the registry), so a new,
+    // moved or offline machine needs no change here. Renders nothing when
+    // this node has no reachable peers.
+    fetch('/nodes.json').then(r => r.json()).then(d => {{
+      const n = (d && d.nodes) || [];
+      if (n.length < 2) return;
+      const pill = 'font-family:monospace;font-size:0.75rem;padding:0.2rem 0.6rem;border:1px solid var(--border-2);border-radius:999px;text-decoration:none;';
+      document.getElementById('node-switch').innerHTML = n.map(x => x.self
+        ? '<span style="' + pill + 'color:var(--accent);border-color:var(--accent)" title="' + x.chip + '">● ' + x.label + '</span>'
+        : (x.online
+          ? '<a href="' + x.url + '" style="' + pill + 'color:var(--text-2)" title="' + x.chip + ' — switch to ' + x.label + '">⇄ ' + x.label + '</a>'
+          : '<span style="' + pill + 'color:var(--text-5);opacity:0.6" title="' + x.label + ' is offline">⏸ ' + x.label + '</span>')).join('');
+    }}).catch(() => {{}});
+    </script>
     <div class="watts"><span data-live="watts">{watts_str} W</span></div>
     <div class="label">{hosts.local_label()} live telemetry</div>
     <div class="scope">Device layer only · {meter_display_name()} + lm-sensors · updates every 3s</div>

@@ -274,6 +274,7 @@ def test_required_tier_table_snapshot():
         "video_remote_run":    Tier.Lab,   # CR-085 — encodes on another compute host (GoS2)
         "ai_remote_run":       Tier.Lab,   # CR-085 Part 3 — LLM / image gen on another host
         "peer_api":            Tier.Anonymous,   # CR-085 — gate is signature + peer address (require_peer)
+        "node_lan_links":      Tier.Lab,   # CR-085 machine switch: peers' lab addresses
     }
     assert capabilities._REQUIRED_TIER == expected
 
