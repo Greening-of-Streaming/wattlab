@@ -463,7 +463,9 @@ async def settings_page(request: Request):
                   "Variance calibration always keeps its fixed protocol.", onchange="syncCooldownMode()")}
     {field("video_cooldown_s",  s['video_cooldown_s'],  10, 300, "s",      "fixed rest between CPU and GPU runs (used when wait-for-idle is OFF; also the fallback after an idle-wait timeout)")}
     {field("llm_rest_s",        s['llm_rest_s'],        5,  120, "s",      "fixed pause between LLM batch / compare runs (used when wait-for-idle is OFF; also the timeout fallback)")}
-    {field("cooldown_idle_tolerance_w", s.get('cooldown_idle_tolerance_w', 3.0), 0.5, 20, "W", "idle-wait: settle when a reading is within this of the captured floor", step=0.5)}
+    {field("cooldown_idle_tolerance_pct", s.get('cooldown_idle_tolerance_pct', 4.0), 0.5, 20, "%", "idle-wait: settle within this % of the idle floor (relative mode, default) …", step=0.5)}
+    {field("cooldown_idle_tolerance_floor_w", s.get('cooldown_idle_tolerance_floor_w', 0.5), 0.1, 5, "W", "… but never tighter than this (above the meters' low-power noise)", step=0.1)}
+    {field("cooldown_idle_tolerance_w", s.get('cooldown_idle_tolerance_w', 3.0), 0.5, 20, "W", "absolute mode only (cooldown_idle_tolerance_mode = absolute): fixed band above the floor", step=0.5)}
     {field("cooldown_idle_settle_polls", s.get('cooldown_idle_settle_polls', 3), 1, 10, "polls", "idle-wait: consecutive in-band reads needed to confirm settle")}
     {field("cooldown_idle_max_wait_s", s.get('cooldown_idle_max_wait_s', 120), 10, 600, "s", "idle-wait: cap before timeout → dialog (Lab) or fixed fallback")}
     {field("cooldown_dialog_watchdog_s", s.get('cooldown_dialog_watchdog_s', 75), 15, 300, "s", "idle-wait timeout dialog: auto-apply the fallback if no operator answer within this")}
@@ -646,7 +648,7 @@ async def settings_page(request: Request):
         }}
         setDisabled('video_cooldown_s', on);
         setDisabled('llm_rest_s', on);
-        ['cooldown_idle_tolerance_w','cooldown_idle_settle_polls',
+        ['cooldown_idle_tolerance_pct','cooldown_idle_tolerance_floor_w','cooldown_idle_tolerance_w','cooldown_idle_settle_polls',
          'cooldown_idle_max_wait_s','cooldown_dialog_watchdog_s'].forEach(function(id) {{
             setDisabled(id, !on);
         }});
@@ -655,6 +657,7 @@ async def settings_page(request: Request):
 
     async function saveSettings() {{
         const num_fields = ['baseline_polls','video_cooldown_s','llm_rest_s','llm_unload_settle_s',
+                            'cooldown_idle_tolerance_pct','cooldown_idle_tolerance_floor_w',
                             'cooldown_idle_tolerance_w','cooldown_idle_settle_polls',
                             'cooldown_idle_max_wait_s','cooldown_dialog_watchdog_s',
                             'decode_cadence_s','decode_settle_s','decode_baseline_samples',

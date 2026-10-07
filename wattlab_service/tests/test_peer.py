@@ -411,3 +411,16 @@ def test_video_routes_refuse_unsupported_gpu_preset(monkeypatch):
     monkeypatch.setattr(gpu, "supports", lambda c: True)
     t = client.get("/video", headers=LAB).text
     assert "selectPreset('av1_both')" in t                       # GoS1 (NVENC) unchanged
+
+
+# --- relative idle tolerance (owner 2026-10-07) -------------------------------------
+
+def test_idle_tolerance_is_relative_with_a_floor():
+    import power
+    s = {}
+    assert abs(power.idle_tolerance_w(78.0, s) - 3.12) < 1e-9      # GoS1 ≈ the old fixed 3 W
+    assert power.idle_tolerance_w(1.5, s) == 0.5                    # GoS2: the floor, not 3 W
+    assert power.idle_tolerance_w(None, s) == 0.5
+    assert power.idle_tolerance_w(78.0, {"cooldown_idle_tolerance_mode": "absolute",
+                                         "cooldown_idle_tolerance_w": 3.0}) == 3.0
+    assert power.idle_tolerance_w(200.0, {"cooldown_idle_tolerance_pct": 2.0}) == 4.0

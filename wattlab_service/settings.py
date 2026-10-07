@@ -25,7 +25,10 @@ DEFAULTS = {
     # fixed variance_cooldown_s protocol.
     "cooldown_wait_for_idle": True,
     # Idle-wait tuning (were hardcoded at the 4 compare call sites pre-unification).
-    "cooldown_idle_tolerance_w": 3.0,   # settled = reading ≤ floor + this
+    "cooldown_idle_tolerance_mode": "relative",  # relative (default) | absolute — see power.idle_tolerance_w
+    "cooldown_idle_tolerance_pct": 4.0,          # relative: settled = reading ≤ floor + max(floor_w, pct % of floor)
+    "cooldown_idle_tolerance_floor_w": 0.5,
+    "cooldown_idle_tolerance_w": 3.0,   # absolute mode only: settled = reading ≤ floor + this
     "cooldown_idle_settle_polls": 3,    # consecutive in-band reads to confirm settle
     "cooldown_idle_max_wait_s": 120,    # cap before timeout → dialog / fallback
     # Live idle-wait readout in the progress widget ("⏳ Idle wait 12s · 65.2 W

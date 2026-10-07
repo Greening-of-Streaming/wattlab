@@ -182,6 +182,24 @@ def meter_cadence_label() -> str:
     return "1-second intervals"
 
 
+def idle_tolerance_w(reference_w=None, s: dict = None) -> float:
+    """How far above the idle floor still counts as "settled" (CR-085,
+    owner 2026-10-07). Relative by default so any machine gets a sensible
+    band without tuning: max(floor_w, pct % of the floor being waited for) —
+    defaults 0.5 W / 4 % give GoS1 (~78 W idle) ~3.1 W (the old fixed 3 W)
+    and GoS2 (~1.5 W idle) 0.5 W (the old fixed 3 W was 2× its idle). The
+    0.5 W floor sits above the P110's low-power noise. `cooldown_idle_
+    tolerance_mode: "absolute"` restores the fixed cooldown_idle_tolerance_w."""
+    if s is None:
+        import settings as _settings
+        s = _settings.load()
+    if s.get("cooldown_idle_tolerance_mode", "relative") == "absolute":
+        return float(s.get("cooldown_idle_tolerance_w", 3.0))
+    pct = float(s.get("cooldown_idle_tolerance_pct", 4.0))
+    floor = float(s.get("cooldown_idle_tolerance_floor_w", 0.5))
+    return max(floor, pct / 100.0 * float(reference_w or 0.0))
+
+
 def meter_topology_row() -> str:
     """Hardware-disclosure table row describing the dual-meter daisy-chain —
     empty on a single-meter setup. Consumed via the {METER_TOPOLOGY_ROW}
@@ -291,8 +309,7 @@ async def sample_baseline(polls: int, *, read_watts, read_sensors=None,
     }
     if reference_w is not None:
         try:
-            import settings as _settings
-            tol = float(_settings.load().get("cooldown_idle_tolerance_w", 3.0))
+            tol = idle_tolerance_w(reference_w)
         except Exception:
             tol = 3.0
         out["baseline_reference_w"] = round(reference_w, 2)
@@ -544,7 +561,7 @@ async def cooldown_between_runs(*, fixed_seconds, reference_w=None,
         return {"method": "fixed", "waited_s": float(fixed_seconds),
                 "settled": True, "final_w": None, "timed_out": False}
 
-    tol = float(s.get("cooldown_idle_tolerance_w", 3.0))
+    tol = idle_tolerance_w(reference_w, s)
     settle_polls = int(s.get("cooldown_idle_settle_polls", 3))
     max_wait = int(s.get("cooldown_idle_max_wait_s", 120))
     watchdog_s = int(s.get("cooldown_dialog_watchdog_s", 75))

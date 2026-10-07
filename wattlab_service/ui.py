@@ -194,6 +194,11 @@ _LOCK_STYLES = (
 )
 
 
+def _idle_tol(s) -> float:
+    import power
+    return round(power.idle_tolerance_w(power.LAST_W_BASE, s), 2)
+
+
 def _local_label() -> str:
     import hosts
     return hosts.local_label()
@@ -744,7 +749,7 @@ def _ui_cfg() -> dict:
         # Live idle-wait readout (wlCooldownLine): lab-wide visibility toggle +
         # the tolerance that folds into the displayed target (floor + tol).
         "show_wait_detail": bool(s.get("cooldown_show_wait_detail", True)),
-        "idle_tolerance_w": s.get("cooldown_idle_tolerance_w", 3.0),
+        "idle_tolerance_w": _idle_tol(s),
         # CR-070 — seconds of pre-job idle wait before wlCooldownLine offers
         # the "Run job anyway" skip button (attended Lab runs only).
         "pre_job_skip_after_s": s.get("pre_job_skip_after_s", 5),
