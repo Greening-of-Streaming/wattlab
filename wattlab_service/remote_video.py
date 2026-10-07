@@ -1,7 +1,11 @@
 """
 remote_video.py — encode measurements on a remote compute host (CR-085).
 
-GoS1's service drives the remote host over SSH (hosts.py) and polls the
+THE SSH DRIVER — kept as a fallback (owner 2026-10-07; hosts.py explains when
+to use it). Hosts with `driver: "peer"` never reach this module: their jobs go
+through peer.submit to the host's own OWL.
+
+This node's service drives the remote host over SSH (hosts.py) and polls the
 remote host's OWN plugs (power.use_meters). The measurement contract is the
 local one, unchanged: shared baseline/task samplers (power.py), the same
 energy arithmetic and dual-meter combine, the same confidence model, VMAF

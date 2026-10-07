@@ -1,7 +1,9 @@
 """
 remote_ai.py — LLM inference and image generation on a remote compute host
-(CR-085 Part 3). Same contract as remote_video.py: GoS1 drives the host over
-SSH, measures on the host's own plugs (power.use_meters), and computes energy
+(CR-085 Part 3). Part of THE SSH DRIVER, kept as a fallback (owner 2026-10-07;
+see hosts.py) — except run_image_session("local", …) and run_local_mlx(), which
+a node also uses for its OWN jobs. Same contract as remote_video.py: this node
+drives the host over SSH, measures on the host's own plugs (power.use_meters), and computes energy
 with the SAME functions the local paths use — image_gen._calc_energy for
 images, the llm.py arithmetic for inference — so a GoS2 figure and a GoS1
 figure differ only by the machine.

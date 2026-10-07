@@ -1,8 +1,8 @@
 # GoS2 autonomy plan — from "driven by GoS1" to "two autonomous OWL nodes"
 
 **Status:** drafted 2026-10-05 (owner request); **Phases 1–5 built overnight 2026-10-05/06** (owner decisions:
-data root `/Users/gos/owl-data`, GoS2 pages Lab-only, HMAC peer auth, SSH driver retired only after the owner
-tests). CR-085 follow-on; implements `docs/gos2_design.md` §2 ("two autonomous peers").
+data root `/Users/gos/owl-data`, GoS2 pages Lab-only, HMAC peer auth; the SSH driver is **kept as a
+fallback** (owner 2026-10-07), not retired). CR-085 follow-on; implements `docs/gos2_design.md` §2 ("two autonomous peers").
 
 | Phase | Commit | State |
 |---|---|---|
@@ -28,7 +28,8 @@ Interleaved, n=3 per driver, order alternated per rep, Spotlight permanently off
 
 All 36 runs 🟢; no difference distinguishable (|t| < 1.6). The ±6 % seen in the morning's non-interleaved
 comparison was Spotlight on/off churn, not the driver. GoS2's own-OWL figures are its numbers from here on;
-the SSH driver may be retired once the owner has tested.
+the SSH driver stays as a documented fallback (owner 2026-10-07): bring-up of a brand-new machine before OWL
+runs on it, or a peer whose OWL is broken (when and how: `hosts.py` module docstring).
 
 ### Outage drills — passed 2026-10-06 (`campaign_2026-10-06_gos2_autonomy/drills.{py,jsonl}`)
 - **A — GoS1 down** (process frozen with SIGSTOP — only `restart` is in sudoers; to a peer a hung node looks

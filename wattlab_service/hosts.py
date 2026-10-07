@@ -33,13 +33,24 @@ whose address is the host of a registered `url` (peer.source_allowed) — LAN,
 SSH tunnel (http://127.0.0.1:<fwd port>), Tailscale (http://100.x… or a
 MagicDNS name), VPN or a public HTTPS name all work by changing `url` on each
 side; no code, no second policy edit. HMAC signing is network-independent. The
-legacy `ssh`/`meters` fields are only read by the SSH driver (retired after the
-owner's test).
+legacy `ssh`/`meters` fields are only read by the SSH driver (a kept fallback,
+see below).
 
-Interim mechanism (owner, 2026-10-04): GoS1's service runs the remote encode
-over SSH and reads the remote host's plugs directly over the LAN. Valid while
-the machines share a LAN; the peer job API in docs/gos2_design.md §2 replaces
-it before a host moves off-site.
+Two drivers, chosen per host by `driver` (default "ssh"):
+  · "peer" (normal since 2026-10-06): the host runs its own OWL and is reached
+    only through the signed peer API (peer.py / routes_peer.py) at `url` — its
+    own queue, meters, scorer and results. Everything below this line about
+    `ssh`, `meters`, `engines`, `python`, `ollama`, `mlx_models` is unused.
+  · "ssh" (KEPT AS A FALLBACK — owner decision 2026-10-07, do not delete): this
+    node drives a host that has no OWL of its own — runs ffmpeg / the Python
+    runners there over SSH (`ssh`, `ssh_key`, `workdir`, `python`) and reads the
+    host's plugs itself (`meters`, via power.use_meters, KLAP-exclusive: the
+    host's own OWL must not poll them at the same time — pause it with
+    /tmp/owl-paused). Use it to bring up a brand-new machine before OWL runs on
+    it, or if a peer's OWL is broken. Requires the same LAN as the meters.
+    Parity with the peer driver is proven (interleaved n=3, all within ±2.5 %,
+    docs/gos2_autonomy_plan.md § Parity gate). Code: remote_video.py,
+    remote_ai.py, the ssh helpers here; panels pick the path from `driver`.
 
 Pre-CR-085 results carry no `host` field — every one of them was measured on
 GoS1, so `result_host()` defaults to the local identity at read time (owner
