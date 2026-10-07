@@ -82,7 +82,7 @@ remote/Tania operation. Do not run display arms on two boxes at once.
   comment); `lab_reservations.py` ticker raises/lowers the same `/tmp/owl-lab-session` flag, owns only what it raised,
   never re-raises after a hand end; banner shows "reserved until", `/decode` shows who is next. Queue page polls
   instead of `<meta refresh>`. CR-067 items 3/4 found already live and marked. Tests 1107. Uncommitted.
-- S78 (10-04→07): **GoS2 (Mac mini M6) brought up and made autonomous** — own OWL via a loopback-ssh LaunchDaemon (macOS Local Network blocks launchd-started Python), signed peer API (one setting per peer: its `url`), simultaneous runs, replication, outage drills, parity gate passed (±2.5 %); SSH driver kept as fallback. **P110 fw 1.3.1 refreshes every 2 s below ~12 W** (decode audit: 42/2,381 flags at stake, no published claim). **Pre-existing benchmark bug** (no idle guard between steps → x264 understated ~31 %) fixed + clean rerun; corrected M6 headline (hw −9/−18 %, CPU −31/−41 %); relative idle tolerance; GoS2 visible to members via gateway `gos2.wattlab…` on GoS1 (DNS pending). Tests 1237.
+- S78 (10-04→07): **GoS2 (Mac mini M6) brought up and made autonomous** — own OWL via a loopback-ssh LaunchDaemon (macOS Local Network blocks launchd-started Python), signed peer API (one setting per peer: its `url`), simultaneous runs, replication, outage drills, parity gate passed (±2.5 %); SSH driver kept as fallback. **P110 fw 1.3.1 refreshes every 2 s below ~12 W** (decode audit: 42/2,381 flags at stake, no published claim). **Pre-existing benchmark bug** (no idle guard between steps → x264 understated ~31 %) fixed + clean rerun; corrected M6 headline (hw −9/−18 %, CPU −31/−41 %); relative idle tolerance; GoS2 visible to members via a gateway on GoS1, **live at https://gos2.greeningofstreaming.org** (verified from outside). Tests 1237.
 - S77 (09-21→22, unattended; committed as "S75" in fac9405 — numbering collision with JOURNAL S75/S76): **TV Box W5 onboarded** (no-brand Allwinner H618, Android 12, legacy OMX, 32-bit
   userland; Lab-F3 + HDMI_1) — `ro.product.*` is SPOOFED as a Google ADT-3, so provenance must come from
   `ro.board.platform`/logcat. **It cannot play AV1: 1.7 fps vs 60.0 for its three hw codecs, yet PLAYING + flat
@@ -148,11 +148,12 @@ idle when allowed). (6) Benchmark AI panels: LLM on T2, image as warm sessions �
 Other-machines panels visible to all tiers, operational for Lab; /decode on GoS2 drives GoS1's rig (one rig
 owner, GoS1's queue the reservation authority); AV1 GPU presets greyed where unsupported; macOS chip
 temperature via `owl-temps` (IOHID, no sudo; poller cost −0.003 ± 0.011 W); /methodology hardware table per
-machine; **member gateway** `gos2.wattlab.greeningofstreaming.org` served by GoS1 (anonymous → greyed page,
-zero requests to GoS2; members/Lab forwarded with a vouched identity) — **pending owner DNS + certbot**.
+machine; **member gateway** served by GoS1, **live at https://gos2.greeningofstreaming.org** (Wix A record →
+GoS1; certbot `--expand`; Wix can't create `gos2.wattlab…`, so members sign in on that name) — anonymous → greyed
+page, zero requests to GoS2; members/Lab forwarded with a vouched identity. Verified from a phone on mobile data.
 GoS1 Ollama 0.20.2 → 0.35.1 (owner, 10-07, matches GoS2). Deck: GoS1↔GoS2 architecture (artifact).
 
-**Open:** DNS + `certbot --expand` for gos2.wattlab; Tania on fresh-sample SE (then re-flag 42 runs) and the
+**Open:** Tania on fresh-sample SE (then re-flag 42 runs) and the
 calibrated-SE question; draft encode finding headline rewrite; earthed P110 test; SDXL-Lightning in the
 session runner; GoS2 public front door/role swap re-scoped by the gateway.
 

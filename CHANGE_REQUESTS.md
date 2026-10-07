@@ -1329,10 +1329,17 @@ ownership, SSH link, tier trust, phases; §13 Phase 0 log, §14 overnight build 
 (interim, SSH-driven, Lab-only):** GoS2 encode engines on `/video` (`78a0aa1`), envelope v2 host/engine stamps,
 remote LLM (Ollama + MLX) and image generation (`2ace75c`), Lab image bench (`6f7c06c`), SANA-Sprint family
 (`9908693`). First data: `docs/gos2_m6_report_2026-10.md`; draft finding in `docs/findings_drafts/` (unpublished). **Autonomy plan (GoS2 works without GoS1): `docs/gos2_autonomy_plan.md`.**
+**Shipped 2026-10-06/07 (S78) — GoS2 autonomous:** autonomy Phases 1–5 done (own OWL under `owl-svc`, signed peer
+API, simultaneous runs, replication incl. decode, outage drills, parity gate ±2.5 %); SSH driver kept as a
+documented fallback; decode rig driven from either node (GoS1 the single owner); machine switch; **member gateway
+live at https://gos2.greeningofstreaming.org** (served by GoS1; anonymous never reach GoS2). **Re-scoped:** GoS1
+stays the only public entry point. The "GoS2 = always-on front door" role swap below is superseded for now: it
+conflicts with GoS2 as a 1.3 W precision bench. Still open: GoS1 sleep/wake, moving GoS2 off-site (change its
+peer `url` only).
 
 ### Ask
 
-A Mac Mini M6 ("GoS2"), metered by lab-G1 (inner, `.165`, fw 1.3.1) → lab-G2 (outer, `.22`, fw 1.4.8), must be able
+A Mac Mini M6 ("GoS2"), metered by lab-G1 (inner, `.165`, fw 1.3.1; lab-G3 `.11` since 2026-10-06) → lab-G2 (outer, `.22`, fw 1.4.8), must be able
 to host OWL if GoS1 goes dark, and be movable to another member's office with configuration changes only.
 
 ### Decisions (owner, 2026-10-04)
