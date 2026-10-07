@@ -240,3 +240,16 @@ def test_other_machine_runs_render_as_machine_tiles(monkeypatch):
 def test_image_page_routes_session_results_to_shared_renderer():
     t = client.get("/image", headers=LAB).text
     assert "j.result.mode === 'session'" in t and "wlMachineResult('image', j.result)" in t
+
+
+def test_home_demo_queue_name_the_local_machine(monkeypatch):
+    """Owner 2026-10-07: GoS2's home page said "GoS1"."""
+    monkeypatch.setattr(hosts, "local_label", lambda: "GoS2")
+    base = hosts.local_host()
+    monkeypatch.setattr(hosts, "local_host", lambda: {**base, "id": "gos2", "label": "GoS2",
+                                                       "chip": "Apple M6", "machine": "Mac mini"})
+    for page in ("/", "/demo", "/queue-status"):
+        t = client.get(page, headers=LAB).text
+        assert "GoS2" in t and "GoS1" not in t, page
+        assert "{OWL_ME}" not in t and "__OWL_ME__" not in t, page
+    assert "GoS2 is a Mac mini (Apple M6)." in client.get("/demo", headers=LAB).text

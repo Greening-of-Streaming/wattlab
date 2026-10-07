@@ -30,6 +30,7 @@ import queue_control
 import rag as rag_module
 import rig
 import runtime
+import hosts
 import ui
 from capabilities import (
     requires, can, CapabilityError,
@@ -163,7 +164,7 @@ async def _lab_session_handler(request: Request, exc: queue_control.LabSessionAc
     Browsing is untouched — only enqueue raises this — so the message can be
     specific: the box is reserved, come back for runs later."""
     return JSONResponse(status_code=503, content={"error": (
-        "Lab session in progress — GoS1 is reserved for hands-on measurement "
+        f"Lab session in progress — {hosts.local_label()} is reserved for hands-on measurement "
         "work right now, so new runs are paused. Browsing (guided tour, "
         "findings, past results) stays open; runs re-open when the session "
         "ends.")})
@@ -291,11 +292,11 @@ async def index(request: Request):
         <img src="/static/owl.svg" alt="OWL">
         <div>
             <div class="name">OWL</div>
-            <span class="tagline">Online WattLab · GoS1</span>
+            <span class="tagline">Online WattLab · {hosts.local_label()}</span>
         </div>
     </div>
     <div class="watts"><span data-live="watts">{watts_str} W</span></div>
-    <div class="label">GoS1 live telemetry</div>
+    <div class="label">{hosts.local_label()} live telemetry</div>
     <div class="scope">Device layer only · {meter_display_name()} + lm-sensors · updates every 3s</div>
     <div class="temps">
         <div>
@@ -751,7 +752,7 @@ async function load() {
     }
     const el = document.getElementById('content');
     if (q.depth === 0) {
-        el.innerHTML = '<div class="depth">0</div><div class="depth-lbl">jobs in queue — GoS1 is idle</div>';
+        el.innerHTML = '<div class="depth">0</div><div class="depth-lbl">jobs in queue — __OWL_ME__ is idle</div>';
         return;
     }
     let html = '<div class="depth">' + q.depth + '</div>' +
@@ -818,4 +819,4 @@ async function togglePause(on) {
 load();
 setInterval(load, 4000);
 </script>
-""")
+""".replace("__OWL_ME__", hosts.local_label()))

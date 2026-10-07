@@ -138,7 +138,7 @@ def _tier_indicator_html(request: Request) -> str:
     if t == audience.Tier.Lab:
         return (
             f'<div style="{base_style};border-color:var(--accent);color:var(--accent)">'
-            "▣ You're on the GoS1 lab network — "
+            f"▣ You're on the {_local_label()} lab network — "
             '<span style="color:var(--text-3)">'
             'Lab tier · all access (settings, calibration, custom inputs)</span>'
             '</div>'
@@ -192,6 +192,11 @@ _LOCK_STYLES = (
     ".lock-block input,.lock-block textarea,.lock-block button,"
     ".lock-block select,.lock-block label{cursor:not-allowed!important}"
 )
+
+
+def _local_label() -> str:
+    import hosts
+    return hosts.local_label()
 
 
 def _lock_badge_html(request: Request, capability: str,

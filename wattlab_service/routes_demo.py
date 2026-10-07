@@ -135,7 +135,7 @@ def _budget_teaser_html() -> str:
                      ' — no calibration artifact yet')
         else:
             when = str(meta.get("measured_on", ""))[:10]
-            badge = f'<span style="color:var(--accent)">measured</span> · GoS1 · {when}'
+            badge = f'<span style="color:var(--accent)">measured</span> · {_hosts.local_label()} · {when}'
         clip = str(meta.get("clip_low", "low-complexity clip"))
         return (
             '<div style="border:1px solid var(--border-2);padding:1rem 1.25rem;'
@@ -306,14 +306,14 @@ _DEMO_HTML = f"""
 <div class="step active" id="step-0">
   <h1>OWL</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
-    Greening of Streaming · Live energy measurement · {_hosts.local_label()}</p>
+    Greening of Streaming · Live energy measurement · {{OWL_ME}}</p>
 
   {{TIER_INDICATOR}}
 
   <p style="color:var(--text-2);line-height:1.8;max-width:560px">
     OWL measures the real energy cost of video transcoding and AI inference —
     using a calibrated smart plug, not estimates. Every number on this page
-    comes from a live measurement on GoS1, a server in our lab in France.
+    comes from a live measurement on {{OWL_ME}}, a server in our lab in France.
   </p>
 
   <p style="color:var(--text-2);line-height:1.8;max-width:560px">
@@ -339,11 +339,11 @@ _DEMO_HTML = f"""
   </p>
 
   <div class="big-metric" id="live-watts">— W</div>
-  <div class="big-label">GoS1 current power draw · {{METER_NAME}} · device layer only</div>
+  <div class="big-label">{{OWL_ME}} current power draw · {{METER_NAME}} · device layer only</div>
 
   <details>
     <summary>What's being measured?</summary>
-    <p>GoS1 is an AMD Ryzen 9 workstation with an {{GPU_DISPLAY_NAME}} GPU.
+    <p>{{OWL_MACHINE_SENTENCE}}
     Power is sampled via {{METER_NAME}} at {{METER_CADENCE}},
     connected to the mains supply. We measure the delta between idle
     baseline and task power — not estimated TDP or nameplate figures.</p>
@@ -448,7 +448,7 @@ _DEMO_HTML = f"""
       </div>
       <div id="video-status"></div>
     </div>
-    <p class="limitation">Scope: device layer only (GoS1). Network, CDN, and CPE not included.
+    <p class="limitation">Scope: device layer only ({{OWL_ME}}). Network, CDN, and CPE not included.
     A faster encode does not automatically mean less energy — this measures total Wh, not rate.</p>
   </div>
 
@@ -621,7 +621,7 @@ _DEMO_HTML = f"""
       </div>
       <div id="llm-status"></div>
     </div>
-    <p class="limitation">Scope: device layer only (GoS1). No amortised training cost included.
+    <p class="limitation">Scope: device layer only ({{OWL_ME}}). No amortised training cost included.
     mWh/token measures inference energy only — not the energy cost of training the model.</p>
   </div>
 
@@ -668,7 +668,7 @@ _DEMO_HTML = f"""
       <button class="btn btn-primary" onclick="runDemoImage()">Run a standard image generation (SD-Turbo · 512&times;512 · ~30&thinsp;s)</button>
     </div>
     <div id="image-status"></div>
-    <p class="limitation">Scope: device layer only (GoS1). Network and storage excluded.
+    <p class="limitation">Scope: device layer only ({{OWL_ME}}). Network and storage excluded.
     This measures one image on one machine — not the energy cost of a hosted API call.</p>
   </div>
 
@@ -716,7 +716,7 @@ _DEMO_HTML = f"""
       <button class="btn btn-primary" onclick="runDemoRAG()">Run a standard RAG energy test ({{DEMO_RAG_MODEL_LABEL}} · 3-mode · ~10&thinsp;min)</button>
     </div>
     <div id="rag-status"></div>
-    <p class="limitation">Scope: device layer only (GoS1). Network excluded.
+    <p class="limitation">Scope: device layer only ({{OWL_ME}}). Network excluded.
     RAG retrieval adds overhead but the dominant cost remains token generation.</p>
   </div>
 
@@ -855,7 +855,7 @@ _DEMO_HTML = f"""
   <div class="btn-row" style="margin-bottom:1.5rem"><button class="btn btn-secondary" onclick="goStep(8)">&lsaquo; Client decode</button><button class="btn btn-primary" onclick="goStep(1)">&#8635; Start over</button></div>
   <h1>Findings</h1>
   <p style="color:var(--text-3);font-size:0.85rem;margin-bottom:1.5rem">
-    Greening of Streaming · OWL · {_hosts.local_label()}</p>
+    Greening of Streaming · OWL · {{OWL_ME}}</p>
 
   <div id="summary-content">
     {{FINDINGS_PANEL}}
@@ -938,7 +938,7 @@ _DEMO_HTML = f"""
   </table>
   <p style="color:var(--text-5);font-size:0.72rem;margin-top:0.25rem;margin-bottom:1.25rem;
             font-family:monospace;line-height:1.5">
-    Lab tier is granted automatically on the GoS1 LAN (loopback / 192.168.x).
+    Lab tier is granted automatically on the {{OWL_ME}} LAN (loopback / 192.168.x).
     There's no public sign-up for Lab — it's the operator surface for the
     bench itself.
   </p>
@@ -963,7 +963,7 @@ _DEMO_HTML = f"""
       greeningofstreaming.org ↗</a>
   </div>
   <p class="scope-note" style="margin-top:1.5rem">
-    Scope: device layer only (GoS1). Network, CDN, CPE excluded.<br>
+    Scope: device layer only ({{OWL_ME}}). Network, CDN, CPE excluded.<br>
     LLM: no amortised training cost included.</p>
 </div>
 
@@ -1773,7 +1773,7 @@ function buildSummary() {{
     ${{section('RAG (retrieval-augmented inference)', ragRows)}}
 
     <p style="color:var(--text-3);font-size:0.82rem;line-height:1.7;margin-top:1.5rem;max-width:560px">
-      These figures are from live measurements on GoS1, a server in France,
+      These figures are from live measurements on {{OWL_ME}}, a server in France,
       using a calibrated smart plug. Not modelled. Not averaged.
       Reproducible by anyone with the same hardware.
     </p>`;
@@ -1783,6 +1783,14 @@ function buildSummary() {{
     {_RESULT_JS}
     {_CONF_HELP_WIDGET}
 """
+
+
+def _machine_sentence() -> str:
+    """CR-085: the guided tour describes the machine it runs on."""
+    lh = _hosts.local_host()
+    if lh.get("id", "gos1") == "gos1":
+        return f"{lh['label']} is an AMD Ryzen 9 workstation with an {_gpu_display_name()} GPU."
+    return f"{lh['label']} is a {lh.get('machine') or 'computer'} ({lh.get('chip') or 'unknown chip'})."
 
 
 @router.get("/demo", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -1841,6 +1849,8 @@ async def demo_page(request: Request):
             .replace("{GPU_H265_ENC}",       _gpu_enc("h265"))
             .replace("{GPU_AV1_ENC}",        _gpu_enc("av1"))
             .replace("{GPU_RUNTIME}",        _gpu_runtime())
+            .replace("{OWL_MACHINE_SENTENCE}", _machine_sentence())
+            .replace("{OWL_ME}",             _hosts.local_label())
             .replace("{GPU_DISPLAY_NAME}",   _gpu_display_name())
             .replace("{DEMO_LLM_MODEL_KEY}",   DEMO_LLM_MODEL)
             .replace("{DEMO_LLM_MODEL_LABEL}", _llm_model_label(DEMO_LLM_MODEL))
