@@ -39,6 +39,7 @@ related_findings:
 supersedes: null
 tags: [video, encode, apple-silicon, m6, nvenc, cross-host, draft]
 caveats:
+  - "⚠ CORRECTION 2026-10-07 — the hardware percentages in this draft are superseded. GoS2's Oct 5 figures had no idle guard on GoS2's own baseline. Clean rerun (n=5 per node and codec, docs/gos2_m6_report_2026-10.md §0): H.264 VBR media engine vs NVENC −9 % (not −15 %), H.265 −18 % (not −22 %), x264 −31 % (not −26 %), x265 −41 %. VMAF unchanged. Update headline/claim_short before review."
   - "DRAFT pending lab review. Measured overnight 2026-10-04/05 by Claude with the owner asleep; Tania checks before anything is posted (publication rule 2026-08-17)."
   - "MARGINAL vs WHOLE-MACHINE. Headline percentages are OWL's standard marginal ΔE (energy above each machine's own idle floor). The two idle floors differ ~50× (GoS1 ~78 W, GoS2 ~1.4–2 W). The whole-machine view (wall power × time) makes the M6 2.3–3.4× cheaper per encode — valid only if the machine would otherwise sit idle or be off; state which view any quote uses."
   - "RATE CONTROL MATTERS MORE THAN SILICON ON THE M6 MEDIA ENGINE. In constant-bitrate mode (`-constant_bit_rate 1`, chosen to mirror NVENC's `-rc cbr`), the M6 encoder is slower (30.4 s vs 20.3 s), uses more energy (0.196 vs 0.170 Wh) and scores 5 VMAF lower (83.3 vs 88.6) at the same file size; raising the CBR target to 12 Mb/s only reaches VMAF 86.3 (bits go to filler). NVENC loses ~0.9 VMAF in CBR. The like-for-like hardware claim is therefore made in VBR on both; the CBR numbers stay on record."
