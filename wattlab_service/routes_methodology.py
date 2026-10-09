@@ -67,7 +67,8 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 14px 24px;
+    /* Bar spans the page; its contents line up with the 780px .content column. */
+    padding: 14px max(24px, calc((100% - 780px) / 2 + 24px));
     border-bottom: 1px solid var(--border);
     background: var(--surface);
   }
