@@ -114,14 +114,16 @@ def import_result(job_type: str, envelope: dict) -> Path:
     """CR-085 Phase 4 — store an envelope produced and stamped by ANOTHER node,
     verbatim: never re-run save_result (it would overwrite saved_at, owl_version,
     visitor_key and the host/hardware stamps, and enrich twice). Idempotent."""
-    if job_type not in ("video", "llm", "image", "decode"):
+    if job_type not in ("video", "llm", "image", "decode", "benchmark"):
         raise ValueError(f"import_result: unsupported type {job_type!r}")
     jid = str(envelope.get("job_id") or "")
     if not jid or "/" in jid or ".." in jid:
         raise ValueError("import_result: bad job_id")
     if not (envelope.get("host") or {}).get("id"):
         raise ValueError("import_result: envelope has no host stamp")
-    date_str = str(envelope.get("saved_at") or datetime.now().isoformat())[:10]
+    # Benchmark run files are named by their start date (benchmark._persist).
+    stamp = envelope.get("created_at") if job_type == "benchmark" else None
+    date_str = str(stamp or envelope.get("saved_at") or datetime.now().isoformat())[:10]
     out_dir = RESULTS_DIR / job_type
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{date_str}_{jid}.json"
@@ -554,7 +556,27 @@ def _sum_benchmark(summary: dict, data: dict) -> dict:
     summary["total_steps"] = data.get("total_steps", len(steps))
     summary["n_done"] = sum(1 for s in steps if s.get("status") == "done")
     summary["n_error"] = sum(1 for s in steps if s.get("status") == "error")
+    summary["group_id"] = data.get("group_id")
+    summary["created_at"] = data.get("created_at")
+    summary["config"] = data.get("config") or {}
+    summary["gpu"] = bench_gpu(data)
     return summary
+
+
+def bench_gpu(data: dict):
+    """GPU name for a benchmark run: its own stamp, else (run files saved
+    before 2026-10-09 carry none) the stamp of its first stored step result —
+    never today's GPU (GoS1 was AMD before 2026-05-29)."""
+    g = (data.get("gpu_hardware") or {}).get("name")
+    if g:
+        return g
+    for st in data.get("steps", []):
+        ref = st.get("result_ref") or {}
+        if ref.get("type") and ref.get("job_id"):
+            sub = load_result(ref["type"], ref["job_id"], visitor_key=None)
+            if sub:
+                return (sub.get("gpu_hardware") or {}).get("name")
+    return None
 
 
 # --- image ---

@@ -591,6 +591,7 @@ async def settings_page(request: Request):
       Which measures &amp; sources run is set by <code>bench_run_*</code> / <code>bench_sources</code> in settings.json.
     </div>
     {slider_field("bench_video_reps", s['bench_video_reps'], 1, 10, 1, "reps", "video all-codecs repeats per source")}
+    {'<div id="bench-nodes" style="font-family:monospace;font-size:0.8rem;margin-top:0.6rem;color:var(--text-3)">Run on: <span id="bench-nodes-list">this node</span><div style="color:var(--text-5);font-size:0.72rem">Several nodes = one run per node, in parallel, same plan (this page&#39;s settings), each on its own meters. Offline nodes are skipped, never substituted.</div></div>' if local else ''}
     {'<button onclick="runBenchmark()" id="benchBtn" style="background:var(--border);color:var(--accent);border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">&#9654; Run overnight benchmark</button> <button onclick="cancelBenchmark()" id="benchCancelBtn" style="background:var(--border);color:var(--err);border:1px solid var(--err);padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">&#9632; Cancel</button><div id="bench-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>' if local else '<div style="color:var(--text-5);font-size:0.78rem;margin-top:0.5rem">Benchmark requires lab access.</div>'}
 
     {('''<details class="calib-details" id="testdataDetails">
@@ -770,13 +771,19 @@ async def settings_page(request: Request):
         await saveSettings();
         msg.innerHTML = '<span style="color:var(--warn)">Queuing benchmark…</span>';
         try {{
-            const resp = await fetch('/benchmark/run', {{method: 'POST'}});
+            const targets = [...document.querySelectorAll('.bench-node:checked')].map(e => e.value);
+            const resp = await fetch('/benchmark/run', {{method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify(targets.length ? {{targets}} : {{}})}});
             const data = await resp.json();
-            if (data.job_id) {{
-                _benchJobId = data.job_id;
-                msg.innerHTML = '<span style="color:var(--accent)">Benchmark ' + data.job_id
-                    + ' queued (position ' + data.queue_position + '). '
-                    + '<a href="/queue-status" style="color:var(--accent)">Follow on the queue →</a></span>';
+            if (data.runs && data.runs.length) {{
+                if (data.job_id) _benchJobId = data.job_id;
+                const runs = data.runs.map(r => r.host + ': ' + r.job_id + ' (queue position ' + r.queue_position + ')').join(' · ');
+                const skipped = (data.skipped || []).map(s => s.host + ' skipped — ' + s.reason).join(' · ');
+                msg.innerHTML = '<span style="color:var(--accent)">Benchmark queued — ' + runs + '. '
+                    + '<a href="/queue-status" style="color:var(--accent)">Follow on the queue →</a></span>'
+                    + (skipped ? '<br><span style="color:var(--warn)">' + skipped + '</span>' : '');
+                btn.disabled = false;
             }} else {{
                 msg.innerHTML = '<span style="color:var(--err)">Error: ' + JSON.stringify(data) + '</span>';
                 btn.disabled = false;
@@ -786,6 +793,18 @@ async def settings_page(request: Request):
             btn.disabled = false;
         }}
     }}
+    (async function loadBenchNodes() {{
+        const el = document.getElementById('bench-nodes-list');
+        if (!el) return;
+        try {{
+            const d = await (await fetch('/nodes.json')).json();
+            el.innerHTML = (d.nodes || []).map(n =>
+                '<label style="margin-right:0.9rem;' + (n.online ? '' : 'color:var(--text-5)') + '">'
+                + '<input type="checkbox" class="bench-node" value="' + n.id + '"'
+                + (n.self ? ' checked' : '') + (n.online ? '' : ' disabled') + '> '
+                + n.label + (n.self ? ' (this node)' : '') + (n.online ? '' : ' — offline') + '</label>').join('');
+        }} catch(e) {{}}
+    }})();
     async function cancelBenchmark() {{
         const msg = document.getElementById('bench-msg');
         let jid = _benchJobId;

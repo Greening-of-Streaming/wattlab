@@ -10,6 +10,12 @@
     if (!renderer) { loading.textContent = 'no renderer for kind=' + kind; continue; }
     try {
       const r = await fetch('/benchmark/' + bid + '/result/' + type + '/' + jobId + '.json');
+      if (r.status === 404 && el.dataset.host) {
+        // A run measured on another node arrives by replication; its step
+        // results can lag the run file by one pull.
+        loading.textContent = type + '/' + jobId + ' not on this node yet — replicating from ' + el.dataset.host;
+        continue;
+      }
       if (!r.ok) { loading.textContent = 'could not load ' + type + '/' + jobId + ' (HTTP ' + r.status + ')'; continue; }
       const data = await r.json();
       el.innerHTML = renderer({result: data, isPrev: true, savedAt: data.saved_at});

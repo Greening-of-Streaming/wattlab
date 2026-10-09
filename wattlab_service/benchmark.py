@@ -205,15 +205,59 @@ def _config(s: dict) -> dict:
         "video_reps": max(1, int(s.get("bench_video_reps", 5))),
         "sources": s.get("bench_sources") or DEFAULT_SOURCES,
         "enabled": [mid for mid in ORDER if mid in MEASURES and _is_enabled(MEASURES[mid], s)],
+        "variance_runs": int(s.get("variance_runs", 0)),
     }
 
 
-def init_manifest(bid: str, plan: list, config: dict) -> dict:
+# A run file is replicated to other nodes only once it stops changing.
+FINAL_STATUSES = ("done", "cancelled", "error")
+
+
+def settings_for(config: Optional[dict], s: dict) -> dict:
+    """This node's settings with a launcher's run config applied (multi-node
+    launch, 2026-10-09): every node in a group runs the SAME plan — reps,
+    sources, measures — on its own meters. Node-local values (calibration,
+    models, cooldowns) stay the node's own. No config = the node's settings."""
+    if not config:
+        return s
+    out = dict(s)
+    if "video_reps" in config:
+        out["bench_video_reps"] = int(config["video_reps"])
+    if config.get("sources"):
+        out["bench_sources"] = list(config["sources"])
+    if "enabled" in config:
+        en = set(config["enabled"])
+        for mid, m in MEASURES.items():
+            if m.enabled_key:
+                out[m.enabled_key] = mid in en
+        if "variance" not in en:
+            out["variance_runs"] = 0
+        elif int(out.get("variance_runs", 0)) <= 0:
+            out["variance_runs"] = max(1, int(config.get("variance_runs") or 1))
+    return out
+
+
+def _stamps() -> dict:
+    """Host / GPU / meter provenance — the same stamps persist.save_result puts
+    on every sub-result, so a run file copied to another node (replication)
+    still names the machine that measured it."""
+    import gpu
+    import hosts
+    import power
+    return {"host": hosts.identity(hosts.local_host()),
+            "gpu_hardware": gpu.stamp(), "power_hardware": power.stamp()}
+
+
+def init_manifest(bid: str, plan: list, config: dict, group_id: Optional[str] = None) -> dict:
     return {
         "schema_version": 1,
         "benchmark_run_id": bid,
         "job_id": bid,            # so persist.load_result / glob *_{bid}.json works
         "visitor_key": None,      # operator-only; Lab sees all
+        # Runs launched together on several nodes share a group_id
+        # (/benchmark groups and compares them); None = a single-node run.
+        "group_id": group_id,
+        **_stamps(),
         "status": "queued",       # queued | running | done | cancelled | error
         "created_at": _now(),
         "started_at": None,
@@ -244,10 +288,10 @@ def load_manifest(bid: str) -> Optional[dict]:
     return persist.load_result("benchmark", bid, visitor_key=None)
 
 
-def create_run(bid: str, s: dict) -> dict:
+def create_run(bid: str, s: dict, group_id: Optional[str] = None) -> dict:
     """Pre-create + persist a queued manifest (so a cancel-before-start still
     shows up in the results list). Called by POST /benchmark/run."""
-    manifest = init_manifest(bid, build_plan(s), _config(s))
+    manifest = init_manifest(bid, build_plan(s), _config(s), group_id)
     _persist(manifest)
     return manifest
 

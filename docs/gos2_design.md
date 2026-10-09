@@ -350,3 +350,22 @@ observation until the low-end meter accuracy is checked.
   flash-attention/KV env, same as GoS1), models copied byte-identically from GoS1 (Ollama digests
   359d7dd4bcda / 8f68893c685c; HF caches sd-turbo, sdxl-turbo, SANA-Sprint).
 - Version gaps to remember when comparing: Ollama 0.20.2 vs 0.35.1, torch 2.11 vs 2.14.1, ffmpeg-master vs 9.0.2.
+
+## 15. Benchmarks across nodes (2026-10-09)
+
+Benchmarks follow the same results model as every other type: the node that measures a run owns it, and every node keeps a copy.
+
+- **Stamp.** A benchmark run file (`results/benchmark/`) records the machine that measured it: `host`, `gpu_hardware` and `power_hardware`, the same stamps as its step results.
+  - Files written before 2026-10-09 have no stamp. They count as the writing node's own (`hosts.result_host`), and are exported with the host filled in (`host_inferred`).
+  - For these older files, the GPU shown is read from their first step result. It is never taken from the machine's current GPU, so GoS1 runs from the AMD era stay labelled AMD.
+- **Replication.** `benchmark` comes last in `replication.TYPES`, so each run's step results are copied before the run file that links to them.
+  - Only runs that have finished (`done`, `cancelled` or `error`) are exported. A run file keeps changing until then, and replication only ever adds files.
+  - The list therefore works on any node while the others are down. A copied run whose step results haven't arrived yet says so instead of failing.
+- **Launch.** In /settings, **Run on** offers every node listed in `/nodes.json`; offline nodes are greyed out.
+  - Choosing several nodes starts one run per node, all at the same time. Each runs on its own queue, idle guard and meters, and they share a `group_id` and the launcher's plan (reps, sources, measures; `benchmark.settings_for`). Calibration and models stay each node's own.
+  - A peer receives its run as `POST /peer/jobs` with `type: benchmark`. Nothing follows the peer run while it is in progress; the finished file arrives by replication.
+  - An offline peer is reported as skipped. Its run is never moved to another node (§2).
+- **Read.**
+  - `/benchmark` has a host badge on every run, filter chips (All plus one per node), and draws runs that share a `group_id` as one "Parallel run" block.
+  - `/benchmark/compare?ids=…` puts runs side by side, one column per run. Each cell is mean ± sd with its n, and values are never pooled across columns (`benchmark_compare.py`).
+- **More nodes.** A new node needs no change to any of this: add it to `compute_hosts` as a `peer` and it appears in Run on, in the chips and in replication.

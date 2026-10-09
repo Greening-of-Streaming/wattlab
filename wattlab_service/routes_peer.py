@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import audience
+import benchmark
 import gpu
 import hosts
 import peer
@@ -131,6 +132,15 @@ async def peer_submit(request: Request):
                 jobs[job_id].update({"status": "done", "stage": "done", "result": r})
             except Exception as e:
                 jobs[job_id].update({"status": "error", "stage": "error", "error": str(e)})
+    elif jtype == "benchmark":
+        # Multi-node benchmark (2026-10-09): the launcher's plan on THIS node's
+        # queue + meters. Not followed by the caller — an overnight run outlives
+        # any poll; the finished run file comes back by replication.
+        import routes_benchmark
+        position = routes_benchmark.launch_local(job_id, p.get("config"), p.get("group_id"))
+        if position is None:
+            return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
+        return {"job_id": job_id, "queue_position": position}
     else:
         return JSONResponse({"error": f"unknown job type {jtype!r}"}, status_code=400)
 
@@ -150,8 +160,12 @@ async def peer_cancel(job_id: str):
     return {"cancelled": bool(queue_control.cancel_pending(job_id))}
 
 
+# Result types a node exports to its peers (replication.TYPES pulls these).
+EXPORT_TYPES = ("video", "llm", "image", "decode", "benchmark")
+
+
 def _result_path(job_type: str, job_id: str):
-    if job_type not in ("video", "llm", "image", "decode") or "/" in job_id or ".." in job_id:
+    if job_type not in EXPORT_TYPES or "/" in job_id or ".." in job_id:
         return None
     m = sorted(glob.glob(str(persist.RESULTS_DIR / job_type / f"*_{job_id}.json")))
     return Path(m[-1]) if m else None
@@ -175,18 +189,24 @@ async def peer_result(job_type: str, job_id: str):
 async def peer_result_index(job_type: str, since: str = ""):
     """Replication index (Phase 5): envelopes THIS node produced (host = this
     node), saved after `since` (ISO), oldest first."""
-    if job_type not in ("video", "llm", "image", "decode"):
+    if job_type not in EXPORT_TYPES:
         return JSONResponse({"error": "bad type"}, status_code=400)
     me = hosts.local_host()["id"]
+    bench = job_type == "benchmark"
     out = []
     for f in sorted((persist.RESULTS_DIR / job_type).glob("*.json")):
-        if since and f.name[:10] < since[:10]:
+        # Benchmark files are named by their START date and can finish days
+        # later — no filename pre-filter for them (there are few).
+        if since and not bench and f.name[:10] < since[:10]:
             continue
         try:
             d = json.loads(f.read_text())
         except Exception:
             continue
         if hosts.result_host(d).get("id") != me or (since and str(d.get("saved_at", "")) <= since):
+            continue
+        # A run file changes until the run ends; replication is append-only.
+        if bench and d.get("status") not in benchmark.FINAL_STATUSES:
             continue
         out.append({"job_id": d.get("job_id"), "saved_at": d.get("saved_at")})
     return {"host": me, "type": job_type, "results": out}

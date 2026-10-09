@@ -21,7 +21,9 @@ import peer
 import persist
 import settings as cfg
 
-TYPES = ("video", "llm", "image", "decode")   # decode: the rig owner's results (CR-085, 2026-10-07)
+# decode: the rig owner's results (CR-085, 2026-10-07). benchmark LAST: a run
+# file references its steps' video/llm/image results, pulled first.
+TYPES = ("video", "llm", "image", "decode", "benchmark")
 
 
 def _state_file(hid: str):
