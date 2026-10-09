@@ -295,3 +295,10 @@ def test_group_uses_launchers_calibration_count_and_respects_node_opt_outs():
     assert s["variance_runs"] == 30
     ids = [st["id"] for st in benchmark.build_plan(s)]
     assert ids[0] == "variance" and "llm_compare" in ids and "rag_compare" not in ids
+
+
+def test_calibration_details_endpoint_loads():
+    """/precalibration/data 500'd on both nodes (2026-10-10): `import paths`
+    had slipped inside the module docstring."""
+    r = client.get("/precalibration/data", headers=LAB)
+    assert r.status_code == 200 and "available" in r.json()

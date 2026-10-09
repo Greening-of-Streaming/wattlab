@@ -4,7 +4,6 @@ test-data cleanup panel), settings save, /variance/run calibration
 trigger, and /precalibration/data (thermal-recovery probe JSON).
 
 Phase 3 per-feature route module — shared state from runtime.py, chrome
-import paths
 from ui.py, never import main.
 """
 import uuid
@@ -17,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import audience
 import auth
 import model_catalog
+import paths
 import queue_control
 import settings as cfg
 import ui
