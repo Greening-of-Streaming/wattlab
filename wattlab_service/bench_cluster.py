@@ -17,6 +17,7 @@ import peer
 import queue_control
 
 POLL_S = 30          # GoS2 idles at ~1.3 W: keep the poll light
+RETRY_S = 5          # while a peer is unreachable
 
 
 def nodes(request=None) -> list:
@@ -72,11 +73,15 @@ async def poller():
     an offline peer costs a 3 s timeout there, never on a page)."""
     loop = asyncio.get_event_loop()
     while True:
+        unreachable = False
         for hid, h in hosts.remote_hosts().items():
             if hosts.driver(h) == "peer":
                 try:
-                    await loop.run_in_executor(
-                        None, lambda h=h, hid=hid: peer.info({**h, "id": hid}, max_age=POLL_S - 5))
+                    inf = await loop.run_in_executor(
+                        None, lambda h=h, hid=hid: peer.info({**h, "id": hid}, max_age=0))
+                    unreachable = unreachable or inf is None
                 except Exception:
-                    pass
-        await asyncio.sleep(POLL_S)
+                    unreachable = True
+        # A peer that is down (often: restarting at the same time as this
+        # node) is re-checked soon, so it isn't shown offline for a full cycle.
+        await asyncio.sleep(RETRY_S if unreachable else POLL_S)
