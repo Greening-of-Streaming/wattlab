@@ -166,8 +166,7 @@ def running_now_html(request: Request, cancel: bool = False) -> str:
                           f'data-job="{html_lib.escape(str(b.get("job_id")))}" style="background:var(--border);'
                           f'color:var(--err);border:1px solid var(--err);font-family:monospace;'
                           f'font-size:0.72rem;cursor:pointer;padding:0 0.5rem">&#9632; Cancel</button>')
-        rows.append(f'<div><span style="color:var(--accent);border:1px solid var(--accent);'
-                    f'padding:0 0.35rem;font-size:0.72rem">{html_lib.escape(n["label"])}</span> {state}</div>')
+        rows.append(f'<div>· <b style="color:var(--text-2)">{html_lib.escape(n["label"])}</b> {state}</div>')
     return ('<div class="bench-now" style="font-family:monospace;font-size:0.78rem;line-height:1.9;'
             'margin:0.6rem 0">' + "".join(rows) + '</div>')
 

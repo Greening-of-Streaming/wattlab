@@ -268,14 +268,25 @@ def _bench_launcher_html(request: Request) -> str:
             " — offline" if n["online"] is False else
             " — busy: benchmark " + str(n["benchmark"].get("status")) if n["benchmark"] else "")
         dis = " disabled" if n["online"] is False else ""
-        boxes.append(f'<label style="margin-right:1rem;white-space:nowrap;'
-                     f'{"color:var(--text-5)" if dis else ""}">'
+        boxes.append(f'<label class="node-chip{" off" if dis else ""}">'
                      f'<input type="checkbox" class="bench-node" value="{_h.escape(n["id"])}"'
-                     f'{" checked" if n["self"] else ""}{dis}> {_h.escape(n["label"])}{_h.escape(note)}</label>')
+                     f'{" checked" if n["self"] else ""}{dis}> {_h.escape(n["label"])}'
+                     f'<span class="node-chip-note">{_h.escape(note)}</span></label>')
     return (
+        # Toggle chips: the whole chip is the click target and its fill shows the
+        # choice (owner 2026-10-10: bare checkboxes read as unselectable).
+        '<style>'
+        '.node-chip{display:inline-flex;align-items:center;gap:0.4rem;cursor:pointer;user-select:none;'
+        'border:1px solid var(--border-3);color:var(--text-3);padding:0.35rem 0.75rem;margin:0.3rem 0.4rem 0.3rem 0;'
+        'font-size:0.85rem}'
+        '.node-chip input{accent-color:var(--accent);width:1rem;height:1rem;cursor:pointer}'
+        '.node-chip:has(input:checked){border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}'
+        '.node-chip.off{opacity:0.45;cursor:not-allowed}'
+        '.node-chip-note{color:var(--text-5);font-size:0.72rem}'
+        '</style>'
         '<div id="bench-nodes" style="font-family:monospace;font-size:0.82rem;margin-top:0.6rem;color:var(--text-3)">'
-        'Run on: ' + "".join(boxes) +
-        '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem">Tick one machine or several. '
+        '<div style="margin-bottom:0.2rem">Run on (click to choose — one machine or both):</div>' + "".join(boxes) +
+        '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem">'
         'Several = one run per machine, at the same time, same plan (this page&#39;s settings), each on '
         'its own meters; an offline machine is skipped, never substituted. While a machine benchmarks, '
         'it refuses new visitor runs and points them at a free machine.</div></div>'
@@ -283,7 +294,7 @@ def _bench_launcher_html(request: Request) -> str:
         'border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;'
         'font-size:0.85rem;margin-top:0.75rem">&#9654; Run benchmark</button>'
         '<div id="bench-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>'
-        '<div style="margin-top:0.6rem;font-family:monospace;font-size:0.78rem;color:var(--text-4)">Now:</div>'
+        '<div style="margin-top:0.8rem;font-family:monospace;font-size:0.78rem;color:var(--text-4)">Status right now:</div>'
         + routes_benchmark.running_now_html(request, cancel=True))
 
 
@@ -803,6 +814,11 @@ async def settings_page(request: Request):
         msg.innerHTML = '<span style="color:var(--warn)">Queuing benchmark…</span>';
         try {{
             const targets = [...document.querySelectorAll('.bench-node:checked')].map(e => e.value);
+            if (document.querySelector('.bench-node') && !targets.length) {{
+                msg.innerHTML = '<span style="color:var(--warn)">Choose at least one machine.</span>';
+                btn.disabled = false;
+                return;
+            }}
             const resp = await fetch('/benchmark/run', {{method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
                 body: JSON.stringify(targets.length ? {{targets}} : {{}})}});
