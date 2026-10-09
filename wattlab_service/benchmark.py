@@ -227,13 +227,15 @@ def settings_for(config: Optional[dict], s: dict) -> dict:
         out["bench_sources"] = list(config["sources"])
     if "enabled" in config:
         en = set(config["enabled"])
+        # A measure runs if the launcher chose it AND this node hasn't switched
+        # it off (e.g. no RAG corpus on GoS2: bench_run_rag false there).
         for mid, m in MEASURES.items():
             if m.enabled_key:
-                out[m.enabled_key] = mid in en
-        if "variance" not in en:
-            out["variance_runs"] = 0
-        elif int(out.get("variance_runs", 0)) <= 0:
-            out["variance_runs"] = max(1, int(config.get("variance_runs") or 1))
+                out[m.enabled_key] = mid in en and bool(s.get(m.enabled_key, True))
+        # Calibration: the launcher's run count on every node (same plan); the
+        # result is written to EACH node's own settings.json (never replicated).
+        out["variance_runs"] = (max(1, int(config.get("variance_runs") or 1))
+                                if "variance" in en else 0)
     return out
 
 

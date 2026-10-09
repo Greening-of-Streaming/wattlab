@@ -286,3 +286,12 @@ def _req(headers):
     return Request({"type": "http", "method": "GET", "path": "/", "query_string": b"",
                     "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
                     "client": (headers.get("x-real-ip", "127.0.0.1"), 1)})
+
+
+def test_group_uses_launchers_calibration_count_and_respects_node_opt_outs():
+    cfg_ = benchmark._config(_settings(variance_runs=30, bench_run_rag=True, bench_run_llm=True))
+    node = _settings(variance_runs=5, bench_run_rag=False, bench_run_llm=True)
+    s = benchmark.settings_for(cfg_, node)
+    assert s["variance_runs"] == 30
+    ids = [st["id"] for st in benchmark.build_plan(s)]
+    assert ids[0] == "variance" and "llm_compare" in ids and "rag_compare" not in ids
