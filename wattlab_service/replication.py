@@ -49,7 +49,13 @@ def pull_once(hid: str, h: dict) -> dict:
     for t in TYPES:
         since = st.get(t, "")
         q = f"/peer/results/{t}?since={since}" if since else f"/peer/results/{t}"
-        idx = peer.call(h, "GET", q, timeout=30)
+        try:
+            idx = peer.call(h, "GET", q, timeout=30)
+        except Exception as e:
+            # One type failing (e.g. a peer on older code that doesn't export
+            # it yet) must not cost the other types their saved progress.
+            out[f"{t}_error"] = repr(e)[:200]
+            continue
         n = 0
         for row in idx.get("results", []):
             jid = row.get("job_id")

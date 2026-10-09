@@ -198,3 +198,16 @@ def test_compare_never_pools_and_reports_n(tmp_path, monkeypatch):
     assert [c["missing"] for c in tb["columns"]] == [0, 1]
     html = client.get("/benchmark/compare?ids=a1,b1", headers=LAB).text
     assert "never pooled" in html and "n=2" in html
+
+
+def test_peer_without_benchmark_export_does_not_block_other_types(tmp_path, monkeypatch):
+    monkeypatch.setattr(persist, "RESULTS_DIR", tmp_path)
+    def fake_call(h, method, path, payload=None, timeout=15):
+        if path.startswith("/peer/results/benchmark"):
+            raise RuntimeError("HTTP 400 bad type")       # peer on older code
+        return {"results": []}
+    monkeypatch.setattr(peer, "call", fake_call)
+    monkeypatch.setattr(peer, "online", lambda h: True)
+    out = replication.pull_once("gos2", PEER_HOST)
+    assert out["video"] == 0 and "benchmark_error" in out
+    assert (tmp_path / "_replication" / "gos2.json").exists()
