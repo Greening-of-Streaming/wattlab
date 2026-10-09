@@ -225,7 +225,7 @@ _BENCH_LIST_JS = """<script>
 
 
 _LIST_STYLES = (
-    'body{background:var(--bg);color:var(--text)}'
+    'body{background:var(--bg);color:var(--text);max-width:912px;margin:0 auto;padding:0 1rem}'
     '.finding-wrap{max-width:880px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'
     '.bench-row{display:flex;gap:0.5rem;align-items:center}'
     '.bench-row .finding-row{flex:1;min-width:0}'
@@ -327,7 +327,8 @@ async def benchmark_compare_page(request: Request, ids: str = ""):
         f'<div class="bench-cmp-wrap"><table class="bench-cmp"><tr><th>metric</th>{head}</tr>'
         f'{body_rows}</table></div></div>'
     )
-    return HTMLResponse(ui.render_page(request, "Benchmark comparison", body, styles=_LIST_STYLES))
+    return HTMLResponse(ui.render_page(request, "Benchmark comparison", body,
+                                       styles=_LIST_STYLES + 'body{max-width:1132px}'))
 
 
 @router.get("/benchmark/{bid}", response_class=HTMLResponse,
@@ -392,7 +393,7 @@ async def benchmark_detail_page(bid: str, request: Request):
     # in tail so the embeds keep working.
     return HTMLResponse(ui.render_page(
         request, f"Benchmark {html_lib.escape(bid)}", body,
-        styles=('body{background:var(--bg);color:var(--text)}'
+        styles=('body{background:var(--bg);color:var(--text);max-width:932px;margin:0 auto;padding:0 1rem}'
                 '.bench-wrap{max-width:900px;margin:1.5rem auto;padding:0 1rem;color:var(--text);background:var(--bg)}'),
         tail=_RESULT_JS + _BENCH_HYDRATE_JS))
 
