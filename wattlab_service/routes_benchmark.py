@@ -94,6 +94,7 @@ async def benchmark_run(request: Request):
                           timeout=20)
             out["runs"].append({"host": label, "job_id": r["job_id"],
                                 "queue_position": r.get("queue_position")})
+            peer.info({**h, "id": hid}, max_age=0)   # its benchmark state, fresh for the banner
         except Exception as e:
             out["skipped"].append({"host": label, "reason": repr(e)[:200]})
     if not out["runs"]:
@@ -102,21 +103,73 @@ async def benchmark_run(request: Request):
     return out
 
 
-@router.post("/benchmark/cancel", dependencies=[Depends(requires(BENCHMARK_RUN))])
-async def benchmark_cancel(request: Request, job_id: str = Form(...)):
-    """Cancel a benchmark run. Running → cooperative flag (lands after the
-    current step); queued-but-not-started → drop from queue + mark cancelled."""
-    job_id = (job_id or "").strip()
+def cancel_local(job_id: str) -> str:
+    """Cancel a benchmark on THIS node. Running → cooperative flag (lands after
+    the current step); queued-but-not-started → drop from queue + mark
+    cancelled. Returns the state; shared with POST /peer/jobs/{id}/cancel."""
     if queue_control.current_job_id == job_id:
         if job_id in jobs:
             jobs[job_id]["cancel_requested"] = True
-        return {"ok": True, "state": "cancelling"}
+        return "cancelling"
     if queue_control.cancel_pending(job_id):
         if job_id in jobs:
             jobs[job_id].update({"status": "cancelled", "stage": "cancelled"})
         benchmark.cancel_queued(job_id)
-        return {"ok": True, "state": "cancelled_before_start"}
-    return JSONResponse({"ok": False, "state": "not_found"}, status_code=404)
+        return "cancelled_before_start"
+    return "not_found"
+
+
+@router.post("/benchmark/cancel", dependencies=[Depends(requires(BENCHMARK_RUN))])
+async def benchmark_cancel(request: Request, job_id: str = Form(...), host: str = Form("")):
+    """Cancel a benchmark run on this node, or on another node (`host`) through
+    the signed peer API — so either machine can stop either machine's run."""
+    job_id = (job_id or "").strip()
+    host = (host or "").strip()
+    if host and host != hosts.local_host()["id"]:
+        h = hosts.get(host)
+        if not h or hosts.driver(h) != "peer":
+            return JSONResponse({"ok": False, "state": "unknown host"}, status_code=404)
+        try:
+            r = peer.call(h, "POST", f"/peer/jobs/{job_id}/cancel", {}, timeout=15)
+        except Exception as e:
+            return JSONResponse({"ok": False, "state": f"{h.get('label', host)} unreachable: {e!r}"[:200]},
+                                status_code=503)
+        peer._INFO.pop(host, None)      # refresh its benchmark state on the next read
+        return {"ok": bool(r.get("cancelled")), "state": r.get("state") or
+                ("cancelled_before_start" if r.get("cancelled") else "not_found")}
+    state = cancel_local(job_id)
+    if state == "not_found":
+        return JSONResponse({"ok": False, "state": state}, status_code=404)
+    return {"ok": True, "state": state}
+
+
+def running_now_html(request: Request, cancel: bool = False) -> str:
+    """Benchmarks running or queued on any node, from the cached cluster state
+    (bench_cluster) — every node shows every node's runs while they run (the
+    run file itself only replicates once it is final)."""
+    import bench_cluster
+    rows = []
+    for n in bench_cluster.nodes(request):
+        b = n["benchmark"]
+        if n["online"] is False:
+            state = '<span style="color:var(--text-5)">offline</span>'
+        elif n["online"] is None:
+            state = '<span style="color:var(--text-5)">status not known yet</span>'
+        elif not b:
+            state = '<span style="color:var(--text-4)">idle — open for runs</span>'
+        else:
+            state = (f'{"🟡 running" if b.get("status") == "running" else "⚪ queued"} '
+                     f'benchmark {html_lib.escape(str(b.get("job_id")))}'
+                     f' · {html_lib.escape(str(b.get("stage") or ""))[:90]}')
+            if cancel:
+                state += (f' <button class="bench-cancel" data-host="{html_lib.escape(n["id"])}" '
+                          f'data-job="{html_lib.escape(str(b.get("job_id")))}" style="background:var(--border);'
+                          f'color:var(--err);border:1px solid var(--err);font-family:monospace;'
+                          f'font-size:0.72rem;cursor:pointer;padding:0 0.5rem">&#9632; Cancel</button>')
+        rows.append(f'<div><span style="color:var(--accent);border:1px solid var(--accent);'
+                    f'padding:0 0.35rem;font-size:0.72rem">{html_lib.escape(n["label"])}</span> {state}</div>')
+    return ('<div class="bench-now" style="font-family:monospace;font-size:0.78rem;line-height:1.9;'
+            'margin:0.6rem 0">' + "".join(rows) + '</div>')
 
 
 # ── CR-061 benchmark results view ───────────────────────────────────────────
@@ -264,6 +317,7 @@ async def benchmark_list_page(request: Request, host: str = ""):
         'labelled with the machine that measured it. Launch + cancel from '
         '<a href="/settings" style="color:var(--accent)">/settings</a>. Other nodes\' '
         'runs appear here once they finish (replicated every few minutes).</p>'
+        f'{running_now_html(request)}'
         f'{_host_chips(runs, host)}'
         '<button id="bench-compare-btn" disabled style="background:var(--border);color:var(--accent);'
         'border:1px solid var(--accent);padding:0.3rem 0.9rem;font-family:monospace;font-size:0.78rem;'

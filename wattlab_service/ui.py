@@ -608,6 +608,47 @@ _BENCH_HYDRATE_JS = f'<script src="/static/wl-bench-hydrate.js?v={_WL_ASSET_V}">
 # version stamp, queue badge, shared JS bundles). A page brings only its
 # own CSS, body, optional extra <head> content, and optional scripts that
 # must load after the footer's bundles.
+def _benchmark_banner(request: Request | None = None) -> str:
+    """Site-wide strip while ANY node runs (or has queued) a benchmark, on
+    every node (2026-10-10). A node with a benchmark refuses non-Lab runs
+    (queue_control.BenchmarkBusy); the others stay open — the strip says
+    which. Reads cached peer state only (bench_cluster), never waits on a peer."""
+    try:
+        import bench_cluster
+        ns = bench_cluster.nodes(request)
+    except Exception:
+        return ""
+    busy = [n for n in ns if n["benchmark"]]
+    if not busy:
+        return ""
+    lab = request is not None and audience.tier(request) == audience.Tier.Lab
+    def who(n):
+        b = n["benchmark"]
+        s = f'<b>{html_lib.escape(n["label"])}</b>'
+        if lab and b.get("stage"):
+            s += f' ({html_lib.escape(str(b["stage"]))[:80]})'
+        elif b.get("status") == "queued":
+            s += " (queued)"
+        return s
+    free = [n for n in ns if not n["benchmark"] and n["online"]]
+    if free:
+        links = []
+        for n in free:
+            name = html_lib.escape(n["label"]) + (" (this machine)" if n["self"] else "")
+            links.append(f'<a href="{html_lib.escape(n["url"])}" style="color:var(--accent)">{name}</a>'
+                         if n["url"] and not n["self"] else f'<b>{name}</b>')
+        tail = (" — new runs are paused there; " + ", ".join(links)
+                + (" is" if len(links) == 1 else " are") + " open for runs.")
+    else:
+        tail = (" — every OWL machine is benchmarking, so new runs are paused until one "
+                "finishes. Browsing stays open.")
+    return ('<div style="background:var(--accent-soft);border:1px solid '
+            'var(--border-3);border-radius:4px;padding:0.45rem 0.8rem;'
+            'margin:0.6rem 0;font-size:0.8rem;color:var(--text-2)">'
+            '⏱ Benchmark running on ' + " and ".join(who(n) for n in busy) + tail
+            + ' <a href="/benchmark" style="color:var(--text-3)">benchmarks →</a></div>')
+
+
 def _lab_session_banner(request: Request | None = None) -> str:
     """Site-wide strip while bin/lab-session-on holds the box: browsing stays
     open, non-Lab runs 503 at the enqueue chokepoint (queue_control). Shown to
@@ -644,7 +685,8 @@ def render_page(request: Request, title: str, body: str, *,
     page's inline JS depends on at call time (e.g. _PROGRESS_JS).
     `back=False` drops the ← Home link (the home page itself)."""
     header = (_auth_chip_html(request) + (_BACK if back else "")
-              + _nav_html(request) + _lab_session_banner(request))
+              + _nav_html(request) + _lab_session_banner(request)
+              + _benchmark_banner(request))
     return f"""<!DOCTYPE html>
 <html>
 <head>

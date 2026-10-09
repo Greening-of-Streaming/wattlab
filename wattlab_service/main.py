@@ -222,6 +222,14 @@ async def _capability_error_handler(request: Request, exc: CapabilityError):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
+@app.exception_handler(queue_control.BenchmarkBusy)
+async def _benchmark_busy_handler(request: Request, exc: queue_control.BenchmarkBusy):
+    """Non-Lab run submission while this node benchmarks (2026-10-10): a Lab
+    session scoped to one node — the message names a free node if any."""
+    import bench_cluster
+    return JSONResponse(status_code=503, content={"error": bench_cluster.busy_message(request)})
+
+
 @app.exception_handler(queue_control.LabSessionActive)
 async def _lab_session_handler(request: Request, exc: queue_control.LabSessionActive):
     """Non-Lab run submission during a lab session (bin/lab-session-on).
@@ -269,6 +277,8 @@ async def startup():
     if s.get("run_replication", True):
         import replication
         asyncio.create_task(replication.poller())
+        import bench_cluster                              # who is benchmarking (banner + 503)
+        asyncio.create_task(bench_cluster.poller())
     if s.get("run_rag_check", True):
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, rag_module.check_index)

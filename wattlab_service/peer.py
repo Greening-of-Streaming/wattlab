@@ -187,6 +187,16 @@ def online(host: dict) -> bool:
     return info(host) is not None
 
 
+UNKNOWN = object()        # cached() before the first answer (or attempt)
+
+
+def cached(host: dict):
+    """The last /peer/info answer WITHOUT fetching (None = offline, UNKNOWN =
+    never asked). For page renders and the enqueue chokepoint, which must not
+    wait on a peer; bench_cluster.poller keeps it fresh."""
+    return _INFO.get(host.get("id"), (0, UNKNOWN))[1]
+
+
 # --- caller-side job stub -------------------------------------------------------
 
 _MIRROR = ("status", "stage", "queue_position", "partial_response", "images_done",

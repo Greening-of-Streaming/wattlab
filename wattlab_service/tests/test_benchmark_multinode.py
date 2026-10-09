@@ -146,7 +146,7 @@ def test_parallel_launch_shares_a_group_and_skips_offline_peer(no_queue, monkeyp
     assert r.status_code == 200 and d["group_id"]
     assert [x["host"] for x in d["runs"]][1:] == ["GoS2"]
     assert d["skipped"] == [{"host": "GoS3", "reason": "offline"}]
-    (hid, path, payload), = sent
+    (hid, path, payload), = [c for c in sent if c[1] == "/peer/jobs"]
     assert path == "/peer/jobs" and payload["type"] == "benchmark"
     assert payload["params"]["group_id"] == d["group_id"] and "enabled" in payload["params"]["config"]
     local = benchmark.load_manifest(d["runs"][0]["job_id"])
@@ -211,3 +211,78 @@ def test_peer_without_benchmark_export_does_not_block_other_types(tmp_path, monk
     out = replication.pull_once("gos2", PEER_HOST)
     assert out["video"] == 0 and "benchmark_error" in out
     assert (tmp_path / "_replication" / "gos2.json").exists()
+
+
+# --- busy nodes (owner 2026-10-10) -------------------------------------------------
+
+ANON = {"x-real-ip": "8.8.8.8"}
+
+
+@pytest.fixture
+def bench_running(monkeypatch):
+    monkeypatch.setattr(queue_control, "benchmark_state",
+                        lambda: {"job_id": "b1", "status": "running", "stage": "step 2/9", "label": "x"})
+
+
+def _peer_state(monkeypatch, info):
+    monkeypatch.setattr(hosts, "all_remote", lambda: {"gos2": {**PEER_HOST, "public_url": "https://gos2.example/"}})
+    monkeypatch.setattr(peer, "cached", lambda h: info)
+
+
+def test_busy_node_refuses_visitor_runs_and_names_the_free_one(bench_running, monkeypatch):
+    _peer_state(monkeypatch, {"benchmark": None})
+    with pytest.raises(queue_control.BenchmarkBusy):
+        queue_control.enqueue("j1", "video", "v", None, request=_req(ANON))
+    import bench_cluster
+    msg = bench_cluster.busy_message(_req(LAB))
+    assert "running a benchmark" in msg and "GoS2 is free: http://10.0.0.9:8000/" in msg
+
+
+def test_all_nodes_busy_is_a_lab_session_everywhere(bench_running, monkeypatch):
+    _peer_state(monkeypatch, {"benchmark": {"job_id": "gos2-x", "status": "running"}})
+    import bench_cluster
+    assert "Every OWL machine" in bench_cluster.busy_message(None)
+    html = client.get("/benchmark", headers=LAB).text
+    assert "every OWL machine is benchmarking" in html
+
+
+def test_idle_node_stays_open_and_shows_the_peers_benchmark(monkeypatch):
+    _peer_state(monkeypatch, {"benchmark": {"job_id": "gos2-x", "status": "running", "stage": "step 1/4"}})
+    monkeypatch.setattr(queue_control, "benchmark_state", lambda: None)
+    html = client.get("/settings", headers=LAB).text
+    assert "Benchmark running on <b>GoS2</b>" in html and "open for runs" in html
+    assert 'class="bench-node" value="gos2"' in html and 'data-host="gos2"' in html   # cancel from here
+
+
+def test_lab_is_never_refused_by_a_benchmark(bench_running, monkeypatch):
+    monkeypatch.setattr(queue_control, "_jobs", {})
+    pos = queue_control.enqueue("jlab", "video", "v", None, request=None)
+    assert pos is not None
+    queue_control.cancel_pending("jlab")
+
+
+def test_peer_publishes_benchmark_state_and_cancels_it(bench_running, monkeypatch):
+    d = client.get("/peer/info", headers=_signed("GET", "/peer/info")).json()
+    assert d["benchmark"]["job_id"] == "b1"
+    import routes_benchmark, runtime
+    runtime.jobs["b9"] = {"type": "benchmark"}
+    monkeypatch.setattr(routes_benchmark, "cancel_local", lambda j: "cancelling")
+    r = client.post("/peer/jobs/b9/cancel", headers=_signed("POST", "/peer/jobs/b9/cancel"))
+    assert r.json() == {"cancelled": True, "state": "cancelling"}
+    runtime.jobs.pop("b9", None)
+
+
+def test_cancel_on_another_node_goes_through_the_peer_api(monkeypatch):
+    _peer_state(monkeypatch, None)
+    calls = []
+    monkeypatch.setattr(peer, "call", lambda h, m, p, payload=None, timeout=15:
+                        (calls.append(p), {"cancelled": True, "state": "cancelling"})[1])
+    r = client.post("/benchmark/cancel", headers=LAB, data={"job_id": "gos2-x", "host": "gos2"})
+    assert r.json() == {"ok": True, "state": "cancelling"} and calls == ["/peer/jobs/gos2-x/cancel"]
+
+
+def _req(headers):
+    from starlette.requests import Request
+    return Request({"type": "http", "method": "GET", "path": "/", "query_string": b"",
+                    "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+                    "client": (headers.get("x-real-ip", "127.0.0.1"), 1)})

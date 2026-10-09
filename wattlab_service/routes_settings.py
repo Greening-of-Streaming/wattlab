@@ -254,6 +254,39 @@ async def precalibration_data():
 
 # --- Settings ---
 
+def _bench_launcher_html(request: Request) -> str:
+    """Run on: one checkbox per OWL node, rendered server-side from the cached
+    cluster state (bench_cluster) — any of the combinations, from either
+    machine. Below it, what every node is benchmarking right now, each with
+    its own Cancel (routes_benchmark.running_now_html)."""
+    import html as _h
+    import bench_cluster
+    import routes_benchmark
+    boxes = []
+    for n in bench_cluster.nodes(request):
+        note = (" (this machine)" if n["self"] else "") + (
+            " — offline" if n["online"] is False else
+            " — busy: benchmark " + str(n["benchmark"].get("status")) if n["benchmark"] else "")
+        dis = " disabled" if n["online"] is False else ""
+        boxes.append(f'<label style="margin-right:1rem;white-space:nowrap;'
+                     f'{"color:var(--text-5)" if dis else ""}">'
+                     f'<input type="checkbox" class="bench-node" value="{_h.escape(n["id"])}"'
+                     f'{" checked" if n["self"] else ""}{dis}> {_h.escape(n["label"])}{_h.escape(note)}</label>')
+    return (
+        '<div id="bench-nodes" style="font-family:monospace;font-size:0.82rem;margin-top:0.6rem;color:var(--text-3)">'
+        'Run on: ' + "".join(boxes) +
+        '<div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem">Tick one machine or several. '
+        'Several = one run per machine, at the same time, same plan (this page&#39;s settings), each on '
+        'its own meters; an offline machine is skipped, never substituted. While a machine benchmarks, '
+        'it refuses new visitor runs and points them at a free machine.</div></div>'
+        '<button onclick="runBenchmark()" id="benchBtn" style="background:var(--border);color:var(--accent);'
+        'border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;'
+        'font-size:0.85rem;margin-top:0.75rem">&#9654; Run benchmark</button>'
+        '<div id="bench-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>'
+        '<div style="margin-top:0.6rem;font-family:monospace;font-size:0.78rem;color:var(--text-4)">Now:</div>'
+        + routes_benchmark.running_now_html(request, cancel=True))
+
+
 @router.get("/settings", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def settings_page(request: Request):
     s = cfg.load()
@@ -591,8 +624,7 @@ async def settings_page(request: Request):
       Which measures &amp; sources run is set by <code>bench_run_*</code> / <code>bench_sources</code> in settings.json.
     </div>
     {slider_field("bench_video_reps", s['bench_video_reps'], 1, 10, 1, "reps", "video all-codecs repeats per source")}
-    {'<div id="bench-nodes" style="font-family:monospace;font-size:0.8rem;margin-top:0.6rem;color:var(--text-3)">Run on: <span id="bench-nodes-list">this node</span><div style="color:var(--text-5);font-size:0.72rem">Several nodes = one run per node, in parallel, same plan (this page&#39;s settings), each on its own meters. Offline nodes are skipped, never substituted.</div></div>' if local else ''}
-    {'<button onclick="runBenchmark()" id="benchBtn" style="background:var(--border);color:var(--accent);border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">&#9654; Run overnight benchmark</button> <button onclick="cancelBenchmark()" id="benchCancelBtn" style="background:var(--border);color:var(--err);border:1px solid var(--err);padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">&#9632; Cancel</button><div id="bench-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>' if local else '<div style="color:var(--text-5);font-size:0.78rem;margin-top:0.5rem">Benchmark requires lab access.</div>'}
+    {_bench_launcher_html(request) if local else '<div style="color:var(--text-5);font-size:0.78rem;margin-top:0.5rem">Benchmark requires lab access.</div>'}
 
     {('''<details class="calib-details" id="testdataDetails">
       <summary>Test data cleanup (Lab)</summary>
@@ -761,7 +793,6 @@ async def settings_page(request: Request):
         }}
     }}
 
-    let _benchJobId = null;
     async function runBenchmark() {{
         const btn = document.getElementById('benchBtn');
         const msg = document.getElementById('bench-msg');
@@ -777,7 +808,6 @@ async def settings_page(request: Request):
                 body: JSON.stringify(targets.length ? {{targets}} : {{}})}});
             const data = await resp.json();
             if (data.runs && data.runs.length) {{
-                if (data.job_id) _benchJobId = data.job_id;
                 const runs = data.runs.map(r => r.host + ': ' + r.job_id + ' (queue position ' + r.queue_position + ')').join(' · ');
                 const skipped = (data.skipped || []).map(s => s.host + ' skipped — ' + s.reason).join(' · ');
                 msg.innerHTML = '<span style="color:var(--accent)">Benchmark queued — ' + runs + '. '
@@ -793,40 +823,19 @@ async def settings_page(request: Request):
             btn.disabled = false;
         }}
     }}
-    (async function loadBenchNodes() {{
-        const el = document.getElementById('bench-nodes-list');
-        if (!el) return;
-        try {{
-            const d = await (await fetch('/nodes.json')).json();
-            el.innerHTML = (d.nodes || []).map(n =>
-                '<label style="margin-right:0.9rem;' + (n.online ? '' : 'color:var(--text-5)') + '">'
-                + '<input type="checkbox" class="bench-node" value="' + n.id + '"'
-                + (n.self ? ' checked' : '') + (n.online ? '' : ' disabled') + '> '
-                + n.label + (n.self ? ' (this node)' : '') + (n.online ? '' : ' — offline') + '</label>').join('');
-        }} catch(e) {{}}
-    }})();
-    async function cancelBenchmark() {{
+    document.querySelectorAll('.bench-cancel').forEach(b => b.addEventListener('click', async () => {{
         const msg = document.getElementById('bench-msg');
-        let jid = _benchJobId;
-        if (!jid) {{
-            // page may have reloaded — fall back to the running job if it's a benchmark
-            try {{
-                const q = await (await fetch('/queue')).json();
-                if (q.running && q.running.type === 'benchmark') jid = q.running.job_id;
-            }} catch(e) {{}}
-        }}
-        if (!jid) {{ msg.innerHTML = '<span style="color:var(--text-4)">No benchmark to cancel.</span>'; return; }}
-        const form = new FormData(); form.append('job_id', jid);
+        const form = new FormData(); form.append('job_id', b.dataset.job); form.append('host', b.dataset.host);
+        b.disabled = true;
         try {{
-            const resp = await fetch('/benchmark/cancel', {{method: 'POST', body: form}});
-            const data = await resp.json();
-            msg.innerHTML = '<span style="color:var(--warn)">Cancel: ' + (data.state || JSON.stringify(data))
-                + ' — takes effect after the current step.</span>';
-            const b = document.getElementById('benchBtn'); if (b) b.disabled = false;
+            const data = await (await fetch('/benchmark/cancel', {{method: 'POST', body: form}})).json();
+            msg.innerHTML = '<span style="color:var(--warn)">Cancel ' + b.dataset.host + ': '
+                + (data.state || JSON.stringify(data)) + ' — a running benchmark stops after its current step.</span>';
         }} catch(e) {{
             msg.innerHTML = '<span style="color:var(--err)">Cancel failed: ' + e + '</span>';
+            b.disabled = false;
         }}
-    }}
+    }}));
 
     let precalChartInstance = null;
     async function loadPrecalibration(force) {{

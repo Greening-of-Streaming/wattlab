@@ -62,6 +62,7 @@ async def peer_info():
             "llm_models": list(llm.MODELS.keys()),
             "mlx_models": sorted((s.get("local_mlx_models") or {}).keys()),
             "queue_depth": queue_control.depth(),
+            "benchmark": queue_control.benchmark_state(),
             "rig": bool(s.get("run_rig_poller", True)),
             "version": version.version_dict()}
 
@@ -157,6 +158,10 @@ async def peer_status(job_id: str):
 
 @router.post("/peer/jobs/{job_id}/cancel", dependencies=_DEPS)
 async def peer_cancel(job_id: str):
+    if (jobs.get(job_id) or {}).get("type") == "benchmark":
+        import routes_benchmark
+        st = routes_benchmark.cancel_local(job_id)
+        return {"cancelled": st != "not_found", "state": st}
     return {"cancelled": bool(queue_control.cancel_pending(job_id))}
 
 
@@ -315,15 +320,25 @@ def _arrived_on_public_name(request: Request) -> bool:
         return True
 
 
+def node_link(request: Request, h: dict):
+    """(url, locked) for a peer node as this visitor may see it: keep visitors
+    on the kind of address they arrived on (owner 2026-10-07: a Lab visitor
+    who came in by the public name was sent to raw LAN addresses) — public
+    name, or the member gateway → the peer's public_url; LAN/IP → its url.
+    public_tier "member": visitors below it see the node locked, no address."""
+    lan = can(audience.tier(request), NODE_LAN_LINKS)
+    if lan and not _arrived_on_public_name(request):
+        url = h.get("url")
+    else:
+        url = h.get("public_url") or (h.get("url") if lan else None)
+    locked = (not lan and h.get("public_tier") == "member"
+              and not can(audience.tier(request), NODE_GATEWAY_VIEW))
+    return (url.rstrip("/") + "/" if url else None), locked
+
+
 @router.get("/nodes.json", dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def nodes_json(request: Request):
     import asyncio
-    import audience
-    lan = can(audience.tier(request), NODE_LAN_LINKS)
-    # Keep visitors on the kind of address they arrived on (owner 2026-10-07: a Lab
-    # visitor who came in by the public name was sent to raw LAN addresses):
-    # public name, or the member gateway → prefer peers' public_url; LAN/IP → url.
-    public_ctx = _arrived_on_public_name(request)
     me = hosts.local_host()
     out = [{"id": me["id"], "label": me.get("label", me["id"]), "chip": me.get("chip", ""),
             "self": True, "online": True, "url": None}]
@@ -331,18 +346,12 @@ async def nodes_json(request: Request):
     for hid, h in hosts.remote_hosts().items():
         if hosts.driver(h) != "peer":
             continue
-        if lan and not public_ctx:
-            url = h.get("url")
-        else:
-            url = h.get("public_url") or (h.get("url") if lan else None)
+        url, locked = node_link(request, h)
         if not url:
             continue
-        # public_tier "member" (owner 2026-10-07): visitors below it see the
-        # machine greyed and locked, never its address.
-        locked = (not lan and h.get("public_tier") == "member"
-                  and not can(audience.tier(request), NODE_GATEWAY_VIEW))
         inf = await loop.run_in_executor(None, lambda h=h, hid=hid: peer.info({**h, "id": hid}))
         out.append({"id": hid, "label": h.get("label", hid), "chip": h.get("chip", ""),
                     "self": False, "online": inf is not None, "locked": locked,
-                    "url": None if locked else url.rstrip("/") + "/"})
+                    "url": None if locked else url,
+                    "benchmark": (inf or {}).get("benchmark")})
     return {"nodes": out}

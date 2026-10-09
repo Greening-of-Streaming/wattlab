@@ -35,6 +35,26 @@ class LabSessionActive(Exception):
     503 with the public wording (mirrors the maintenance page's copy)."""
 
 
+class BenchmarkBusy(LabSessionActive):
+    """Non-Lab enqueue refused while THIS node runs or has queued a benchmark
+    (owner 2026-10-10) — a Lab session scoped to one node; main.py's 503 names
+    a free node (bench_cluster.busy_message)."""
+
+
+def benchmark_state() -> Optional[dict]:
+    """The benchmark this node is running, else the first one queued, else None.
+    Published in /peer/info so every node knows."""
+    if current_job_id and _jobs and (_jobs.get(current_job_id) or {}).get("type") == "benchmark":
+        j = _jobs[current_job_id]
+        return {"job_id": current_job_id, "status": "running",
+                "stage": j.get("stage"), "label": j.get("label")}
+    for e in pending_queue:
+        if e["type"] == "benchmark":
+            return {"job_id": e["job_id"], "status": "queued", "stage": "queued",
+                    "label": e["label"]}
+    return None
+
+
 def lab_session_active() -> bool:
     return LAB_SESSION_FLAG.exists()
 
@@ -208,6 +228,8 @@ def enqueue(job_id: str, job_type: str, label: str, coro_fn,
     vk = visitor_key(request)
     if vk is not None and lab_session_active():
         raise LabSessionActive()
+    if vk is not None and benchmark_state() is not None:
+        raise BenchmarkBusy()
     cap = _visitor_cap(vk)
     if cap is not None and _visitor_in_flight(vk) >= cap:
         return None
