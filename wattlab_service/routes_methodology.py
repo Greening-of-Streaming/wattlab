@@ -352,7 +352,7 @@ _METHODOLOGY_HTML = """<!DOCTYPE html>
 {AUTH_CHIP_STYLES}
 </style>
 <script src="{CHARTJS_URL}"></script>
-<script src="/static/wl-charts.js"></script>
+<script src="{CHARTS_JS_SRC}"></script>
 </head>
 <body>
 {AUTH_CHIP}
@@ -834,4 +834,5 @@ async def methodology_page(request: Request):
             .replace("{GITHUB_ISSUES_URL}",   GITHUB_ISSUES_URL)
             .replace("{ECO2MIX_URL}",         ECO2MIX_URL)
             .replace("{EMBER_URL}",           EMBER_URL)
-            .replace("{CHARTJS_URL}",         CHARTJS_URL))
+            .replace("{CHARTJS_URL}",         CHARTJS_URL)
+            .replace("{CHARTS_JS_SRC}",       ui.CHARTS_JS_SRC))

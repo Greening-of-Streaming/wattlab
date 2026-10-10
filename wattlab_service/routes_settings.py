@@ -441,7 +441,7 @@ async def settings_page(request: Request):
     subtitle = f'OWL · {_me} · Lab mode' if local else f'OWL · {_me} · Read-only'
 
     chart_js = ('<script src="' + CHARTJS_URL + '"></script>'
-                '<script src="/static/wl-charts.js"></script>'
+                '<script src="' + ui.CHARTS_JS_SRC + '"></script>'
                 if local else '')
     return ui.render_page(request, "Settings", head=f"    {chart_js}\n", styles=f"""
         * {{ box-sizing:border-box; margin:0; padding:0; }}
@@ -591,7 +591,7 @@ async def settings_page(request: Request):
       <em>legacy</em> fallback for results saved without raw samples. Queue is blocked for the duration.
     </div>
     {slider_field("variance_runs",      s['variance_runs'],      0,  100, 2,  "runs",    "number of H264-CPU + H265-GPU run pairs · steps of 2 (a pair needs ≥2) · 0 disables calibration here and in the benchmark", label="Variance Runs (0 to skip)")}
-    {slider_field("variance_cooldown_s",s['variance_cooldown_s'],10, 300, 10, "s",       "cooldown between each run pair")}
+    {slider_field("variance_cooldown_s",s['variance_cooldown_s'],10, 300, 5,  "s",       "cooldown between each run pair")}
     <div style="padding:0.5rem 0;border-bottom:1px solid var(--panel-2)">
       <label style="color:var(--text-2);font-size:0.85rem">H.264 CPU command (derived)</label>
       <div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem;margin-bottom:0.3rem">Mirrors the <code>/video</code> H.264 CPU preset · bitrate from <code>h264_bitrate_kbps</code> · {{input}}/{{output}} substituted at runtime</div>

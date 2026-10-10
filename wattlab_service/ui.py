@@ -308,6 +308,10 @@ _WL_ASSET_V = version.version_dict().get("sha") or "dev"
 
 _UI_CFG_TAG = '<script src="/ui-config.js"></script>'
 
+# Shared chart helper — versioned like the other wl-*.js bundles, or a browser
+# keeps an old copy after a deploy (2026-10-10: GoS2 drew the probe chart flat).
+CHARTS_JS_SRC = f"/static/wl-charts.js?v={_WL_ASSET_V}"
+
 
 # Shared live-telemetry poller (static/wl-live.js): one /live fetch every 3s
 # updates every element carrying a data-live="<key>" attribute; formatters

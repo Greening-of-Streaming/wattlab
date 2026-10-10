@@ -1183,7 +1183,7 @@ async def llm_compare_page(request: Request):
     size_order_js = _json.dumps([m["params"] for m in MODELS.values()])
 
     return _bake_durations(ui.render_page(request, "LLM · Compare across models", head=f"""    <script src="{CHARTJS_URL}"></script>
-    <script src="/static/wl-charts.js"></script>
+    <script src="{ui.CHARTS_JS_SRC}"></script>
 """, styles=f"""
         *{{box-sizing:border-box;margin:0;padding:0}}
         body{{font-family:monospace;background:var(--bg);color:var(--text);
