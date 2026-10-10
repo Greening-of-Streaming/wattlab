@@ -146,6 +146,20 @@ def test_panel_renders_from_registry_for_lab(registry):
     assert "CPU (software) vs Apple media engine" in html
 
 
+def test_pair_box_greys_remote_buttons_this_machine_cannot_mirror(registry, monkeypatch):
+    """Owner 2026-10-10: AV1 CPU-vs-GPU from GoS2 with "at the same time" ticked
+    ran on GoS1 alone — GoS2 refused av1_both (no AV1 encoder) and the page said
+    nothing. The page now knows which local twins are refused and greys those
+    remote buttons while the box is ticked; runRemote never submits one."""
+    monkeypatch.setattr(routes_video.gpu, "supports", lambda c: c != "av1")
+    html = client.get("/video", headers=_LAB).text
+    off = json.loads(html.split("const LOCAL_OFF = ", 1)[1].split(";\n", 1)[0])
+    assert set(off) == {"av1_gpu", "av1_both"} and "AV1" in off["av1_both"]
+    assert 'data-host="gos2" data-codec="h264" data-engine="both"' in html
+    assert "function pairToggle(box)" in html
+    assert "also.checked && !LOCAL_OFF[localPreset(codec, engine)]" in html
+
+
 def test_panel_visible_but_locked_for_anonymous(registry):
     """Owner 2026-10-07: every tier sees the Other-machines panel; only Lab can
     use it. Locked = dimmed, every button disabled, a plain Lab-only badge

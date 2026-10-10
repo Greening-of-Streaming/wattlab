@@ -9,6 +9,7 @@ way. Phase 3 per-feature route module — shared state from runtime.py,
 chrome from ui.py, never import main.
 """
 import hosts as _hosts
+import json
 import uuid
 from pathlib import Path
 
@@ -191,10 +192,11 @@ def _remote_hosts_panel_html(request: Request) -> str:
             btns = []
             for eid, lbl, kind, codecs in offered:
                 if codec in codecs:
-                    btns.append(f'<button class="remote-btn"{dis} onclick="runRemote(\'{hid}\',\'{codec}\',\'{eid}\')">{lbl}</button>')
+                    btns.append(f'<button class="remote-btn"{dis} data-host="{hid}" data-codec="{codec}" data-engine="{eid}" onclick="runRemote(\'{hid}\',\'{codec}\',\'{eid}\')">{lbl}</button>')
             pair = hosts.pair_engines({**h, "id": hid}, codec)
             if pair:
-                btns.append(f'<button class="remote-btn remote-pair"{dis} onclick="runRemote(\'{hid}\',\'{codec}\',\'both\')">'
+                btns.append(f'<button class="remote-btn remote-pair"{dis} data-host="{hid}" data-codec="{codec}" data-engine="both" '
+                            f'onclick="runRemote(\'{hid}\',\'{codec}\',\'both\')">'
                             f'{labels[pair[0]]} vs {labels[pair[1]]}</button>')
             if btns:
                 rows.append(f'<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-top:0.45rem">'
@@ -529,6 +531,9 @@ async def video_page(request: Request):
     // CAN_BATCH_COMPARE mirrors the BATCH_COMPARE gate for all_codecs.
     const CAN_CUSTOM_CMD = {'true' if can_custom_cmd else 'false'};
     const CAN_BATCH_COMPARE = {'true' if can_batch_compare else 'false'};
+    // CR-085: presets THIS machine refuses (no hardware encoder for the codec) —
+    // the "at the same time" box greys the remote buttons whose local twin is one.
+    const LOCAL_OFF = {json.dumps({k: _preset_unavailable(k) for k in _GPU_PRESET_CODEC if _preset_unavailable(k)})};
     // IS_LAN kept as an alias so _cmdBox() reads naturally — same
     // editable-textarea-vs-readonly-div decision, just resolved against
     // the right capability now.
@@ -716,6 +721,32 @@ async def video_page(request: Request):
         }}
     }}
 
+    // CR-085: the local twin of a remote (codec, engine) button, as a /video preset key
+    function localPreset(codec, engine) {{
+        const eng = {{hw: 'gpu', hw_vbr: 'gpu'}}[engine] || engine;
+        const P = {{both: {{h264: 'both', h265: 'h265_both', av1: 'av1_both'}},
+                   cpu: {{h264: 'cpu', h265: 'h265_cpu', av1: 'av1_cpu'}},
+                   gpu: {{h264: 'gpu', h265: 'h265_gpu', av1: 'av1_gpu'}}}};
+        return (P[eng] || {{}})[codec];
+    }}
+    // Ticking "at the same time" greys the remote buttons this machine can't
+    // mirror (owner 2026-10-10: AV1 CPU-vs-GPU from GoS2 ran on GoS1 alone,
+    // the local half refused with no word on the page).
+    function pairToggle(box) {{
+        const host = box.id.slice('also-local-'.length);
+        document.querySelectorAll('.remote-btn[data-host="' + host + '"]').forEach(b => {{
+            const why = LOCAL_OFF[localPreset(b.dataset.codec, b.dataset.engine)];
+            const off = box.checked && !!why;
+            b.disabled = off;
+            b.style.opacity = off ? '0.4' : '';
+            b.title = off ? why + ' — untick "at the same time" to run it on the other machine alone' : '';
+        }});
+    }}
+    document.querySelectorAll('input[id^="also-local-"]').forEach(box => {{
+        box.addEventListener('change', () => pairToggle(box));
+        pairToggle(box);
+    }});
+
     async function runRemote(host, codec, engine) {{
         const status = document.getElementById('status');
         if (selectedSource === 'upload') {{ alert('Other machines run the preloaded sources — pick one under Source.'); return; }}
@@ -730,13 +761,9 @@ async def video_page(request: Request):
             const runs = [owlRunOf(host, data.job_id)];
             // CR-085: same source + codec + engine on this machine, at the same time
             const also = document.getElementById('also-local-' + host);
-            if (also && also.checked) {{
-                const eng = {{hw: 'gpu', hw_vbr: 'gpu'}}[engine] || engine;
-                const P = {{both: {{h264: 'both', h265: 'h265_both', av1: 'av1_both'}},
-                           cpu: {{h264: 'cpu', h265: 'h265_cpu', av1: 'av1_cpu'}},
-                           gpu: {{h264: 'gpu', h265: 'h265_gpu', av1: 'av1_gpu'}}}};
+            if (also && also.checked && !LOCAL_OFF[localPreset(codec, engine)]) {{
                 const f2 = new FormData();
-                f2.append('source_key', selectedSource); f2.append('preset', P[eng][codec]);
+                f2.append('source_key', selectedSource); f2.append('preset', localPreset(codec, engine));
                 f2.append('compute_vmaf', document.getElementById('vmafToggle').checked ? 'true' : 'false');
                 const d2 = await (await fetch('/video/use-source', {{method: 'POST', body: f2}})).json().catch(() => ({{}}));
                 if (d2.job_id) runs.push(owlRunLocal(d2.job_id));
