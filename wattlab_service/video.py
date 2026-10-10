@@ -1321,6 +1321,13 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
             import platform
             all_idle = [w for window in idle_windows for w in window]
             w_base_mean = sum(all_idle) / len(all_idle) if all_idle else None
+            # The calibration reads its idle windows directly (not through
+            # power.sample_baseline), so it never set the rolling idle floor:
+            # a benchmark's first step after calibration found no reference,
+            # skipped its pre-step idle wait and took its first baseline hot
+            # (2026-10-10: GoS1 H.264 CPU baseline 105 W vs a 78 W floor).
+            if w_base_mean is not None:
+                power.LAST_W_BASE = w_base_mean
             persist.append_history_line("variance", {
                 "variance_pct":            round(mean_cv, 4),
                 "variance_idle_pct":       round(idle_cv, 4) if idle_cv is not None else None,
