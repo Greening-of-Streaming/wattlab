@@ -59,7 +59,8 @@
 ## GoS2 (second OWL node, CR-085)
 - Mac mini M6 at `192.168.1.29`; own OWL (`owl-svc` LaunchDaemon → loopback ssh → uvicorn — macOS Local Network
   privacy blocks launchd-started LAN access); restart from GoS1 `bin/gos2-owl-restart`; deploy
-  `git push gos2 main:deploy` + `git merge --ff-only deploy` on GoS2. Meters: inner lab-G3 `.11`, outer lab-G2 `.22`.
+  `git push gos2 main:deploy` (needs `GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_gos2 -o IdentitiesOnly=yes"` — the
+  remote names no key, the default one is refused) + `git merge --ff-only deploy` on GoS2. Meters: inner lab-G3 `.11`, outer lab-G2 `.22`.
 - Nodes talk only through the signed peer API (`peer.py`); a peer's `url` in `compute_hosts` is the one networking
   setting. SSH driver = documented fallback (`hosts.py`). Decode rig: GoS1 is the only owner; GoS2's /decode
   forwards to it. Members reach GoS2 via GoS1's gateway `https://gos2.wattlab.greeningofstreaming.org` (Wix A record → GoS1; members' main-site sign-in carries over; anonymous get a greyed box, never reach GoS2).
