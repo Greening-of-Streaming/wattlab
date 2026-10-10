@@ -1155,6 +1155,7 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
     gpu_failed = 0
     failure_stderr: list[str] = []    # tail of stderr from each failed encode
 
+    cancelled = False
     LOCK_FILE.write_text(job_id)
     try:
         # Pre-calibration cooldown — let the system settle before the first
@@ -1175,6 +1176,12 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
         )
 
         for i in range(n_runs):
+            # Cooperative cancel (/queue/cancel-current): stops between
+            # encodes, so lock + focus are released in order and no encoder
+            # is orphaned. A cancelled calibration never updates settings.
+            if jobs and jobs.get(job_id, {}).get("cancel_requested"):
+                cancelled = True
+                break
             run_label = f"{i + 1}/{n_runs}"
 
             def _stage(s):
@@ -1211,6 +1218,10 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
             elif not cpu_result.get("success"):
                 cpu_failed += 1
                 failure_stderr.append(f"run {run_label} cpu: {cpu_result.get('stderr','')[-200:]}")
+
+            if jobs and jobs.get(job_id, {}).get("cancel_requested"):
+                cancelled = True
+                break
 
             # --- Cooldown between CPU and GPU (fixed protocol; respect_toggle=False) ---
             await cooldown_between_runs(
@@ -1296,7 +1307,10 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
         "abort_reason":            None,
     }
 
-    if too_many_failed:
+    if cancelled:
+        result["cancelled"] = True
+        result["abort_reason"] = "cancelled by the operator; settings not updated"
+    elif too_many_failed:
         result["abort_reason"] = (
             f"≥50% encode failures (cpu {cpu_failed}/{n_runs}, "
             f"gpu {gpu_failed}/{n_runs}); refusing to update settings. "

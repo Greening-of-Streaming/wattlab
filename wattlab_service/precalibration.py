@@ -264,6 +264,10 @@ async def run_thermal_recovery_probe(job_id: str, jobs: dict) -> dict:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     raw_path = _DIAG_DIR / f"recovery_{ts}.csv"
     summary_path = _DIAG_DIR / f"recovery_{ts}_summary.csv"
+    # Written under a .partial name and renamed only when the sweep completes:
+    # a cancelled or killed probe must never become the chart's "latest" run.
+    partial_path = summary_path.with_name(summary_path.name + ".partial")
+    cancelled = False
 
     stopped = focus_mode_enter()
     LOCK_FILE.write_text(job_id)
@@ -271,12 +275,15 @@ async def run_thermal_recovery_probe(job_id: str, jobs: dict) -> dict:
     t_start = time.time()
     try:
         with raw_path.open("w", newline="") as raw_f, \
-             summary_path.open("w", newline="") as sum_f:
+             partial_path.open("w", newline="") as sum_f:
             raw_writer = csv.DictWriter(raw_f, fieldnames=_RAW_FIELDS)
             summary_writer = csv.DictWriter(sum_f, fieldnames=_SUMMARY_FIELDS)
             raw_writer.writeheader()
             summary_writer.writeheader()
             for i, d in enumerate(distances, 1):
+                if jobs and jobs.get(job_id, {}).get("cancel_requested"):
+                    cancelled = True
+                    break
                 run_idx = f"{i:02d}_d{d:03d}"
                 prefix = f"distance {d}s ({i}/{len(distances)})"
                 if jobs and job_id in jobs:
@@ -293,6 +300,11 @@ async def run_thermal_recovery_probe(job_id: str, jobs: dict) -> dict:
     finally:
         focus_mode_exit(stopped)
         LOCK_FILE.unlink(missing_ok=True)
+    if cancelled:
+        partial_path.unlink(missing_ok=True)
+        return {"cancelled": True, "pairs_ok": n_ok, "pairs_failed": n_fail,
+                "raw_csv": str(raw_path)}
+    partial_path.rename(summary_path)
 
     elapsed_min = round((time.time() - t_start) / 60, 1)
     result = {

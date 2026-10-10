@@ -215,3 +215,31 @@ def test_precalibration_data_reports_pooled_sources(tmp_path, monkeypatch):
     d = TestClient(main.app).get("/precalibration/data", headers=_LAB).json()
     assert d["available"] and len(d["sources"]) == 2
     assert d["recovery"]["encodes_per_point"] == 2
+
+
+# --- cooperative cancel (2026-10-10) ----------------------------------------
+
+@pytest.mark.parametrize("jtype", ["variance", "precalibration"])
+def test_cancel_current_flags_calibration_jobs(monkeypatch, jtype):
+    from runtime import jobs
+    monkeypatch.setattr(queue_control, "current_job_id", "cal1")
+    jobs["cal1"] = {"type": jtype}
+    try:
+        r = TestClient(main.app).post("/queue/cancel-current", headers=_LAB)
+        assert r.status_code == 200 and r.json()["method"] == "cooperative"
+        assert jobs["cal1"]["cancel_requested"] is True
+    finally:
+        jobs.pop("cal1", None)
+
+
+def test_cancelled_probe_leaves_no_summary(tmp_path, monkeypatch):
+    """A cancelled probe must not become the chart's latest run."""
+    monkeypatch.setattr(precalibration, "_DIAG_DIR", tmp_path)
+    monkeypatch.setattr(precalibration, "LOCK_FILE", tmp_path / "lock")
+    monkeypatch.setattr(precalibration, "focus_mode_enter", lambda: [])
+    monkeypatch.setattr(precalibration, "focus_mode_exit", lambda s: None)
+    jobs = {"p1": {"cancel_requested": True}}
+    r = asyncio.run(precalibration.run_thermal_recovery_probe("p1", jobs))
+    assert r["cancelled"] is True
+    assert not list(tmp_path.glob("*_summary.csv*"))
+    assert not (tmp_path / "lock").exists()

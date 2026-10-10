@@ -556,6 +556,12 @@ async def queue_cancel_current():
         j["cancel_requested"] = True
         return {"ok": True, "job_id": jid, "method": "cooperative",
                 "note": "stops after the current step"}
+    if jtype in ("variance", "precalibration"):
+        # Both check the flag between encodes and release lock + focus
+        # themselves; a cancelled calibration leaves settings untouched.
+        j["cancel_requested"] = True
+        return {"ok": True, "job_id": jid, "method": "cooperative",
+                "note": "stops after the current encode"}
     return JSONResponse(
         {"ok": False, "error": f"'{jtype}' runs can't be cancelled mid-run — "
          "they're bounded by their own timeouts. (Killing the coroutine would "
@@ -843,6 +849,7 @@ async function load() {
             // cooperative (after current step); others are refused server-side
             // with the reason, surfaced verbatim below.
             const note = q.running.type === 'benchmark' ? 'takes effect after the current step'
+                       : (q.running.type === 'variance' || q.running.type === 'precalibration') ? 'takes effect after the current encode — settings stay as they were'
                        : q.running.type === 'enhance' ? 'kills the partner container; run lands as cancelled'
                        : 'this workload may not be cancellable — the server will say';
             runHtml += '<button onclick="cancelCurrent()" ' +
