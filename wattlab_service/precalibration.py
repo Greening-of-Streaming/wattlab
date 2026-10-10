@@ -116,13 +116,73 @@ def recovery_summary(points: list) -> dict | None:
                 break
             at = p["distance_s"]
         rec[wl] = at
-    per_dist = {}
-    for p in points:
-        per_dist[(p["distance_s"], p["workload"])] = per_dist.get((p["distance_s"], p["workload"]), 0) + 1
     return {"floor_w": round(floor, 3), "floor_sd_w": round(sd, 3),
             "tolerance_w": round(tol, 3), "tolerance_pct": round(100 * tol / floor, 1),
             "settled_from_s": SETTLED_FROM_S, "recovery_s": rec,
-            "encodes_per_point": max(per_dist.values())}
+            "encodes_per_point": max(p.get("n_runs", 1) for p in points)}
+
+
+SERIES_WINDOW_DAYS = 14  # probes this close to the latest one are pooled with it
+
+
+def read_summary(path) -> list:
+    """One probe's summary CSV → [{distance_s, workload, encode_s, n_polls,
+    mean_w, std_w, cv_pct, min_w, max_w}]."""
+    out = []
+    with Path(path).open() as f:
+        for row in csv.DictReader(f):
+            out.append({"distance_s": int(row["distance_s"]), "workload": row["workload"],
+                        "encode_s": float(row["encode_s"]), "n_polls": int(row["n_polls"]),
+                        **{k: float(row[k]) for k in ("mean_w", "std_w", "cv_pct", "min_w", "max_w")}})
+    return out
+
+
+def _stamp(path) -> datetime:
+    # recovery_YYYYMMDD_HHMMSS_summary.csv
+    return datetime.strptime("_".join(Path(path).stem.split("_")[1:3]), "%Y%m%d_%H%M%S")
+
+
+def probe_series(diag_dir) -> list:
+    """[(path, points)] — the latest probe plus every earlier one that repeats
+    it: same distances, workloads and poll count, run within
+    SERIES_WINDOW_DAYS of it. A re-run from /settings therefore ADDS to the
+    curve; a probe from another era (other GPU, other room, other settings)
+    never mixes in. Oldest first."""
+    files = sorted(Path(diag_dir).glob("recovery_*_summary.csv"))
+    if not files:
+        return []
+    shape = lambda pts: (sorted((p["distance_s"], p["workload"]) for p in pts),
+                         sorted({p["n_polls"] for p in pts}))
+    latest = files[-1]
+    lp = read_summary(latest)
+    series = [(latest, lp)]
+    for f in reversed(files[:-1]):
+        try:
+            if (_stamp(latest) - _stamp(f)).days >= SERIES_WINDOW_DAYS:
+                break
+            pts = read_summary(f)
+        except (ValueError, KeyError, OSError):
+            continue
+        if shape(pts) == shape(lp):
+            series.append((f, pts))
+    return list(reversed(series))
+
+
+def pool(series: list) -> list:
+    """Per distance × workload across the runs of a series: mean_w = mean of
+    the run means, run_sd_w = their spread (None with one run), n_runs, and
+    run_means (each run's own point, for the chart's faint per-run lines)."""
+    by = {}
+    for _, pts in series:
+        for p in pts:
+            by.setdefault((p["distance_s"], p["workload"]), []).append(p)
+    out = []
+    for (d, wl), ps in sorted(by.items()):
+        means = [p["mean_w"] for p in ps]
+        out.append({**ps[-1], "mean_w": round(statistics.mean(means), 3),
+                    "run_sd_w": round(statistics.stdev(means), 3) if len(means) > 1 else None,
+                    "n_runs": len(means), "run_means": means})
+    return out
 
 
 async def _sample_idle(n_polls: int) -> list:

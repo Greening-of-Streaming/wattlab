@@ -105,7 +105,8 @@
         borderDash: ds.borderDash,  // e.g. [5,4] for marker / reference lines
         tension: ds.tension !== undefined ? ds.tension : 0.2,
         pointRadius: ds.pointRadius !== undefined ? ds.pointRadius : 3,
-        fill: ds.fill,  // e.g. '-1' to shade the band between this and the previous series
+        fill: ds.fill,
+        borderWidth: ds.borderWidth,  // e.g. '-1' to shade the band between this and the previous series
       };
     });
     const scales = baseScales(opts.xLabel, opts.yLabel);

@@ -169,3 +169,49 @@ def test_recovery_tolerance_never_tighter_than_two_percent():
 
 def test_recovery_none_without_settled_points():
     assert precalibration.recovery_summary(_pts([(0, "cpu", 90), (5, "cpu", 80)])) is None
+
+
+# --- re-runs add to the curve (2026-10-10) ----------------------------------
+
+def _write(dirp, stamp, rows, n_polls=5):
+    f = dirp / f"recovery_{stamp}_summary.csv"
+    lines = ["distance_s,workload,encode_s,n_polls,mean_w,std_w,cv_pct,min_w,max_w,sample_window_s"]
+    lines += [f"{d},{w},15.0,{n_polls},{m},0.1,1.0,{m},{m},5.2" for d, w, m in rows]
+    f.write_text("\n".join(lines) + "\n")
+    return f
+
+
+_ROWS = [(0, "cpu", 30.0), (5, "cpu", 1.9), (60, "cpu", 1.4), (0, "gpu", 25.0), (5, "gpu", 1.4), (60, "gpu", 1.35)]
+
+
+def test_probe_rerun_is_pooled_with_the_previous_run(tmp_path):
+    _write(tmp_path, "20261010_074153", _ROWS)
+    _write(tmp_path, "20261011_090000", [(d, w, m + 0.1) for d, w, m in _ROWS])
+    series = precalibration.probe_series(tmp_path)
+    assert [p.name for p, _ in series] == ["recovery_20261010_074153_summary.csv",
+                                           "recovery_20261011_090000_summary.csv"]
+    pooled = {(p["distance_s"], p["workload"]): p for p in precalibration.pool(series)}
+    p = pooled[(5, "cpu")]
+    assert p["n_runs"] == 2 and p["run_means"] == [1.9, 2.0]
+    assert p["mean_w"] == 1.95 and p["run_sd_w"] is not None
+    assert precalibration.recovery_summary(list(pooled.values()))["encodes_per_point"] == 2
+
+
+def test_probe_from_another_era_or_shape_is_not_pooled(tmp_path):
+    _write(tmp_path, "20260707_005223", _ROWS)                     # 3 months earlier
+    _write(tmp_path, "20261009_120000", _ROWS, n_polls=10)          # other poll count
+    _write(tmp_path, "20261009_130000", _ROWS[:3])                  # other distances
+    _write(tmp_path, "20261010_074153", _ROWS)
+    series = precalibration.probe_series(tmp_path)
+    assert [p.name for p, _ in series] == ["recovery_20261010_074153_summary.csv"]
+    assert all(p["n_runs"] == 1 and p["run_sd_w"] is None for p in precalibration.pool(series))
+
+
+def test_precalibration_data_reports_pooled_sources(tmp_path, monkeypatch):
+    import routes_settings
+    _write(tmp_path, "20261010_074153", _ROWS)
+    _write(tmp_path, "20261011_090000", _ROWS)
+    monkeypatch.setattr(routes_settings.paths, "repo", lambda *a: tmp_path)
+    d = TestClient(main.app).get("/precalibration/data", headers=_LAB).json()
+    assert d["available"] and len(d["sources"]) == 2
+    assert d["recovery"]["encodes_per_point"] == 2
