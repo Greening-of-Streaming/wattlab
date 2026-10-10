@@ -256,3 +256,11 @@ def test_probe_still_being_written_does_not_hide_the_curve(tmp_path):
     assert len(series) == 2
     r = precalibration.recovery_summary(precalibration.pool(series))
     assert r["encodes_per_point"] == 2 and set(r["recovery_runs_s"]) == {"cpu", "gpu"}
+
+
+def test_idle_blip_in_settled_zone_does_not_undo_recovery():
+    """2026-10-10: one +0.39 W idle reading at 120 s made a GoS2 GPU run read
+    'never recovered'. The settled zone defines the floor; it can't veto."""
+    pts = _pts([(0, "gpu", 25.0), (5, "gpu", 1.40), (35, "gpu", 1.38),
+                (60, "gpu", 1.37), (90, "gpu", 1.38), (120, "gpu", 1.40), (150, "gpu", 1.75)])
+    assert precalibration.recovery_summary(pts)["recovery_s"]["gpu"] == 5

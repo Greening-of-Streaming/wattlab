@@ -108,8 +108,11 @@ def recovery_summary(points: list) -> dict | None:
     sd = statistics.stdev(settled) if len(settled) > 1 else 0.0
     tol = max(TOL_SD_MULT * sd, floor * TOL_MIN_PCT / 100)
     def recovered_at(curve):
-        at = None
-        for d, w in reversed(curve):
+        # Points in the settled zone define the floor; a blip there is idle
+        # noise, not the encode still cooling, so it can't undo a recovery.
+        settled_ds = [d for d, _ in curve if d >= SETTLED_FROM_S]
+        at = min(settled_ds) if settled_ds else None
+        for d, w in reversed([c for c in curve if c[0] < SETTLED_FROM_S]):
             if abs(w - floor) > tol:
                 break
             at = d
