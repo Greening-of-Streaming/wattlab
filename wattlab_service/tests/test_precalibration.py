@@ -124,3 +124,48 @@ def test_settings_page_renders_rerun_probe_button():
     assert "Re-run probe" in body
     # ETA badge carries a server-computed estimate.
     assert "min" in body and "distances" in body
+
+
+# --- recovery read scaled to the node (2026-10-10) --------------------------
+
+def _pts(rows):
+    return [{"distance_s": d, "workload": w, "mean_w": m} for d, w, m in rows]
+
+
+# GoS2's 2026-10-10 probe (recovery_20261010_074153_summary.csv), floor ~1.37 W.
+_GOS2 = _pts([
+    (0, "cpu", 30.054), (2, "cpu", 4.052), (5, "cpu", 1.925), (8, "cpu", 1.823),
+    (12, "cpu", 1.789), (18, "cpu", 1.73), (25, "cpu", 1.569), (35, "cpu", 1.394),
+    (50, "cpu", 1.395), (70, "cpu", 1.373), (95, "cpu", 1.412), (120, "cpu", 1.408),
+    (0, "gpu", 26.559), (2, "gpu", 2.865), (5, "gpu", 1.437), (8, "gpu", 1.405),
+    (12, "gpu", 1.396), (18, "gpu", 1.452), (25, "gpu", 1.352), (35, "gpu", 1.469),
+    (50, "gpu", 1.357), (70, "gpu", 1.341), (95, "gpu", 1.332), (120, "gpu", 1.331),
+])
+
+
+def test_recovery_low_floor_node_sees_the_cpu_tail():
+    """The old fixed ±1 W rule called GoS2's CPU curve recovered at 5 s while it
+    sat +0.55 W (+40 %) above a 1.4 W floor; the scaled rule waits for 35 s."""
+    r = precalibration.recovery_summary(_GOS2)
+    assert 1.3 < r["floor_w"] < 1.45
+    assert r["tolerance_w"] < 0.2
+    assert r["recovery_s"] == {"cpu": 35, "gpu": 5}
+    assert r["encodes_per_point"] == 1
+
+
+def test_recovery_must_stay_within_tolerance():
+    """A point that dips inside the band and climbs out again doesn't count."""
+    pts = _pts([(0, "cpu", 100), (5, "cpu", 76.0), (10, "cpu", 80.0), (20, "cpu", 76.2),
+                (60, "cpu", 76.0), (90, "cpu", 76.1)])
+    assert precalibration.recovery_summary(pts)["recovery_s"]["cpu"] == 20
+
+
+def test_recovery_tolerance_never_tighter_than_two_percent():
+    pts = _pts([(0, "gpu", 90), (5, "gpu", 76.9), (60, "gpu", 76.0), (90, "gpu", 76.0)])
+    r = precalibration.recovery_summary(pts)
+    assert r["tolerance_w"] == round(76.0 * 0.02, 3)
+    assert r["recovery_s"]["gpu"] == 5
+
+
+def test_recovery_none_without_settled_points():
+    assert precalibration.recovery_summary(_pts([(0, "cpu", 90), (5, "cpu", 80)])) is None

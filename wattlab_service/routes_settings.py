@@ -220,6 +220,7 @@ async def precalibration_data():
     `_<timestamp>.csv` (raw per-poll readings) is referenced for download.
     """
     import csv as csv_mod
+    import precalibration
     diag_dir = paths.repo("results", "diagnostics")
     if not diag_dir.exists():
         return {"available": False, "reason": "no diagnostics directory"}
@@ -249,6 +250,7 @@ async def precalibration_data():
         "generated_at":   datetime.fromtimestamp(latest.stat().st_mtime)
                                   .isoformat(timespec="seconds"),
         "points": points,
+        "recovery": precalibration.recovery_summary(points),
     }
 
 
@@ -618,7 +620,7 @@ async def settings_page(request: Request):
       <summary>More calibration details</summary>
       <div class="panel">
         <div style="color:var(--text-4);font-size:0.72rem;line-height:1.6;margin-bottom:0.5rem">
-          Thermal-recovery probe (<code>bin/probe-thermal-recovery</code>, or the button below): for each distance d after a CPU and a GPU encode, samples N idle polls. Used to validate that <code>variance_cooldown_s</code> is long enough — the curve should flatten well below it.
+          Thermal-recovery probe (<code>bin/probe-thermal-recovery</code>, or the button below): for each distance d after a CPU and a GPU encode, samples N idle polls. Plotted as watts above this machine's own idle floor, so a small tail on a low-power node stays visible. Used to validate that <code>variance_cooldown_s</code> is long enough — both curves should be inside the grey tolerance band well before the orange cooldown line.
         </div>
         {precal_run_controls}
         <div id="precal-meta" style="color:var(--text-5);font-size:0.72rem;margin-bottom:0.5rem">Loading…</div>
@@ -871,39 +873,56 @@ async def settings_page(request: Request):
                     + '<code>bin/probe-thermal-recovery</code> from the shell).</span>';
                 return;
             }}
-            const cpu = data.points.filter(p => p.workload === 'cpu');
-            const gpu = data.points.filter(p => p.workload === 'gpu');
-            precalChartInstance = WlCharts.line({{
-                canvas: document.getElementById('precalChart'),
-                xLabel: 'distance from encode end (s)',
-                yLabel: 'mean idle watts (8-poll window)',
-                yUnit:  'W',
-                datasets: [
-                    {{ label: 'post-CPU encode', color: 'cpu',
-                       points: cpu.map(p => ({{x:p.distance_s, y:p.mean_w}})) }},
-                    {{ label: 'post-GPU encode', color: 'gpu',
-                       points: gpu.map(p => ({{x:p.distance_s, y:p.mean_w}})) }},
-                ]
-            }});
-            // Quick stats: idle reached, recommended cooldown (last point where mean delta to floor < 1W)
-            const meanW = arr => arr.reduce((s,p)=>s+p.mean_w,0)/arr.length;
-            const settled = data.points.filter(p => p.distance_s >= 60);
-            const floor = settled.length ? meanW(settled).toFixed(2) : 'n/a';
-            // Recovery threshold: first distance where mean within 1W of the settled floor
-            function recoveryAt(workload) {{
-                const pts = data.points.filter(p => p.workload === workload).sort((a,b)=>a.distance_s-b.distance_s);
-                const f = parseFloat(floor);
-                for (const p of pts) {{ if (Math.abs(p.mean_w - f) < 1.0) return p.distance_s; }}
-                return null;
-            }}
-            const cpuRec = recoveryAt('cpu'), gpuRec = recoveryAt('gpu');
+            // Plotted as watts ABOVE the node's own idle floor, zoomed on the
+            // tolerance band: on GoS2 (1.4 W floor) a 30 W end-of-encode spike
+            // otherwise squashes a +0.5 W (+40 %) tail into a flat line.
+            const rec = data.recovery;
             const fname = data.source_summary.split('/').pop();
             meta.innerHTML = 'source: <code>' + fname + '</code> · generated ' + data.generated_at;
+            if (!rec) {{
+                stats.innerHTML = 'No points at ≥ 60 s in this probe, so no idle floor to compare against.';
+                return;
+            }}
+            const floor = rec.floor_w, tol = rec.tolerance_w;
+            const above = wl => data.points.filter(p => p.workload === wl)
+                .sort((a,b) => a.distance_s - b.distance_s)
+                .map(p => ({{x: p.distance_s, y: p.mean_w - floor}}));
+            const xs = data.points.map(p => p.distance_s);
+            const xMin = Math.min(...xs), xMax = Math.max(...xs);
+            const cdEl = document.getElementById('variance_cooldown_s');
+            const cd = cdEl ? parseInt(cdEl.value) : null;
+            const yMax = 5 * tol, yMin = -2 * tol;
+            const datasets = [
+                {{ label: 'idle tolerance (±' + tol.toFixed(2) + ' W)', color: '#888888', borderDash: [4,4],
+                   pointRadius: 0, tension: 0, points: [{{x:xMin,y:-tol}},{{x:xMax,y:-tol}}] }},
+                {{ label: '_band', color: '#888888', borderDash: [4,4], pointRadius: 0, tension: 0, fill: '-1',
+                   points: [{{x:xMin,y:tol}},{{x:xMax,y:tol}}] }},
+                {{ label: 'after a CPU encode', color: 'cpu', points: above('cpu') }},
+                {{ label: 'after a GPU encode', color: 'gpu', points: above('gpu') }},
+            ];
+            if (cd !== null && !isNaN(cd)) datasets.push(
+                {{ label: 'variance cooldown (' + cd + ' s)', color: 'warn', borderDash: [6,3], pointRadius: 0,
+                   tension: 0, points: [{{x:cd,y:yMin}},{{x:cd,y:yMax}}] }});
+            precalChartInstance = WlCharts.line({{
+                canvas: document.getElementById('precalChart'),
+                xLabel: 'seconds after the encode ends',
+                yLabel: 'W above idle floor (' + floor.toFixed(2) + ' W)',
+                yUnit:  'W', yMin, yMax, datasets,
+            }});
+            precalChartInstance.options.plugins.legend.labels.filter = i => !i.text.startsWith('_');
+            precalChartInstance.update();
+            const off = data.points.filter(p => p.mean_w - floor > yMax)
+                .map(p => p.workload.toUpperCase() + ' ' + p.distance_s + ' s: +' + (p.mean_w - floor).toFixed(1) + ' W');
+            const recTxt = wl => rec.recovery_s[wl] !== null && rec.recovery_s[wl] !== undefined
+                ? '<strong>' + rec.recovery_s[wl] + ' s</strong>'
+                : '<strong style="color:var(--warn)">not within tolerance by the last point</strong>';
+            const polls = data.points.length ? data.points[0].n_polls : '?';
             stats.innerHTML =
-                '· settled idle (d ≥ 60s mean): <strong style="color:var(--accent)">' + floor + ' W</strong><br>' +
-                '· post-CPU recovery to ±1W of floor: <strong>' + (cpuRec !== null ? cpuRec + 's' : 'not within 1W') + '</strong><br>' +
-                '· post-GPU recovery to ±1W of floor: <strong>' + (gpuRec !== null ? gpuRec + 's' : 'not within 1W') + '</strong><br>' +
-                '· n distances: ' + (new Set(data.points.map(p=>p.distance_s))).size;
+                '· idle floor (mean of points ≥ ' + rec.settled_from_s + ' s): <strong style="color:var(--accent)">' + floor.toFixed(2) + ' W</strong> ± ' + rec.floor_sd_w.toFixed(2) + ' W<br>' +
+                '· tolerance: <strong>±' + tol.toFixed(2) + ' W</strong> (' + rec.tolerance_pct + ' % of the floor — 3 × the scatter of the settled points, never under 2 %)<br>' +
+                '· back within tolerance for good after a CPU encode: ' + recTxt('cpu') + ' · after a GPU encode: ' + recTxt('gpu') + '<br>' +
+                (off.length ? '· off the top of the chart: ' + off.join(' · ') + '<br>' : '') +
+                '· each point is one encode followed by ' + polls + ' idle polls (n = ' + rec.encodes_per_point + ' encode per point — no repeats, so no confidence interval on the recovery time)';
         }} catch(e) {{
             meta.innerHTML = '<span style="color:var(--err)">Failed to load probe data: ' + e + '</span>';
         }}

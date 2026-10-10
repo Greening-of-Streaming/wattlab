@@ -87,6 +87,44 @@ def estimated_minutes(distances, pre_cool_s, n_polls) -> int:
     return max(1, round(per_pair / 60))
 
 
+SETTLED_FROM_S = 60      # distances at/after this are the settled idle floor
+TOL_SD_MULT = 3          # tolerance: 3 × the floor's own scatter…
+TOL_MIN_PCT = 2.0        # …but never tighter than 2 % of the floor
+
+
+def recovery_summary(points: list) -> dict | None:
+    """Recovery read from the probe's summary points, scaled to the node.
+
+    A fixed "within 1 W" test (the chart's old rule) fits GoS1's 76 W floor and
+    says nothing on GoS2's 1.4 W one — there it called a +0.55 W (+40 %) tail
+    "recovered" at 5 s. The tolerance here comes from the floor itself:
+    max(3 × sd of the settled point means, 2 % of the floor). A workload has
+    recovered at the first distance from which every later point stays
+    within it. None when the probe has no settled points to define a floor."""
+    settled = [p["mean_w"] for p in points if p["distance_s"] >= SETTLED_FROM_S]
+    if not settled:
+        return None
+    floor = statistics.mean(settled)
+    sd = statistics.stdev(settled) if len(settled) > 1 else 0.0
+    tol = max(TOL_SD_MULT * sd, floor * TOL_MIN_PCT / 100)
+    rec = {}
+    for wl in sorted({p["workload"] for p in points}):
+        pts = sorted((p for p in points if p["workload"] == wl), key=lambda p: p["distance_s"])
+        at = None
+        for p in reversed(pts):
+            if abs(p["mean_w"] - floor) > tol:
+                break
+            at = p["distance_s"]
+        rec[wl] = at
+    per_dist = {}
+    for p in points:
+        per_dist[(p["distance_s"], p["workload"])] = per_dist.get((p["distance_s"], p["workload"]), 0) + 1
+    return {"floor_w": round(floor, 3), "floor_sd_w": round(sd, 3),
+            "tolerance_w": round(tol, 3), "tolerance_pct": round(100 * tol / floor, 1),
+            "settled_from_s": SETTLED_FROM_S, "recovery_s": rec,
+            "encodes_per_point": max(per_dist.values())}
+
+
 async def _sample_idle(n_polls: int) -> list:
     readings = []
     for _ in range(n_polls):

@@ -105,8 +105,14 @@
         borderDash: ds.borderDash,  // e.g. [5,4] for marker / reference lines
         tension: ds.tension !== undefined ? ds.tension : 0.2,
         pointRadius: ds.pointRadius !== undefined ? ds.pointRadius : 3,
+        fill: ds.fill,  // e.g. '-1' to shade the band between this and the previous series
       };
     });
+    const scales = baseScales(opts.xLabel, opts.yLabel);
+    // Optional fixed y range (e.g. to zoom on a small tail next to a big
+    // spike); points outside are clipped at the chart edge.
+    if (opts.yMin !== undefined) scales.y.min = opts.yMin;
+    if (opts.yMax !== undefined) scales.y.max = opts.yMax;
     return new Chart(ctx, {
       type: 'line',
       data: { datasets },
@@ -114,7 +120,7 @@
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: 'nearest', intersect: false },
-        scales: baseScales(opts.xLabel, opts.yLabel),
+        scales,
         plugins: basePlugins(opts.yUnit),
       },
     });
