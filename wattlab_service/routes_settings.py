@@ -894,29 +894,47 @@ async def settings_page(request: Request):
             if (cd !== null && !isNaN(cd)) datasets.push(
                 {{ label: '_cooldown', color: 'warn', borderDash: [6,3], pointRadius: 0, tension: 0, borderWidth: 1.5,
                    points: [{{x:cd,y:yMin}},{{x:cd,y:yMax}}] }});
-            for (const [wl, name, rgb] of [['cpu', 'after a CPU encode', '255,119,85'], ['gpu', 'after a GPU encode', '0,255,153']]) {{
-                if (nRuns > 1) for (let i = 0; i < nRuns; i++) datasets.push(
-                    {{ label: '_' + wl + ' run ' + (i+1), color: 'rgba(' + rgb + ',0.3)', pointRadius: 0, borderWidth: 1,
-                       points: pts(wl).filter(p => p.run_means && p.run_means.length > i)
-                                      .map(p => ({{x: p.distance_s, y: p.run_means[i] - floor}})) }});
-                datasets.push({{ label: name + (nRuns > 1 ? ' (mean of ' + nRuns + ' runs)' : ''), color: wl,
-                                 borderWidth: 2.5, pointRadius: 3,
+            const errs = {{}};
+            for (const [wl, name] of [['cpu', 'after a CPU encode'], ['gpu', 'after a GPU encode']]) {{
+                const label = name + (nRuns > 1 ? ' (mean of ' + nRuns + ' runs, ±1 sd)' : '');
+                errs[label] = pts(wl).map(p => p.run_sd_w || 0);
+                datasets.push({{ label, color: wl, borderWidth: 2.5, pointRadius: 3,
                                  points: pts(wl).map(p => ({{x: p.distance_s, y: p.mean_w - floor}})) }});
             }}
+            // Error bars: ±1 sd of the run means at each point, drawn as
+            // whiskers over the mean line (only when there are repeats).
+            const errorBars = {{ id: 'precalErrorBars', afterDatasetsDraw(chart) {{
+                const c = chart.ctx, y = chart.scales.y;
+                chart.data.datasets.forEach((ds, i) => {{
+                    const e = errs[ds.label];
+                    if (!e || chart.getDatasetMeta(i).hidden) return;
+                    c.save(); c.strokeStyle = ds.borderColor; c.lineWidth = 1.5;
+                    chart.getDatasetMeta(i).data.forEach((pt, j) => {{
+                        if (!e[j]) return;
+                        const v = ds.data[j].y, top = y.getPixelForValue(v + e[j]), bot = y.getPixelForValue(v - e[j]);
+                        c.beginPath(); c.moveTo(pt.x, top); c.lineTo(pt.x, bot);
+                        c.moveTo(pt.x - 4, top); c.lineTo(pt.x + 4, top);
+                        c.moveTo(pt.x - 4, bot); c.lineTo(pt.x + 4, bot); c.stroke();
+                    }});
+                    c.restore();
+                }});
+            }} }};
             precalChartInstance = WlCharts.line({{
                 canvas: document.getElementById('precalChart'),
                 xLabel: 'seconds after the encode ends',
                 yLabel: 'W above idle floor (' + floor.toFixed(2) + ' W)',
-                yUnit:  'W', yMin, yMax, datasets,
+                yUnit:  'W', yMin, yMax, datasets, plugins: [errorBars],
             }});
             precalChartInstance.options.plugins.legend.labels.filter = i => !i.text.startsWith('_');
             precalChartInstance.options.plugins.tooltip.filter = i => !i.dataset.label.startsWith('_');
             precalChartInstance.update();
             const off = data.points.filter(p => p.mean_w - floor > yMax)
                 .map(p => p.workload.toUpperCase() + ' ' + p.distance_s + ' s: +' + (p.mean_w - floor).toFixed(1) + ' W');
-            const recTxt = wl => rec.recovery_s[wl] !== null && rec.recovery_s[wl] !== undefined
+            const sec = v => v === null || v === undefined ? 'never' : v + ' s';
+            const recTxt = wl => (rec.recovery_s[wl] !== null && rec.recovery_s[wl] !== undefined
                 ? '<strong>' + rec.recovery_s[wl] + ' s</strong>'
-                : '<strong style="color:var(--warn)">not within tolerance by the last point</strong>';
+                : '<strong style="color:var(--warn)">not within tolerance by the last point</strong>')
+                + ((rec.recovery_runs_s || {{}})[wl] ? ' (each run: ' + rec.recovery_runs_s[wl].map(sec).join(', ') + ')' : '');
             const polls = data.points.length ? data.points[0].n_polls : '?';
             stats.innerHTML =
                 '· idle floor (mean of points ≥ ' + rec.settled_from_s + ' s): <strong style="color:var(--accent)">' + floor.toFixed(2) + ' W</strong> ± ' + rec.floor_sd_w.toFixed(2) + ' W<br>' +
@@ -925,7 +943,7 @@ async def settings_page(request: Request):
                 '· back within tolerance for good after a CPU encode: ' + recTxt('cpu') + ' · after a GPU encode: ' + recTxt('gpu') + '<br>' +
                 (off.length ? '· off the top of the chart: ' + off.join(' · ') + '<br>' : '') +
                 (nRuns > 1
-                    ? '· ' + nRuns + ' probe runs (repeats of the same probe within 14 days) — the bold line is their mean, the faint lines each run'
+                    ? '· ' + nRuns + ' probe runs (repeats of the same probe within 14 days) — each point is their mean, the whiskers ±1 sd across runs'
                     : '· each point is one encode followed by ' + polls + ' idle polls (n = 1 run — no repeats, so no confidence interval on the recovery time; re-running the probe adds a run)');
         }} catch(e) {{
             meta.innerHTML = '<span style="color:var(--err)">Failed to load probe data: ' + e + '</span>';

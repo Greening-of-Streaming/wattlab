@@ -117,6 +117,7 @@
     return new Chart(ctx, {
       type: 'line',
       data: { datasets },
+      plugins: opts.plugins || [],   // per-chart Chart.js plugins (e.g. error bars)
       options: {
         responsive: true,
         maintainAspectRatio: false,

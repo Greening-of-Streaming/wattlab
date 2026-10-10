@@ -107,19 +107,29 @@ def recovery_summary(points: list) -> dict | None:
     floor = statistics.mean(settled)
     sd = statistics.stdev(settled) if len(settled) > 1 else 0.0
     tol = max(TOL_SD_MULT * sd, floor * TOL_MIN_PCT / 100)
-    rec = {}
+    def recovered_at(curve):
+        at = None
+        for d, w in reversed(curve):
+            if abs(w - floor) > tol:
+                break
+            at = d
+        return at
+
+    n = max(p.get("n_runs", 1) for p in points)
+    rec, rec_runs = {}, {}
     for wl in sorted({p["workload"] for p in points}):
         pts = sorted((p for p in points if p["workload"] == wl), key=lambda p: p["distance_s"])
-        at = None
-        for p in reversed(pts):
-            if abs(p["mean_w"] - floor) > tol:
-                break
-            at = p["distance_s"]
-        rec[wl] = at
+        rec[wl] = recovered_at([(p["distance_s"], p["mean_w"]) for p in pts])
+        # Each run read against the same floor + band: the spread of these is
+        # how sure the pooled recovery time is.
+        if n > 1:
+            rec_runs[wl] = [recovered_at([(p["distance_s"], p["run_means"][i]) for p in pts
+                                          if len(p.get("run_means", [])) > i])
+                            for i in range(n)]
     return {"floor_w": round(floor, 3), "floor_sd_w": round(sd, 3),
             "tolerance_w": round(tol, 3), "tolerance_pct": round(100 * tol / floor, 1),
             "settled_from_s": SETTLED_FROM_S, "recovery_s": rec,
-            "encodes_per_point": max(p.get("n_runs", 1) for p in points)}
+            "recovery_runs_s": rec_runs, "encodes_per_point": n}
 
 
 SERIES_WINDOW_DAYS = 14  # probes this close to the latest one are pooled with it
@@ -148,30 +158,39 @@ def probe_series(diag_dir) -> list:
     SERIES_WINDOW_DAYS of it. A re-run from /settings therefore ADDS to the
     curve; a probe from another era (other GPU, other room, other settings)
     never mixes in. Oldest first."""
-    files = sorted(Path(diag_dir).glob("recovery_*_summary.csv"))
-    if not files:
-        return []
     shape = lambda pts: (sorted((p["distance_s"], p["workload"]) for p in pts),
                          sorted({p["n_polls"] for p in pts}))
-    latest = files[-1]
-    lp = read_summary(latest)
-    series = [(latest, lp)]
-    for f in reversed(files[:-1]):
+
+    def complete(pts):
+        # Both workloads at every distance, out to the settled zone. A probe
+        # still being written (pre-.partial code) or killed mid-sweep isn't.
+        keys = {(p["distance_s"], p["workload"]) for p in pts}
+        wls = {w for _, w in keys}
+        ds = {d for d, _ in keys}
+        return (len(wls) == 2 and keys == {(d, w) for d in ds for w in wls}
+                and max(ds, default=0) >= SETTLED_FROM_S)
+
+    runs = []
+    for f in sorted(Path(diag_dir).glob("recovery_*_summary.csv")):
         try:
-            if (_stamp(latest) - _stamp(f)).days >= SERIES_WINDOW_DAYS:
-                break
             pts = read_summary(f)
+            _stamp(f)
         except (ValueError, KeyError, OSError):
             continue
-        if shape(pts) == shape(lp):
-            series.append((f, pts))
-    return list(reversed(series))
+        if complete(pts):
+            runs.append((f, pts))
+    if not runs:
+        return []
+    latest, lp = runs[-1]
+    series = [(f, pts) for f, pts in runs
+              if (_stamp(latest) - _stamp(f)).days < SERIES_WINDOW_DAYS and shape(pts) == shape(lp)]
+    return series
 
 
 def pool(series: list) -> list:
     """Per distance × workload across the runs of a series: mean_w = mean of
     the run means, run_sd_w = their spread (None with one run), n_runs, and
-    run_means (each run's own point, for the chart's faint per-run lines)."""
+    run_means (each run's own point)."""
     by = {}
     for _, pts in series:
         for p in pts:

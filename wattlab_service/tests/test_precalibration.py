@@ -243,3 +243,16 @@ def test_cancelled_probe_leaves_no_summary(tmp_path, monkeypatch):
     assert r["cancelled"] is True
     assert not list(tmp_path.glob("*_summary.csv*"))
     assert not (tmp_path / "lock").exists()
+
+
+def test_probe_still_being_written_does_not_hide_the_curve(tmp_path):
+    """2026-10-10 GoS2: a probe mid-sweep (old code wrote its summary in place)
+    became the 'latest' run, matched no earlier run and had no settled points,
+    so the chart disappeared. Incomplete files are skipped."""
+    _write(tmp_path, "20261010_074153", _ROWS)
+    _write(tmp_path, "20261010_120000", _ROWS)
+    _write(tmp_path, "20261010_143224", [(0, "cpu", 30.0), (0, "gpu", 25.0), (5, "cpu", 1.9)])
+    series = precalibration.probe_series(tmp_path)
+    assert len(series) == 2
+    r = precalibration.recovery_summary(precalibration.pool(series))
+    assert r["encodes_per_point"] == 2 and set(r["recovery_runs_s"]) == {"cpu", "gpu"}
