@@ -1,0 +1,174 @@
+# DRAFT plain-language overlay for the /findings redesign mockup (2026-10-16).
+# Read by routes_mockup_findings.py only. Ben edits wording here; once approved,
+# these fields move into each finding's frontmatter (Phase 2) and this file goes.
+#
+# Wording rule (Cochrane/GRADE-style): the verb follows the evidence.
+#   main shelf, 🟢  → plain statement ("uses", "costs")
+#   main shelf, 🟡  → "appears to" / "probably"
+#   early signal (n < 3) → "may" / "in a first test"; no headline number shown
+#
+# n_runs = smallest repeat count behind the headline comparison, read from each
+# finding's caveats (Claude's reading 2026-10-16 — VERIFY before Phase 2).
+# Fields: plain_headline, plain_summary, key_number, theme, tags, n_runs, n_note
+
+hw-decoder-cuts-client-energy-4x:
+  plain_headline: A chip built for video plays it on about a quarter of the power software needs
+  plain_summary: >-
+    On the same small computer, playing a film through its dedicated video chip added 0.41 W;
+    doing the same job in software added 1.50 W. The chip only helps if the software can reach
+    it — and with no chip at all, the newest format (AV1) couldn't play smoothly.
+  key_number: 3.7× less power
+  theme: watching
+  tags: [where:home-device, lever:hw-vs-sw, hardware:raspberry-pi, hardware:streaming-box, codec:h264, codec:av1]
+  n_runs: 3
+  n_note: n=3–6 per arm, same board
+
+appletv-a10x-av1-vp9-software-fallback:
+  plain_headline: A 2017 Apple TV uses about 30% more power for the newer video formats its chip wasn't built for
+  plain_summary: >-
+    H.264 and HEVC play at the same power (about 4.1 W). AV1 and VP9, which this chip can't
+    decode in hardware, cost about 1.2 W more because the main processor does the work instead.
+  key_number: +29% (+1.2 W)
+  theme: watching
+  tags: [where:home-device, lever:hw-vs-sw, lever:codec, hardware:apple-tv, codec:h264, codec:hevc, codec:av1, codec:vp9]
+  n_runs: 3
+  n_note: n=3 per format, three kinds of content (one cell n=2)
+
+looped-excerpt-measures-as-continuous:
+  plain_headline: Testing with a looped 2-minute clip gives the same reading as playing the full programme
+  plain_summary: >-
+    On four TV boxes, a 2-minute excerpt played on repeat measured the same as the continuous
+    original. A shorter 30-second loop added a small bias (up to +4%) on one box — so our tests
+    use 2-minute loops.
+  key_number: within 0.02 W
+  theme: measuring
+  tags: [where:home-device, lever:test-design, hardware:streaming-box, codec:h264]
+  n_runs: 3
+  n_note: n=3 paired passes per box
+
+streaming-box-plays-4-7x-cheaper-than-general-purpose:
+  plain_headline: A purpose-built streaming box may play video far more cheaply than a small general-purpose computer — but not every cheap box does
+  plain_summary: >-
+    Playing the same clip with a screen attached, Google's streaming box added +0.30 W against
+    +1.32 to +2.03 W on Raspberry Pi boards, even when the Pi used its own video chip. A no-brand
+    TV box was only modestly better than the Pi, so "streaming box" is not an efficiency class.
+  key_number: 4–7× less extra power
+  theme: watching
+  tags: [where:home-device, lever:device-type, hardware:streaming-box, hardware:raspberry-pi, codec:h264]
+  n_runs: 1
+  n_note: single paired read per device (GTV n=2 in the W5 comparison) — verify
+
+stb-decode-and-play-content-over-codec:
+  plain_headline: On modern TV boxes, what you watch may matter more for power than the video format it arrives in
+  plain_summary: >-
+    An hour of HD playback on two current streaming boxes added about 0.25–0.65 W over the home
+    screen. Switching content moved that by about 0.35 W; switching the video format by 0.1 W
+    or less.
+  key_number: content ≈0.35 W vs format ≤0.1 W
+  theme: watching
+  tags: [where:home-device, lever:content, lever:codec, hardware:streaming-box, codec:h264, codec:hevc, codec:av1]
+  n_runs: 1
+  n_note: n=1 per box × content × format cell (one cell n=3)
+
+codec-decode-energy-depends-on-silicon-and-regime:
+  plain_headline: There may be no single "greenest" video format — it depends on the chip doing the work
+  plain_summary: >-
+    On one streaming box the formats were indistinguishable; on another, the older H.264 cost
+    about 11% more; in software the spread reached about 60%. Even the way you run the test can
+    flip the ranking.
+  key_number: 0 to ~60% spread
+  theme: watching
+  tags: [where:home-device, lever:codec, lever:device-type, hardware:streaming-box, hardware:raspberry-pi, codec:h264, codec:hevc, codec:av1, codec:vp9]
+  n_runs: 1
+  n_note: n=1–3 per cell (software panels mostly n=1)
+
+abr-all-codecs-meridian-120s:
+  plain_headline: Encoding video on a graphics card may use 2–4× less energy than on the main processor
+  plain_summary: >-
+    On one 2-minute clip, every format we tried (H.264, HEVC, AV1) took 2–4.4× less energy on the
+    graphics card than in software. HEVC on the graphics card produced the cheapest file.
+  key_number: 2–4.4× less energy
+  theme: preparing
+  tags: [where:server, lever:hw-vs-sw, lever:codec, hardware:amd-gpu, hardware:desktop-cpu, codec:h264, codec:hevc, codec:av1]
+  n_runs: 1
+  n_note: n=1 (single full-length run on disk)
+
+av1-hw-sw-vmaf-tradeoff:
+  plain_headline: A dedicated AV1 encoding chip may halve the energy, at a small cost in picture quality and file size
+  plain_summary: >-
+    Hardware AV1 encoding used about 55% less energy than software, but scored about 2 points
+    lower on a standard picture-quality scale (VMAF) and produced a file about 40% larger.
+  key_number: −55% energy, −2 VMAF, +40% size
+  theme: preparing
+  tags: [where:server, lever:hw-vs-sw, hardware:amd-gpu, hardware:desktop-cpu, codec:av1]
+  n_runs: 1
+  n_note: n=1 (same run as the all-formats finding)
+
+gpu-boost-overclocks-fixed-function-nvenc:
+  plain_headline: Switching off a graphics card's automatic speed boost may cut video-encoding energy by about a tenth, with no loss of quality
+  plain_summary: >-
+    NVIDIA's automatic boost pushes the card faster than the video encoder can use. Capping the
+    clock saved about 9% of the energy for the same picture quality and nearly the same time —
+    and made our readings repeatable across reboots and room temperature.
+  key_number: −9% energy, same quality
+  theme: preparing
+  tags: [where:server, lever:settings, hardware:nvidia-gpu, codec:h264]
+  n_runs: 2
+  n_note: n=2 per clock setting (after a discarded warm-up)
+
+upscale-sweetspot-degraded-sources:
+  plain_headline: AI upscaling may pay off most on old, low-quality video — and not at all on already-sharp 4K
+  plain_summary: >-
+    Restoring badly degraded standard-definition video to 4K bought about 20× more quality per
+    unit of energy than polishing clean HD. Re-processing pristine 4K bought nothing, at the
+    highest energy cost (about 44 Wh per clip).
+  key_number: ~20× more quality per Wh
+  theme: preparing
+  tags: [where:server, lever:content, hardware:nvidia-gpu]
+  n_runs: 1
+  n_note: n=1 per quality rung (14 runs across the ladder)
+
+input-master-sensitivity:
+  plain_headline: How big the source file is may make no difference to the energy needed to re-encode it
+  plain_summary: >-
+    Re-encoding siblings of the same clip at source bitrates from 1.3 to 14.6 Mbps cost the same
+    energy within noise. Starting from an AV1 source added about 10% on the graphics card.
+  key_number: ≤5% spread
+  theme: measuring
+  tags: [where:server, lever:test-design, hardware:amd-gpu, hardware:desktop-cpu, codec:hevc, codec:av1]
+  n_runs: 1
+  n_note: n=1 per source variant
+
+llm-cold-inference-mwh-per-token:
+  plain_headline: A bigger AI chat model may use more than ten times the energy per word of a small one
+  plain_summary: >-
+    Mistral 7B used about 0.96 mWh per token (roughly a word fragment), TinyLlama about 0.07 —
+    around 13× apart. Measured on an earlier model panel and graphics card.
+  key_number: ~13× per token
+  theme: ai
+  tags: [where:server, lever:model-size, hardware:amd-gpu]
+  n_runs: 1
+  n_note: single run per model; small model near the noise floor
+
+rag-faithfulness-rem-question:
+  plain_headline: In a first test, the smallest AI model made up an answer that larger models got right from the same documents
+  plain_summary: >-
+    All three models were handed the same correct documents. The 1.1-billion-parameter model
+    blended in an unrelated source and invented a framework; the 12B and 14B models stayed
+    faithful.
+  key_number: 1 of 3 models hallucinated
+  theme: ai
+  tags: [where:server, lever:model-size, hardware:amd-gpu]
+  n_runs: 1
+  n_note: n=1 (one question, one run)
+
+sd-turbo-cpu-image-first-run:
+  plain_headline: A first measurement of the energy it takes to make one AI image on a desktop processor
+  plain_summary: >-
+    SD-Turbo used about 0.21 Wh to generate one 512×512 image on GoS1's processor (no graphics
+    card).
+  key_number: 0.21 Wh per image
+  theme: ai
+  tags: [where:server, hardware:desktop-cpu]
+  n_runs: 1
+  n_note: n=1

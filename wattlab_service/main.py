@@ -60,6 +60,7 @@ import routes_image
 import routes_llm
 import routes_methodology
 import routes_mockups   # TEMPORARY — Marketing Lab landing mockups, delete with the module
+import routes_mockup_findings   # TEMPORARY — /findings redesign mockup, delete with the module
 import routes_peer
 import routes_privacy
 import routes_rag
@@ -71,7 +72,7 @@ import routes_video
 for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_decode,
                  routes_demo,
                  routes_enhance, routes_findings, routes_image, routes_llm,
-                 routes_methodology, routes_mockups, routes_peer, routes_privacy, routes_rag,
+                 routes_methodology, routes_mockups, routes_mockup_findings, routes_peer, routes_privacy, routes_rag,
                  routes_rem, routes_results, routes_settings, routes_video):
     app.include_router(_feature.router)
 
