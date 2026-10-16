@@ -446,3 +446,43 @@ def test_every_cited_result_type_is_embeddable():
             assert r.status_code == 200, (
                 f"finding {f.slug!r}: cited source {rid!r} not downloadable ({r.status_code})"
             )
+
+
+# --- Drafts + the /findings redesign preview (TEMPORARY with routes_mockup_findings) ---
+
+_DRAFTS = Path(findings._DRAFTS_DIR)
+_PREVIEW = "/preview-c5d9b3be/findings"
+_ANON = {"x-real-ip": "8.8.8.8"}
+
+
+def test_every_draft_loads_under_the_published_schema():
+    """Drafts are held to the same schema and source checks as published
+    findings, so promoting one is a file move, never a fix-up."""
+    for p in sorted(_DRAFTS.glob("*.md")):
+        if p.name.startswith("._"):
+            continue      # macOS metadata from the writing desk
+        assert findings.load_draft(p.stem) is not None, p.name
+
+
+def test_drafts_never_reach_the_live_catalog():
+    published = {f.slug for f in findings.list_all()}
+    for p in _DRAFTS.glob("*.md"):
+        assert p.stem not in published
+        assert findings.load(p.stem) is None
+
+
+def test_preview_renders_for_anonymous_with_drafts_badged():
+    r = client.get(_PREVIEW, headers=_ANON)
+    assert r.status_code == 200
+    assert "Where the watts go when you watch" in r.text
+    assert "Draft &middot; awaiting lab review" in r.text
+    assert 'name="robots" content="noindex' in r.text
+
+
+def test_preview_draft_source_route_is_scoped_to_cited_drafts():
+    ok = client.get(f"{_PREVIEW}/source/decode/uhd1004a/download.json", headers=_ANON)
+    assert ok.status_code == 200
+    assert ok.json()["job_id"] == "uhd1004a"
+    # A result no previewed draft cites stays private.
+    assert client.get(f"{_PREVIEW}/source/decode/dec0de04/download.json",
+                      headers=_ANON).status_code == 404

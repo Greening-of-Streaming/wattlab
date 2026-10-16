@@ -10,27 +10,37 @@
 # House rule: add a new value only once 2 findings need it.
 
 theme:
-  label: Topic
+  label: Question
   values:
-    watching:
-      label: Watching video at home
-      question: What does it cost to watch video at home?
-      synonyms: [playback, decode, decoding, set-top box, STB, TV box, streaming device, client]
-      definition: Energy a home device uses to play video, over and above sitting on its home screen.
+    where:
+      label: Where the energy goes
+      question: Where does the energy go when people watch?
+      synonyms: [TV, television, screen, display, panel, home, viewing, household, picture mode]
+      definition: How the power drawn while watching splits between the screen, the box and the choices around them.
+    myths:
+      label: Myths tested
+      question: Do 4K, HDR, codecs and bitrate really matter?
+      synonyms: [4K, UHD, HDR, resolution, codec, bitrate, AV1, HEVC, VP9, myth, claim]
+      definition: Common claims about streaming energy, checked against measurements.
+    devices:
+      label: Devices compared
+      question: Which devices make the biggest difference?
+      synonyms: [set-top box, STB, TV box, streaming stick, dongle, Raspberry Pi, hardware decoder, chip]
+      definition: How much the choice of playback device and its silicon changes the energy.
     preparing:
-      label: Preparing video for streaming
-      question: What does it cost to prepare and improve video before it's streamed?
-      synonyms: [encode, encoding, transcode, compression, upscale, upscaling, enhancement, server]
-      definition: Energy a server uses to compress, convert or enhance video before delivery.
+      label: Preparing video
+      question: What does it cost to prepare video for streaming?
+      synonyms: [encode, encoding, transcode, compression, ABR ladder, server, NVENC, GPU]
+      definition: Energy a server uses to compress and convert video before delivery.
     ai:
-      label: AI workloads
-      question: What does it cost to run AI?
-      synonyms: [LLM, chatbot, language model, RAG, image generation, inference, GenAI]
-      definition: Energy a server uses to run AI models (text, retrieval, images).
-    measuring:
+      label: AI in media
+      question: What does AI add?
+      synonyms: [LLM, chatbot, language model, RAG, image generation, upscaling, super-resolution, inference, GenAI]
+      definition: Energy used to run AI models on media tasks — text, images and video enhancement.
+    trust:
       label: How we measure
-      question: How do we know our numbers are right?
-      synonyms: [methodology, method, test design, protocol, reproducibility]
+      question: Why trust these numbers?
+      synonyms: [methodology, method, test design, protocol, reproducibility, repeatability]
       definition: Checks on our own test methods, so other results can be trusted.
 
 where:
@@ -62,8 +72,16 @@ lever:
       definition: The class of device doing the work.
     settings:
       label: Settings
-      synonyms: [preset, bitrate, clock, GPU boost, rate control, overclock]
-      definition: How the hardware or encoder is configured.
+      synonyms: [preset, clock, GPU boost, rate control, overclock, picture mode, eco mode, vivid, brightness]
+      definition: How the hardware, encoder or TV is configured.
+    bitrate:
+      label: Bitrate
+      synonyms: [Mb/s, Mbps, data rate, bandwidth, source bitrate, quality level]
+      definition: How many bits per second the video uses.
+    resolution-hdr:
+      label: Resolution and HDR
+      synonyms: [4K, UHD, 2160p, HD, 1080p, HDR, HDR10, SDR, dynamic range]
+      definition: The picture format — how many pixels and how wide a brightness range.
     content:
       label: What's on screen
       synonyms: [content, animation, live action, complexity, source quality, degraded]
@@ -80,6 +98,10 @@ lever:
 hardware:
   label: Hardware
   values:
+    tv:
+      label: TV screen
+      synonyms: [LG C2, OLED, television, panel, display]
+      definition: The TV the box plays into (an LG C2 55-inch OLED).
     raspberry-pi:
       label: Raspberry Pi
       synonyms: [Pi 400, Pi 5, single-board computer]

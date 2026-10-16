@@ -10,6 +10,58 @@
 # n_runs = smallest repeat count behind the headline comparison, read from each
 # finding's caveats (Claude's reading 2026-10-16 — VERIFY before Phase 2).
 # Fields: plain_headline, plain_summary, key_number, theme, tags, n_runs, n_note
+# draft: true = the finding lives in docs/findings_drafts/ (shown with a Draft badge).
+
+tv-screen-draws-20x-the-streaming-box:
+  draft: true
+  plain_headline: The TV screen uses more than 20 times the power of the streaming box feeding it
+  plain_summary: >-
+    On a 55-inch OLED fed by Google's streaming box, the screen drew 50–57 W and the box about 2 W.
+    Whatever the picture format, the box was only 3–5 % of what the pair drew at the wall — so choices
+    that only touch the box act on a small slice of the energy.
+  key_number: 21–29× the box
+  theme: where
+  tags: [where:home-device, hardware:tv, hardware:streaming-box, lever:device-type, lever:resolution-hdr]
+  n_runs: 3
+  n_note: n=3 per arm, six picture-format arms
+
+tv-picture-mode-outweighs-streaming-choices:
+  draft: true
+  plain_headline: A TV's "Vivid" picture mode adds about 40 % to its power — more than every streaming choice combined
+  plain_summary: >-
+    Switching our OLED TV from Standard to Vivid or Sports added about 20 W while watching football
+    (+39 %) and about 10 W on adverts. The mode labelled Eco saved nothing. The streaming box feeding it
+    stayed at under 2 W throughout.
+  key_number: +20 W (+39 %)
+  theme: where
+  tags: [where:home-device, hardware:tv, lever:settings, lever:content]
+  n_runs: 3
+  n_note: n=3 per mode (one ad-break cell n=2)
+
+hdr-costs-the-screen-4k-costs-the-box:
+  draft: true
+  plain_headline: HDR costs energy at the screen; 4K costs it at the box — and the screen's share is ten times bigger
+  plain_summary: >-
+    HDR made our OLED TV draw about 4 W more (7–8 %) while six of seven boxes didn't notice it. 4K
+    made every box draw 0.3–1.1 W more, and the screen nothing measurable.
+  key_number: HDR +4 W · 4K +0.3–1.1 W
+  theme: myths
+  tags: [where:home-device, hardware:tv, hardware:streaming-box, hardware:apple-tv, lever:resolution-hdr]
+  n_runs: 3
+  n_note: n=3 per box and format, seven boxes
+
+bitrate-barely-moves-box-playback-power:
+  draft: true
+  plain_headline: Raising the bitrate 128-fold raises a TV box's power by only 15–26 %
+  plain_summary: >-
+    Four streaming boxes played the same clip from 0.25 to 32 Mb/s. Their power rose in a straight line,
+    by 0.3–0.5 W in total — tenths of a watt, not a share of "streaming energy". The network side is
+    not included.
+  key_number: +0.3–0.5 W over 128×
+  theme: myths
+  tags: [where:home-device, hardware:streaming-box, lever:bitrate, codec:h264]
+  n_runs: 3
+  n_note: n=3 per rung, seven rungs, four boxes
 
 hw-decoder-cuts-client-energy-4x:
   plain_headline: A chip built for video plays it on about a quarter of the power software needs in non-specialized hardware
@@ -18,7 +70,7 @@ hw-decoder-cuts-client-energy-4x:
     doing the same job in software added 1.50 W. The chip only helps if the software can reach
     it — and with no chip at all, the newest format (AV1) couldn't play smoothly.
   key_number: 3.7× less power
-  theme: watching
+  theme: devices
   tags: [where:home-device, lever:hw-vs-sw, hardware:raspberry-pi, hardware:streaming-box, codec:h264, codec:av1]
   n_runs: 3
   n_note: n=3–6 per arm, same board
@@ -29,7 +81,7 @@ appletv-a10x-av1-vp9-software-fallback:
     H.264 and HEVC play at the same power (about 4.1 W). AV1 and VP9, which this chip can't
     decode in hardware, cost about 1.2 W more because the main processor does the work instead.
   key_number: +29% (+1.2 W)
-  theme: watching
+  theme: myths
   tags: [where:home-device, lever:hw-vs-sw, lever:codec, hardware:apple-tv, codec:h264, codec:hevc, codec:av1, codec:vp9]
   n_runs: 3
   n_note: n=3 per format, three kinds of content (one cell n=2)
@@ -41,7 +93,7 @@ looped-excerpt-measures-as-continuous:
     original. A shorter 30-second loop added a small bias (up to +4%) on one box — so our tests
     use 2-minute loops.
   key_number: within 0.02 W
-  theme: measuring
+  theme: trust
   tags: [where:home-device, lever:test-design, hardware:streaming-box, codec:h264]
   n_runs: 3
   n_note: n=3 paired passes per box
@@ -53,7 +105,7 @@ streaming-box-plays-4-7x-cheaper-than-general-purpose:
     +1.32 to +2.03 W on Raspberry Pi boards, even when the Pi used its own video chip. A no-brand
     TV box was only modestly better than the Pi, so "streaming box" is not an efficiency class.
   key_number: 4–7× less extra power
-  theme: watching
+  theme: devices
   tags: [where:home-device, lever:device-type, hardware:streaming-box, hardware:raspberry-pi, codec:h264]
   n_runs: 1
   n_note: single paired read per device (GTV n=2 in the W5 comparison) — verify
@@ -65,7 +117,7 @@ stb-decode-and-play-content-over-codec:
     screen. Switching content moved that by about 0.35 W; switching the video format by 0.1 W
     or less.
   key_number: content ≈0.35 W vs format ≤0.1 W
-  theme: watching
+  theme: myths
   tags: [where:home-device, lever:content, lever:codec, hardware:streaming-box, codec:h264, codec:hevc, codec:av1]
   n_runs: 1
   n_note: n=1 per box × content × format cell (one cell n=3)
@@ -77,7 +129,7 @@ codec-decode-energy-depends-on-silicon-and-regime:
     about 11% more; in software the spread reached about 60%. Even the way you run the test can
     flip the ranking.
   key_number: 0 to ~60% spread
-  theme: watching
+  theme: myths
   tags: [where:home-device, lever:codec, lever:device-type, hardware:streaming-box, hardware:raspberry-pi, codec:h264, codec:hevc, codec:av1, codec:vp9]
   n_runs: 1
   n_note: n=1–3 per cell (software panels mostly n=1)
@@ -123,7 +175,7 @@ upscale-sweetspot-degraded-sources:
     unit of energy than polishing clean HD. Re-processing pristine 4K bought nothing, at the
     highest energy cost (about 44 Wh per clip).
   key_number: ~20× more quality per Wh
-  theme: preparing
+  theme: ai
   tags: [where:server, lever:content, hardware:nvidia-gpu]
   n_runs: 1
   n_note: n=1 per quality rung (14 runs across the ladder)
@@ -134,8 +186,8 @@ input-master-sensitivity:
     Re-encoding siblings of the same clip at source bitrates from 1.3 to 14.6 Mbps cost the same
     energy within noise. Starting from an AV1 source added about 10% on the graphics card.
   key_number: ≤5% spread
-  theme: measuring
-  tags: [where:server, lever:test-design, hardware:amd-gpu, hardware:desktop-cpu, codec:hevc, codec:av1]
+  theme: trust
+  tags: [where:server, lever:test-design, lever:bitrate, hardware:amd-gpu, hardware:desktop-cpu, codec:hevc, codec:av1]
   n_runs: 1
   n_note: n=1 per source variant
 

@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Import the October 2026 display campaigns into OWL decode envelopes.
+
+Two scripted rig campaigns ran outside the OWL job queue and so left no result
+files; findings must cite stored results, so this writes them:
+
+  results/decode/2026-10-04_uhd1004a.json  LG C2 panel + Google TV Streamer over HDMI,
+                                           matched Meridian clips, HD/4K × SDR/HDR, n=3
+  results/decode/2026-10-04_uhd1004b.json  six boxes on the same HD/4K × SDR/HDR10 set, n=3
+  results/decode/2026-10-10_c2pm1010.json  LG C2 picture modes (eco/normal/filmMaker/
+                                           sports/vivid) × football/ads, fed by the GTV, n=3
+
+Source data: /srv/data/owl/campaign_2026-10-04_uhd_hdr/{runs,box_runs,dev_runs,discarded}
+and /srv/data/owl/campaign_2026-10-10_c2modes/runs. Idempotent: re-running
+overwrites the same three files. Rows the campaign set aside (discarded/) are
+carried in a top-level `discarded[]` block — visible provenance, excluded from runs[].
+
+Run shape follows the decode-batch envelopes: the box is the device (w_base /
+w_task / delta_w + raw samples); the LG C2 panel, where metered, is the context
+meter (context_*). The picture-mode campaign has no per-row baseline (paired
+absolute watts by design), so its rows carry w_task only.
+"""
+import json
+import statistics as st
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "wattlab_service"))
+from persist import RESULTS_DIR  # noqa: E402
+import confidence as conf_mod  # noqa: E402
+
+UHD = Path("/srv/data/owl/campaign_2026-10-04_uhd_hdr")
+MODES = Path("/srv/data/owl/campaign_2026-10-10_c2modes")
+OUT_DIR = RESULTS_DIR / "decode"
+
+# Why rows in discarded/ were set aside (campaign NOTES.txt, 2026-10-04).
+DISCARD_REASONS = {
+    "atv_r1_lad_hd": "box state: flat ~3.7 W vs 5.7/6.8 W in reps 2-3 at identical delivered Mb/s; "
+                     "rep-1 baseline ~3.2 W vs ~4.8 W later (NOTES.txt 18:11)",
+    "atv_r1_mer_hd_hdr10": "box state: as atv_r1_lad_hd (NOTES.txt 18:11)",
+}
+
+POWER_HW = {"name": "Tapo P110", "kind": "smart_plug", "api": "local mW", "cadence_s": 1.0,
+            "note": "fw 1.3.1 plugs refresh every ~2 s below ~12 W while polled at 1 s; "
+                    "means are unaffected, per-sample spread is understated"}
+
+
+def _num(v):
+    return None if v in (None, "", "None") else float(v)
+
+
+def _mean(xs):
+    return round(st.mean(xs), 3) if xs else None
+
+
+def _confidence(base, task):
+    if not base or not task:
+        return {}
+    d = st.mean(task) - st.mean(base)
+    return conf_mod.confidence(d, len(task), st.mean(base),
+                               baseline_samples_w=base, task_samples_w=task)
+
+
+def _box_run(d, name, device, clip, extra=None):
+    base, task = d.get("base_w") or [], d.get("task_w") or []
+    r = {
+        "run": name, "device": device, "clip": clip, "rep": int(d.get("rep", 0)),
+        "sink": d.get("sink"),
+        "w_base": _num(d.get("w_base")), "w_task": _num(d.get("w_task")),
+        "delta_w": _num(d.get("delta_w")),
+        "n_base": len(base), "n_task": len(task),
+        "presented_fps": _num(d.get("fps")),
+        "playback_state_at_end": d.get("state_end"),
+        "confidence": _confidence(base, task),
+        "raw_baseline_w": base, "raw_task_w": task,
+    }
+    if d.get("pos_rate") is not None:
+        r["delivered_mbps"] = d.get("pos_rate")
+    if extra:
+        r.update(extra)
+    return r
+
+
+def _write(date, job_id, data):
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / f"{date}_{job_id}.json"
+    payload = {
+        "job_id": job_id, "saved_at": datetime.now().isoformat(),
+        "visitor_key": None, "envelope_version": 1, "mode": "decode_panel",
+        "power_hardware": POWER_HW, **data,
+        "import_note": "scripted rig campaign import (bin/import-campaign-2026-10); "
+                       "not produced by the OWL job queue",
+    }
+    path.write_text(json.dumps(payload, indent=1))
+    print(f"wrote {path}  ({len(payload['runs'])} runs, {len(payload.get('discarded', []))} discarded)")
+
+
+def c2_hdmi():
+    runs, discarded = [], []
+    for src, keep in ((UHD / "runs", True), (UHD / "discarded", False)):
+        for p in sorted(src.glob("r*_*.json")):
+            d = json.loads(p.read_text())
+            if d.get("kind") != "hdr":
+                continue
+            if not keep:
+                discarded.append({"run": d["name"], "c2_task_w": _num(d.get("c2_task_w")),
+                                  "gtv_task_w": _num(d.get("gtv_task_w")),
+                                  "reason": "set aside by the campaign (re-run); see ANALYSIS.md"})
+                continue
+            gb, gt = d["base"].get("gtv_w", []), d["task"].get("gtv_w", [])
+            cb, ct = d["base"].get("c2_w", []), d["task"].get("c2_w", [])
+            runs.append({
+                "run": d["name"], "device": "gtv", "arm": d["arm"], "clip": d["clip"],
+                "rep": int(d["rep"]), "picture_mode": d["settings_start"].get("pictureMode"),
+                "oled_light": d["settings_start"].get("backlight"),
+                "settings_unchanged": d["settings_start"] == d["settings_end"],
+                "w_base": _num(d["gtv_base_w"]), "w_task": _num(d["gtv_task_w"]),
+                "delta_w": round(_num(d["gtv_task_w"]) - _num(d["gtv_base_w"]), 3),
+                "n_base": len(gb), "n_task": len(gt),
+                "context_base_w": _num(d["c2_base_w"]), "context_task_w": _num(d["c2_task_w"]),
+                "context_delta_w": round(_num(d["c2_task_w"]) - _num(d["c2_base_w"]), 3),
+                "presented_fps": _num(d.get("fps")), "playback_state_at_end": d.get("state_end"),
+                "gtv_dataspace": d.get("gtv_dataspace"),
+                "confidence": _confidence(gb, gt),
+                "raw_baseline_w": gb, "raw_task_w": gt,
+                "raw_context_baseline_w": cb, "raw_context_w": ct,
+            })
+    _write("2026-10-04", "uhd1004a", {
+        "template_label": "LG C2 55\" OLED fed by Google TV Streamer over HDMI (2160p60 output) — "
+                          "matched Meridian clips, HD/4K × SDR/HDR",
+        "device": {"name": "Google TV Streamer", "role": "source box (device meter)"},
+        "context_device": {"name": "LG C2 55\" OLED (webOS)", "role": "panel (context meter)"},
+        "protocol": {"harness": "campaign_2026-10-04_uhd_hdr/run_uhd.py",
+                     "baseline": "box home screen, panel on, before each row",
+                     "reps": 3, "rep_order": "whole passes"},
+        "runs": runs, "discarded": discarded,
+        "measured_on": "2026-10-04", "report": "/srv/data/owl/campaign_2026-10-04_uhd_hdr/ANALYSIS.md",
+    })
+
+
+def boxes():
+    runs, discarded = [], []
+    for sub in ("box_runs", "dev_runs"):
+        for p in sorted((UHD / sub).glob("*.json")):
+            d = json.loads(p.read_text())
+            clip = d.get("clip", "")
+            if not clip.startswith("mer_"):
+                continue
+            runs.append(_box_run(d, d["name"], d.get("box") or d.get("device"), clip))
+    for p in sorted((UHD / "discarded").glob("*_r*_*.json")):
+        d = json.loads(p.read_text())
+        if not d.get("clip", "").startswith("mer_"):
+            continue
+        discarded.append({"run": d["name"], "w_task": _num(d.get("w_task")),
+                          "reason": DISCARD_REASONS.get(d["name"],
+                                                        "set aside by the campaign; see NOTES.txt")})
+    _write("2026-10-04", "uhd1004b", {
+        "template_label": "Six streaming boxes — matched Meridian clips, HD/4K × SDR/HDR10, n=3",
+        "device": {"name": "Fire TV Stick 4K, Xiaomi TV Box Gen 2 + Gen 3, Bbox, Apple TV 4K (2017), Roku",
+                   "role": "each box on its own meter; HDMI into the C2 (not displayed)"},
+        "protocol": {"harness": "campaign_2026-10-04_uhd_hdr/run_boxes.py + run_devices.py",
+                     "baseline": "box home screen before each row", "reps": 3,
+                     "playback_check": "presented fps (Android boxes) or position rate (Apple TV, Roku)"},
+        "runs": runs, "discarded": discarded,
+        "measured_on": "2026-10-04", "report": "/srv/data/owl/campaign_2026-10-04_uhd_hdr/ANALYSIS.md",
+    })
+
+
+# The campaign's first row: the panel sits flat at ~41 W for 108 of 120 s, where every
+# other ad-break row swings 41-56 W with the content — a frozen picture under a
+# PLAYING player state, so it measures a still frame, not the ads.
+MODES_DISCARD = {"r1_ads_normal": "frozen picture: panel flat ~41 W for 108 s of 120 s while "
+                                  "every other ads row tracks the content (41-56 W); "
+                                  "player still reported PLAYING"}
+
+
+def picture_modes():
+    runs, discarded = [], []
+    for p in sorted((MODES / "runs").glob("r*_*.json")):
+        d = json.loads(p.read_text())
+        c2, gtv = d.get("c2_w", []), d.get("gtv_w", [])
+        if d["name"] in MODES_DISCARD:
+            discarded.append({"run": d["name"], "context_task_w": _num(d.get("c2_mean_w")),
+                              "w_task": _num(d.get("gtv_mean_w")),
+                              "reason": MODES_DISCARD[d["name"]]})
+            continue
+        runs.append({
+            "run": d["name"], "device": "gtv", "content": d["content"], "rep": int(d["rep"]),
+            "picture_mode": d["mode"], "settings": d.get("settings_start"),
+            "settings_unchanged": d.get("settings_start") == d.get("settings_end"),
+            "w_base": None, "w_task": _num(d.get("gtv_mean_w")), "delta_w": None,
+            "n_task": len(gtv), "context_task_w": _num(d.get("c2_mean_w")),
+            "playback_state_at_end": d.get("state_end"),
+            "confidence": {}, "raw_task_w": gtv, "raw_context_w": c2,
+        })
+    _write("2026-10-10", "c2pm1010", {
+        "template_label": "LG C2 picture modes × content (football, ad break), fed by Google TV Streamer, "
+                          "120 s windows, n=3",
+        "device": {"name": "Google TV Streamer", "role": "source box (device meter)"},
+        "context_device": {"name": "LG C2 55\" OLED (webOS)", "role": "panel (context meter)"},
+        "protocol": {"harness": "campaign_2026-10-10_c2modes/run_modes.py", "window_s": 120,
+                     "reps": 3, "rep_order": "whole passes, mode order shuffled per pass",
+                     "baseline": "none — paired absolute watts across modes within each pass"},
+        "runs": runs, "discarded": discarded, "measured_on": "2026-10-10",
+        "report": "/srv/data/owl/campaign_2026-10-10_c2modes/run.out",
+    })
+
+
+if __name__ == "__main__":
+    c2_hdmi()
+    boxes()
+    picture_modes()

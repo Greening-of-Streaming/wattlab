@@ -25,6 +25,7 @@ import yaml
 
 _REPO_ROOT     = Path(__file__).resolve().parent.parent
 _FINDINGS_DIR  = _REPO_ROOT / "docs" / "findings"
+_DRAFTS_DIR    = _REPO_ROOT / "docs" / "findings_drafts"
 _RESULTS_DIR   = _REPO_ROOT / "results"
 
 _VALID_CONFIDENCE = {"green", "yellow", "red"}
@@ -69,12 +70,24 @@ def load(slug: str) -> Finding | None:
     if the file exists but is malformed or refers to a missing result."""
     if not _SLUG_RE.match(slug):
         return None
-    path = _FINDINGS_DIR / f"{slug}.md"
+    return _load_path(_FINDINGS_DIR / f"{slug}.md", slug)
+
+
+def load_draft(slug: str) -> Finding | None:
+    """Load an unpublished finding from docs/findings_drafts/ under the same
+    schema and source checks as a published one. Never listed by list_all();
+    only callers that ask for a named draft see it."""
+    if not _SLUG_RE.match(slug):
+        return None
+    return _load_path(_DRAFTS_DIR / f"{slug}.md", slug)
+
+
+def _load_path(path: Path, slug: str) -> Finding | None:
     if not path.exists():
         return None
 
     mtime = path.stat().st_mtime
-    cached = _CACHE.get(slug)
+    cached = _CACHE.get(str(path))
     if cached and cached[0] == mtime:
         return cached[1]
 
@@ -105,7 +118,7 @@ def load(slug: str) -> Finding | None:
             f"{path.name}: frontmatter slug={f.slug!r} disagrees with filename {slug!r}"
         )
 
-    _CACHE[slug] = (mtime, f)
+    _CACHE[str(path)] = (mtime, f)
     return f
 
 
