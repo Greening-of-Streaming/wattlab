@@ -12,7 +12,7 @@
 # Fields: plain_headline, plain_summary, key_number, theme, tags, n_runs, n_note
 
 hw-decoder-cuts-client-energy-4x:
-  plain_headline: A chip built for video plays it on about a quarter of the power software needs
+  plain_headline: A chip built for video plays it on about a quarter of the power software needs in non-specialised hardware
   plain_summary: >-
     On the same small computer, playing a film through its dedicated video chip added 0.41 W;
     doing the same job in software added 1.50 W. The chip only helps if the software can reach
