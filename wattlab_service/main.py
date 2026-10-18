@@ -157,6 +157,13 @@ async def _node_gateway(request: Request, call_next):
     gw = _cfg.load().get("gateway_hosts") or {}
     host = (request.headers.get("host") or "").split(":")[0].lower()
     hid = gw.get(host) if gw else None
+    # SSH-tunnel visitors (browser on localhost:<port>) can't reach a peer's LAN
+    # url, so the machine switch sends them to <node-id>.localhost on the same
+    # tunnel: this node's own id is served as itself, a peer's id is gatewayed.
+    if not hid and host.endswith(".localhost"):
+        sub = host[: -len(".localhost")]
+        if sub != hosts.local_host().get("id") and sub in hosts.remote_hosts():
+            hid = sub
     if not hid:
         return await call_next(request)
     path = request.url.path

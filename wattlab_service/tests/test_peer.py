@@ -477,6 +477,23 @@ def test_gateway_lab_forwarded_as_lab_and_offline_is_greyed(monkeypatch):
     assert r.status_code == 503 and "offline" in r.text
 
 
+def test_tunnel_gateway_on_node_id_dot_localhost(monkeypatch):
+    # SSH tunnel (browser on localhost:8000): the switch links <id>.localhost on
+    # the same port — a peer id is gatewayed as Lab, this node's own id is itself.
+    calls = _gateway(monkeypatch)
+    import settings as cfg
+    real = cfg.load
+    monkeypatch.setattr(cfg, "load", lambda: {**real(), "gateway_hosts": {}})
+    client.get("/video", headers={**LAB, "host": "gos2.localhost:8000"})
+    assert calls[-1][1].startswith("/peer/view/video?") and "_owl_tier=lab" in calls[-1][1]
+    n = len(calls)
+    t = client.get("/", headers={**LAB, "host": "gos1.localhost:8000"}).text
+    assert 'id="node-switch"' in t and len(calls) == n
+    client.get("/", headers={**LAB, "host": "nosuch.localhost:8000"})
+    assert len(calls) == n
+    assert "(^|\\.)localhost$" in t and "x.id + '.localhost'" in t
+
+
 def test_gateway_off_without_setting(monkeypatch):
     calls = _gateway(monkeypatch)
     import settings as cfg

@@ -311,7 +311,8 @@ def _arrived_on_public_name(request: Request) -> bool:
     if pv is not None:
         return bool(pv.get("via_gateway"))
     host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(":")[0].lower()
-    if not host or host in ("localhost", "testserver") or host.endswith(".local"):
+    if (not host or host in ("localhost", "testserver") or host.endswith(".local")
+            or host.endswith(".localhost")):
         return False
     try:
         ipaddress.ip_address(host)

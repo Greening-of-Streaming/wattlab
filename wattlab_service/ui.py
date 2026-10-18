@@ -912,6 +912,11 @@ _NODE_SWITCH = """    <div id="node-switch" style="display:flex;gap:0.4rem;flex-
     fetch('/nodes.json').then(r => r.json()).then(d => {
       const n = (d && d.nodes) || [];
       if (n.length < 2) return;
+      // Over an SSH tunnel (page on localhost / <id>.localhost) a peer's LAN url
+      // is unreachable: stay on the tunnel — <id>.localhost:<port> is gatewayed
+      // by the tunnel's node (main._node_gateway); browsers resolve *.localhost.
+      const tun = /(^|\\.)localhost$/.test(location.hostname);
+      if (tun) n.forEach(x => { if (!x.self && x.url) x.url = location.protocol + '//' + x.id + '.localhost' + (location.port ? ':' + location.port : '') + '/'; });
       const pill = 'font-family:monospace;font-size:0.75rem;padding:0.2rem 0.6rem;border:1px solid var(--border-2);border-radius:999px;text-decoration:none;';
       document.getElementById('node-switch').innerHTML = n.map(x => x.self
         ? '<span style="' + pill + 'color:var(--accent);border-color:var(--accent)" title="' + x.chip + '">● ' + x.label + '</span>'
