@@ -85,8 +85,15 @@ CLIPS = {
     "kranjska_120s": paths.repo('test_content', 'kranjska_dh_120s.mp4'),  # sport
 }
 
-CPU_ENCODER = {"h264": "libx264", "h265": "libx265", "av1": "libsvtav1"}
+CPU_ENCODER = {"h264": "libx264", "h265": "libx265", "av1": "libsvtav1", "vvc": "libvvenc"}
 CPU_NORM_KEY = {"h264": "cpu", "h265": "h265_cpu", "av1": "av1_cpu"}
+
+# VVC (libvvenc, CPU only) has no /video preset, so its norm args live here.
+# libvvenc ignores -g (its own -period default is 1 s), so the pinned GOP goes in
+# as IntraPeriod; IDR refresh = closed GOP, matching x265 open-gop=0 / SVT scd=0.
+# libvvenc accepts yuv420p10le only, so vvc recipes require bit_depth=10.
+def _vvc_norm_args(gop: str) -> list:
+    return ["-vvenc-params", f"IntraPeriod={gop}:DecodingRefreshType=idr"]
 PRESET_KEY = {
     ("h264", "cpu"): "cpu",  ("h265", "cpu"): "h265_cpu", ("av1", "cpu"): "av1_cpu",
     ("h264", "gpu"): "gpu",  ("h265", "gpu"): "h265_gpu", ("av1", "gpu"): "av1_gpu",
@@ -111,15 +118,27 @@ def _tuned_extra(codec: str) -> list:
 # Command builders — mirror the live /video pipeline (1080p, AAC 128k, pinned GOP),
 # varying ONLY the encoder/quality args so the comparison stays apples-to-apples.
 # ---------------------------------------------------------------------------
-def build_cmd(codec: str, profile: str, bitrate_kbps: int, height: int = 1080) -> str:
+def build_cmd(codec: str, profile: str, bitrate_kbps: int, height: int = 1080,
+              bit_depth: int = 8) -> str:
     """Return a custom_cmd template string (with {input}/{output}) for one recipe.
-    profile ∈ {"cpu", "gpu_baseline", "gpu_tuned"}. `height` is the output rung."""
+    profile ∈ {"cpu", "gpu_baseline", "gpu_tuned"}. `height` is the output rung.
+    bit_depth=10 (CPU only) appends format=yuv420p10le to the shared scale chain
+    and moves x265 to Main10; the default 8 leaves every existing recipe as-is."""
     gop = str(int(cfg.load().get("encode_gop_frames", 120)))
+    if codec == "vvc" and (profile != "cpu" or bit_depth != 10):
+        raise ValueError("vvc is CPU-only (libvvenc) and needs bit_depth=10")
+    if bit_depth not in (8, 10) or (bit_depth == 10 and profile != "cpu"):
+        raise ValueError(f"bit_depth={bit_depth} unsupported for profile {profile}")
     if profile == "cpu":
-        norm = video._norm_args(CPU_NORM_KEY[codec])
+        norm = (_vvc_norm_args(gop) if codec == "vvc"
+                else video._norm_args(CPU_NORM_KEY[codec]))
+        vf = f"scale=-2:{height}"
+        if bit_depth == 10:
+            vf += ",format=yuv420p10le"
+            norm = ["main10" if a == "main" and codec == "h265" else a for a in norm]
         parts = ["ffmpeg", "-y", "-i", "{input}",
                  "-c:v", CPU_ENCODER[codec], "-b:v", f"{bitrate_kbps}k", *norm,
-                 "-vf", f"scale=-2:{height}", "-c:a", "aac", "-b:a", "128k", "{output}"]
+                 "-vf", vf, "-c:a", "aac", "-b:a", "128k", "{output}"]
     else:
         b = gpu.BACKEND
         quality = list(b.ffmpeg_gpu_norm_args(codec, gop))     # live baseline args
