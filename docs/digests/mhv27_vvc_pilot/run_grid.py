@@ -31,6 +31,8 @@ CODEC_ORDER = ["h265", "av1", "vvc"]
 PAUSE_FLAG, LAB_FLAG = Path("/tmp/owl-paused"), Path("/tmp/owl-lab-session")
 OUT_DIR = REPO / "results" / "calibration" / "_staging"
 KEEP_DIR = Path("/srv/data/owl/mhv27_vvc_pilot/grid_outputs")   # rep-0 outputs kept for decode
+CLIPS = {"meridian_120s": parity.CLIPS["meridian_120s"],
+         "football_30s": REPO / "test_content" / "football_35s.mp4"}   # LAB-INTERNAL source (pictures)
 
 _orig_fr_prep = quality._fr_prep
 
@@ -66,7 +68,7 @@ def n_frames(path: Path) -> int:
 
 
 async def measure(ref: Path, job_id: str, codec: str, kbps: int, clip_dur_s: float,
-                  frames_per_pass: int, keep: bool) -> dict:
+                  frames_per_pass: int, keep: bool, keep_name: str = "") -> dict:
     cmd_str = parity.build_cmd(codec, "cpu", kbps, 1080, bit_depth=10)
     out_path = video.UPLOAD_DIR / f"{job_id}_out.mp4"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +110,7 @@ async def measure(ref: Path, job_id: str, codec: str, kbps: int, clip_dur_s: flo
     vmaf = video.compute_vmaf(out_path, ref, s=VMAF_S)
     if keep:
         KEEP_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(out_path), str(KEEP_DIR / f"{codec}_{kbps}k.mp4"))   # /tmp -> /srv/data: cross-device
+        shutil.move(str(out_path), str(KEEP_DIR / (keep_name or f"{codec}_{kbps}k.mp4")))   # /tmp -> /srv/data: cross-device
     else:
         out_path.unlink(missing_ok=True)
     return {
@@ -137,7 +139,7 @@ def recipes(plan: dict) -> list:
 
 async def main(a) -> int:
     plan = json.loads(Path(a.plan).read_text())
-    ref = parity.ensure_clip(parity.CLIPS["meridian_120s"], DURATION_S)
+    ref = parity.ensure_clip(CLIPS[a.clip], DURATION_S)
     fpp = n_frames(ref)
     todo = recipes(plan)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -145,11 +147,12 @@ async def main(a) -> int:
         out = Path(a.resume)
         art = json.loads(out.read_text())
     else:
-        out = OUT_DIR / f"mhv27_vvc_pilot_encode_{datetime.now(timezone.utc):%Y-%m-%dT%H%M}.json"
+        tag = "" if a.clip == "meridian_120s" else f"{a.clip}_"
+        out = OUT_DIR / f"mhv27_vvc_pilot_encode_{tag}{datetime.now(timezone.utc):%Y-%m-%dT%H%M}.json"
         art = {"schema": "mhv27-vvc-pilot-encode/v1",
                "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "fingerprint": parity.fingerprint(),
-               "protocol": {"clip": "meridian_120s", "excerpt_s": DURATION_S, "ref_packets": fpp,
+               "protocol": {"clip": a.clip, "excerpt_s": DURATION_S, "ref_packets": fpp,
                             "chain": "scale=-2:1080,format=yuv420p10le", "audio": "aac 128k",
                             "gop_frames": int(cfg.load().get("encode_gop_frames", 120)),
                             "baseline_polls": BASELINE_POLLS, "min_task_s": MIN_TASK_S, "reps": REPS,
@@ -183,17 +186,18 @@ async def main(a) -> int:
             if last_floor is not None:
                 cd = await power.cooldown_between_runs(fixed_seconds=60, reference_w=last_floor,
                                                        stage="mhv27_grid_cooldown")
-            job_id = f"mhv27_{r['codec']}_{r['kbps']}_r{r['rep']}"
+            job_id = f"mhv27_{a.clip}_{r['codec']}_{r['kbps']}_r{r['rep']}"
             print(f"[grid] {i + 1}/{len(todo)} {r}  {datetime.now():%H:%M:%S}", flush=True)
             try:
-                m = await measure(ref, job_id, r["codec"], r["kbps"], DURATION_S, fpp, keep=r["rep"] == 0)
+                m = await measure(ref, job_id, r["codec"], r["kbps"], DURATION_S, fpp, keep=r["rep"] == 0,
+                                  keep_name=f"{'' if a.clip == 'meridian_120s' else a.clip + '_'}{r['codec']}_{r['kbps']}k.mp4")
             except Exception as exc:
                 m = {"error": repr(exc)}
             last_floor = m.get("w_base", last_floor)
             print(f"[grid]    -> vmaf={m.get('vmaf')} kbps={(m.get('achieved_bitrate_bps') or 0) // 1000} "
                   f"dW={m.get('delta_w')} Wh/1000f={m.get('wh_per_1000_frames')} n_enc={m.get('n_encodes')} "
                   f"{m.get('confidence_flag')} elevated={m.get('baseline_elevated')}", flush=True)
-            art["rows"].append({"codec": r["codec"], "target_kbps": r["kbps"], "rep": r["rep"],
+            art["rows"].append({"clip": a.clip, "codec": r["codec"], "target_kbps": r["kbps"], "rep": r["rep"],
                                 "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                                 "cooldown": cd, **m})
             checkpoint()
@@ -212,5 +216,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--plan", required=True)
     ap.add_argument("--resume")
+    ap.add_argument("--clip", default="meridian_120s", choices=sorted(CLIPS))
     ap.add_argument("--dry", action="store_true")
     sys.exit(asyncio.run(main(ap.parse_args())))

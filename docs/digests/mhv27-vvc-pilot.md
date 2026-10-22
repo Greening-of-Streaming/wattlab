@@ -1,7 +1,7 @@
 # MHV'27 VVC pilot: encode and decode energy, one night (2026-10-22)
 
 *Pilot data for the ACM Mile-High Video 2027 abstract ("Early Insight"). Measured 2026-10-22 between 00:57 and
-02:44 Paris on GoS1 and GoS2, under the revised run prompt [`mhv27-vvc-pilot_prompt.md`](mhv27-vvc-pilot_prompt.md).
+06:40 Paris on GoS1 and GoS2, under the revised run prompt [`mhv27-vvc-pilot_prompt.md`](mhv27-vvc-pilot_prompt.md).
 Nothing here has been reviewed by Tania. It is not a finding, and nothing below has been catalogued on `/findings`.
 Everything is **measured** unless it is marked *[inferred]*.*
 
@@ -11,9 +11,11 @@ the raw artifacts (`raw/`), the scripts (`scout.py`, `run_grid.py`, `decode_benc
 
 ## Affirmations (what we can stand behind)
 
-1. 🟢 **At VMAF 92 on this clip, VVenC (`medium`) needs 55 % fewer bits than x265 and 51 % fewer than SVT-AV1,
-   but spends 10.3× the encode energy of x265 and 19× that of SVT-AV1.** This holds at default presets on a
-   24-thread Ryzen 9 7900 (n=3 per point, 45/45 runs 🟢). The conservative intervals are 9.7–11.0× and 18.3–19.9×.
+1. 🟢 **At VMAF 92, VVenC (`medium`) saves bits but costs an order of magnitude more encode energy, and the gap widens
+   on complex content.** These are default presets on a 24-thread Ryzen 9 7900, n=3 per point, 90/90 runs 🟢:
+   - **Meridian:** 55 % fewer bits than x265 and 51 % fewer than SVT-AV1, for **10.3×** and **19×** the energy
+     (conservative intervals 9.7–11.0× and 18.3–19.9×).
+   - **Football:** 39 % and 30 % fewer bits, for **18×** and **47×** the energy (17.3–19.1× and 45.9–48.7×).
 2. 🟡 **On an Apple M6, paced 1080p60 playback of the same VMAF-92 picture costs +1.23 W in VVC (software is the only
    path), against +0.17 W for HEVC or AV1 in hardware and +0.24 W for AV1 in software (dav1d).** That puts VVC at about 7× the
    hardware decoders (n=3; the VVC rows stay 🟢 after the fresh-sample correction, but the 0.17 W hardware rows drop to
@@ -27,6 +29,10 @@ the raw artifacts (`raw/`), the scripts (`scout.py`, `run_grid.py`, `decode_benc
 **Content.** `meridian_120s.mp4`: Netflix Meridian, H.264 **8-bit 4:2:0 SDR**, 3840×2160, 59.94 fps. The window is the first 30 s
 (`parity.ensure_clip`, the SMPTE #4951 excerpt), and every encode outputs 1801 frames. Encoding a 10-bit output from an
 8-bit source is a stated choice, not an HDR claim.
+
+**Second clip, Football:** `football_35s.mp4`, H.264 8-bit 4:2:0, 3840×2160, **60 fps**. It is the SMPTE #4951 sport tier
+(SI ~48, high spatial detail) and a **lab-internal source**: the measurements are publishable, the pictures are not. The
+window is again the first 30 s, giving 1802 frames per encode. It has encode rows only; decode used the Meridian streams.
 
 **Encode (GoS1, CPU only).** All three encoders use one shared chain, `scale=-2:1080,format=yuv420p10le`, then
 `-b:v <target>`, GOP 120 closed with no scene cut, AAC 128k, and `nice -n -5`. Library defaults are otherwise untouched. The
@@ -63,7 +69,7 @@ scores as ffmpeg's automatic format negotiation, to two decimals.
 
 Energy is the marginal ΔE above each node's own idle floor (GoS1 ~77 W, GoS2 ~1.3 W) at the wall.
 
-## 2. Encode results (GoS1)
+## 2. Encode results (GoS1) — Meridian (left panel) and Football (right panel, §2b)
 
 ![Encode energy vs VMAF](mhv27_vvc_pilot/fig_encode_energy_vs_vmaf.png)
 
@@ -120,6 +126,48 @@ For SMPTE #4951 comparability, in Wh per minute of content (× 3.596): HEVC 0.80
   thread count, or slower x265/SVT presets would all move the ratio (the encode-levers draft finding shows presets move
   energy several-fold).
 
+### 2b. Football (encode only)
+
+All 45 runs 🟢, none elevated. The ladders came from an unmetered scout, as for Meridian (`grid_plan_football.json`).
+
+| Codec | Target → actual kb/s | VMAF v0.6.1 | Wh / 1000 frames | ΔW (W) | Encode s / pass |
+|---|---|---|---|---|---|
+| HEVC x265 | 5000 → 5001 | 87.66 | 0.335 ± 0.006 | 70.3 | 30.9 |
+| | 7000 → 6969 | 90.53 | 0.364 ± 0.007 | 70.1 | 33.7 |
+| | 9000 → 8928 | 92.16 | 0.390 ± 0.012 | 70.0 | 36.1 |
+| | 11000 → 10886 | 93.18 | 0.419 ± 0.004 | 71.1 | 38.3 |
+| | 14000 → 13820 | 94.17 | 0.450 ± 0.018 | 70.9 | 41.2 |
+| AV1 SVT | 5000 → 4945 | 89.20 | 0.148 ± 0.005 | 69.7 | 13.8 |
+| | 7000 → 6878 | 91.51 | 0.150 ± 0.002 | 69.4 | 14.0 |
+| | 9000 → 8691 | 92.79 | 0.147 ± 0.002 | 69.8 | 13.7 |
+| | 12000 → 10992 | 93.71 | 0.157 ± 0.004 | 68.9 | 14.8 |
+| | 15000 → 13167 | 94.30 | 0.151 ± 0.017 | 69.3 | 14.1 |
+| VVC VVenC | 3500 → 3271 | 88.43 | 5.611 ± 0.073 | 68.1 | 534.6 |
+| | 4500 → 4181 | 90.46 | 6.380 ± 0.144 | 69.3 | 597.1 |
+| | 5500 → 5067 | 91.78 | 6.893 ± 0.140 | 68.7 | 651.2 |
+| | 7000 → 6395 | 93.05 | 7.753 ± 0.070 | 69.4 | 724.8 |
+| | 9000 → 8258 | 94.18 | 8.837 ± 0.033 | 69.6 | 824.1 |
+
+| At VMAF 92 | kb/s | Wh / 1000 frames [bootstrap] | conservative |
+|---|---|---|---|
+| HEVC | 8735 | 0.387 [0.382, 0.390] | [0.376, 0.399] |
+| AV1 | 7571 [7551, 7593] | 0.149 [0.149, 0.150] | [0.147, 0.151] |
+| VVC | 5297 | 7.04 [6.99, 7.07] | [6.91, 7.17] |
+
+| VVC vs … at VMAF 92 | Energy ratio | Bitrate change |
+|---|---|---|
+| HEVC | **18.2×** (bootstrap 18.0–18.4; conservative **17.3–19.1**) | **−39 %** |
+| AV1 | **47.3×** (bootstrap 46.9–47.6; conservative **45.9–48.7**) | **−30 %** |
+
+At matched bitrate (6650 kb/s actual), VVC uses 22.0× the energy of HEVC and 52.7× that of AV1, at VMAF 93.2 against 90.1 / 91.2.
+In Wh per minute of content (× 3.6, 60 fps) at VMAF 92: HEVC 1.39, AV1 0.54, VVC 25.3.
+
+**Across the two clips:**
+- **VVC's bitrate advantage shrinks on the harder content** (−55 → −39 % vs HEVC, −51 → −30 % vs AV1).
+- **Its energy premium grows** (10 → 18× vs HEVC, 19 → 47× vs AV1). SVT-AV1 preset 8 barely slows down on
+  Football (12.0 → 13.7 s per pass), while VVenC slows almost 3× (222 → 651 s).
+- Two clips can't give a trend; this is two data points, stated as such.
+
 ## 3. Decode results
 
 ![Decode energy](mhv27_vvc_pilot/fig_decode.png)
@@ -167,8 +215,8 @@ every 2 s below ~12 W), using each node's own settings.
 
 | Statement | Status | Why |
 |---|---|---|
-| VVenC vs x265/SVT-AV1 encode energy at VMAF 92 (10.3× / 19×) | 🟢 | n=3 per point, 45/45 🟢, conservative CI ±7 %. One clip, one host, defaults. |
-| VVC bitrate saving at VMAF 92 (−55 % / −51 %) | 🟢 (as measured) | VMAF and bitrate are essentially deterministic. One clip only, so not a general BD-rate. |
+| VVenC vs x265/SVT-AV1 encode energy at VMAF 92 (Meridian 10.3× / 19×; Football 18× / 47×) | 🟢 | n=3 per point, 90/90 🟢, conservative CIs within ±7 %. Two clips, one host, defaults. |
+| VVC bitrate saving at VMAF 92 (Meridian −55 % / −51 %; Football −39 % / −30 %) | 🟢 (as measured) | VMAF and bitrate are essentially deterministic. Two clips, so not a general BD-rate. |
 | M6 paced decode: VVC ≈ 7× hardware HEVC/AV1 | 🟡 | VVC side 🟢; the hardware side (0.17 W) drops to 🟡/🔴 on fresh samples. |
 | M6 paced decode: VVC ≈ 5× dav1d | 🟢 | Both cells 🟢 on fresh samples. |
 | GoS1 paced decode ranking | 🟡 | VVC and dav1d 🟢; HEVC cell not confident. |
@@ -190,17 +238,19 @@ prompt asked for, reported as is, not tuned around.
 
 ## 6. What was cut, and why
 
-- **Grid: nothing cut.** The full 3 codecs × 5 bitrates × n=3 ran (projected about 2.5 h, actual 1 h 28 min).
+- **Grid: nothing cut.** The full 3 codecs × 5 bitrates × n=3 ran on Meridian (projected about 2.5 h, actual 1 h 28 min)
+  and on Football (3 h 22 min).
 - **Pi energy rows: not run.** The rig poller inside the wattlab service holds the Pi plug's P110 (KLAP) session, so a
   standalone read needs the service stopped, and only `restart` is in sudoers. The fallback was a temporary PATH line at
   the top of the Pi's `~/.bashrc`, so that OWL's own `/decode` pipeline would pick up the staged ffmpeg. The session's
   safety check refused it as unauthorized persistence, so the Pi rows have speed only.
-- **Football: not run in this digest** (the prompt's optional addition).
+- **Football: run** (encode only, the prompt's optional addition; 45 rows, 03:18–06:40).
 - **Extras that were run:** single-thread AFAP arms on both hosts, AFAP rows on GoS2, and GoS2's hardware decode arms.
 
 ## 7. What this does not show
 
-- **One clip** (Meridian, low complexity, 30 s), **one encode host** (Ryzen 9 7900), **CPU encode only**. No VVC hardware
+- **Two clips** (Meridian, low complexity; Football, high detail; 30 s each), **one encode host** (Ryzen 9 7900),
+  **CPU encode only**. Decode used Meridian streams only. No VVC hardware
   encoder exists on either node.
 - **8-bit SDR source → 10-bit encodes.** No HDR, and VMAF v0.6.1 is an SDR model.
 - **Default presets and threading.** These are three different points on three dials. VVenC used 8 of 24 threads; perceptual

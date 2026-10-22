@@ -58,11 +58,18 @@ def interp_at(xs, ys, x0):
 
 
 # ---------------------------------------------------------------- encode
+CLIP_TITLE = {"meridian_120s": "Meridian", "football_30s": "Football (lab-internal source)"}
+
+
 def load_encode():
-    files = sorted(glob.glob(str(REPO / "results/calibration/_staging/mhv27_vvc_pilot_encode_*.json"))
-                   or glob.glob(str(HERE / "raw/mhv27_vvc_pilot_encode_*.json")))
-    art = json.loads(Path(files[-1]).read_text())
-    return art, [r for r in art["rows"] if not r.get("error")], files[-1]
+    """Latest artifact per clip → {clip: (art, rows, path)}; staging first, raw/ copies as fallback."""
+    files = sorted(glob.glob(str(REPO / "results/calibration/_staging/mhv27_vvc_pilot_encode_*.json"))) \
+        or sorted(glob.glob(str(HERE / "raw/mhv27_vvc_pilot_encode_*.json")))
+    out = {}
+    for f in files:
+        art = json.loads(Path(f).read_text())
+        out[art["protocol"]["clip"]] = (art, [r for r in art["rows"] if not r.get("error")], f)
+    return out
 
 
 def encode_points(rows):
@@ -105,7 +112,8 @@ def pct(a):
 
 def encode_section(art, rows, path, lines):
     pts = encode_points(rows)
-    lines.append(f"## Encode (GoS1) — source artifact `{Path(path).relative_to(REPO)}`\n")
+    lines.append(f"## Encode (GoS1), {CLIP_TITLE.get(art['protocol']['clip'], art['protocol']['clip'])} — "
+                 f"artifact `{Path(path).name}`\n")
     lines.append(f"{len(rows)} rows, complete={art.get('complete')}. Per point: mean ± 95 % t-CI over reps.\n")
     lines.append("| Codec | Target kb/s | Actual kb/s | VMAF v0.6.1 | Wh/1000 frames | ΔW (W) | Encode s / pass | n | flags | elevated |")
     lines.append("|---|---|---|---|---|---|---|---|---|---|")
@@ -193,7 +201,7 @@ def encode_section(art, rows, path, lines):
 
 
 def write_encode_csv(rows):
-    keys = ["codec", "target_kbps", "rep", "at", "achieved_kbps", "vmaf", "vmaf_model", "n_encodes",
+    keys = ["clip", "codec", "target_kbps", "rep", "at", "achieved_kbps", "vmaf", "vmaf_model", "n_encodes",
             "encode_wall_s_mean", "frames_encoded", "delta_t_s", "w_base", "delta_w", "delta_e_wh_total",
             "wh_per_1000_frames", "wh_per_min_video", "poll_count", "confidence_flag", "confidence_positive",
             "baseline_elevated", "cache_evicted", "ffmpeg_cmd"]
@@ -282,24 +290,28 @@ def write_decode_csv(rows):
 
 
 # ---------------------------------------------------------------- figures
-def figures(means, dec):
+def figures(means_by_clip, dec):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     colors = {"h265": "#1f77b4", "av1": "#ff7f0e", "vvc": "#2ca02c"}
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    for c in ["h265", "av1", "vvc"]:
-        if c not in means:
-            continue
-        m = sorted(means[c])
-        ax.errorbar([x[0] for x in m], [x[2] for x in m], yerr=[x[3] for x in m], xerr=[x[4] for x in m],
-                    marker="o", capsize=3, label=LABEL[c], color=colors[c])
-    ax.axvline(TARGET, ls=":", c="grey")
-    ax.set_xlabel("VMAF v0.6.1 (1080p, vs 4K source)")
-    ax.set_ylabel("Encode energy above idle (Wh / 1000 frames)")
-    ax.set_title("GoS1 CPU encode, Meridian 30 s, 10-bit, default presets (n=3, 95 % CI)")
-    ax.set_ylim(bottom=0)
-    ax.legend()
+    clips = [c for c in CLIP_TITLE if c in means_by_clip]
+    fig, axes = plt.subplots(1, len(clips), figsize=(7 * len(clips), 4.5), squeeze=False)
+    for ax, clip in zip(axes[0], clips):
+        means = means_by_clip[clip]
+        for c in ["h265", "av1", "vvc"]:
+            if c not in means:
+                continue
+            m = sorted(means[c])
+            ax.errorbar([x[0] for x in m], [x[2] for x in m], yerr=[x[3] for x in m], xerr=[x[4] for x in m],
+                        marker="o", capsize=3, label=LABEL[c], color=colors[c])
+        ax.axvline(TARGET, ls=":", c="grey")
+        ax.set_xlabel("VMAF v0.6.1 (1080p, vs 4K source)")
+        ax.set_ylabel("Encode energy above idle (Wh / 1000 frames)")
+        ax.set_title(f"{CLIP_TITLE[clip]} 30 s", fontsize=10)
+        ax.set_ylim(bottom=0)
+        ax.legend(fontsize=8)
+    fig.suptitle("GoS1 CPU encode (Ryzen 9 7900), 10-bit, default presets (n=3, 95 % CI)", fontsize=10)
     fig.tight_layout()
     fig.savefig(HERE / "fig_encode_energy_vs_vmaf.png", dpi=150)
 
@@ -327,9 +339,14 @@ def figures(means, dec):
 
 def main():
     lines = []
-    art, rows, path = load_encode()
-    means = encode_section(art, rows, path, lines)
-    write_encode_csv(rows)
+    enc = load_encode()
+    means = {}
+    all_rows = []
+    for clip in [c for c in CLIP_TITLE if c in enc]:
+        art, rows, path = enc[clip]
+        means[clip] = encode_section(art, rows, path, lines)
+        all_rows += [{**r, "clip": clip} for r in rows]
+    write_encode_csv(all_rows)
     drows = load_decode()
     dec = decode_section(drows, lines) if drows else {}
     if drows:

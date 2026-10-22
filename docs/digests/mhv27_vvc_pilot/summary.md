@@ -1,4 +1,4 @@
-## Encode (GoS1) — source artifact `results/calibration/_staging/mhv27_vvc_pilot_encode_2026-10-21T2258.json`
+## Encode (GoS1), Meridian — artifact `mhv27_vvc_pilot_encode_2026-10-21T2258.json`
 
 45 rows, complete=True. Per point: mean ± 95 % t-CI over reps.
 
@@ -52,6 +52,60 @@ Conservative interval (per-point 95 % t-CI bounds interpolated, extremes paired)
 VVC vs HEVC (x265 Main10) at 700 kb/s: energy 13.01× [12.86, 13.19]
 
 VVC vs AV1 (SVT-AV1 10-bit) at 700 kb/s: energy 23.45× [23.26, 23.69]
+## Encode (GoS1), Football (lab-internal source) — artifact `mhv27_vvc_pilot_encode_football_30s_2026-10-22T0118.json`
+
+45 rows, complete=True. Per point: mean ± 95 % t-CI over reps.
+
+| Codec | Target kb/s | Actual kb/s | VMAF v0.6.1 | Wh/1000 frames | ΔW (W) | Encode s / pass | n | flags | elevated |
+|---|---|---|---|---|---|---|---|---|---|
+| h265 | 5000 | 5001 ± 0 | 87.66 ± 0.00 | 0.3350 ± 0.0056 | 70.3 ± 1.1 | 30.9 ± 0.2 | 3 | 🟢🟢🟢 | 0 |
+| h265 | 7000 | 6969 ± 0 | 90.53 ± 0.00 | 0.3637 ± 0.0069 | 70.1 ± 1.2 | 33.7 ± 0.1 | 3 | 🟢🟢🟢 | 0 |
+| h265 | 9000 | 8928 ± 0 | 92.16 ± 0.00 | 0.3898 ± 0.0121 | 70.0 ± 1.8 | 36.1 ± 0.2 | 3 | 🟢🟢🟢 | 0 |
+| h265 | 11000 | 10886 ± 0 | 93.18 ± 0.00 | 0.4193 ± 0.0037 | 71.1 ± 0.6 | 38.3 ± 0.1 | 3 | 🟢🟢🟢 | 0 |
+| h265 | 14000 | 13820 ± 0 | 94.17 ± 0.00 | 0.4497 ± 0.0175 | 70.9 ± 2.6 | 41.2 ± 0.1 | 3 | 🟢🟢🟢 | 0 |
+| av1 | 5000 | 4945 ± 14 | 89.20 ± 0.10 | 0.1478 ± 0.0047 | 69.7 ± 1.9 | 13.8 ± 0.1 | 3 | 🟢🟢🟢 | 0 |
+| av1 | 7000 | 6878 ± 12 | 91.51 ± 0.05 | 0.1501 ± 0.0018 | 69.4 ± 0.5 | 14.0 ± 0.1 | 3 | 🟢🟢🟢 | 0 |
+| av1 | 9000 | 8691 ± 46 | 92.79 ± 0.07 | 0.1471 ± 0.0019 | 69.8 ± 1.1 | 13.7 ± 0.1 | 3 | 🟢🟢🟢 | 0 |
+| av1 | 12000 | 10992 ± 53 | 93.71 ± 0.03 | 0.1567 ± 0.0040 | 68.9 ± 1.2 | 14.8 ± 0.7 | 3 | 🟢🟢🟢 | 0 |
+| av1 | 15000 | 13167 ± 163 | 94.30 ± 0.06 | 0.1508 ± 0.0165 | 69.3 ± 3.2 | 14.1 ± 1.1 | 3 | 🟢🟢🟢 | 0 |
+| vvc | 3500 | 3271 ± 0 | 88.43 ± 0.00 | 5.6111 ± 0.0733 | 68.1 ± 0.9 | 534.6 ± 0.8 | 3 | 🟢🟢🟢 | 0 |
+| vvc | 4500 | 4181 ± 0 | 90.46 ± 0.00 | 6.3804 ± 0.1436 | 69.3 ± 1.5 | 597.1 ± 1.4 | 3 | 🟢🟢🟢 | 0 |
+| vvc | 5500 | 5067 ± 0 | 91.78 ± 0.00 | 6.8926 ± 0.1403 | 68.7 ± 1.3 | 651.2 ± 2.9 | 3 | 🟢🟢🟢 | 0 |
+| vvc | 7000 | 6395 ± 0 | 93.05 ± 0.00 | 7.7528 ± 0.0704 | 69.4 ± 0.7 | 724.8 ± 2.8 | 3 | 🟢🟢🟢 | 0 |
+| vvc | 9000 | 8258 ± 0 | 94.18 ± 0.00 | 8.8365 ± 0.0328 | 69.6 ± 0.1 | 824.1 ± 1.9 | 3 | 🟢🟢🟢 | 0 |
+
+### At VMAF 92 (interpolated; 95 % bootstrap interval)
+
+| Codec | kb/s @ VMAF 92 | Wh/1000 frames @ VMAF 92 |
+|---|---|---|
+| HEVC (x265 Main10) | 8735 [8735, 8735] | 0.3873 [0.3822, 0.3903] |
+| AV1 (SVT-AV1 10-bit) | 7571 [7551, 7593] | 0.1490 [0.1485, 0.1495] |
+| VVC (VVenC) | 5297 [5297, 5297] | 7.0416 [6.9884, 7.0729] |
+
+| Ratio at VMAF 92 | Energy ratio [95 %] | Bitrate change [95 %] |
+|---|---|---|
+| VVC vs HEVC (x265 Main10) | 18.18× [17.98, 18.41] | -39 % [-39, -39] |
+| VVC vs AV1 (SVT-AV1 10-bit) | 47.26× [46.91, 47.56] | -30 % [-30, -30] |
+
+Conservative interval (per-point 95 % t-CI bounds interpolated, extremes paired):
+
+- HEVC (x265 Main10): Wh/1000 frames @ VMAF 92 in [0.3757, 0.3988]
+- AV1 (SVT-AV1 10-bit): Wh/1000 frames @ VMAF 92 in [0.1472, 0.1508]
+- VVC (VVenC): Wh/1000 frames @ VMAF 92 in [6.9134, 7.1698]
+- VVC vs HEVC (x265 Main10): energy ratio in [17.33×, 19.09×]
+- VVC vs AV1 (SVT-AV1 10-bit): energy ratio in [45.85×, 48.71×]
+
+### At matched bitrate (6650 kb/s actual; interpolated, 95 % bootstrap interval)
+
+| Codec | VMAF @ matched | Wh/1000 frames @ matched |
+|---|---|---|
+| HEVC (x265 Main10) | 90.07 | 0.3590 [0.3573, 0.3616] |
+| AV1 (SVT-AV1 10-bit) | 91.24 | 0.1499 [0.1493, 0.1505] |
+| VVC (VVenC) | 93.20 | 7.9011 [7.8840, 7.9290] |
+
+VVC vs HEVC (x265 Main10) at 6650 kb/s: energy 22.01× [21.86, 22.14]
+
+VVC vs AV1 (SVT-AV1 10-bit) at 6650 kb/s: energy 52.72× [52.46, 53.00]
 
 ## Decode
 
