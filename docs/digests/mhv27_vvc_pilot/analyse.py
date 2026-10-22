@@ -326,12 +326,12 @@ def figures(means_by_clip, dec):
             ax.bar(range(len(ks)), [dec[k][1][0] for k in ks], yerr=[dec[k][1][1] or 0 for k in ks],
                    capsize=3, color=[col[k[1]] for k in ks])
             ax.set_xticks(range(len(ks)))
-            ax.set_xticklabels([f"{'GoS1' if k[0] == 'gos1' else 'GoS2'}\n{names[k[1]]}" for k in ks],
+            ax.set_xticklabels([f"{ {'gos1': 'GoS1', 'gos2': 'GoS2', 'pi5': 'Pi 5'}[k[0]] }\n{names[k[1]]}" for k in ks],
                                fontsize=7, rotation=45, ha="right")
             ax.set_yscale("log")
             ax.set_title(title, fontsize=10)
         axes[0].set_ylabel("Decode energy above idle (Wh / 1000 frames, log)")
-        fig.suptitle("Host decode of the VMAF≈92 streams: GoS1 Ryzen 9 7900 vs GoS2 Apple M6 (n=3, 95 % CI)",
+        fig.suptitle("Decode of the VMAF≈92 streams: GoS1 Ryzen 9 7900, GoS2 Apple M6, Pi 5 (paced only) (n=3, 95 % CI)",
                      fontsize=10)
         fig.tight_layout()
         fig.savefig(HERE / "fig_decode.png", dpi=150)

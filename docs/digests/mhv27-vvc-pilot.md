@@ -1,7 +1,7 @@
 # MHV'27 VVC pilot: encode and decode energy, one night (2026-10-22)
 
 *Pilot data for the ACM Mile-High Video 2027 abstract ("Early Insight"). Measured 2026-10-22 between 00:57 and
-06:40 Paris on GoS1 and GoS2, under the revised run prompt [`mhv27-vvc-pilot_prompt.md`](mhv27-vvc-pilot_prompt.md).
+06:40 Paris on GoS1 and GoS2 (Pi 5 rows 10:57–11:10), under the revised run prompt [`mhv27-vvc-pilot_prompt.md`](mhv27-vvc-pilot_prompt.md).
 Nothing here has been reviewed by Tania. It is not a finding, and nothing below has been catalogued on `/findings`.
 Everything is **measured** unless it is marked *[inferred]*.*
 
@@ -20,9 +20,10 @@ the raw artifacts (`raw/`), the scripts (`scout.py`, `run_grid.py`, `decode_benc
    path), against +0.17 W for HEVC or AV1 in hardware and +0.24 W for AV1 in software (dav1d).** That puts VVC at about 7× the
    hardware decoders (n=3; the VVC rows stay 🟢 after the fresh-sample correction, but the 0.17 W hardware rows drop to
    🟡/🔴, so the ratio is 🟡).
-3. 🟡 **A Raspberry Pi 5 cannot decode this 1080p59.94 10-bit VVC stream in real time** with a current ffmpeg: it
-   reaches 0.83× (50 fps) flat out (n=3, no throttling). HEVC reaches 2.3× and dav1d 2.7× on the same board. This is a speed
-   measurement only; the Pi's energy was not measured (see §6).
+3. 🟢 **A Raspberry Pi 5 cannot decode this 1080p59.94 10-bit VVC stream in real time** with a current ffmpeg: it
+   reaches 0.83× (50 fps) flat out (n=3, no throttling). Trying costs **+4.94 W, against +1.92 W for HEVC and +1.27 W for
+   AV1 (dav1d)**, both of which play in real time (n=3 each, 9/9 🟢, still 🟢 on fresh samples). Per decoded frame that is
+   ~3× HEVC and ~5× dav1d.
 
 ## 1. Operating points and versions
 
@@ -221,11 +222,29 @@ every 2 s below ~12 W), using each node's own settings.
 | M6 paced decode: VVC ≈ 5× dav1d | 🟢 | Both cells 🟢 on fresh samples. |
 | GoS1 paced decode ranking | 🟡 | VVC and dav1d 🟢; HEVC cell not confident. |
 | AFAP decode ratios (both hosts) | 🟢 | All cells 🟢, CIs small. |
-| Pi 5 can't sustain real-time VVC 1080p60 10-bit | 🟡 | Speed n=3 and consistent, no throttling. One build and one stream; energy not measured. |
+| Pi 5 can't sustain real-time VVC 1080p60 10-bit | 🟡 | Speed n=3 and consistent, no throttling. One build, one stream; speed was measured unmetered, outside the energy runs. |
+| Pi 5 paced decode: VVC +4.94 W vs HEVC +1.92 W / dav1d +1.27 W | 🟢 | 9/9 🟢, also on fresh samples. The VVC row is a decoder running below real time, not valid playback. |
 
-## 5. Pi 5 stretch (speed only)
+## 5. Pi 5 (paced decode energy + speed)
 
-Unmetered, n=3 for VVC and n=1 for the others (`mhv27_vvc_pilot/pi5_speed_unmetered.txt`):
+**Energy** was measured through OWL's own `/decode` pipeline (batch `9589624c2902`, 9 jobs, 2026-10-22 10:57–11:10 Paris, rig
+P110 lab-F2 `.184`, fw 1.3.1). Each job runs a 15 s settle, a 20 s baseline and a **45 s paced window** (`ffmpeg -nostdin -re
+-i … -an -f null -`), with the idle guard. The clips are the three decode streams looped once to 60 s by stream copy, since the
+upload template needs ≥ 45 s. The `ffmpeg` on the Pi resolved to the staged N-127900 build through a temporary,
+owner-approved PATH line in the Pi's `~/.bashrc`, removed straight after (system ffmpeg 5.1.9 untouched). Envelopes are in
+`raw/pi5/`. Reps ran as whole passes.
+
+| Pi 5, paced | ΔW (W) | Wh / 1000 frames | speed× | flags | fresh |
+|---|---|---|---|---|---|
+| VVC (sw) | **4.94 ± 0.41** | 0.0275 ± 0.0023 *[frames inferred from 0.83×]* | 0.83 | 🟢🟢🟢 | 🟢🟢🟢 |
+| HEVC (sw) | 1.92 ± 0.08 | 0.0089 ± 0.0004 | 1.02 | 🟢🟢🟢 | 🟢🟢🟢 |
+| AV1 dav1d | 1.27 ± 0.18 | 0.0059 ± 0.0008 | 1.02 | 🟢🟢🟢 | 🟢🟢🟢 |
+
+The Pi idled at 3.0–3.1 W. Its Wi-Fi interface was up alongside Ethernet in every window, and the board also runs Pi-hole
+(LAN DNS); both are constant across rows and disclosed per rig convention. Per-frame values use window × 59.94 fps × speed.
+For VVC the speed comes from the unmetered check below, not from the metered run (the rig harness does not record `speed=`).
+
+**Speed**, unmetered, n=3 for VVC and n=1 for the others (`mhv27_vvc_pilot/pi5_speed_unmetered.txt`):
 
 | Pi 5 | VVC | HEVC | AV1 dav1d |
 |---|---|---|---|
@@ -240,10 +259,8 @@ prompt asked for, reported as is, not tuned around.
 
 - **Grid: nothing cut.** The full 3 codecs × 5 bitrates × n=3 ran on Meridian (projected about 2.5 h, actual 1 h 28 min)
   and on Football (3 h 22 min).
-- **Pi energy rows: not run.** The rig poller inside the wattlab service holds the Pi plug's P110 (KLAP) session, so a
-  standalone read needs the service stopped, and only `restart` is in sudoers. The fallback was a temporary PATH line at
-  the top of the Pi's `~/.bashrc`, so that OWL's own `/decode` pipeline would pick up the staged ffmpeg. The session's
-  safety check refused it as unauthorized persistence, so the Pi rows have speed only.
+- **Pi energy rows: run on the morning of 2026-10-22**, after the owner approved the temporary PATH line (§5). Paced only;
+  no AFAP rows on the Pi.
 - **Football: run** (encode only, the prompt's optional addition; 45 rows, 03:18–06:40).
 - **Extras that were run:** single-thread AFAP arms on both hosts, AFAP rows on GoS2, and GoS2's hardware decode arms.
 
@@ -256,7 +273,7 @@ prompt asked for, reported as is, not tuned around.
 - **Default presets and threading.** These are three different points on three dials. VVenC used 8 of 24 threads; perceptual
   QPA is on by default, which optimises for XPSNR rather than VMAF *[inferred: could understate VVC on VMAF]*.
 - **Decode streams sit at one quality point** (VMAF ≈ 92), at different bitrates per codec.
-- **GoS2 rows use fw 1.3.1 P110s**, which refresh about every 2 s below ~12 W, and P110 accuracy around 1 W is unverified against a
+- **GoS2 and Pi 5 rows use fw 1.3.1 P110s**, which refresh about every 2 s below ~12 W, and P110 accuracy around 1 W is unverified against a
   reference meter. GoS1 paced rows sit near the floor of a 77 W idle.
 - **Device layer only.** Network, CDN and CPE are excluded. Energy only, no CO2e.
 - **No client STB / TV decode.** No rig box can play VVC today (capabilities digest §3).
