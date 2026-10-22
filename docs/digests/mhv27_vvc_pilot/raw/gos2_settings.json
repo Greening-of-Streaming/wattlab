@@ -1,0 +1,15 @@
+{
+ "conf_green_polls": 9,
+ "conf_yellow_polls": 4,
+ "conf_positive_green": 0.95,
+ "conf_positive_yellow": 0.8,
+ "variance_pct": 1.37,
+ "variance_green_x": 5,
+ "variance_yellow_x": 2,
+ "variance_idle_pct": 2.57,
+ "variance_idle_drift_pct": 4.4,
+ "variance_cpu_pct": 1.12,
+ "variance_gpu_pct": 0.43,
+ "variance_runs": 30,
+ "variance_cooldown_s": 35
+}

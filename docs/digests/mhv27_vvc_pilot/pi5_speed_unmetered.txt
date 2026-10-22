@@ -1,0 +1,11 @@
+# Pi 5 (Raspberry Pi OS Bookworm, 4x Cortex-A76, 16 GB) — UNMETERED real-time check, 2026-10-22 ~02:50 Paris
+# ffmpeg N-127900-ge2798d5cad-20261021 (BtbN linuxarm64 gpl static, staged in /dev/shm; system ffmpeg 5.1.9 untouched)
+# streams = the VMAF-92 decode streams (sha256 verified), 1801 frames, 1080p59.94 10-bit; default threads; -an -f null -
+vvc      afap  rep1 speed=0.832x fps=50   | rep2 0.835x | rep3 0.828x   throttled=0x0, 62.8 C after
+vvc      paced rep1 speed=0.828x fps=50   (-re cannot pace above what the decoder sustains)
+hevc     afap  rep1 speed=2.29x  fps=137
+hevc     paced rep1 speed=1.02x  fps=61
+libdav1d afap  rep1 speed=2.7x   fps=162
+libdav1d paced rep1 speed=1.02x  fps=61
+# Energy NOT measured: the rig poller owns the Pi plug's KLAP session; stopping the service is not in sudoers
+# and the alternative (temporary PATH shim in the Pi's ~/.bashrc so OWL's /decode path picks this ffmpeg) was refused.

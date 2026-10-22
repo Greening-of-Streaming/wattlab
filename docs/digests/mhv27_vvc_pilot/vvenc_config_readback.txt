@@ -1,0 +1,38 @@
+[libvvenc @ 0x622b856c4e40] vvenc [details]: Internal format                        : 1920x1080  59.9401 Hz  SDR
+vvenc [details]: Threads                                : 8  (parallel frames: 4)
+vvenc [details]: Rate control                           : VBR  500 kbps  single-pass
+vvenc [details]: Perceptual optimization                : Enabled
+vvenc [details]: Intra period (keyframe)                : 120
+vvenc [details]: Decoding refresh type                  : IDR
+vvenc [details]: Sequence PSNR output                   : Linear average only
+vvenc [details]: Hexadecimal PSNR output                : Disabled
+vvenc [details]: Sequence MSE output                    : Disabled
+vvenc [details]: Frame MSE output                       : Disabled
+vvenc [details]: Cabac-zero-word-padding                : Enabled
+vvenc [details]: Frame index                            : all frames
+vvenc [details]: Profile                                : main_10
+vvenc [details]: Level                                  : 4.1
+vvenc [details]: CU size                                : 128
+vvenc [details]: Max TB size                            : 64
+vvenc [details]: Min CB size                            : 4
+vvenc [details]: Motion search range                    : 384
+vvenc [details]: QP                                     : 38
+vvenc [details]: Max dQP signaling subdiv               : 2
+vvenc [details]: Cb QP Offset (dual tree)               : 0 (0)
+vvenc [details]: Cr QP Offset (dual tree)               : 0 (0)
+vvenc [details]: GOP size                               : 32
+vvenc [details]: PicReordering                          : 1
+vvenc [details]: Input bit depth                        : (Y:10, C:10)
+vvenc [details]: MSB-extended bit depth                 : (Y:10, C:10)
+vvenc [details]: Internal bit depth                     : (Y:10, C:10)
+vvenc [details]: cu_chroma_qp_offset_subdiv             : -1
+vvenc [details]: log2_sao_offset_scale_luma             : 0
+vvenc [details]: log2_sao_offset_scale_chroma           : 0
+vvenc [details]: Cost function                          : Lossy coding
+vvenc [details]: Film grain analysis                    : 0
+vvenc [details]: CODING TOOL CFG: CTU128 QTMin44BTT21 IBD:0 SAO:1 ALF:1 (NonLinLuma:0 NonLinChr:0) CCALF:1 Tiles:-1x-1 Slices:1 WPP:0 WPP-Substreams:1 TMVP:1 DQ:1 SDH:0 CST:1 BDOF:1 DMVR:1 MTSImplicit:1 SBT:0 JCbCr:1 CabacInitPresent:0 AMVR:5 SMVD:3 LMCS:0 CIIP:0 MIP:1 AFFINE:4 (PROF:1, Type:1) MMVD:3 DisFracMMVD:1 SbTMVP:1 GPM:4 LFNST:1 MTS:0 ISP:3 TS:2 TSLog2MaxSize:4 useChromaTS:0 BDPCM:2 IBC:2 BCW:0 
+vvenc [details]: ENC. ALG. CFG: QPA:1 HAD:1 RDQ:1 RDQTS:1 ASR:1 MinSearchWindow:96 EDO:2 MCTF:2 BIM:1 
+vvenc [details]: PRE-ANALYSIS CFG: STA:1 LeadFrames:0 TrailFrames:0 
+vvenc [details]: FAST TOOL CFG: ECU:0 FEN:3 FDM:1 FastSearch:4 (SCC:2) LCTUFast:1 FastMrg:3 PBIntraFast:1 AMaxBT:0 FastQtBtEnc:1 ContentBasedFastQtbt:1 FastMIP:3 FastIntraTools:1 IntraEstDecBit:2 FastLocalDualTree:1 IntegerET:0 FastSubPel:1 ReduceFilterME:2 QtbttExtraFast:3 FastTTSplit:5 IBCFastMethod:3 FIM:0 ALFSpeed:0 QuantThr:4 SelectiveRDQO:0 
+vvenc [details]: RATE CONTROL CFG: RateControl:1 Passes:1 Pass:-1 TargetBitrate:500000 LookAhead:1 FirstPassMode:0 
+vvenc [details]: PARALLEL PROCESSING CFG: NumThreads:8 MaxParallelFrames:4 IFP:0 (IFPLines:0) NumParallelGOPs:0 WppBitEqual:1 WF:0 
