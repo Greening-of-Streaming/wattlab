@@ -30,8 +30,8 @@ live=$(curl -fsS "$BASE/live") && ok "/live: $live" || { bad "/live unreachable 
 
 # 2. power source + banner
 page=$(curl -fsS "$BASE/video")
-if echo "$page" | grep -q "SIMULATED POWER"; then ok "simulated-power banner shown"
-elif echo "$page" | grep -q "Power source unavailable"; then bad "power source unavailable (see banner on /video)"
+if grep -q "SIMULATED POWER" <<<"$page"; then ok "simulated-power banner shown"
+elif grep -q "Power source unavailable" <<<"$page"; then bad "power source unavailable (see banner on /video)"
 else ok "real power source (no simulated banner)"; fi
 
 # 3. tiers: the host itself is Lab (loopback / Docker bridge in OWL_LAB_CIDRS).

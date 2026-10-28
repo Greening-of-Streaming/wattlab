@@ -46,7 +46,7 @@ plus content, and 16 GB RAM or more (LLMs). For GPUs, an NVIDIA driver and the
 
 ```bash
 git clone https://github.com/greeningofstreaming/wattlab.git && cd wattlab
-cp container/owl.env.example container/owl.env      # then edit (power source, tiers…)
+cp container/owl.env.example container/owl.env      # then edit (node name, power source, tiers…)
 
 # CPU-only host:
 docker compose -f container/docker-compose.yml up -d --build
@@ -317,7 +317,9 @@ docker run --rm -v owl_owl-data:/data -v "$PWD":/out alpine \
 ```
 
 Every result carries the host, GPU and power-source stamps, so GoS can import
-them next to its own bench data, clearly labelled as yours.
+them next to its own bench data, clearly labelled as yours. The host name comes
+from `OWL_NODE_LABEL` (else the hostname); set it before your first run, because
+it is written into each result and its scope statement.
 
 ## 10. Not in the container
 

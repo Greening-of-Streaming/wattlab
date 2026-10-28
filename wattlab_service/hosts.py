@@ -67,16 +67,79 @@ import settings as cfg
 CODECS = ("h264", "h265", "av1")
 CODEC_LABEL = {"h264": "H.264", "h265": "H.265", "av1": "AV1"}
 
-# Identity of the machine this service runs on. Overridable via the
-# `local_host` setting; the defaults describe GoS1.
-_LOCAL_DEFAULT = {
-    "id": "gos1",
-    "label": "GoS1",
-    "chip": "AMD Ryzen 9 7900 + NVIDIA RTX 5080",
-    "cpu": "Ryzen 9 7900",
-    "machine": "Tower server",
-    "os": "Ubuntu 24.04",
-}
+# Identity of the machine this service runs on: detected from the machine
+# itself (OWL_NODE_LABEL, hostname, /proc/cpuinfo, os-release), then overridden
+# field by field by the `local_host` setting. GoS1 and GoS2 pin theirs in
+# settings.json; a new node (container, cloud VM) names itself correctly
+# instead of claiming to be GoS1.
+_GENERIC_HOSTNAMES = {"localhost", "localhost.localdomain", "ubuntu", ""}
+
+
+def _detect_label() -> str:
+    """OWL_NODE_LABEL, else a meaningful hostname, else "OWL node". Skips
+    generic names and Docker's 12-hex container ids (not the server's name)."""
+    import re
+    import socket
+    import env
+    name = (env.load().get("OWL_NODE_LABEL") or "").strip()
+    if name:
+        return name
+    host = socket.gethostname().split(".")[0]
+    if host.lower() in _GENERIC_HOSTNAMES or re.fullmatch(r"[0-9a-f]{12}", host):
+        return "OWL node"
+    return host
+
+
+def _detect_cpu() -> str:
+    import platform
+    import re
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                name = line.split(":", 1)[1]
+                name = re.sub(r"\((R|TM)\)|\bCPU\b|@.*$|\d+-Core Processor|Processor", "", name)
+                return " ".join(name.split()) or "CPU"
+    except OSError:
+        pass
+    return platform.processor() or platform.machine() or "CPU"
+
+
+def _detect_os() -> str:
+    import platform
+    try:
+        for line in Path("/etc/os-release").read_text().splitlines():
+            if line.startswith("PRETTY_NAME="):
+                return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return f"{platform.system()} {platform.release()}".strip()
+
+
+_DETECTED: dict | None = None
+
+
+def _detected_local() -> dict:
+    global _DETECTED
+    if _DETECTED is None:
+        import os
+        import re
+        label = _detect_label()
+        cpu = _detect_cpu()
+        try:
+            import gpu
+            g = gpu.BACKEND.name if getattr(gpu.BACKEND, "available", False) else ""
+        except Exception:
+            g = ""
+        _DETECTED = {
+            "id": re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "owl-node",
+            "label": label,
+            "chip": f"{cpu} + {g}" if g else cpu,
+            "cpu": cpu,
+            "machine": "Docker container" if os.path.exists("/.dockerenv") else "Server",
+            "os": _detect_os(),
+        }
+    return _DETECTED
+
 
 # SSH options for every remote call: key-only, never prompt, fail fast.
 _SSH_OPTS = ["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
@@ -87,7 +150,7 @@ _SSH_OPTS = ["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
 
 def local_host() -> dict:
     s = cfg.load()
-    return {**_LOCAL_DEFAULT, **(s.get("local_host") or {}), "remote": False}
+    return {**_detected_local(), **(s.get("local_host") or {}), "remote": False}
 
 
 def driver(host: dict) -> str:
@@ -98,7 +161,7 @@ def driver(host: dict) -> str:
 
 def local_label() -> str:
     """This node's name for scope strings ("Device layer only (GoS1)…")."""
-    return local_host().get("label", "GoS1")
+    return local_host().get("label") or "OWL node"
 
 
 def local_cpu() -> str:
