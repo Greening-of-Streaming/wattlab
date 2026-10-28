@@ -48,6 +48,8 @@ plus content, and 16 GB RAM or more (LLMs). For GPUs, an NVIDIA driver and the
 git clone https://github.com/greeningofstreaming/wattlab.git && cd wattlab
 cp container/owl.env.example container/owl.env      # then edit (node name, power source, tiers…)
 
+export OWL_GIT_SHA=$(git rev-parse --short HEAD)   # stamps the code version on every result
+
 # CPU-only host:
 docker compose -f container/docker-compose.yml up -d --build
 # NVIDIA host (NVENC encode, CUDA image gen, GPU LLM inference):
@@ -78,6 +80,29 @@ On first start the entrypoint:
 
 All state lives in the `owl-data` volume (`/data`): results, settings, test
 content, HF cache. Models live in `ollama-models`.
+
+### Updating
+
+GoS publishes changes on `main`. Nothing updates by itself: pull and rebuild.
+
+```bash
+cd wattlab
+git pull --ff-only
+export OWL_GIT_SHA=$(git rev-parse --short HEAD)
+docker compose -f container/docker-compose.yml up -d --build      # add -f container/docker-compose.gpu.yml on NVIDIA hosts
+```
+
+- **Kept across updates:** results, `settings.json` and test content (the
+  `owl-data` volume), models (`ollama-models`), and `container/owl.env`
+  (gitignored). `settings.json` is seeded only on the first start, so later
+  changes to `settings.container.json` do not reach an existing install; new
+  settings take their defaults from code.
+- **Code version:** every result records `owl_version.sha`, the commit the image
+  was built from. Without `OWL_GIT_SHA` it reads `unknown`, and results from
+  before and after an update can no longer be told apart.
+- **Local code changes** (for example a reader added to `meter_backends.py`)
+  make `git pull --ff-only` stop on a conflict. Prefer sending the reader to GoS
+  so it lands upstream; otherwise keep it on your own branch and merge.
 
 ## 3. How a measurement works (one page)
 

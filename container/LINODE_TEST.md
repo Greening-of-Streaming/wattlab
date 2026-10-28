@@ -34,8 +34,9 @@ git -C ~/wattlab archive --format=tar HEAD | ssh root@$IP 'mkdir -p /opt/wattlab
 ## 3. Bring it up, exactly as the README says
 
 ```bash
-ssh root@$IP 'cd /opt/wattlab && cp container/owl.env.example container/owl.env \
-  && docker compose -f container/docker-compose.yml up -d --build'
+SHA=$(git -C ~/wattlab rev-parse --short HEAD)   # git archive ships no .git: pass the version in
+ssh root@$IP "cd /opt/wattlab && cp container/owl.env.example container/owl.env \
+  && OWL_GIT_SHA=$SHA docker compose -f container/docker-compose.yml up -d --build"
 ssh root@$IP 'cd /opt/wattlab && docker compose -f container/docker-compose.yml logs -f owl'   # until "Uvicorn running"
 ```
 
