@@ -507,3 +507,33 @@ def test_local_mlx_evicts_ollama_then_baselines_on_the_queue_floor(monkeypatch):
     with pytest.raises(RuntimeError, match="stop here"):
         asyncio.run(remote_ai._run_remote_mlx("qwen3.5:4b", "T2", "j1", host))
     assert order == ["evict", "local baseline"]
+
+
+def test_mlx_llm_combines_both_meters(monkeypatch):
+    """Dual-meter nodes get the per-meter combine (ci2) on the MLX path: the
+    summary must see the inner meter's baseline samples, not just meter 2's
+    (2026-10-28 — every MLX LLM result had read meters 'degraded')."""
+    import asyncio
+    import llm
+    import remote_ai
+    monkeypatch.setattr(llm, "unload_all_loaded_models", lambda: [])
+
+    async def baseline(polls, read_watts, **kw):
+        return {"w_base": 1.4, "samples_w": [1.38, 1.4, 1.42, 1.4, 1.4],
+                "baseline_samples_w_2": [2.4, 2.41, 2.39, 2.4, 2.4]}
+
+    async def poll(host, fn):
+        r = power.TaskReadings((float(t), 21.4 + (t % 2) * 0.1) for t in range(30))
+        r.samples_w_2 = [22.4 + (t % 2) * 0.1 for t in range(30)]
+        return fn(), r
+    monkeypatch.setattr(power, "sample_baseline", baseline)
+    monkeypatch.setattr(remote_ai, "_poll_while", poll)
+    monkeypatch.setattr(remote_ai, "_remote_mlx", lambda h, repo, prompt: {
+        "duration_s": 30.0, "output_tokens": 1000, "mlx_lm": "0.32.0"})
+    monkeypatch.setattr(hosts, "identity", lambda h: {"id": "gos2"})
+    host = {"label": "GoS2", "chip": "Apple M6", "local": True, "meters": ["10.0.0.1", "10.0.0.2"],
+            "mlx_models": {"qwen3.5:4b": "mlx-community/Qwen3.5-4B-4bit"}}
+    r = asyncio.run(remote_ai._run_remote_mlx("qwen3.5:4b", "T2", "j1", host))
+    m = r["energy"]["meters"]
+    assert "degraded" not in m and m["delta_w_combined"] == r["energy"]["delta_w"]
+    assert r["energy"]["confidence"]["method"] == "ci2"

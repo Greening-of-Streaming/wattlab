@@ -229,9 +229,9 @@ async def run_remote_llm(model_key: str, task_key: str, job_id: str, host_id: st
     task_samples_w = [round(r[1], 2) for r in readings]
     w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
     delta_w = round(w_task - w_base, 2)
-    meters = power.meters_summary({"w_base": w_base, **{k: v for k, v in baseline.items()
-                                   if k.startswith("baseline_samples_w_2")}},
-                                  readings, task_samples_w)
+    # The whole baseline: the inner meter's samples are what the per-meter
+    # combine diffs against — without them every run reads "degraded" (ci).
+    meters = power.meters_summary(baseline, readings, task_samples_w)
     if meters and "delta_w_combined" in meters:
         delta_w = meters["delta_w_combined"]
     delta_t = inf["duration_s"]
@@ -305,9 +305,9 @@ async def _run_remote_mlx(model_key: str, task_key: str, job_id: str, host: dict
     task_samples_w = [round(r[1], 2) for r in readings]
     w_task = sum(r[1] for r in readings) / len(readings) if readings else w_base
     delta_w = round(w_task - w_base, 2)
-    meters = power.meters_summary({"w_base": w_base, **{k: v for k, v in baseline.items()
-                                   if k.startswith("baseline_samples_w_2")}},
-                                  readings, task_samples_w)
+    # The whole baseline: the inner meter's samples are what the per-meter
+    # combine diffs against — without them every run reads "degraded" (ci).
+    meters = power.meters_summary(baseline, readings, task_samples_w)
     if meters and "delta_w_combined" in meters:
         delta_w = meters["delta_w_combined"]
     delta_t = inf["duration_s"]
