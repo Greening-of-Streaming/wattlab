@@ -275,6 +275,11 @@ async def _run_remote_mlx(model_key: str, task_key: str, job_id: str, host: dict
     if jobs is not None:
         jobs[job_id].update({"stage": "baseline", "meter_ip": host["meters"][0],
                              "power_host": host.get("label")})
+    # Ollama keeps the last model resident for 5 min: on a unified-memory Mac a
+    # prior Ollama gpt-oss (~13 GB) plus the MLX copy overflows the GPU budget
+    # (Metal OOM), and any resident model also sits in the baseline. Evict first.
+    if host.get("local") and llm.unload_all_loaded_models():
+        await asyncio.sleep(s["llm_unload_settle_s"])
     baseline = await remote_video._baseline(host, s["baseline_polls"])
     LOCK_FILE.write_text(job_id)
     try:
