@@ -193,7 +193,7 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
     repo = cfg_m["repo"]
 
     t_start = time.time()
-    pipe = None
+    pipe, embeds = None, None
     try:
         loader = cfg_m.get("loader")
         if loader == "sdxl_unet_ckpt":
@@ -214,7 +214,10 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
                 pipe = DiffusionPipeline.from_pretrained(repo, **kwargs)
             else:
                 pipe = AutoPipelineForText2Image.from_pretrained(repo, **kwargs)
-            pipe = pipe.to(torch_device(torch))   # CR-085: cuda → mps → cpu
+            if cfg_m.get("encode_once"):
+                embeds = encode_once(torch, pipe, torch_device(torch), [prompt])
+            else:
+                pipe = pipe.to(torch_device(torch))   # CR-085: cuda → mps → cpu
         else:
             pipe = AutoPipelineForText2Image.from_pretrained(
                 repo,
@@ -225,8 +228,9 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
         images = []
         for i in range(batch):
             gen = torch.Generator().manual_seed(seed + i) if seed is not None else None
+            text = {"prompt_embeds": embeds[prompt]} if embeds else {"prompt": prompt}
             result = pipe(
-                prompt=prompt,
+                **text,
                 num_inference_steps=steps,
                 # 0 for the ADD/turbo families; distilled-guidance families
                 # (SANA-Sprint) carry their own value in the catalog.
@@ -273,6 +277,25 @@ def generate_image(prompt: str, seed: int = None, device: str = "cpu",
             torch.cuda.empty_cache()
         elif use_gpu and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
             torch.mps.empty_cache()
+
+
+def encode_once(torch, pipe, device: str, prompts: list) -> dict:
+    """Families whose text encoder + transformer exceed the GPU (FLUX.2 Klein
+    4B: 7.5 + 7.3 GB bf16 on the 16 GB RTX 5080): encode each prompt once with
+    the text encoder on the device, park it on the CPU, then generate from the
+    cached embeddings (catalog flag `encode_once`). Text encoding is <1 % of a
+    4-step 1024 px generation. Mirrors remote/owl_imagegen._encode_once."""
+    pipe.text_encoder.to(device)
+    with torch.no_grad():
+        embeds = {p: pipe.encode_prompt(prompt=p, device=device)[0] for p in dict.fromkeys(prompts)}
+    pipe.text_encoder.to("cpu")
+    pipe.text_encoder = None
+    if device == "cuda":
+        torch.cuda.empty_cache()
+    elif device == "mps":
+        torch.mps.empty_cache()
+    pipe.to(device)
+    return embeds
 
 
 def _calc_energy(w_base: float, w_task: float, delta_t: float,

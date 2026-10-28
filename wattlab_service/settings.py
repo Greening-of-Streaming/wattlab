@@ -331,6 +331,9 @@ DEFAULTS = {
     "run_replication":    True,    # CR-085 Phase 5 — pull peers' results (no-op without peers)
     "replication_interval_s": 600,
     "local_mlx_models":   {},
+    # Image models this node runs MLX-native via mflux ({slug: mflux ModelConfig
+    # name}, e.g. {"flux2-klein-4b": "flux2_klein_4b"}); needs ~/owl/mflux-venv.
+    "local_mlx_image_models": {},
     "apple_powermetrics": False,
 }
 

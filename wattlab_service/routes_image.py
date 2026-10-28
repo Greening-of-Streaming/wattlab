@@ -827,7 +827,8 @@ async def image_bench(request: Request, host: str = Form("local"),
 async def image_session(request: Request, host: str = Form("local"),
                         model_key: str = Form("sana-sprint"),
                         per_prompt: int = Form(25), settle_s: int = Form(30),
-                        prompt: str = Form(None), target_s: int = Form(0)):
+                        prompt: str = Form(None), target_s: int = Form(0),
+                        runtime: str = Form("diffusers")):
     """CR-085 Lab — warm-model image session: load + 2 warm-up images outside
     the window, warm-model baseline, then curated.IMAGE_SESSION_PROMPTS ×
     per_prompt measured over the generation window only. Same runner script on
@@ -837,6 +838,8 @@ async def image_session(request: Request, host: str = Form("local"),
         return JSONResponse({"error": f"Unknown model: {model_key}"}, status_code=400)
     if not 1 <= per_prompt <= 100 or not 0 <= settle_s <= 300 or not 0 <= target_s <= 300:
         return JSONResponse({"error": "per_prompt 1–100, settle_s 0–300, target_s 0–300"}, status_code=400)
+    if runtime not in remote_ai.IMAGE_RUNTIMES:
+        return JSONResponse({"error": f"Unknown runtime: {runtime}"}, status_code=400)
     prompts = [prompt.strip()] if prompt and prompt.strip() else None   # None → curated set
     if host != "local":
         h = hosts.get(host)
@@ -847,20 +850,25 @@ async def image_session(request: Request, host: str = Form("local"),
             try:
                 return peer.submit(h, "image_session",
                                    {"model_key": model_key, "per_prompt": per_prompt, "settle_s": settle_s,
-                                    "prompt": prompt, "target_s": target_s}, "image", jobs)
+                                    "prompt": prompt, "target_s": target_s, "runtime": runtime},
+                                   "image", jobs)
             except Exception as e:
                 return JSONResponse({"error": f"{h.get('label', host)}: {e}"}, status_code=502)
         if h is None or not h.get("python"):
             return JSONResponse({"error": f"'{host}' is not an image-generation host"}, status_code=400)
+    if runtime == "mflux" and (host != "local" or model_key not in remote_ai.mlx_image_models()):
+        return JSONResponse({"error": f"No MLX (mflux) engine for {model_key} on {host}"}, status_code=400)
     job_id = f"{host}-{uuid.uuid4().hex[:8]}" if host != "local" else uuid.uuid4().hex[:8]
-    label = f"Image session ({IMAGE_MODELS[model_key]['label']} · {host})"
+    label = (f"Image session ({IMAGE_MODELS[model_key]['label']} · {host}"
+             f"{' · MLX' if runtime == 'mflux' else ''})")
 
     async def coro():
         try:
             jobs[job_id].update({"status": "running", "stage": "starting"})
             result = await remote_ai.run_image_session(host, model_key, jobs, job_id,
                                                        per_prompt=per_prompt, settle_s=settle_s,
-                                                       prompts=prompts, target_s=target_s)
+                                                       prompts=prompts, target_s=target_s,
+                                                       runtime=runtime)
             save_result("image", job_id, result)
             jobs[job_id].update({"status": "done", "stage": "done", "result": result})
         except Exception as e:

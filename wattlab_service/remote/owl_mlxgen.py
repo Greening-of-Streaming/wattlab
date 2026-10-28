@@ -33,8 +33,16 @@ def main():
     out_tok = int(getattr(last, "generation_tokens", 0) or 0)
     in_tok = int(getattr(last, "prompt_tokens", 0) or 0)
     import mlx_lm
+    # gpt-oss (harmony format) streams its reasoning and answer as channels;
+    # show the final answer, keep the reasoning (Ollama returns it as
+    # "thinking"). Token counts are unchanged: every generated token counts.
+    thinking = None
+    if "<|channel|>final<|message|>" in text:
+        head, _, final = text.rpartition("<|channel|>final<|message|>")
+        thinking = head.split("<|message|>", 1)[-1].split("<|end|>", 1)[0]
+        text = final.split("<|return|>", 1)[0].split("<|end|>", 1)[0]
     print(json.dumps({
-        "response": text,
+        "response": text, **({"thinking": thinking} if thinking is not None else {}),
         "prompt_tokens": in_tok, "output_tokens": out_tok,
         "total_tokens": in_tok + out_tok,
         "duration_s": round(t_end - t_start, 2),

@@ -61,6 +61,7 @@ async def peer_info():
             "image_models": list(image_gen.IMAGE_MODELS.keys()),
             "llm_models": list(llm.MODELS.keys()),
             "mlx_models": sorted((s.get("local_mlx_models") or {}).keys()),
+            "mlx_image_models": sorted((s.get("local_mlx_image_models") or {}).keys()),
             "queue_depth": queue_control.depth(),
             "benchmark": queue_control.benchmark_state(),
             "rig": bool(s.get("run_rig_poller", True)),
@@ -124,7 +125,8 @@ async def peer_submit(request: Request):
                     r = await remote_ai.run_image_session(
                         "local", p.get("model_key", "sd-turbo"), jobs, job_id,
                         per_prompt=int(p.get("per_prompt", 5)), settle_s=int(p.get("settle_s", 30)),
-                        prompts=[prompt] if prompt else None, target_s=float(p.get("target_s", 30)))
+                        prompts=[prompt] if prompt else None, target_s=float(p.get("target_s", 30)),
+                        runtime=p.get("runtime", "diffusers"))
                 else:
                     r = await image_gen.run_image_measurement(
                         (p.get("prompt") or curated.CANONICAL_IMAGE_PROMPT), job_id, jobs,

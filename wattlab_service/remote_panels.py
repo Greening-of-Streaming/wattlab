@@ -207,15 +207,21 @@ async function runRemoteLLM(host, runtime) {{
 def image_panel_html(request) -> str:
     locked = not can(audience.tier(request), AI_REMOTE_RUN)
     dis = " disabled" if locked else ""
-    blocks = []
+    blocks, mlx = [], {}
     for hid, h in hosts.remote_hosts().items():
         is_peer, info = peer_state({**h, "id": hid})
         if is_peer and info is None:
             blocks.append(offline_block(h, hid))
             continue
+        mlx_btn = ""
+        if is_peer and info.get("mlx_image_models"):
+            mlx[hid] = sorted(info["mlx_image_models"])
+            mlx_btn = (f'<button class="remote-btn"{dis} data-mlx-img-host="{hid}" '
+                       f'onclick="runRemoteImage(\'{hid}\',\'mflux\')">MLX (Apple-native, mflux)</button>')
         if is_peer or h.get("python"):
             blocks.append(_block(h, hid, f'<button class="remote-btn"{dis} onclick="runRemoteImage(\'{hid}\')">'
                                          f'Generate on {h.get("label", hid)} GPU (same model files as {hosts.local_label()})</button>'
+                                         + mlx_btn
                                          + ("" if locked else _pair_box(hid, "GPU", simultaneous=is_peer)) +
                                          f'<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.35rem">GPU path, clean method: model loaded '
                                          f'and warmed up first, 30 s settle, then ≥30 s of generation measured (~75 s per run). '
@@ -223,11 +229,21 @@ def image_panel_html(request) -> str:
     if not blocks:
         return ""
     js = """<script>
-async function runRemoteImage(host) {
+const _REMOTE_MLX_IMG = """ + json.dumps(mlx) + """;
+function _syncRemoteMlxImg() {
+  document.querySelectorAll('[data-mlx-img-host]').forEach(b => {
+    const ok = (_REMOTE_MLX_IMG[b.dataset.mlxImgHost] || []).includes(selectedModelKey);
+    b.disabled = !ok; b.title = ok ? '' : 'No MLX (mflux) conversion registered for this model';
+  });
+}
+document.addEventListener('click', () => setTimeout(_syncRemoteMlxImg, 0));
+document.addEventListener('DOMContentLoaded', _syncRemoteMlxImg);
+async function runRemoteImage(host, runtime) {
   // Clean method (owner 2026-10-05): warm-model session — load + warm-up
   // outside the window, 30 s settle, then ≥30 s of generation-only measurement.
   const SESSION = '&per_prompt=5&settle_s=30&target_s=30';
   let body = 'host=' + encodeURIComponent(host) + '&model_key=' + encodeURIComponent(selectedModelKey) + SESSION;
+  if (runtime) body += '&runtime=' + encodeURIComponent(runtime);
   // Send the prompt box like startMeasurement() does (bug 2026-10-05: the
   // remote button always fell back to the canonical prompt).
   const promptEl = document.getElementById('prompt');

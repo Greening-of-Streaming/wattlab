@@ -46,16 +46,39 @@ def _load(torch, a):
         kwargs["variant"] = "fp16"
     if a.get("pipeline") == "diffusion":
         from diffusers import DiffusionPipeline
-        pipe = DiffusionPipeline.from_pretrained(a["repo"], **kwargs).to(device)
+        pipe = DiffusionPipeline.from_pretrained(a["repo"], **kwargs)
     else:
-        pipe = AutoPipelineForText2Image.from_pretrained(a["repo"], **kwargs).to(device)
-    _sync(torch, device)
+        pipe = AutoPipelineForText2Image.from_pretrained(a["repo"], **kwargs)
+    if not a.get("encode_once"):        # encode_once: moved to the device by _encode_once
+        pipe = pipe.to(device)
+        _sync(torch, device)
     return pipe, device
 
 
-def _gen(torch, pipe, device, a, prompt, seed):
+def _encode_once(torch, pipe, device, prompts):
+    """Families whose text encoder + transformer exceed the GPU (FLUX.2 Klein
+    4B: 7.5 + 7.3 GB bf16 on a 16 GB card): encode every prompt once with the
+    text encoder on the device, park it on the CPU, then generate from the
+    cached embeddings. Same on every device, so CUDA and MPS stay comparable.
+    Returns {prompt: prompt_embeds}. Mirrors image_gen.encode_once."""
+    pipe.text_encoder.to(device)
+    with torch.no_grad():
+        embeds = {p: pipe.encode_prompt(prompt=p, device=device)[0] for p in dict.fromkeys(prompts)}
+    pipe.text_encoder.to("cpu")
+    pipe.text_encoder = None
+    if device == "cuda":
+        torch.cuda.empty_cache()
+    elif device == "mps":
+        torch.mps.empty_cache()
+    pipe.to(device)
+    _sync(torch, device)
+    return embeds
+
+
+def _gen(torch, pipe, device, a, prompt, seed, embeds=None):
     gen = torch.Generator().manual_seed(seed) if seed is not None else None
-    img = pipe(prompt=prompt, num_inference_steps=int(a["steps"]),
+    text = {"prompt_embeds": embeds[prompt]} if embeds else {"prompt": prompt}
+    img = pipe(**text, num_inference_steps=int(a["steps"]),
                guidance_scale=float(a.get("guidance_scale", 0.0)),
                height=int(a["size_px"]), width=int(a["size_px"]),
                generator=gen).images[0]
@@ -71,12 +94,13 @@ def oneshot(a):
     import torch
     t_start = time.time()                 # as before: imports outside load_s
     pipe, device = _load(torch, a)
+    embeds = _encode_once(torch, pipe, device, [a["prompt"]]) if a.get("encode_once") else None
     t_load = time.time()
     images = []
     seed = a.get("seed")
     for i in range(int(a["batch"])):
         images.append(_gen(torch, pipe, device, a, a["prompt"],
-                           seed + i if seed is not None else None))
+                           seed + i if seed is not None else None, embeds))
     t_end = time.time()
     buf = io.BytesIO()
     images[-1].save(buf, format="PNG")
@@ -95,12 +119,13 @@ def session(a):
     import torch
     t0 = time.time()
     pipe, device = _load(torch, a)
-    load_s = round(time.time() - t0, 2)
     prompts = a["prompts"]
+    embeds = _encode_once(torch, pipe, device, prompts) if a.get("encode_once") else None
+    load_s = round(time.time() - t0, 2)
     seed = int(a.get("seed", 1234))
     t_w = time.time()
     for i in range(int(a.get("warmup", 2))):
-        _gen(torch, pipe, device, a, prompts[0], seed + 10_000 + i)
+        _gen(torch, pipe, device, a, prompts[0], seed + 10_000 + i, embeds)
     warmup_s = round(time.time() - t_w, 2)
     print(json.dumps({"ev": "ready", "device": device, "load_s": load_s,
                       "warmup_s": warmup_s, **_versions(torch)}), flush=True)
@@ -119,7 +144,7 @@ def session(a):
         p_target = target_s * (p_idx + 1) / len(prompts)
         k = 0
         while k < per_prompt or (target_s and time.time() - t_go < p_target):
-            last = _gen(torch, pipe, device, a, prompt, seed + p_idx * 1000 + k)
+            last = _gen(torch, pipe, device, a, prompt, seed + p_idx * 1000 + k, embeds)
             print(json.dumps({"ev": "img", "p": p_idx, "k": k}), flush=True)
             k += 1
         n += k

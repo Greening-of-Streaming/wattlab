@@ -89,7 +89,7 @@ async def run_remote_image(prompt: str, job_id: str, host_id: str,
             "fp16_variant": bool(cfg_m.get("fp16_variant")),
             "torch_dtype": cfg_m.get("torch_dtype", "float16"),
             "guidance_scale": cfg_m.get("guidance_scale", 0.0),
-            "pipeline": cfg_m.get("pipeline")}
+            "pipeline": cfg_m.get("pipeline"), "encode_once": bool(cfg_m.get("encode_once"))}
 
     if jobs is not None:
         jobs[job_id].update({"stage": "baseline", "full_prompt": full_prompt,
@@ -176,8 +176,12 @@ def _remote_mlx(host: dict, repo: str, prompt: str) -> dict:
     wd = host.get("workdir", "owl")
     py = host.get("python", f"{wd}/venv/bin/python")
     args = json.dumps({"repo": repo, "prompt": prompt})
+    # A node running its own job uses the repo's runner (deployed with the
+    # code); an SSH-driven host uses the copy in its workdir.
+    runner = (str(Path(__file__).parent / "remote" / "owl_mlxgen.py") if host.get("local")
+              else "owl_mlxgen.py")
     cmd = (f"cd {shlex.quote(wd)} && HF_HUB_OFFLINE=1 {shlex.quote(py)} "
-           f"owl_mlxgen.py {shlex.quote(args)}")
+           f"{shlex.quote(runner)} {shlex.quote(args)}")
     if host.get("local"):          # CR-085 Phase 4: the node runs MLX itself
         r = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True, timeout=1800)
     else:
@@ -327,6 +331,19 @@ async def _run_remote_mlx(model_key: str, task_key: str, job_id: str, host: dict
 # then the task window runs from GO to done — generation only.
 
 RUNNER_LOCAL = Path(__file__).parent / "remote" / REMOTE_IMAGEGEN
+RUNNER_MFLUX = Path(__file__).parent / "remote" / "owl_mfluxgen.py"
+IMAGE_RUNTIMES = ("diffusers", "mflux")
+
+
+def local_mflux_python() -> str:
+    """mflux lives in its own venv (its MLX pin must not move mlx-lm's)."""
+    import os
+    return os.path.expanduser("~/owl/mflux-venv/bin/python")
+
+
+def mlx_image_models() -> dict:
+    """{image model slug: mflux ModelConfig name} this node can run on MLX."""
+    return dict(cfg.load().get("local_mlx_image_models") or {})
 
 
 def per_prompt_breakdown(readings, events, t_go: float, w_base: float,
@@ -358,10 +375,18 @@ def per_prompt_breakdown(readings, events, t_go: float, w_base: float,
 async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
                             job_id: str = None, per_prompt: int = 25,
                             settle_s: int = 30, prompts: list = None,
-                            target_s: float = 0) -> dict:
+                            target_s: float = 0, runtime: str = "diffusers") -> dict:
     import curated
     import sys
     local = host_id == "local"
+    if runtime not in IMAGE_RUNTIMES:
+        raise ValueError(f"Unknown image runtime: {runtime}")
+    mflux_model = None
+    if runtime == "mflux":
+        # Apple-native path: the node runs it on itself (a peer job), never over SSH.
+        mflux_model = mlx_image_models().get(model_key)
+        if not local or not mflux_model:
+            raise ValueError(f"{model_key}: no MLX (mflux) conversion registered on this node")
     host = hosts.local_host() if local else hosts.get(host_id)
     if host is None or (not local and not host.get("python")):
         raise ValueError(f"'{host_id}' is not an image-generation host")
@@ -378,8 +403,13 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
             "fp16_variant": bool(cfg_m.get("fp16_variant")),
             "torch_dtype": cfg_m.get("torch_dtype", "float16"),
             "guidance_scale": cfg_m.get("guidance_scale", 0.0),
-            "pipeline": cfg_m.get("pipeline"), "device": None}   # runner picks cuda → mps → cpu
-    if local:
+            "pipeline": cfg_m.get("pipeline"), "device": None,   # runner picks cuda → mps → cpu
+            "encode_once": bool(cfg_m.get("encode_once"))}
+    if mflux_model:
+        args["mflux_model"] = mflux_model
+        cmd = [local_mflux_python(), str(RUNNER_MFLUX), json.dumps(args)]
+        env = {**__import__("os").environ, "HF_HUB_OFFLINE": "1"}
+    elif local:
         cmd = [sys.executable, str(RUNNER_LOCAL), json.dumps(args)]
         env = {**__import__("os").environ, "HF_HUB_OFFLINE": "1"}
     else:
@@ -488,15 +518,22 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
     # generation work alone; cold = also charging the cost of holding the model.
     e_cold = image_gen._calc_energy(cold["w_base"], w_task, window_s, readings, n,
                                     cold["baseline_samples_w"], baseline_dict=cold)
-    gpu_label = (f"GPU ({__import__('gpu').BACKEND.device_label()})" if local
+    gpu_label = (f"{host.get('chip', '')} GPU (MLX · mflux)" if mflux_model
+                 else f"GPU ({__import__('gpu').BACKEND.device_label()})" if local
                  else f"{host.get('chip', '')} GPU (Metal/MPS)")
+    versions = ({k: ready.get(k) for k in ("mflux", "mlx")} if mflux_model
+                else {k: ready.get(k) for k in ("torch", "diffusers")})
     return {
         "mode": "session", "job_id": job_id, "host": hosts.identity(host),
-        "engine": {"id": "gpu", "kind": "hw", "label": gpu_label},
+        "engine": {"id": "gpu", "kind": "hw", "label": gpu_label,
+                   "runtime": (f"mflux {versions.get('mflux')}" if mflux_model
+                               else f"diffusers {versions.get('diffusers')}")},
         "model_key": model_key, "model_label": cfg_m["label"],
+        **({"model_mflux": mflux_model, "peak_memory_gb": done.get("peak_memory_gb")}
+           if mflux_model else {}),
         "prompts": prompts, "per_prompt": int(per_prompt), "settle_s": int(settle_s),
         "warmup_images": 2, "load_s": ready.get("load_s"), "warmup_s": ready.get("warmup_s"),
-        "versions": {k: ready.get(k) for k in ("torch", "diffusers")},
+        "versions": versions,
         "baseline_cold": {"w_base": cold["w_base"], "samples_w": cold["baseline_samples_w"]},
         "baseline_warm": {"w_base": warm["w_base"], "samples_w": warm["baseline_samples_w"]},
         "generation": {"gen_s": round(window_s, 3), "gen_s_runner": done["gen_s"],
@@ -510,7 +547,8 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
         "energy": e,
         "energy_vs_cold_idle": {k: e_cold[k] for k in ("w_base", "delta_w", "delta_e_wh",
                                                        "wh_per_image", "confidence")},
-        "scope": _scope(host, f"GPU, warm model, generation window only. Model: {cfg_m['label']} "
+        "scope": _scope(host, f"GPU{' via MLX (mflux)' if mflux_model else ''}, warm model, "
+                              f"generation window only. Model: {cfg_m['label']} "
                               f"at {cfg_m['size_px']}px"),
     }
 

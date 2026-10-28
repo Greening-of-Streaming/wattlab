@@ -414,6 +414,26 @@ _IMAGE_FAMILIES = {
         # 0.37.1) — load via DiffusionPipeline, which reads model_index.json.
         "pipeline": "diffusion",
     },
+    "flux2-klein-4b": {
+        # Black Forest Labs, Jan 2026, Apache 2.0: 4B DiT distilled to 4 steps,
+        # Qwen3-4B text encoder, ~13 GB in bf16 (fits the RTX 5080's 16 GB and
+        # the M6's 24 GB unified memory). The one modern model that runs on all
+        # three stacks — diffusers on CUDA (GoS1) and MPS (GoS2), and MLX via
+        # mflux (GoS2, `local_mlx_image_models`) — for model-matched comparisons.
+        "label": "FLUX.2 Klein 4B", "repo": "black-forest-labs/FLUX.2-klein-4B",
+        "params": "~4B", "native_px": 1024, "cpu_ok": False,
+        "cpu_steps": None, "gpu_steps": 4, "gpu_batch": 2,
+        "compare_steps": 4, "compare_batch": 2,
+        "size_px": 1024, "fp16_variant": False,
+        "torch_dtype": "bfloat16", "guidance_scale": 1.0,
+        # AutoPipeline has no Flux2Klein mapping; DiffusionPipeline reads
+        # model_index.json → Flux2KleinPipeline (diffusers 0.37.1).
+        "pipeline": "diffusion",
+        # 7.5 GB text encoder + 7.3 GB transformer overflow 16 GB at 1024 px:
+        # encode prompts once, park the encoder on the CPU (peak 10.5 GB on the
+        # RTX 5080, 2026-10-28). Applied on every device for parity.
+        "encode_once": True,
+    },
     "flux-schnell": {
         "label": "FLUX.1-schnell (NF4)", "repo": "black-forest-labs/FLUX.1-schnell",
         "params": "~12B", "native_px": 1024, "cpu_ok": False,
