@@ -30,7 +30,8 @@ import energy
 from power import get_power_watts, read_sensors_dict
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
-OLLAMA_URL = "http://localhost:11434"
+import ollama_api
+OLLAMA_URL = ollama_api.base_url()
 EMBED_MODEL = "all-MiniLM-L6-v2"
 COLLECTION_NAME = "rag_corpus"
 CHUNK_SIZE_CHARS = 512 * 4   # ~512 tokens at ~4 chars/token

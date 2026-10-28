@@ -310,6 +310,9 @@ DEFAULTS = {
     "run_carbon_poller":  True,
     "run_rag_check":      True,
     "run_sensors_poller": True,
+    # Feature modules left unmounted on this node (main.py; e.g. the container
+    # profile drops routes_decode, routes_rem, routes_enhance, routes_peer).
+    "disabled_routers":   [],
     # CR-085 — MLX conversions this node can run itself ({ollama_key: hf_repo});
     # Apple nodes only. Sensors via powermetrics on Apple nodes (off: it loads
     # the machine being measured).

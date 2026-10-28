@@ -1,0 +1,12 @@
+# NVIDIA GPU override (needs the NVIDIA Container Toolkit on the host).
+# Builds the CUDA torch image and gives both OWL (NVENC encode, CUDA image gen,
+# nvidia-smi telemetry) and Ollama (LLM inference) the GPUs.
+services:
+  owl:
+    build:
+      args:
+        TORCH_FLAVOUR: cu128
+    image: owl:cu128
+    gpus: all
+  ollama:
+    gpus: all

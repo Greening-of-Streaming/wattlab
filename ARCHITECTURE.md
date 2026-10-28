@@ -82,17 +82,23 @@ the type's `wlRender*Card`, and that doc.** Unregistered modes are loud:
 2. Cooldown stamp-key variants on disk (`cooldowns` list vs `cooldown` dict) —
    renderer tolerates both; unify writers next time measurement modules are
    edited for a measurement reason.
-3. Flat-file persistence won't scale past the next growth spurt (CR-031 §1
-   decision pending — don't extend `persist.py` before it's made).
+3. Flat-file persistence: CR-031 §1 decided 2026-10-28 — JSON stays the
+   source of truth; a derived SQLite index only on the triggers listed there.
 4. Only a minority of test files exercise routes via TestClient, all as Lab.
 
 ## Still open (separate tracks)
 
-- **PowerBackend protocol (CR-031 §2)** — `power.BACKEND` mirroring
-  `gpu.BACKEND`; schedule when a PDU candidate is concrete.
-- **Containerisation (CR-031 §3)** — the host couplings are now visible in
-  one place each: focus-mode sudoers (measurement modules), `sensors -j`
-  (power.py), `/tmp/gos-measure.lock`, `settings.json` + `results/` volumes.
+- **Power sources (CR-031 §2, 2026-10-28)** — `OWL_POWER_SOURCE` picks
+  `tapo` (default, unchanged) or a `meter_backends.py` backend (`synthetic`,
+  `component` = RAPL / nvidia-smi / HTTP readers) behind
+  `power._read_meter_watts()`; per-component series land in
+  `energy.meters.components`. A PDU backend would be one more reader.
+- **Containerisation (CR-031 §3, 2026-10-28)** — `container/` (Dockerfile,
+  compose + GPU override, entrypoint, seed settings) and
+  **`container/README.md`**, the hand-off doc for a cloud/provider operator
+  and their AI agent (meter contract, validation, access). Container-only
+  switches: `OLLAMA_HOST`, `OWL_LAB_CIDRS` / `OWL_TRUSTED_PROXIES`
+  (audience.py), `OWL_FOCUS_MODE`, `HF_HOME`, `disabled_routers`.
 
 **Conventions to hold:** policy lives in `capabilities.py` (docs mirror it,
 never fork it); truth in code over docs; tests green at every merge;

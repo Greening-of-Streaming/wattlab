@@ -51,7 +51,7 @@ def _models_section_html(s: dict, local: bool) -> str:
     # enabled_image_models() drops them from the runner) — see backend_allows().
     gpu_vendor = model_catalog.active_gpu_vendor()
     labels = {
-        "llm_enabled_models":   ("LLM models",   "Drives /llm and /llm/compare. Source: <code>ollama list</code>."),
+        "llm_enabled_models":   ("LLM models",   "Drives /llm and /llm/compare. Source: Ollama (<code>/api/tags</code>). S/M/L/XL = the curated ladder; models too large for this host are greyed out."),
         "rag_enabled_models":   ("RAG models",   "Drives /rag and /rag/compare. Same Ollama catalog as LLM; can be a different subset."),
         "image_enabled_models": ("Image models", "Drives /image. Source: HuggingFace cache scan."),
     }
@@ -67,7 +67,8 @@ def _models_section_html(s: dict, local: bool) -> str:
             # cuda_only models can't run on a non-NVIDIA GPU: force them
             # disabled + unchecked so the UI never implies they're active.
             cuda_only = bool(v.get("cuda_only"))
-            blocked = cuda_only and gpu_vendor != "nvidia"
+            too_big = v.get("fit") == "wont-load"
+            blocked = (cuda_only and gpu_vendor != "nvidia") or too_big
             checked = "checked" if ((all_on or k in enabled) and not blocked) else ""
             disabled = "disabled" if (not local or blocked) else ""
             extras = []
@@ -77,6 +78,18 @@ def _models_section_html(s: dict, local: bool) -> str:
                 extras.append(v["size"])
             extra_str = " · ".join(extras)
             badge = ""
+            if v.get("tier"):
+                badge += (
+                    '<span style="font-size:0.62rem;font-weight:bold;padding:0.05rem 0.4rem;'
+                    'border-radius:3px;border:1px solid var(--border-3);color:var(--text-3);'
+                    f'margin-right:0.3rem">{v["tier"]}</span>'
+                )
+            if v.get("fit") == "cpu-spill":
+                badge += ('<span style="font-size:0.66rem;color:var(--warn)">'
+                          'partly on CPU here</span>')
+            if too_big:
+                badge += ('<span style="font-size:0.66rem;color:var(--warn)">'
+                          'too large for this host</span>')
             if cuda_only:
                 badge = (
                     '<span style="font-size:0.62rem;font-weight:bold;letter-spacing:0.03em;'
@@ -600,7 +613,7 @@ async def settings_page(request: Request):
     <div style="padding:0.5rem 0;border-bottom:1px solid var(--panel-2)">
       <label style="color:var(--text-2);font-size:0.85rem">H.265 GPU command (derived)</label>
       <div style="color:var(--text-5);font-size:0.72rem;margin-top:0.2rem;margin-bottom:0.3rem">Mirrors the <code>/video</code> H.265 GPU preset · bitrate from <code>h265_bitrate_kbps</code> · {{input}}/{{output}} substituted at runtime</div>
-      <div style="background:var(--panel-2);border:1px solid var(--border-2);padding:0.4rem 0.5rem;font-family:monospace;font-size:0.72rem;color:var(--text-4);word-break:break-all;line-height:1.5">{vid.variance_template("h265_gpu", s)}</div>
+      <div style="background:var(--panel-2);border:1px solid var(--border-2);padding:0.4rem 0.5rem;font-family:monospace;font-size:0.72rem;color:var(--text-4);word-break:break-all;line-height:1.5">{vid.variance_template("h265_gpu", s) or "— no GPU encoder on this host: the GPU leg is skipped"}</div>
     </div>
     {'<button onclick="runVarianceCalibration()" id="varCalBtn" style="background:var(--border);color:var(--accent);border:1px solid #00ff9944;padding:0.5rem 1.25rem;cursor:pointer;font-family:monospace;font-size:0.85rem;margin-top:0.75rem">▶ Run variance calibration</button><div id="var-cal-msg" style="margin-top:0.5rem;font-size:0.82rem"></div>' if local else '<div style="color:var(--text-5);font-size:0.78rem;margin-top:0.5rem">Calibration requires lab access.</div>'}
 

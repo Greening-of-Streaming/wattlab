@@ -91,10 +91,11 @@ table in decode_bench/README.md §Network. External-access incidents + DuckDNS u
 - Python: fastapi/uvicorn, tapo 0.8.12, **torch 2.11.0+cu128**, diffusers/transformers/accelerate, chroma.
 - System: lm-sensors, ffmpeg 6.1.1 + `/usr/local/bin/ffmpeg-master` (driven by `ffmpeg_bin`; ships NVENC
   encoders + `scale_cuda`; `av1_nvenc` has no `-profile` knob, `-rc cbr` is the ABR-equivalent).
-- Ollama 0.35.1 (port 11434; upgraded 2026-10-07, same version as GoS2). Ladder (S30): tinyllama (anchor, **off the default panel**), qwen3:1.7b/4b/8b,
-  mistral-nemo:12b, phi4, gpt-oss:20b. Live panel = `llm_enabled_models` in settings.json (currently the 6
-  non-tinyllama ones). CANONICAL_RAG_MODEL = qwen3:4b. **MODELS dicts are live views (CR-050) — never edit as
-  literals; add/remove via `ollama pull` or settings.**
+- Ollama 0.35.1 (port 11434; upgraded 2026-10-07, same version as GoS2). **LLM ladder (2026-10-28,
+  `model_catalog.LLM_LADDER`): S qwen3.5:4b · M qwen3.5:9b · L gpt-oss:20b · XL qwen3.5:122b (big hosts only)**;
+  `fit_on_host()` greys out / drops models a host can't load. Pre-10-28 ladder (tinyllama, qwen3:1.7b/4b/8b,
+  mistral-nemo, phi4) removed from GoS1; its results stay. CANONICAL_RAG_MODEL = DEMO_LLM_MODEL = qwen3.5:4b.
+  **MODELS dicts are live views (CR-050) — never edit as literals; add/remove via `ollama pull` or settings.**
 - Image gen (diffusers, `image_enabled_models`): sd-turbo, sdxl-turbo, sdxl-lightning, sana-600m. SD 3.5 Medium
   is the next add (gated, needs HF token). Avoid FLUX.1-schnell NF4 paths on non-CUDA (see memory).
 - NR-VQA sandbox (runtime dep, NOT in git): `/srv/data/owl/vqa-eval/` = CompressedVQA-HDR + venv + weights;

@@ -74,6 +74,11 @@ for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, 
                  routes_enhance, routes_findings, routes_image, routes_llm,
                  routes_methodology, routes_mockups, routes_mockup_findings, routes_peer, routes_privacy, routes_rag,
                  routes_rem, routes_results, routes_settings, routes_video):
+    # `disabled_routers` (settings, read once at boot): a node without the
+    # hardware a feature drives — e.g. the container profile has no decode
+    # rig, REM fleet, Pixop or peer — leaves its pages unmounted (404).
+    if _feature.__name__ in (_cfg.load().get("disabled_routers") or []):
+        continue
     app.include_router(_feature.router)
 
 # Serve bundled assets (owl logo, favicon, wl-*.js bundles) from

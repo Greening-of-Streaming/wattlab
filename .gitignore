@@ -50,3 +50,6 @@ index.json
 manifest.json
 tmp/
 decode_bench/tools
+
+# Container instance config (secrets) — container/owl.env.example is the template
+container/owl.env

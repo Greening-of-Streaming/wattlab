@@ -21,9 +21,10 @@ sessions on that plug. Device handles are therefore cached per meter and
 rebuilt on error — and nothing outside this process may poll a registered
 meter concurrently (bin/probe-dual-meter requires the service stopped).
 
-To swap in a different power source (PDU, IPMI, another smart plug brand):
-  replace _read_meter_watts() — keep the same signature and return type
-  (the fuller PowerBackend protocol is CR-031 §2, deliberately deferred).
+Other power sources (CR-031 §2, 2026-10-28): `OWL_POWER_SOURCE=synthetic|component`
+routes the primary read to meter_backends.py (container / provider telemetry);
+unset or `tapo` is the P110 path below, unchanged. Remote-host overrides
+(`use_meters`) are always Tapo.
 """
 
 import env
@@ -40,6 +41,44 @@ from tapo import ApiClient
 import gpu
 
 _config = env.load()
+
+
+def _resolve_power_source():
+    """(name, backend|None). `OWL_POWER_SOURCE` wins; unset = tapo (the plugs
+    configured in .env). A bad non-Tapo config does not crash the service —
+    the error is kept and raised on every read, so jobs fail loudly with the
+    reason instead of measuring something else."""
+    name = (_config.get("OWL_POWER_SOURCE") or "tapo").strip().lower()
+    if name == "tapo":
+        return name, None
+    try:
+        import meter_backends
+        return name, meter_backends.create(name)
+    except Exception as e:
+        return name, e
+
+
+POWER_SOURCE, BACKEND = _resolve_power_source()
+
+
+def _backend():
+    """The active non-Tapo backend, or None on the Tapo path (incl. inside a
+    remote host's use_meters() context)."""
+    if BACKEND is None or _METER_OVERRIDE.get() is not None:
+        return None
+    if isinstance(BACKEND, Exception):
+        raise RuntimeError(f"power source {POWER_SOURCE!r} unavailable: {BACKEND}")
+    return BACKEND
+
+
+def last_components():
+    """{component: W} from the latest primary read when the source reports a
+    breakdown (component/synthetic backends), else None."""
+    try:
+        b = _backend()
+    except RuntimeError:
+        return None
+    return dict(b.last_components) if b is not None and b.last_components else None
 
 # Cached device handles, one per meter IP (KLAP sessions are exclusive — see
 # module docstring). The per-IP lock prevents two coroutines (e.g. the runtime
@@ -86,6 +125,8 @@ def _meter_ips() -> list:
 
 
 def meter_count() -> int:
+    if BACKEND is not None and _METER_OVERRIDE.get() is None:
+        return 1
     return len(_meter_ips())
 
 
@@ -93,6 +134,11 @@ async def _read_meter_watts(idx: int = 0, retries: int = 3) -> float:
     """Read one meter (full mW precision), via a cached device handle.
     On any error the handle is dropped and rebuilt on the next attempt —
     the standard recovery for a KLAP session invalidated elsewhere."""
+    b = _backend()
+    if b is not None:
+        w = await asyncio.to_thread(b.read)
+        LAST_READING[POWER_SOURCE] = (w, time.time())
+        return w
     ip = _meter_ips()[idx]
     lock = _DEVICE_LOCKS.setdefault(ip, asyncio.Lock())
     for attempt in range(retries):
@@ -146,9 +192,12 @@ def meter_display_name() -> str:
     main._gpu_display_name(). Settings imported lazily to avoid an import cycle."""
     try:
         import settings as _cfg
-        return _cfg.load().get("meter_display_name") or METER_NAME
+        override = _cfg.load().get("meter_display_name")
     except Exception:
-        return METER_NAME
+        override = None
+    if BACKEND is not None and not isinstance(BACKEND, Exception):
+        return BACKEND.stamp()["name"]
+    return override or METER_NAME
 
 
 def stamp() -> dict:
@@ -159,6 +208,10 @@ def stamp() -> dict:
     Dual-meter runs (CR-065) additionally record the configuration facts —
     measured fresh-sample rates live in docs/dual_meter_pretest_findings.md,
     not here, so the stamp never asserts performance it didn't measure."""
+    if BACKEND is not None and _METER_OVERRIDE.get() is None:
+        if isinstance(BACKEND, Exception):
+            return {"name": POWER_SOURCE, "kind": "unavailable", "error": str(BACKEND)}
+        return BACKEND.stamp()
     out = {
         "name": meter_display_name(),
         "kind": METER_KIND,
@@ -237,6 +290,7 @@ class TaskReadings(list):
     call site that iterates/serialises the list keeps working unchanged."""
     samples_w_2 = None      # secondary-meter watts (rounded), or None
     degraded = False        # True when the secondary stream dropped mid-run
+    components_w = None     # [{component: W}, …] per poll, component sources only
 
 
 async def _poll_secondary_baseline(polls: int, interval: float):
@@ -293,9 +347,13 @@ async def sample_baseline(polls: int, *, read_watts, read_sensors=None,
         if meter_count() >= 2 else None
     power_readings = []
     sensor_readings = []
+    components = []
     try:
         for _ in range(polls):
             power_readings.append(await read_watts())
+            c = last_components()
+            if c:
+                components.append(c)
             if read_sensors is not None:
                 sensor_readings.append(read_sensors())
             await asyncio.sleep(interval)
@@ -317,6 +375,8 @@ async def sample_baseline(polls: int, *, read_watts, read_sensors=None,
     LAST_W_BASE = out["w_base"]
     if read_sensors is not None:
         out["sensor_readings"] = sensor_readings
+    if components:
+        out["baseline_components_w"] = components
     if second is not None:
         samples_2, degraded = await second
         if degraded or len(samples_2) < 2:
@@ -337,9 +397,13 @@ async def sample_task(stop_event: asyncio.Event, *, read_watts,
     second = asyncio.create_task(_poll_secondary_task(stop_event, interval)) \
         if meter_count() >= 2 else None
     readings = TaskReadings()
+    components = []
     try:
         while not stop_event.is_set():
             watts = await read_watts()
+            c = last_components()
+            if c:
+                components.append(c)
             if tuples:
                 readings.append((time.time(), watts))
             else:
@@ -350,6 +414,8 @@ async def sample_task(stop_event: asyncio.Event, *, read_watts,
         if second is not None:
             second.cancel()
         raise
+    if components:
+        readings.components_w = components
     if second is not None:
         samples_2, degraded = await second
         if degraded or len(samples_2) < 2:
@@ -359,7 +425,39 @@ async def sample_task(stop_event: asyncio.Event, *, read_watts,
     return readings
 
 
+def components_summary(baseline: dict, readings):
+    """Per-component breakdown for component/synthetic power sources:
+    {component: {w_base, w_task, delta_w}} plus the raw per-poll series.
+    None when the source reports no breakdown (every Tapo run). Informational
+    — ΔE and confidence stay on the total, which is what the meter contract
+    guarantees; components need not sum to anything a wall plug would see."""
+    b = (baseline or {}).get("baseline_components_w")
+    t = getattr(readings, "components_w", None)
+    if not b or not t:
+        return None
+    out = {}
+    for k in sorted({k for row in b + t for k in row}):
+        bv = [row[k] for row in b if k in row]
+        tv = [row[k] for row in t if k in row]
+        if not bv or not tv:
+            continue
+        wb, wt = sum(bv) / len(bv), sum(tv) / len(tv)
+        out[k] = {"w_base": round(wb, 3), "w_task": round(wt, 3), "delta_w": round(wt - wb, 3)}
+    return {"by_component": out, "baseline_components_w": b, "task_components_w": t}
+
+
 def meters_summary(baseline: dict, readings, task_samples_w: list):
+    """Dual-meter block (below), plus a `components` key when the power source
+    reports a per-component breakdown (components_summary)."""
+    out = _meters_summary(baseline, readings, task_samples_w)
+    comps = components_summary(baseline, readings)
+    if comps:
+        out = dict(out or {})
+        out["components"] = comps
+    return out
+
+
+def _meters_summary(baseline: dict, readings, task_samples_w: list):
     """Build the optional `energy.meters` block for a dual-meter run.
 
     Returns None on a single-meter run (energy block unchanged from

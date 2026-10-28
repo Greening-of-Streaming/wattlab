@@ -1,0 +1,41 @@
+{
+  "_comment": "Seed settings for a containerised OWL. Copied to /data/settings.json on first start, then owned by the instance (edit via /settings or the file). Only keys that differ from the built-in defaults (wattlab_service/settings.py) are listed.",
+
+  "ffmpeg_bin": "/usr/local/bin/ffmpeg",
+  "vmaf_enabled": true,
+  "vmaf_model": "v0",
+  "vmaf_ffmpeg_bin": "",
+  "vmaf_model_dir": "/data/vmaf",
+  "vqa_enabled": false,
+
+  "uploads_dir": "/data/uploads",
+  "pixop_workdir": "/data/pixop",
+  "vqa_dir": "/data/vqa-eval",
+  "rem_output_dir": "/data/rem_out",
+
+  "run_rig_poller": false,
+  "run_origin": false,
+  "run_carbon_poller": false,
+  "run_replication": false,
+  "run_rag_check": false,
+  "run_sensors_poller": true,
+
+  "disabled_routers": [
+    "routes_decode",
+    "routes_rem",
+    "routes_enhance",
+    "routes_peer",
+    "routes_mockups",
+    "routes_mockup_findings"
+  ],
+
+  "findings_enabled": false,
+  "analytics_enabled": false,
+
+  "compute_hosts": {},
+  "gateway_hosts": {},
+
+  "llm_enabled_models": [],
+  "rag_enabled_models": [],
+  "image_enabled_models": []
+}

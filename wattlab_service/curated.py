@@ -53,4 +53,6 @@ CANONICAL_RAG_QUESTION = "How does codec choice affect streaming energy consumpt
 # (typical ~2-3s), still corpus-faithful, and the 4B size point didn't
 # exist when the original choice was made. TinyLlama is too noisy, Phi-4
 # / mistral-nemo 12B are slow enough that a guided-tour visitor would bounce.
-CANONICAL_RAG_MODEL = "qwen3:4b"
+# 2026-10-28: follows the LLM ladder's tier S (model_catalog.LLM_LADDER) —
+# Qwen3.5 4B (Mar 2026) replaced Qwen3 4B in the ladder tidy-up.
+CANONICAL_RAG_MODEL = "qwen3.5:4b"

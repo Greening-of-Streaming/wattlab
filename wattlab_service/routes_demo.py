@@ -57,7 +57,7 @@ def _finding_matches_live_backend(f) -> bool:
 # page can never describe a model/source the button doesn't run (the way
 # the copy still said "Mistral 7B via Ollama ROCm" months after the demo
 # moved to qwen3:4b on CUDA). RAG follows curated.CANONICAL_RAG_MODEL.
-DEMO_LLM_MODEL = "qwen3:4b"
+DEMO_LLM_MODEL = "qwen3.5:4b"   # ladder tier S (model_catalog.LLM_LADDER)
 DEMO_VIDEO_SOURCE = "meridian_120s"
 DEMO_IMAGE_MODEL = "sd-turbo"   # /image/start server-side default
 

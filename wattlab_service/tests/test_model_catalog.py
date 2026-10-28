@@ -97,3 +97,54 @@ def test_enabled_image_models_drops_cuda_only_on_amd(monkeypatch):
 
     monkeypatch.setattr(mc, "active_gpu_vendor", lambda: "nvidia")
     assert set(mc.enabled_image_models()) == {"sd-turbo", "flux-schnell"}
+
+
+# --- LLM ladder + host fit (2026-10-28) --------------------------------------
+
+def test_ladder_has_one_model_per_tier_with_dates():
+    tiers = [v["tier"] for v in mc.LLM_LADDER.values()]
+    assert sorted(tiers) == sorted(["S", "M", "L", "XL"])
+    for key in mc.LLM_LADDER:
+        assert mc._MODEL_DATES.get(key, {}).get("released"), key
+
+def test_fit_on_host_gos1_shape():
+    gos1 = {"gpu_gb": 15.9, "ram_gb": 62.0}
+    fit = mc.ladder_fit(gos1)
+    assert fit["qwen3.5:4b"]["fit"] == "gpu"
+    assert fit["gpt-oss:20b"]["fit"] == "gpu"      # runs 100 % GPU on the 5080
+    assert fit["qwen3.5:122b"]["fit"] == "wont-load"
+
+def test_fit_on_host_cpu_only_and_big_host(monkeypatch):
+    monkeypatch.setattr(mc, "active_gpu_vendor", lambda: "none")
+    assert mc.fit_on_host(3.4, {"gpu_gb": None, "ram_gb": 16.0}) == "cpu"
+    assert mc.fit_on_host(81.0, {"gpu_gb": None, "ram_gb": 16.0}) == "wont-load"
+    assert mc.fit_on_host(81.0, {"gpu_gb": 96.0, "ram_gb": 256.0}) == "gpu"
+    assert mc.fit_on_host(20.0, {"gpu_gb": 16.0, "ram_gb": 64.0}) == "cpu-spill"
+    assert mc.fit_on_host(0, {"gpu_gb": 16.0, "ram_gb": 64.0}) == "unknown"
+
+def test_enabled_llm_models_drops_models_too_big_for_host(monkeypatch):
+    monkeypatch.setattr(mc, "available_llm_models", lambda: {
+        "qwen3.5:4b": {"fit": "gpu"}, "qwen3.5:122b": {"fit": "wont-load"}})
+    monkeypatch.setattr(mc.cfg, "load", lambda: {})
+    assert list(mc.enabled_llm_models()) == ["qwen3.5:4b"]
+    assert list(mc.enabled_rag_models()) == ["qwen3.5:4b"]
+
+def test_ollama_list_reads_api_tags(monkeypatch):
+    import ollama_api
+    monkeypatch.setattr(ollama_api, "get_json", lambda path, timeout=5: {"models": [
+        {"name": "qwen3.5:4b", "size": 3_400_000_000},
+        {"name": "phi4:latest", "size": 0}]})
+    monkeypatch.setattr(mc, "_ollama_cache", None)
+    rows = mc._ollama_list_raw()
+    assert rows[0] == {"name": "qwen3.5:4b", "size": "3.4 GB", "size_bytes": 3_400_000_000}
+    assert rows[1]["size"] == "?"
+
+
+def test_ollama_base_url_honours_ollama_host(monkeypatch):
+    import ollama_api
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    assert ollama_api.base_url() == "http://localhost:11434"
+    monkeypatch.setenv("OLLAMA_HOST", "http://ollama:11434/")
+    assert ollama_api.url("api/tags") == "http://ollama:11434/api/tags"
+    monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11434")
+    assert ollama_api.base_url() == "http://localhost:11434"

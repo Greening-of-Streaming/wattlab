@@ -312,6 +312,8 @@ async def run_thermal_recovery_probe(job_id: str, jobs: dict) -> dict:
                     jobs[job_id]["stage"] = prefix
                 for workload, tpl, inp in (("cpu", cpu_tpl, _INPUT_CPU),
                                            ("gpu", gpu_tpl, _INPUT_GPU)):
+                    if not tpl:   # no GPU encoder on this host
+                        continue
                     ok = await _measure_one(
                         workload, tpl, inp, d, n_polls, pre_cool_s, run_idx,
                         raw_writer, summary_writer, jobs, job_id, prefix)

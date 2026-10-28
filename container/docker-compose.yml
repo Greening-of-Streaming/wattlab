@@ -1,0 +1,40 @@
+# OWL + Ollama. CPU-only by default; add the GPU override on NVIDIA hosts:
+#   docker compose -f container/docker-compose.yml up -d --build
+#   docker compose -f container/docker-compose.yml -f container/docker-compose.gpu.yml up -d --build
+# Configuration lives in container/owl.env (copy owl.env.example) — see container/README.md.
+name: owl
+
+services:
+  owl:
+    build:
+      context: ..
+      dockerfile: container/Dockerfile
+      args:
+        TORCH_FLAVOUR: ${OWL_TORCH_FLAVOUR:-cpu}
+        OWL_GIT_SHA: ${OWL_GIT_SHA:-unknown}
+    image: owl:${OWL_TORCH_FLAVOUR:-cpu}
+    env_file:
+      - path: owl.env
+        required: false
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    # Loopback-only by default: reach it via `ssh -L 8000:localhost:8000 host`.
+    # To serve visitors, set OWL_PUBLISH=8000 (or put a TLS proxy in front) and
+    # set OWL_LAB_CIDRS in owl.env first.
+    ports:
+      - "${OWL_PUBLISH:-127.0.0.1:8000}:8000"
+    volumes:
+      - owl-data:/data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.35.1      # same version as GoS1/GoS2 (2026-10-07)
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  owl-data:
+  ollama-models:

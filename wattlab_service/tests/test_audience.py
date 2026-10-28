@@ -189,3 +189,32 @@ def test_tier_ordering_is_anonymous_lt_member_lt_lab():
     assert int(Tier.Anonymous) == 0
     assert int(Tier.Member) == 1
     assert int(Tier.Lab) == 2
+
+
+# --- container / cloud overrides (CR-031 §3, 2026-10-28) ----------------------
+
+def test_lab_cidrs_replace_private_rule(monkeypatch):
+    monkeypatch.setenv("OWL_LAB_CIDRS", "198.51.100.7/32")
+    assert audience._is_lab_ip("127.0.0.1") is True
+    assert audience._is_lab_ip("198.51.100.7") is True
+    assert audience._is_lab_ip("172.17.0.1") is False     # docker bridge peer
+    assert audience._is_lab_ip("192.168.1.50") is False
+    assert audience._is_lab_ip("not-an-ip") is False
+
+
+def test_default_lab_rule_unchanged_without_env(monkeypatch):
+    monkeypatch.delenv("OWL_LAB_CIDRS", raising=False)
+    assert audience._is_lab_ip("172.17.0.1") is True
+    assert audience._is_lab_ip("8.8.8.8") is False
+
+
+def test_trusted_proxies_honour_x_real_ip(monkeypatch):
+    class R:
+        def __init__(self, host, hdr):
+            self.client = type("C", (), {"host": host})()
+            self.headers = {"x-real-ip": hdr}
+    monkeypatch.delenv("OWL_TRUSTED_PROXIES", raising=False)
+    assert audience.client_ip(R("172.18.0.2", "8.8.8.8")) == "172.18.0.2"
+    monkeypatch.setenv("OWL_TRUSTED_PROXIES", "172.18.0.0/16")
+    assert audience.client_ip(R("172.18.0.2", "8.8.8.8")) == "8.8.8.8"
+    assert audience.client_ip(R("203.0.113.9", "127.0.0.1")) == "203.0.113.9"

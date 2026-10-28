@@ -49,7 +49,7 @@ remote/Tania operation. Do not run display arms on two boxes at once.
    no auto-updates during runs (`sudo systemctl stop apt-daily.timer` etc. — Pi-side
    focus-mode equivalent, manual for now).
 
-## Condensed session index S26–S79 (S26–S66 moved here from CLAUDE.md on 2026-09-03, S69–S77 on 2026-09-27; full entries below)
+## Condensed session index S26–S80 (S26–S66 moved here from CLAUDE.md on 2026-09-03, S69–S77 on 2026-09-27; full entries below)
 
 - S26–S45 (05-20→06-11): credibility bundle, VMAF+CI confidence, compare trilogy, findings catalog, benchmark orchestrator, GPU swap → RTX 5080, CR-062 cooldown omnibus, Pixop /enhance-run (CR-063/064), refactor to routes_*.py + runtime.py.
 - S46–S53 (06-11→06-19): CR-065 dual P110 (ci2), P110 fw facts, upscale sweet-spot finding, anon-landing audit + TEMP mockups, GDPR analytics + /audience, HDR→4K throttle, encode-parity calibration harness + /video/budget measured.
@@ -82,6 +82,7 @@ remote/Tania operation. Do not run display arms on two boxes at once.
   comment); `lab_reservations.py` ticker raises/lowers the same `/tmp/owl-lab-session` flag, owns only what it raised,
   never re-raises after a hand end; banner shows "reserved until", `/decode` shows who is next. Queue page polls
   instead of `<meta refresh>`. CR-067 items 3/4 found already live and marked. Tests 1107. Uncommitted.
+- S80 (10-28): **OWL containerised for Akamai** (`container/` + hand-off README for their AI; `OWL_POWER_SOURCE` → `meter_backends.py` synthetic/component[rapl/nvidia/http], per-component ΔW in `energy.meters.components`; `OWL_LAB_CIDRS`/`OWL_TRUSTED_PROXIES`; focus-mode skip; `OLLAMA_HOST`; `disabled_routers`); CPU + GPU images smoke-tested on GoS1, Linode test pending. **LLM ladder S qwen3.5:4b · M qwen3.5:9b · L gpt-oss:20b · XL qwen3.5:122b** with host-fit check; old six models removed. CR-031 §1 decided: JSON stays, SQLite index on trigger. Tests 1309.
 - S79 (10-07): **External audit (ChatGPT Astra) reviewed** — every code claim accurate, but framed for cloud portability (off the board steer); one fix shipped: **`X-Real-IP` trusted only from a loopback peer** (`audience.client_ip`, replaces 3 copies — a client reaching :8000 directly could claim Lab); the rest parked as reference-only portability notes on CR-085. Tests 1240.
 - S78 (10-04→07): **GoS2 (Mac mini M6) brought up and made autonomous** — own OWL via a loopback-ssh LaunchDaemon (macOS Local Network blocks launchd-started Python), signed peer API (one setting per peer: its `url`), simultaneous runs, replication, outage drills, parity gate passed (±2.5 %); SSH driver kept as fallback. **P110 fw 1.3.1 refreshes every 2 s below ~12 W** (decode audit: 42/2,381 flags at stake, no published claim). **Pre-existing benchmark bug** (no idle guard between steps → x264 understated ~31 %) fixed + clean rerun; corrected M6 headline (hw −9/−18 %, CPU −31/−41 %); relative idle tolerance; GoS2 visible to members via a gateway on GoS1, **live at https://gos2.wattlab.greeningofstreaming.org** (verified from outside; sign-in carries over from the main site). Tests 1237.
 - S77 (09-21→22, unattended; committed as "S75" in fac9405 — numbering collision with JOURNAL S75/S76): **TV Box W5 onboarded** (no-brand Allwinner H618, Android 12, legacy OMX, 32-bit
@@ -108,6 +109,22 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 #   ladder; 4K/HDR arms; loop-validity finding; headless = no-sink regime; football sports tier.
 #   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
 ```
+
+## Session 80 — 2026-10-28 (OWL containerised for Akamai; LLM ladder tidy-up; persistence decided)
+
+**Why:** Akamai has servers exposing per-component energy (CPU/RAM/GPU…) with no documented API yet; we send them one link — a container + a README written for their AI to adapt OWL's meter. Owner asked to modernise the LLM panel first (fewer models, ~3 sizes, bigger hosts later) and to test on our own Linode before sharing.
+
+**LLM ladder.** Ollama library had moved past the model knowledge (Qwen3.5, Gemma 4…). Owner picked S `qwen3.5:4b` · M `qwen3.5:9b` · L `gpt-oss:20b` · XL `qwen3.5:122b` (81 GB, big hosts only). `model_catalog.LLM_LADDER` (tier, Q4 GB, active params) + `fit_on_host()` → gpu / cpu-spill / cpu / wont-load from `gpu.memory_total_gb()` + RAM (margin calibrated: gpt-oss:20b runs 100 % on the 16 GB 5080). Too-big models greyed on /settings and dropped from runners. Catalog reads Ollama `/api/tags` via new `ollama_api.py` (`OLLAMA_HOST`). Demo + canonical RAG model → qwen3.5:4b; GoS2 MLX map → Qwen3.5-4B/9B-4bit. Validation (Tapo, T2, n=1): 4b 1.65 Wh 🟢, 9b 2.16 Wh 🟢, gpt-oss 1.90 Wh 🟢. Removed tinyllama, qwen3:1.7b/4b/8b, mistral-nemo, phi4 from GoS1 Ollama (results untouched).
+
+**Persistence (CR-031 §1) decided with owner:** JSON stays source of truth (2,618 files / 454 MB, full parse 1.05 s; GoS1↔GoS2 replication already federates); derived SQLite index only on triggers recorded in the CR.
+
+**Container (CR-031 §2/§3).** `power.py` dispatches to `meter_backends.py` when `OWL_POWER_SOURCE` ≠ tapo (Tapo path byte-identical; `use_meters` remote overrides always Tapo); a bad source is kept as an error and fails reads loudly + site-wide strip; synthetic = idle + CPU-util term + noise, stamped `simulated` with a SIMULATED POWER strip on every page; component = sum of readers (RAPL energy counters w/ wraparound, nvidia-smi, HTTP JSON/Prometheus via env). Per-poll component series → `energy.meters.components` (informational; ΔW/confidence on the total; documented in result_envelope.md). `audience`: `OWL_LAB_CIDRS` replaces private-is-Lab, `OWL_TRUSTED_PROXIES` extends X-Real-IP trust (closes CR-066 item 2). Focus mode → `unavailable` without sudo/systemctl or `OWL_FOCUS_MODE=off`. `disabled_routers` setting (+ nav). `HF_HOME` honoured by the image catalog. `container/`: Dockerfile (Ubuntu 24.04, venv, torch cpu|cu128 with a constraint so pip can't swap torch, BtbN static FFmpeg n8.1 NVENC+libvmaf), compose (Ollama 0.35.1 sidecar, loopback-only publish) + GPU override, entrypoint (seed settings, safe defaults), `pull_models.py` (fit-aware), `fetch_test_content.sh` (3 CC-BY extracts from our public download route, sha256-verified), `smoke_test.sh`, `LINODE_TEST.md`, README.
+
+**Bugs found by containerising:** `requirements.txt` pinned sympy 1.13.1 vs live 1.14.0 → pip back-tracked to an old CUDA torch (fixed pin); /settings 500 + both calibrations would crash on a GPU-less host (`variance_template` now "" when no encoder; GPU legs skipped).
+
+**Tests on GoS1 (live queue paused):** CPU image 3.29 GB smoke 6/6 (x264 🟢, qwen3.5:4b CPU 🟢, components + focus_mode stored); GPU image 13.2 GB — h264_nvenc 🟢, GPU LLM 🟢, CPU-vs-GPU with VMAF 93.98/91.71. Real Tapo encode after restart: ci2 🟢, no components block. pytest 1309.
+
+**Open:** Linode Dedicated 16 GB smoke test (owner creates instance) → Tania sign-off → push + send link; GoS2 deploy + Qwen3.5 pulls.
 
 ## Session 79 — 2026-10-07 (external audit reviewed; X-Real-IP trust closed)
 

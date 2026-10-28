@@ -13,7 +13,8 @@ import energy
 from power import get_power_watts, read_sensors_dict, cooldown_between_runs
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+import ollama_api
+OLLAMA_URL = ollama_api.url("api/generate")
 
 # Fixed prompt tasks — predetermined for comparability
 TASKS = {
@@ -155,7 +156,7 @@ def unload_all_loaded_models():
     """
     import urllib.request, json
     try:
-        with urllib.request.urlopen("http://localhost:11434/api/ps", timeout=5) as r:
+        with urllib.request.urlopen(ollama_api.url("api/ps"), timeout=5) as r:
             data = json.loads(r.read())
     except Exception:
         return []
@@ -175,7 +176,7 @@ def loaded_models() -> list:
     GPU consumer (e.g. the diffusers image pipeline) loads."""
     import urllib.request, json
     try:
-        with urllib.request.urlopen("http://localhost:11434/api/ps", timeout=5) as r:
+        with urllib.request.urlopen(ollama_api.url("api/ps"), timeout=5) as r:
             data = json.loads(r.read())
     except Exception:
         return []

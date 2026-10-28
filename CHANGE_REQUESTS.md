@@ -256,7 +256,10 @@ Spec-doc ownership: Tania the encoding-spec subsection of `WATTLAB_SPEC.md`, own
 **Status:** captured 2026-05-04 (post-meeting). Medium priority. One CR, three sub-sections (they share the question *what does it take to run OWL somewhere other than GoS1?*) — each with its own state: **§1 open decision (the Track A gate) · §2 cheap wins shipped, meter registry landed via CR-065 (closed), full backend still parked · §3 nothing built, externally driven.** **Refreshed 2026-07-06 from OWL_AUDIT.md** (§3.2/§3.3/§3.4): §3 gains an *ungated pre-work* list + blocker-list additions; §1 gains the `envelope_version` pre-work; §2 gains a meter-authenticity design input.
 **Triggered by:** team meeting 2026-05-04; board 2026-05-11 reinforced §3 (rack hosting — Linode, or Mike's Akamai open-rack offer in Virginia).
 
-#### §1 Persistence — STATUS: open decision, and the gate for Track A (CR-003, CR-007 analytics)
+#### §1 Persistence — STATUS: DECIDED 2026-10-28 (owner) — JSON stays source of truth; index on trigger
+
+**Decision (2026-10-28, raised by the Akamai container / multi-instance question):** keep flat JSON as the record of truth; the container ships with no DB and results come back as a `results/` tarball → `persist.import_result` (same path as GoS1↔GoS2 replication, which already federates append-only, host-stamped, conflict-free). Measured that day: 2,618 result JSONs / 454 MB (360 MB of it artefacts — training 256 MB in 1 file, image 104 MB — not records), ~870 new files/month (decode campaigns), full parse of every file 1.05 s, `results/video` (966 files) 66 ms, 19 dir-scan call sites. **Build the derived SQLite index** (rebuildable from the JSON, behind `persist.list_results`/`list_batch`) when ANY trigger fires: a feature needs cross-result queries (CR-007 carbon history / CR-003 analytics) · ~20k files · a page scan > 1 s · a third always-on node. A real DB only with a joint decision to align with REM's Postgres/TimescaleDB ("not five databases"). Original framing below.
+
 
 Flat JSON per result (`results/{type}/{date}_{job_id}.json`): fast, debuggable, version-controllable — but no indexing for time-series queries, no atomic transactions, no growth story. Two options:
 
@@ -267,7 +270,8 @@ Decision criteria: if the historical-carbon work (now CR-007 Stage 1) and the ca
 
 **Pre-work — DONE 2026-08-17 (CR-073):** `envelope_version: 1` is stamped by `persist.save_result` (absent = 0). **First consumer of any future index:** `persist.list_batch` (CR-073's dir-scoped batch scan) — the API a SQLite mirror would back unchanged. Original text: stamp `envelope_version: 1` in `persist.save_result` now (absent = 0) and record shape changes as version bumps in `docs/result_envelope.md`. Today every shape change is handled by making all 7 consumers tolerant of both forms forever (two cooldown shapes, small/large aliases, pre-CR-026 `visitor_key`-less records, …) — nothing on disk says which contract a file satisfies, and any §1 analytics/migration would have to reverse-engineer era boundaries from SHAs. Versioned envelopes are the precondition for merging OWL history into any store; `bin/anonymise-visitor-ips.py` is the in-repo template for backfill migrations. Also unify `RESULTS_DIR` resolution (`persist.py` absolute vs `findings.py` repo-relative — they agree only on GoS1) behind the §3 path root.
 
-#### §2 Power source — STATUS: cheap wins shipped 2026-06-09 (`power.stamp()` provenance + `meter_display_name`); full backend NOT built
+#### §2 Power source — STATUS: backend seam SHIPPED 2026-10-28 (`OWL_POWER_SOURCE` → `meter_backends.py`: synthetic + component[rapl/nvidia/http]); PDU reader not built
+
 
 The deferred full shape: `power.py` becomes a dispatcher (`POWER_SOURCE` = tapo | pdu | synthetic) over `power_tapo.py` / `power_pdu.py` / `power_synthetic.py`. Board-added requirements (2026-05-11): every backend declares its **meter resolution**, and confidence must visibly degrade when resolution is coarser than the task ("you cannot be 🟢 on a 4 s encode measured by a 60 s meter" — *resolution-aware confidence is required behaviour, not a watch-out*); the interface must express **one primary reading plus N attributable sub-readings** (utility-grade meter + per-plug PDU stack, Mike's rack model).
 
@@ -275,7 +279,10 @@ The deferred full shape: `power.py` becomes a dispatcher (`POWER_SOURCE` = tapo 
 
 **Design input (2026-07-06, audit §5.9 — unverified lead, see CR-069):** the Tapo path authenticates with full TP-Link *cloud account* credentials from plaintext `.env`, and KLAP trusts whatever answers at `TAPO_P110_IP` — an ARP-spoof/IP-squat on the flat LAN could feed fabricated wattage into published findings (measurement *integrity*, not just confidentiality). Any PowerBackend protocol should carry an explicit meter-authenticity stance per backend.
 
-#### §3 Containerisation — STATUS: nothing built; timeline externally driven (Mike's rack / Linode)
+#### §3 Containerisation — STATUS: BUILT 2026-10-28 (`container/`, hand-off README for Akamai); Linode smoke test before sharing
+
+**2026-10-28:** `container/` ships Dockerfile (CPU/CUDA torch flavours, static FFmpeg NVENC+libvmaf), compose + GPU override with an Ollama 0.35.1 sidecar, entrypoint (seed settings, open-licence content fetch with checksums, fit-aware LLM ladder pull), and `container/README.md` written for Akamai's AI to adapt the meter. Blockers closed: (a) X-Real-IP/private-is-Lab → `OWL_LAB_CIDRS` + `OWL_TRUSTED_PROXIES` (also CR-066 item 2); focus mode skips cleanly without sudo/systemctl (`focus_mode: unavailable`); `OLLAMA_HOST`; `HF_HOME`; `disabled_routers`. Still open: forced recalibration on a new host is documented (README §5), not enforced.
+
 
 `Dockerfile` + `compose.yml`, with explicit acknowledgement of what can't containerise cleanly: focus mode's `systemctl stop` (drop it and document the quality loss, or privileged + /run/systemd — both ugly); GPU passthrough (now `--gpus` + nvidia-container-toolkit for NVENC/CUDA, not the old VAAPI `--device /dev/dri`); settings/calibration are host-specific — **first run on a new host MUST trigger a fresh variance calibration as a startup check**, never a manual step.
 

@@ -22,7 +22,6 @@ Catalog scans are cached for 60 s so /llm/compare doesn't reshell out to
 """
 import os
 import re
-import subprocess
 import time
 from pathlib import Path
 
@@ -85,7 +84,88 @@ _MODEL_DATES = {
         "training_cutoff":  "2024-06",
         "source":           "OpenAI gpt-oss model card (June 2024 training-data cutoff).",
     },
+    "qwen3.5:4b": {
+        "released":         "2026-03-02",
+        "training_cutoff":  None,
+        "source":           "Qwen3.5 small-model release (Alibaba, Apache 2.0). Training cutoff not publicly stated.",
+    },
+    "qwen3.5:9b": {
+        "released":         "2026-03-02",
+        "training_cutoff":  None,
+        "source":           "Qwen3.5 small-model release (Alibaba, Apache 2.0). Training cutoff not publicly stated.",
+    },
+    "qwen3.5:122b": {
+        "released":         "2026-02-24",
+        "training_cutoff":  None,
+        "source":           "Qwen3.5 medium-series release (Alibaba). Training cutoff not publicly stated.",
+    },
+    "gpt-oss:120b": {
+        "released":         "2025-08-05",
+        "training_cutoff":  "2024-06",
+        "source":           "OpenAI gpt-oss model card (June 2024 training-data cutoff).",
+    },
 }
+
+
+# LLM ladder (2026-10-28) — the curated S/M/L/XL panel. Metadata only: the
+# catalog itself stays the live `ollama list` view (CR-050); this table says
+# which tier a model is, how much memory it needs, and its active parameters
+# (MoE models run far fewer than their headline size). `gb` = Q4 download
+# size from ollama.com, used by fit_on_host() before a model is even pulled
+# (the container entrypoint pulls only the tiers that fit). XL is for hosts
+# larger than GoS1 — it is never auto-pulled on a 16 GB GPU / 61 GB RAM box.
+LLM_LADDER = {
+    "qwen3.5:4b":   {"tier": "S",  "gb": 3.4,  "active": "4B"},
+    "qwen3.5:9b":   {"tier": "M",  "gb": 6.6,  "active": "9B"},
+    "gpt-oss:20b":  {"tier": "L",  "gb": 13.0, "active": "3.6B (MoE)"},
+    "qwen3.5:122b": {"tier": "XL", "gb": 81.0, "active": "10B (MoE)"},
+}
+
+# Weights + KV cache/context + runtime: what a loaded model actually holds.
+# Calibrated on GoS1: gpt-oss:20b (13.8 GB on disk) runs 100 % on the 16 GB
+# RTX 5080, so the margin is small. A sizing hint, not a guarantee.
+_FIT_OVERHEAD = 1.05
+_FIT_FIXED_GB = 1.0
+
+
+def host_memory() -> dict:
+    """{'gpu_gb': dedicated VRAM or None, 'ram_gb': system RAM}. Apple
+    silicon reports gpu_gb=None — its GPU shares system RAM."""
+    try:
+        ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3
+    except (ValueError, OSError, AttributeError):
+        ram = 0.0
+    try:
+        import gpu
+        vram = gpu.memory_total_gb()
+    except Exception:
+        vram = None
+    return {"gpu_gb": vram, "ram_gb": round(ram, 1)}
+
+
+def fit_on_host(model_gb: float, mem: dict | None = None) -> str:
+    """'gpu' (fits in VRAM — or in unified memory on Apple) | 'cpu-spill'
+    (loads, but part runs from system RAM: a different, slower regime to
+    measure) | 'cpu' (no GPU, fits in RAM) | 'wont-load' | 'unknown'."""
+    if not model_gb:
+        return "unknown"
+    mem = mem or host_memory()
+    need = model_gb * _FIT_OVERHEAD + _FIT_FIXED_GB
+    vram, ram = mem.get("gpu_gb"), mem.get("ram_gb") or 0.0
+    usable_ram = ram * 0.75  # leave the OS, OWL and the page cache room
+    if vram:
+        if need <= vram:
+            return "gpu"
+        return "cpu-spill" if need <= vram + usable_ram else "wont-load"
+    if active_gpu_vendor() == "apple":
+        return "gpu" if need <= usable_ram else "wont-load"
+    return "cpu" if need <= usable_ram else "wont-load"
+
+
+def ladder_fit(mem: dict | None = None) -> dict:
+    """{key: {tier, gb, active, fit}} for the whole ladder on this host."""
+    mem = mem or host_memory()
+    return {k: {**v, "fit": fit_on_host(v["gb"], mem)} for k, v in LLM_LADDER.items()}
 
 
 def _dates_for(key: str) -> dict:
@@ -127,6 +207,7 @@ _FAMILY_OVERRIDES = {
     "Gpt Oss":       "GPT-OSS",
     "Mistral Nemo":  "Mistral Nemo",
     "Qwen3":         "Qwen3",
+    "Qwen3.5":       "Qwen3.5",
     "Phi4":          "Phi-4",
     "Phi3":          "Phi-3",
 }
@@ -164,31 +245,36 @@ _ollama_cache: list[dict] | None = None
 _ollama_cache_t: float = 0.0
 
 
+def _fmt_size(n_bytes: int) -> str:
+    """Bytes -> the '5.2 GB' style `ollama list` used to print."""
+    if n_bytes >= 1e9:
+        return f"{n_bytes / 1e9:.1f} GB"
+    return f"{n_bytes / 1e6:.0f} MB"
+
+
 def _ollama_list_raw() -> list[dict]:
-    """Returns [{'name': 'qwen3:8b', 'size': '5.2 GB'}, ...] or [] on failure."""
+    """Returns [{'name': 'qwen3:8b', 'size': '5.2 GB', 'size_bytes': ...}, ...]
+    or [] on failure. Reads Ollama's /api/tags (ollama_api.base_url, so a
+    container's OLLAMA_HOST sidecar works — no `ollama` CLI needed)."""
     global _ollama_cache, _ollama_cache_t
     now = time.time()
     if _ollama_cache is not None and (now - _ollama_cache_t) < _CACHE_TTL_S:
         return _ollama_cache
     try:
-        out = subprocess.run(
-            ["ollama", "list"], capture_output=True, text=True, timeout=5
-        ).stdout
+        import ollama_api
+        models = ollama_api.get_json("api/tags").get("models", [])
     except Exception:
         _ollama_cache = []
         _ollama_cache_t = now
         return []
     rows = []
-    for line in out.splitlines()[1:]:  # skip header
-        # Format: NAME<TAB>ID<TAB>SIZE_NUM SIZE_UNIT<TAB>MODIFIED…
-        parts = re.split(r"\s{2,}", line.strip())
-        if len(parts) < 3:
-            continue
-        name = parts[0].strip()
-        size = parts[2].strip() if len(parts) >= 3 else "?"
+    for m in models:
+        name = (m.get("name") or m.get("model") or "").strip()
         if not name:
             continue
-        rows.append({"name": name, "size": size})
+        n = int(m.get("size") or 0)
+        rows.append({"name": name, "size": _fmt_size(n) if n else "?",
+                     "size_bytes": n})
     _ollama_cache = rows
     _ollama_cache_t = now
     return rows
@@ -212,16 +298,22 @@ def available_llm_models() -> dict:
     by default — Ollama's "recently modified first" order is rarely useful.
     """
     out = {}
+    mem = host_memory()
     for row in _ollama_list_raw():
         name = row["name"]
         if any(name.startswith(p) for p in _OLLAMA_IMAGE_PREFIXES):
             continue
         key = _normalize_key(name)
         dates = _dates_for(key)
+        ladder = LLM_LADDER.get(key, {})
+        gb = (row.get("size_bytes") or 0) / 1e9 or ladder.get("gb")
         out[key] = {
             "label":           _label_from_key(name),
             "size":            row.get("size", "?"),
             "params":          _params_from_name(name),
+            "tier":            ladder.get("tier"),           # S/M/L/XL or None
+            "active_params":   ladder.get("active"),
+            "fit":             fit_on_host(gb, mem),         # see fit_on_host
             "released":        dates["released"],         # YYYY-MM-DD or None
             "training_cutoff": dates["training_cutoff"],  # YYYY-MM or None
             "dates_source":    dates["source"],           # tooltip text
@@ -240,19 +332,29 @@ def _enabled_for(surface_key: str, available: dict) -> dict:
     return {k: available[k] for k in enabled if k in available}
 
 
+def _runnable(models: dict) -> dict:
+    # A model too big for this host would fail mid-job (or swap the box to a
+    # crawl); drop it from the runners. /settings keeps showing it, greyed,
+    # with the reason — same contract as cuda_only image models.
+    return {k: v for k, v in models.items() if v.get("fit") != "wont-load"}
+
+
 def enabled_llm_models() -> dict:
-    return _enabled_for("llm_enabled_models", available_llm_models())
+    return _runnable(_enabled_for("llm_enabled_models", available_llm_models()))
 
 
 def enabled_rag_models() -> dict:
-    return _enabled_for("rag_enabled_models", available_llm_models())
+    return _runnable(_enabled_for("rag_enabled_models", available_llm_models()))
 
 
 # ---------------------------------------------------------------------------
 # Image catalog
 # ---------------------------------------------------------------------------
 
-_HF_CACHE = Path.home() / ".cache" / "huggingface" / "hub"
+# Honour the standard HF env overrides (a container mounts its cache volume
+# via HF_HOME); default = the per-user cache GoS1/GoS2 have always used.
+_HF_CACHE = Path(os.environ.get("HF_HUB_CACHE")
+                 or Path(os.environ.get("HF_HOME") or Path.home() / ".cache" / "huggingface") / "hub")
 
 # Built-in defaults for known image-model families. Keys are short slugs
 # (lowercased HF repo "name" portion) so /image stays backwards-compatible

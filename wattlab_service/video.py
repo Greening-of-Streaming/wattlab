@@ -45,9 +45,15 @@ _MAC_FOCUS = "/usr/local/sbin/owl-focus"
 def focus_mode_kind() -> str:
     """Which focus mode this node can apply — stamped on results (CR-085):
     'systemd-timers' (Linux), 'macos-owl-focus' (Apple, wrapper installed) or
-    'unavailable' (Apple without the root wrapper — measured as-is)."""
+    'unavailable' (Apple without the root wrapper, a container without
+    sudo/systemctl, or OWL_FOCUS_MODE=off — measured as-is)."""
     import platform
+    import shutil
+    if (os.environ.get("OWL_FOCUS_MODE") or "").strip().lower() == "off":
+        return "unavailable"
     if platform.system() != "Darwin":
+        if not (shutil.which("sudo") and shutil.which("systemctl")):
+            return "unavailable"
         return "systemd-timers"
     return "macos-owl-focus" if Path(_MAC_FOCUS).exists() else "unavailable"
 
@@ -443,9 +449,14 @@ def variance_template(preset_key: str, s: dict) -> str:
     drift that crept in when /video moved to ABR (S13) but the variance
     textareas stayed on -crf/-qp."""
     import shlex
-    args = PRESETS[preset_key]["cmd_fn"](
-        Path("{input}"), Path("{output}"), _preset_bps(preset_key, s)
-    )
+    try:
+        args = PRESETS[preset_key]["cmd_fn"](
+            Path("{input}"), Path("{output}"), _preset_bps(preset_key, s)
+        )
+    except RuntimeError:
+        # No encoder for this preset on this host (a GPU preset on a GPU-less
+        # container): "" = "no such leg here"; calibrations skip it.
+        return ""
     return shlex.join(args)
 
 POLL_INTERVAL = 1.0
@@ -473,7 +484,8 @@ async def measure_baseline(polls: int = 10) -> dict:
         "gpu_temp_base": round(sum(s["gpu_junction"] for s in sensor_readings
                                    if s["gpu_junction"]) / len(sensor_readings), 1),
         **{k: b[k] for k in ("baseline_samples_w_2", "meter2_degraded",
-                             "baseline_reference_w", "baseline_elevated")
+                             "baseline_reference_w", "baseline_elevated",
+                             "baseline_components_w")
            if k in b},
     }
 
@@ -1223,39 +1235,41 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
                 cancelled = True
                 break
 
-            # --- Cooldown between CPU and GPU (fixed protocol; respect_toggle=False) ---
-            await cooldown_between_runs(
-                fixed_seconds=cooldown, respect_toggle=False,
-                stage=f"run {run_label} — cooldown", jobs=jobs, job_id=job_id,
-            )
+            # GPU leg only where this host has a GPU encoder (gpu_tpl != "").
+            if gpu_tpl:
+                # --- Cooldown between CPU and GPU (fixed protocol; respect_toggle=False) ---
+                await cooldown_between_runs(
+                    fixed_seconds=cooldown, respect_toggle=False,
+                    stage=f"run {run_label} — cooldown", jobs=jobs, job_id=job_id,
+                )
 
-            # --- GPU baseline (collect raw readings for idle CV) ---
-            _stage("GPU baseline")
-            raw_gpu_base = []
-            for _ in range(n_base):
-                w = await get_power_watts()
-                raw_gpu_base.append(w)
-                await asyncio.sleep(POLL_INTERVAL)
-            idle_windows.append(list(raw_gpu_base))
-            w_base_gpu = sum(raw_gpu_base) / len(raw_gpu_base)
+                # --- GPU baseline (collect raw readings for idle CV) ---
+                _stage("GPU baseline")
+                raw_gpu_base = []
+                for _ in range(n_base):
+                    w = await get_power_watts()
+                    raw_gpu_base.append(w)
+                    await asyncio.sleep(POLL_INTERVAL)
+                idle_windows.append(list(raw_gpu_base))
+                w_base_gpu = sum(raw_gpu_base) / len(raw_gpu_base)
 
-            # --- GPU encode ---
-            out_gpu = UPLOAD_DIR / f"{job_id}_var_gpu_{i}.mp4"
-            cmd_gpu = apply_custom_cmd(gpu_tpl, meridian, out_gpu)
-            _stage("H.265 GPU encode")
-            stop_gpu = asyncio.Event()
-            poll_gpu = asyncio.create_task(poll_during_task(stop_gpu))
-            gpu_result = await asyncio.get_event_loop().run_in_executor(
-                None, transcode, cmd_gpu)
-            stop_gpu.set()
-            readings_gpu = await poll_gpu
-            out_gpu.unlink(missing_ok=True)
-            if gpu_result.get("success") and readings_gpu:
-                w_task2 = sum(r["watts"] for r in readings_gpu) / len(readings_gpu)
-                gpu_delta_w.append(round(w_task2 - w_base_gpu, 3))
-            elif not gpu_result.get("success"):
-                gpu_failed += 1
-                failure_stderr.append(f"run {run_label} gpu: {gpu_result.get('stderr','')[-200:]}")
+                # --- GPU encode ---
+                out_gpu = UPLOAD_DIR / f"{job_id}_var_gpu_{i}.mp4"
+                cmd_gpu = apply_custom_cmd(gpu_tpl, meridian, out_gpu)
+                _stage("H.265 GPU encode")
+                stop_gpu = asyncio.Event()
+                poll_gpu = asyncio.create_task(poll_during_task(stop_gpu))
+                gpu_result = await asyncio.get_event_loop().run_in_executor(
+                    None, transcode, cmd_gpu)
+                stop_gpu.set()
+                readings_gpu = await poll_gpu
+                out_gpu.unlink(missing_ok=True)
+                if gpu_result.get("success") and readings_gpu:
+                    w_task2 = sum(r["watts"] for r in readings_gpu) / len(readings_gpu)
+                    gpu_delta_w.append(round(w_task2 - w_base_gpu, 3))
+                elif not gpu_result.get("success"):
+                    gpu_failed += 1
+                    failure_stderr.append(f"run {run_label} gpu: {gpu_result.get('stderr','')[-200:]}")
 
             # --- Inter-run cooldown (skip after last run) ---
             if i < n_runs - 1:

@@ -18,7 +18,9 @@ of the dependency graph for the access spine.
 """
 
 from enum import IntEnum
+import functools
 import ipaddress
+import os
 
 from fastapi import Request
 
@@ -27,6 +29,41 @@ class Tier(IntEnum):
     Anonymous = 0
     Member = 1
     Lab = 2
+
+
+@functools.lru_cache(maxsize=8)
+def _parse_cidrs(raw: str) -> tuple:
+    nets = []
+    for part in (raw or "").replace(";", ",").split(","):
+        part = part.strip()
+        if part:
+            try:
+                nets.append(ipaddress.ip_network(part, strict=False))
+            except ValueError:
+                pass
+    return tuple(nets)
+
+
+def _in_env_cidrs(ip_str: str, var: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return any(addr in n for n in _parse_cidrs(os.environ.get(var, "")))
+
+
+def _is_lab_ip(ip_str: str) -> bool:
+    """Lab-origin test. Default (GoS1/GoS2): loopback or RFC1918 private.
+    With `OWL_LAB_CIDRS` set (containers, cloud — where every peer looks
+    private behind Docker/LB networking) ONLY loopback + those CIDRs are Lab."""
+    if os.environ.get("OWL_LAB_CIDRS", "").strip():
+        try:
+            if ipaddress.ip_address(ip_str).is_loopback:
+                return True
+        except ValueError:
+            return False
+        return _in_env_cidrs(ip_str, "OWL_LAB_CIDRS")
+    return _is_loopback_or_private(ip_str)
 
 
 def _is_loopback_or_private(ip_str: str) -> bool:
@@ -54,7 +91,9 @@ _TRUSTED_PROXY_HOSTS = {"testclient"}
 def client_ip(request) -> str:
     """The visitor's IP. X-Real-IP is honoured only when the direct peer is a
     trusted proxy (loopback nginx); anyone reaching :8000 directly is judged by
-    their own socket address, so the header can't be spoofed to claim Lab."""
+    their own socket address, so the header can't be spoofed to claim Lab.
+    `OWL_TRUSTED_PROXIES` (CIDRs) adds proxies beyond loopback — e.g. the
+    Docker bridge a containerised reverse proxy connects from."""
     host = request.client.host if getattr(request, "client", None) else ""
     trusted = host in _TRUSTED_PROXY_HOSTS
     if not trusted:
@@ -62,6 +101,8 @@ def client_ip(request) -> str:
             trusted = ipaddress.ip_address(host).is_loopback
         except ValueError:
             pass
+    if not trusted:
+        trusted = _in_env_cidrs(host, "OWL_TRUSTED_PROXIES")
     if trusted:
         hdr = request.headers.get("x-real-ip") if request.headers else None
         if hdr:
@@ -93,7 +134,7 @@ def tier(request: Request) -> Tier:
     if pv is not None:
         return {"lab": Tier.Lab, "member": Tier.Member}.get(pv.get("tier"), Tier.Anonymous)
     ip_str = client_ip(request)
-    if _is_loopback_or_private(ip_str):
+    if _is_lab_ip(ip_str):
         return Tier.Lab
 
     # CR-001: signed session cookie + allowlisted email → Member.

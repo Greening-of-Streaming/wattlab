@@ -346,3 +346,24 @@ def read_gpu_sensors() -> dict:
 
 def stamp() -> dict:
     return BACKEND.stamp()
+
+
+def memory_total_gb() -> "float | None":
+    """Dedicated GPU memory in GB, or None (no discrete GPU / Apple unified
+    memory / probe failed). Feeds model_catalog.fit_on_host — a sizing hint,
+    never a measurement input."""
+    if BACKEND.vendor == "nvidia":
+        out = _run(['nvidia-smi', '--query-gpu=memory.total',
+                    '--format=csv,noheader,nounits'])
+        try:
+            return round(float(out.strip().splitlines()[0]) / 1024, 1)
+        except Exception:
+            return None
+    if BACKEND.vendor == "amd":
+        import glob
+        for p in glob.glob('/sys/class/drm/card*/device/mem_info_vram_total'):
+            try:
+                return round(int(open(p).read()) / 1024**3, 1)
+            except Exception:
+                continue
+    return None

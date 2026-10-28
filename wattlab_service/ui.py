@@ -510,8 +510,12 @@ def _nav_items(request: Request) -> tuple:
 def _nav_html(request: Request) -> str:
     path = request.url.path
     links = []
+    off = set(cfg.load().get("disabled_routers") or [])
     for href, label in _nav_items(request):
         if href == "/findings" and not _findings_on():
+            continue
+        if (label == "Decode" and "routes_decode" in off) or \
+           (label == "Enhancement" and "routes_enhance" in off):
             continue
         active = path == href
         color = "var(--accent)" if active else "var(--text-3)"
@@ -680,6 +684,28 @@ def _lab_session_banner(request: Request | None = None) -> str:
             f'measurement runs are paused until the session ends.{extra}</div>')
 
 
+def _power_source_banner() -> str:
+    """Site-wide strip when the power source is simulated or broken
+    (OWL_POWER_SOURCE, power.py). Simulated watts must never be mistaken
+    for a measurement — on any page, by any tier."""
+    try:
+        import power
+        st = power.stamp()
+    except Exception:
+        return ""
+    if st.get("simulated"):
+        msg = ('⚠ <b>SIMULATED POWER</b> — this OWL instance has no power meter; every '
+               'watt and watt-hour shown here is synthetic and must not be cited.')
+    elif st.get("kind") == "unavailable":
+        msg = ('⚠ <b>Power source unavailable</b> — ' + html_lib.escape(str(st.get("error", "")))
+               + ' Measurement runs will fail until it is fixed.')
+    else:
+        return ""
+    return ('<div style="background:var(--accent-soft);border:1px solid var(--warn);'
+            'border-radius:4px;padding:0.45rem 0.8rem;margin:0.6rem 0;font-size:0.8rem;'
+            f'color:var(--text-2)">{msg}</div>')
+
+
 def render_page(request: Request, title: str, body: str, *,
                 styles: str = "", head: str = "", tail: str = "",
                 back: bool = True) -> str:
@@ -689,7 +715,8 @@ def render_page(request: Request, title: str, body: str, *,
     page's inline JS depends on at call time (e.g. _PROGRESS_JS).
     `back=False` drops the ← Home link (the home page itself)."""
     header = (_auth_chip_html(request) + (_BACK if back else "")
-              + _nav_html(request) + _lab_session_banner(request)
+              + _nav_html(request) + _power_source_banner()
+              + _lab_session_banner(request)
               + _benchmark_banner(request))
     return f"""<!DOCTYPE html>
 <html>

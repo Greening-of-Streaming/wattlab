@@ -1,0 +1,12 @@
+# OWL container build context (container/Dockerfile) — allowlist: only what the
+# image copies. Results, test content, corpora, .env, REM, docs bulk stay out.
+*
+!requirements.txt
+!VERSION
+!LICENSE
+!wattlab_service/
+!docs/findings/
+!container/
+wattlab_service/tests/
+**/__pycache__/
+container/owl.env
