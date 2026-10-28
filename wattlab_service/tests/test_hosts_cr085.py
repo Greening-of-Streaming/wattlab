@@ -478,10 +478,12 @@ def test_ai_panels_visible_but_locked_for_anonymous(monkeypatch):
         assert 'id="remote-hosts-panel" class=""' in lab and "function owlRunTiles" in lab, page
 
 
-def test_local_mlx_evicts_resident_ollama_models_before_the_baseline(monkeypatch):
+def test_local_mlx_evicts_ollama_then_baselines_on_the_queue_floor(monkeypatch):
     """A prior Ollama run leaves its model resident for 5 min; on a unified-memory
     Mac, gpt-oss in Ollama + its MLX copy overflow the GPU budget (Metal OOM,
-    2026-10-28). The MLX path must evict Ollama before sampling the baseline."""
+    2026-10-28). The MLX path must evict Ollama before sampling the baseline, and
+    a local node must baseline through power.sample_baseline (which feeds the
+    queue's pre-job idle guard), not the per-remote-host floor table."""
     import asyncio
     import llm
     import remote_ai
@@ -489,14 +491,19 @@ def test_local_mlx_evicts_resident_ollama_models_before_the_baseline(monkeypatch
     order = []
     monkeypatch.setattr(llm, "unload_all_loaded_models", lambda: order.append("evict") or ["gpt-oss:20b"])
 
-    async def fake_baseline(host, polls):
-        order.append("baseline")
+    async def local_baseline(polls, read_watts, **kw):
+        order.append("local baseline")
         raise RuntimeError("stop here")
-    monkeypatch.setattr(remote_video, "_baseline", fake_baseline)
+
+    async def remote_baseline(host, polls):
+        order.append("remote baseline")
+        raise RuntimeError("stop here")
+    monkeypatch.setattr(power, "sample_baseline", local_baseline)
+    monkeypatch.setattr(remote_video, "_baseline", remote_baseline)
     real_sleep = asyncio.sleep
     monkeypatch.setattr(remote_ai.asyncio, "sleep", lambda s: real_sleep(0))
     host = {"label": "GoS2", "local": True, "meters": ["10.0.0.1"],
             "mlx_models": {"qwen3.5:4b": "mlx-community/Qwen3.5-4B-4bit"}}
     with pytest.raises(RuntimeError, match="stop here"):
         asyncio.run(remote_ai._run_remote_mlx("qwen3.5:4b", "T2", "j1", host))
-    assert order == ["evict", "baseline"]
+    assert order == ["evict", "local baseline"]

@@ -264,6 +264,20 @@ async def run_remote_llm(model_key: str, task_key: str, job_id: str, host_id: st
     }
 
 
+async def _mlx_baseline(host: dict, polls: int) -> dict:
+    """A local node samples on its own meters and updates power.LAST_W_BASE, the
+    reference the queue's pre-job idle guard (CR-070) waits for — routed through
+    remote_video._baseline the floor went to a per-remote table instead, the
+    guard never armed, and back-to-back MLX jobs baselined at 9–10 W on a 1.4 W
+    node (2026-10-28)."""
+    if not host.get("local"):
+        return await remote_video._baseline(host, polls)
+    b = await power.sample_baseline(polls, read_watts=power.get_power_watts)
+    return {"w_base": b["w_base"], "baseline_samples_w": b["samples_w"],
+            **{k: b[k] for k in ("baseline_samples_w_2", "meter2_degraded",
+                                 "baseline_reference_w", "baseline_elevated") if k in b}}
+
+
 async def _run_remote_mlx(model_key: str, task_key: str, job_id: str, host: dict,
                           jobs: dict = None) -> dict:
     repo = (host.get("mlx_models") or {}).get(model_key)
@@ -280,7 +294,7 @@ async def _run_remote_mlx(model_key: str, task_key: str, job_id: str, host: dict
     # (Metal OOM), and any resident model also sits in the baseline. Evict first.
     if host.get("local") and llm.unload_all_loaded_models():
         await asyncio.sleep(s["llm_unload_settle_s"])
-    baseline = await remote_video._baseline(host, s["baseline_polls"])
+    baseline = await _mlx_baseline(host, s["baseline_polls"])
     LOCK_FILE.write_text(job_id)
     try:
         if jobs is not None: jobs[job_id]["stage"] = "gpu_inference"
