@@ -13,9 +13,9 @@ the signed peer API on first view and caches them.
 
 Pair score: ffmpeg SSIM + PSNR between same-seed images. Only meaningful when
 both runs drew the SAME starting noise — the diffusers runner draws it on the
-CPU (torch.Generator), identical on CUDA and MPS; mflux draws it with MLX's
-RNG, so the same seed gives a different picture and the pair is reported as
-not comparable rather than as a misleading low score.
+CPU (torch.Generator) in float32 — identical on CUDA and MPS; mflux draws it
+with MLX's RNG, so the same seed gives a different picture and the pair is
+reported as not comparable rather than as a misleading low score.
 """
 import base64
 import hashlib
@@ -85,6 +85,12 @@ def fetch(result: dict, p: int) -> Path | None:
     return f
 
 
+# Noise families that give the same starting noise for a seed on every machine.
+# "torch-cpu" (seeded on the CPU but drawn in bfloat16) is NOT one: bf16 randn
+# differs between PyTorch builds, so those runs drew different pictures.
+PORTABLE_NOISE = {"torch-cpu-f32", "mlx"}
+
+
 def _noise(r: dict) -> str | None:
     if (r.get("generation") or {}).get("noise"):
         return r["generation"]["noise"]
@@ -122,6 +128,9 @@ def pair(a: dict, b: dict) -> dict:
     if na != nb:
         why.append("different starting noise (MLX vs PyTorch random generator): "
                    "the same seed draws a different picture, so pixels cannot be compared")
+    elif na not in PORTABLE_NOISE:
+        why.append("starting noise drawn in bfloat16, which differs between PyTorch builds "
+                   "(runs before 2026-10-29): re-run both to compare")
     oa = {o["p"]: o for o in a.get("outputs") or []}
     ob = {o["p"]: o for o in b.get("outputs") or []}
     if not oa or not ob:

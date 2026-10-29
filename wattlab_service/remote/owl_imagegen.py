@@ -52,7 +52,34 @@ def _load(torch, a):
     if not a.get("encode_once"):        # encode_once: moved to the device by _encode_once
         pipe = pipe.to(device)
         _sync(torch, device)
+    _portable_noise(torch, pipe)
     return pipe, device
+
+
+# Noise family stamped on the "done" event: "torch-cpu-f32" once _portable_noise
+# took, "torch-cpu" (seeded, but not portable across builds) otherwise.
+NOISE = "torch-cpu"
+
+
+def _portable_noise(torch, pipe):
+    """Same seed → same starting noise on every machine. diffusers draws the
+    noise with the CPU generator but in the model's dtype, and CPU randn in
+    bfloat16 differs between PyTorch builds (2026-10-29: x86 torch 2.11 vs
+    arm64 torch 2.14 gave different bf16 noise for seed 1234; float32 matched).
+    Draw in float32, then cast — negligible cost, and two runs of one model
+    become comparable image for image."""
+    import sys
+    global NOISE
+    mod = sys.modules.get(type(pipe).__module__)
+    orig = getattr(mod, "randn_tensor", None)
+    if orig is None:
+        return
+    def randn_f32(shape, generator=None, device=None, dtype=None, layout=None):
+        x = orig(shape, generator=generator, device=torch.device("cpu"),
+                 dtype=torch.float32, layout=layout)
+        return x.to(device=device, dtype=dtype)
+    mod.randn_tensor = randn_f32
+    NOISE = "torch-cpu-f32"
 
 
 def _encode_once(torch, pipe, device, prompts):
@@ -157,7 +184,7 @@ def session(a):
     print(json.dumps({"ev": "done", "gen_s": gen_s, "n_images": n,
                       "s_per_image": round(gen_s / n, 4), "per_prompt_s": spans,
                       "device": device,
-                      "noise": "torch-cpu",
+                      "noise": NOISE,
                       "thumb_b64_png": base64.b64encode(buf.getvalue()).decode()}), flush=True)
     _emit_full(firsts)
 

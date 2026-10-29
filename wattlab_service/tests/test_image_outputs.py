@@ -27,12 +27,13 @@ def _png(color=(10, 20, 30), noise_px=None):
     return b.getvalue()
 
 
-def _result(job_id, png, runtime="diffusers 0.37.1", host="gos1", prompt="a turbine", seed=1234):
+def _result(job_id, png, runtime="diffusers 0.37.1", host="gos1", prompt="a turbine", seed=1234,
+            noise="torch-cpu-f32"):
     import base64
     outs = image_outputs.save(job_id, [{"p": 0, "seed": seed, "png_b64": base64.b64encode(png).decode()}])
     return {"job_id": job_id, "model_key": "flux2-klein-4b", "host": {"id": host},
             "engine": {"runtime": runtime}, "prompts": [prompt],
-            "generation": {"size": 1024, "steps": 4}, "outputs": outs}
+            "generation": {"size": 1024, "steps": 4, "noise": noise}, "outputs": outs}
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +62,7 @@ def test_near_identical_images_get_an_ssim_and_psnr():
 
 def test_mlx_vs_pytorch_noise_is_not_comparable():
     a = _result("ja", _png())
-    b = _result("jb", _png(), runtime="mflux 0.24.0")
+    b = _result("jb", _png(), runtime="mflux 0.24.0", noise="mlx")
     d = image_outputs.pair(a, b)
     assert not d["comparable"] and "starting noise" in d["reasons"][0]
 
@@ -96,7 +97,7 @@ def test_output_route_serves_inline_or_as_download(monkeypatch):
 
 
 def test_pair_route(monkeypatch):
-    rs = {"ja": _result("ja", _png()), "jb": _result("jb", _png(), runtime="mflux 0.24.0")}
+    rs = {"ja": _result("ja", _png()), "jb": _result("jb", _png(), runtime="mflux 0.24.0", noise="mlx")}
     monkeypatch.setattr(routes_image, "load_result", lambda t, j, visitor_key=None: rs.get(j))
     d = client.get("/image/pair?a=ja&b=jb", headers=LAB).json()
     assert d["comparable"] is False
@@ -109,3 +110,30 @@ def test_peer_route_serves_this_nodes_file():
     ok = client.get(path, headers={**LAB, peer.HEADER: peer.sign("GET", path)})
     assert ok.status_code == 200 and ok.content == _png()
     assert client.get(path, headers=LAB).status_code in (401, 403)
+
+
+def test_bf16_noise_runs_are_not_paired():
+    """Runs before the float32-noise fix drew bf16 noise, which differs by PyTorch build."""
+    a, b = _result("ja", _png(), noise="torch-cpu"), _result("jb", _png(), noise="torch-cpu")
+    d = image_outputs.pair(a, b)
+    assert not d["comparable"] and "bfloat16" in d["reasons"][0]
+
+
+def test_runner_draws_seeded_noise_in_float32(monkeypatch):
+    """bf16 randn differs between PyTorch builds; the runner draws float32 and casts."""
+    import sys
+    import types
+    import torch
+    from diffusers.utils.torch_utils import randn_tensor
+    sys.path.insert(0, str(__import__("remote_ai").RUNNER_LOCAL.parent))
+    import owl_imagegen as rn
+    mod = types.ModuleType("fake_pipeline_mod")
+    mod.randn_tensor = randn_tensor
+    monkeypatch.setitem(sys.modules, "fake_pipeline_mod", mod)
+    Pipe = type("Pipe", (), {"__module__": "fake_pipeline_mod"})
+    monkeypatch.setattr(rn, "NOISE", "torch-cpu")
+    rn._portable_noise(torch, Pipe())
+    x = mod.randn_tensor((1, 4, 8, 8), generator=torch.Generator().manual_seed(7),
+                         device=torch.device("cpu"), dtype=torch.bfloat16)
+    ref = torch.randn((1, 4, 8, 8), generator=torch.Generator().manual_seed(7)).to(torch.bfloat16)
+    assert x.dtype == torch.bfloat16 and torch.equal(x, ref) and rn.NOISE == "torch-cpu-f32"
