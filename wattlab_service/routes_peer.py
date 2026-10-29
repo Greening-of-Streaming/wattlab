@@ -192,6 +192,18 @@ async def peer_result(job_type: str, job_id: str):
     return d
 
 
+@router.get("/peer/image-output/{job_id}/{p}", dependencies=_DEPS)
+async def peer_image_output(job_id: str, p: int):
+    """Full-size session image this node produced (image_outputs) — pulled by
+    the node a member is browsing, which caches it."""
+    from fastapi.responses import FileResponse
+    import image_outputs
+    f = image_outputs.local_path(job_id, p)
+    if f is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(f, media_type="image/png")
+
+
 @router.get("/peer/results/{job_type}", dependencies=_DEPS)
 async def peer_result_index(job_type: str, since: str = ""):
     """Replication index (Phase 5): envelopes THIS node produced (host = this

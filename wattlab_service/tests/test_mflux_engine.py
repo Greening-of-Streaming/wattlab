@@ -37,13 +37,19 @@ def _fake_runner(tmp_path):
         "    for k in range(a['per_prompt']):\n"
         "        print(json.dumps({'ev':'img','p':p,'k':k}),flush=True)\n"
         "print(json.dumps({'ev':'done','gen_s':0.2,'n_images':len(a['prompts'])*a['per_prompt'],"
-        "'s_per_image':0.05,'per_prompt_s':[0.1],'device':'mlx','peak_memory_gb':9.5}),flush=True)\n")
+        "'s_per_image':0.05,'per_prompt_s':[0.1],'device':'mlx','peak_memory_gb':9.5,'noise':'mlx'}),flush=True)\n"
+        "import base64,io\nfrom PIL import Image\n"
+        "for p in range(len(a['prompts'])):\n"
+        "    b=io.BytesIO(); Image.new('RGB',(8,8),(p*40,0,0)).save(b,format='PNG')\n"
+        "    print(json.dumps({'ev':'full','p':p,'seed':1234+p*1000,'png_b64':base64.b64encode(b.getvalue()).decode()}),flush=True)\n")
     return f
 
 
 @pytest.fixture
 def session_env(tmp_path, monkeypatch):
     import video
+    import image_outputs
+    monkeypatch.setattr(image_outputs, "DIR", tmp_path / "image_outputs")
     monkeypatch.setattr(remote_ai, "RUNNER_MFLUX", _fake_runner(tmp_path))
     monkeypatch.setattr(remote_ai, "local_mflux_python", lambda: sys.executable)
     monkeypatch.setattr(remote_ai, "mlx_image_models", lambda: {"m": "flux2_klein_4b"})
@@ -73,6 +79,15 @@ def test_mflux_session_runs_the_mlx_runner_and_stamps_the_stack(session_env):
     assert r["model_mflux"] == "flux2_klein_4b" and r["peak_memory_gb"] == 9.5
     assert r["energy"]["delta_w"] == 20.0                   # same arithmetic as the MPS path
     assert "MLX (mflux)" in r["scope"]
+
+
+def test_session_keeps_the_full_size_first_image_per_prompt(session_env, tmp_path):
+    """Handed over after the window closes; saved beside the results, listed on the result."""
+    r = asyncio.run(remote_ai.run_image_session("local", "m", job_id="j-full", per_prompt=2,
+                                                settle_s=0, prompts=["a", "b"], runtime="mflux"))
+    assert [(o["p"], o["seed"], o["file"]) for o in r["outputs"]] == [(0, 1234, "p0.png"), (1, 2234, "p1.png")]
+    assert (tmp_path / "image_outputs" / "j-full" / "p1.png").stat().st_size == r["outputs"][1]["bytes"]
+    assert r["generation"]["noise"] == "mlx"
 
 
 def test_mflux_needs_a_registered_model_on_this_node(session_env, monkeypatch):
@@ -121,7 +136,8 @@ def test_image_panel_offers_mlx_only_when_the_peer_has_it(monkeypatch):
 
 
 def test_runner_session_protocol(monkeypatch, capsys):
-    """owl_mfluxgen.session in-process with the model faked: ready → GO → img × n → done."""
+    """owl_mfluxgen.session in-process with the model faked: ready → GO → img × n →
+    done → one full-size image per prompt (after the window, same seeds as diffusers)."""
     sys.path.insert(0, str(remote_ai.RUNNER_MFLUX.parent))
     import owl_mfluxgen as rn
     from PIL import Image
@@ -140,6 +156,10 @@ def test_runner_session_protocol(monkeypatch, capsys):
     rn.session({"mode": "session", "mflux_model": "flux2_klein_4b", "prompts": ["a", "b"],
                 "per_prompt": 2, "steps": 4, "size_px": 64, "warmup": 1})
     evs = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
-    assert evs[0]["ev"] == "ready" and evs[-1]["ev"] == "done"
-    assert sum(e["ev"] == "img" for e in evs) == 4 and evs[-1]["n_images"] == 4
-    assert evs[-1]["device"] == "mlx" and evs[-1]["thumb_b64_png"]
+    done = next(e for e in evs if e["ev"] == "done")
+    assert evs[0]["ev"] == "ready" and evs.index(done) == 5
+    assert sum(e["ev"] == "img" for e in evs) == 4 and done["n_images"] == 4
+    assert done["device"] == "mlx" and done["thumb_b64_png"] and done["noise"] == "mlx"
+    fulls = evs[6:]
+    assert [(e["ev"], e["p"], e["seed"]) for e in fulls] == [("full", 0, 1234), ("full", 1, 2234)]
+    assert Image.open(io.BytesIO(__import__("base64").b64decode(fulls[0]["png_b64"]))).size == (64, 64)

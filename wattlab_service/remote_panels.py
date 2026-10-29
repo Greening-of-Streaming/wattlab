@@ -71,11 +71,38 @@ function owlRunTiles(kind, runs, onAllDone) {
       return false;
     };
     const loop = async () => {
-      if (await tick()) { if (--open === 0 && onAllDone) onAllDone(); return; }
+      if (await tick()) {
+        if (--open === 0) {
+          if (kind === 'image' && runs.length === 2) owlImagePair(runs[0].id, runs[1].id);
+          if (onAllDone) onAllDone();
+        }
+        return;
+      }
       setTimeout(loop, 2000);
     };
     loop();
   });
+}
+// Same-seed image comparison under a two-machine image run (owner 2026-10-29).
+async function owlImagePair(a, b) {
+  const d = await fetch('/image/pair?a=' + encodeURIComponent(a) + '&b=' + encodeURIComponent(b))
+    .then(x => x.json()).catch(() => null);
+  if (!d || d.error) return;
+  let h = '<div class="batch-box" style="margin-top:0.9rem;padding:0.7rem 1rem;font-size:0.8rem">'
+    + '<div style="color:var(--text-2);font-weight:bold;margin-bottom:0.3rem">Same-seed image comparison</div>';
+  if (!d.comparable) {
+    h += '<div style="color:var(--text-3)">Not comparable pixel for pixel: ' + d.reasons.join('; ') + '. Use the full-size links to compare by eye.</div>';
+  } else {
+    h += d.pairs.map(p => '<div>' + (d.pairs.length > 1 ? 'Prompt ' + (p.p + 1) + ': ' : '')
+      + (p.identical ? '<span style="color:var(--accent)">pixel-identical</span>'
+         : p.error ? '<span style="color:var(--text-4)">' + p.error + '</span>'
+         : 'SSIM <span style="color:var(--accent)">' + p.ssim.toFixed(4) + '</span> · PSNR '
+           + (p.psnr_db == null ? '∞' : p.psnr_db.toFixed(1) + ' dB'))
+      + ' <span style="color:var(--text-4)">(seed ' + p.seed + ')</span></div>').join('')
+      + '<div style="color:var(--text-4);font-size:0.72rem;margin-top:0.3rem">Same model, prompt, seed and starting noise: '
+      + 'SSIM 1 = identical images. Differences come from each GPU’s arithmetic, not from the prompt.</div>';
+  }
+  document.getElementById('status').insertAdjacentHTML('beforeend', h + '</div>');
 }
 function owlRunOf(hid, jobId) {
   const h = OWL_HOSTS[hid] || {label: hid};

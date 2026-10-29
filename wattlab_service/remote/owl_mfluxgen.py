@@ -104,7 +104,7 @@ def session(a):
             break
     per_prompt = int(a["per_prompt"])
     target_s = float(a.get("target_s") or 0)
-    spans, last, n = [], None, 0
+    spans, last, n, firsts = [], None, 0, {}
     t_go = time.time()
     for p_idx, prompt in enumerate(prompts):
         t_p = time.time()
@@ -112,17 +112,32 @@ def session(a):
         k = 0
         while k < per_prompt or (target_s and time.time() - t_go < p_target):
             last = _gen(model, a, prompt, seed + p_idx * 1000 + k)
+            if k == 0:                         # same seed on every stack: the comparable pair
+                firsts[p_idx] = (seed + p_idx * 1000, last)
             print(json.dumps({"ev": "img", "p": p_idx, "k": k}), flush=True)
             k += 1
         n += k
         spans.append(round(time.time() - t_p, 3))
     gen_s = round(time.time() - t_go, 3)
     buf = io.BytesIO()
-    last.resize((256, 256)).save(buf, format="PNG")
+    firsts.get(0, (None, last))[1].resize((256, 256)).save(buf, format="PNG")
     print(json.dumps({"ev": "done", "gen_s": gen_s, "n_images": n,
                       "s_per_image": round(gen_s / n, 4), "per_prompt_s": spans,
                       "device": "mlx", "peak_memory_gb": _peak_gb(),
+                      "noise": "mlx",
                       "thumb_b64_png": base64.b64encode(buf.getvalue()).decode()}), flush=True)
+    _emit_full(firsts)
+
+
+def _emit_full(firsts):
+    """After "done" (the service has closed the measurement window): the first
+    image of each prompt at full size, lossless. Its seed is the same on every
+    stack, so two runs can be compared image for image (owner 2026-10-29)."""
+    for p_idx, (seed, img) in sorted(firsts.items()):
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        print(json.dumps({"ev": "full", "p": p_idx, "seed": seed,
+                          "png_b64": base64.b64encode(buf.getvalue()).decode()}), flush=True)
 
 
 if __name__ == "__main__":

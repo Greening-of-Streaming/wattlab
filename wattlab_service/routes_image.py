@@ -16,11 +16,11 @@ import queue_control
 import ui
 from capabilities import (requires, can, gate, AI_REMOTE_RUN,
                           BATCH_COMPARE, CUSTOM_PROMPT, IMAGE_RUN,
-                          PUBLIC_PAGE, QUEUE_VIEW)
+                          PUBLIC_PAGE, QUEUE_VIEW, RESULTS_DOWNLOAD)
 from image_gen import (run_image_measurement, run_image_both_measurement,
                        run_image_compare_models_measurement, IMAGE_MODELS,
                        IMAGE_STEPS_CPU, IMAGE_STEPS_GPU, GPU_BATCH_SIZE)
-from persist import save_result, list_results
+from persist import save_result, list_results, load_result
 from power import CooldownCancelled
 from runtime import jobs, job_status as _job_status
 from ui import (_BETA_CHIP, _CONF_HELP_WIDGET, _LOCK_STYLES, _PROGRESS_JS,
@@ -879,3 +879,37 @@ async def image_session(request: Request, host: str = Form("local"),
     if position is None:
         return JSONResponse({"error": "Queue full — try again later."}, status_code=429)
     return {"job_id": job_id, "queue_position": position}
+
+
+# --- Full-size session images + same-seed pair score (owner 2026-10-29) --------
+
+@router.get("/image/output/{job_id}/{p}.png", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def image_output(job_id: str, p: int, request: Request, download: int = 0):
+    """The full-size first image of prompt `p` of a session (view in the
+    browser to zoom; ?download=1 to save). Visible to whoever may load the
+    result itself; a peer's image is fetched from it once and cached."""
+    import asyncio
+    from fastapi.responses import FileResponse
+    import image_outputs
+    r = load_result("image", job_id, visitor_key=queue_control.visitor_key(request))
+    if not r:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    f = await asyncio.get_event_loop().run_in_executor(None, image_outputs.fetch, r, p)
+    if f is None:
+        return JSONResponse({"error": "No full-size image kept for this result"}, status_code=404)
+    host = (r.get("host") or {}).get("id") or "node"
+    name = f"owl_{host}_{r.get('model_key', 'image')}_{job_id}_p{p}.png"
+    return FileResponse(f, media_type="image/png", filename=name,
+                        content_disposition_type="attachment" if download else "inline")
+
+
+@router.get("/image/pair", dependencies=[Depends(requires(RESULTS_DOWNLOAD))])
+async def image_pair(a: str, b: str, request: Request):
+    """SSIM / PSNR between two sessions' same-seed images, or why they can't be compared."""
+    import asyncio
+    import image_outputs
+    vk = queue_control.visitor_key(request)
+    ra, rb = load_result("image", a, visitor_key=vk), load_result("image", b, visitor_key=vk)
+    if not ra or not rb:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return await asyncio.get_event_loop().run_in_executor(None, image_outputs.pair, ra, rb)

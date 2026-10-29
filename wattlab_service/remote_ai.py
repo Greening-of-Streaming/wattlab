@@ -396,6 +396,7 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
                             settle_s: int = 30, prompts: list = None,
                             target_s: float = 0, runtime: str = "diffusers") -> dict:
     import curated
+    import image_outputs
     import sys
     local = host_id == "local"
     if runtime not in IMAGE_RUNTIMES:
@@ -518,6 +519,21 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
             t_done = time.time()
             stop.set()
             readings = await poll
+
+        def read_fulls():
+            # Window closed: the runner now hands over the full-size first image
+            # of each prompt (image_outputs). An older runner just exits here.
+            out = []
+            for line in proc.stdout:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if ev.get("ev") == "full":
+                    out.append(ev)
+            return out
+        stage("saving images")
+        fulls = await loop.run_in_executor(None, read_fulls)
     finally:
         if proc is not None and proc.poll() is None:
             proc.kill()
@@ -561,7 +577,8 @@ async def run_image_session(host_id: str, model_key: str, jobs: dict = None,
                        "gen_s_per_image": round(window_s / n, 4),
                        "per_prompt_s": done["per_prompt_s"], "device": done["device"],
                        "size": cfg_m["size_px"], "steps": cfg_m["gpu_steps"],
-                       "b64_png": done.get("thumb_b64_png")},
+                       "noise": done.get("noise"), "b64_png": done.get("thumb_b64_png")},
+        "outputs": image_outputs.save(job_id, fulls) if job_id else [],
         "per_prompt": per_prompt_breakdown(readings, events, t_go, w_base, len(prompts), int(per_prompt)),
         "energy": e,
         "energy_vs_cold_idle": {k: e_cold[k] for k in ("w_base", "delta_w", "delta_e_wh",

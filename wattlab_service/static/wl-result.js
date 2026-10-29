@@ -296,8 +296,21 @@
          + '<div style="font-size:0.78rem;color:var(--text-3);margin-top:0.4rem">' + flag(e) + ' '
          + ((e.confidence && e.confidence.label) || '') + ' · ' + (r.model_label || g.model_label || r.model_key || '')
          + (r.mode === 'session' ? ' · warm model, generation only' : '') + '</div>';
-      if (g.b64_png)
-        h += '<img src="data:image/png;base64,' + g.b64_png + '" alt="" style="max-width:100%;margin-top:0.6rem;border:1px solid var(--border)">';
+      // Full-size first image per prompt (owner 2026-10-29): the thumbnail opens
+      // it at full size for zooming; ⬇ saves it.
+      var outs = r.outputs || [];
+      var full = function(o, dl){ return '/image/output/' + r.job_id + '/' + o.p + '.png' + (dl ? '?download=1' : ''); };
+      if (g.b64_png) {
+        var thumb = '<img src="data:image/png;base64,' + g.b64_png + '" alt="" style="max-width:100%;margin-top:0.6rem;border:1px solid var(--border)">';
+        h += outs.length ? '<a href="' + full(outs[0]) + '" target="_blank" rel="noopener" title="Open full size">' + thumb + '</a>' : thumb;
+      }
+      if (outs.length)
+        h += '<div style="font-size:0.74rem;color:var(--text-3);margin-top:0.3rem">Full size ('
+           + (g.size || '?') + ' px, seed ' + outs[0].seed + '): '
+           + outs.map(function(o){ return (outs.length > 1 ? 'prompt ' + (o.p + 1) + ' ' : '')
+               + '<a style="color:var(--accent)" href="' + full(o) + '" target="_blank" rel="noopener">view</a> · '
+               + '<a style="color:var(--accent)" href="' + full(o, 1) + '">⬇ PNG</a>'; }).join(' &nbsp; ')
+           + '</div>';
       if (prompt) h += '<div style="font-size:0.74rem;color:var(--text-4);margin-top:0.3rem">"' + prompt + '"</div>';
     } else if (kind === 'llm') {
       var inf = r.inference || {};
