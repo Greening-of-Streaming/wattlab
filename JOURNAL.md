@@ -49,7 +49,7 @@ remote/Tania operation. Do not run display arms on two boxes at once.
    no auto-updates during runs (`sudo systemctl stop apt-daily.timer` etc. — Pi-side
    focus-mode equivalent, manual for now).
 
-## Condensed session index S26–S80 (S26–S66 moved here from CLAUDE.md on 2026-09-03, S69–S77 on 2026-09-27; full entries below)
+## Condensed session index S26–S81 (S26–S66 moved here from CLAUDE.md on 2026-09-03, S69–S77 on 2026-09-27; full entries below)
 
 - S26–S45 (05-20→06-11): credibility bundle, VMAF+CI confidence, compare trilogy, findings catalog, benchmark orchestrator, GPU swap → RTX 5080, CR-062 cooldown omnibus, Pixop /enhance-run (CR-063/064), refactor to routes_*.py + runtime.py.
 - S46–S53 (06-11→06-19): CR-065 dual P110 (ci2), P110 fw facts, upscale sweet-spot finding, anon-landing audit + TEMP mockups, GDPR analytics + /audience, HDR→4K throttle, encode-parity calibration harness + /video/budget measured.
@@ -109,6 +109,16 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 #   ladder; 4K/HDR arms; loop-validity finding; headless = no-sink regime; football sports tier.
 #   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
 ```
+
+## Session 81 — 2026-11-04 (GoS2: 2 TB USB4 NVMe SSD attached; idle floor row 5; recalibration + full benchmark)
+
+**Why:** GoS2's 500 GB internal SSD holds `~/owl-data` (~32 GB, growing with every campaign). Owner formatted a 2 TB Fanxiang S690Q NVMe (Ugreen USB4 enclosure) as APFS `GoS2-Ext` (GUID, not encrypted) on the MacBook and attached it to GoS2.
+
+**Found on arrival:** the volume was being Spotlight-indexed (`mdutil -a -i off` from 2026-10-06 does not cover later volumes) — switched off by hand; `/live` read ~7.8 W idle vs the ~1.3 W of rows 1–4. Lab flag raised on GoS2.
+
+**Done:** (1) calibration snapshot BEFORE the first calibration with the disk: GoS2 `settings.json` (2026-10-10 n=30 values), `results/variance/history.jsonl`, the three 2026-10-10 thermal-recovery probes, all benchmark manifests → `~/owl-data/calibration_backups/2026-11-04_pre-usb4-nvme/` + GoS1 `/srv/data/owl/gos2_calibration_backups/`, with a README on how to restore if the disk is removed. (2) Idle floor row 5 (`bin/gos2-idle-row`, protocol unchanged): ~7.8 W (7.824 W ± 0.019 W, runs 2–3; run 1 excluded, CPU idle 94.2 %, its mean 7.878 W agrees; G1 self-draw 1.026 W; `results/diagnostics/gos2_idle_row5_20261104_224845.json`). (3) Hardware disclosure updated: /methodology table + a GoS2 callout, CLAUDE.md, `docs/gos2_design.md` §13, GOS1_DISASTER_RECOVERY.md. (4) Variance calibration (n=30) + full benchmark (10 reps × {meridian, bbb}, LLM, image) queued on GoS2 with the disk attached, followed by a thermal-recovery probe (job ids to be added when the run finishes).
+
+**Open:** nothing lives on the disk yet (data root is still the internal SSD); `pmset disksleep 10` left as is; no Time Machine or other backup of GoS2.
 
 ## Session 80 — 2026-10-28 (OWL containerised for Akamai; LLM ladder tidy-up; persistence decided)
 

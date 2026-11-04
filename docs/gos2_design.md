@@ -2,7 +2,7 @@
 
 **Status:** design phase, opened 2026-10-04. Tracked as **CR-085** (CHANGE_REQUESTS.md). Nothing built yet.
 **Hardware (read over SSH 2026-10-04):** Mac mini `Mac18,5`, **Apple M6** (12 cores: 2 Super + 4 Performance +
-6 Efficiency), 24 GB, 460 GB SSD, macOS **27.0**, FileVault off. Hostname `gos2` / ComputerName `GoS2`, admin user
+6 Efficiency), 24 GB, 500 GB internal SSD (+ 2 TB external NVMe SSD over USB4 since 2026-11-04, §13 row 5), macOS **27.0**, FileVault off. Hostname `gos2` / ComputerName `GoS2`, admin user
 `gos`, no Apple ID (deliberate: no Activation Lock, no iCloud background load). Reached from GoS1 with
 `~/.ssh/id_ed25519_gos2`. Wi-Fi `.95` (MAC `c8:80:6d:3d:a7:6e`, private address off); Ethernet `en0`
 `c8:80:6d:2e:20:cc`, not yet cabled. Metered by two daisy-chained Tapo P110s, **lab-G1** and **lab-G2** (§8).
@@ -291,9 +291,17 @@ Screen Sharing disconnect. Reason: row 3 run 1 showed a ~0.6 W non-CPU transient
 | 1 | 2026-10-05 | Near-factory: macOS 27.0.1; Homebrew with 15 formulae (only `ffmpeg` requested), 0 casks; Apple CLT; Remote Login, Screen Sharing, File Sharing; auto-login; 7 accounts; 523 launchd jobs, 701 processes; Ethernet only, Wi-Fi off | **1.352 W ± 0.008 W** (runs 2–4; run 1 excluded: CPU idle 82.5 %, Screen Sharing 3.8 %) | 1.007 W | `results/diagnostics/gos2_idle_ethernet_wifioff_20261005_001817.json` |
 | 2 | 2026-10-05 | Row 1 + Homebrew python@3.12 venv (torch 2.14.1, diffusers 0.37.1, mlx-lm 0.32.0), **Ollama 0.35.1 brew service running** (idle, no model loaded), ~22 GB HF cache + 3.6 GB Ollama models, 6 standard user accounts, narrow sudo wrappers; 25 formulae (leaves: ffmpeg, ollama, python@3.12), 523 launchd jobs, 717 processes | **1.360 W ± 0.073 W** (runs 1–3, all clean) — no measurable change vs row 1 | 1.021 W | `results/diagnostics/gos2_idle_row2_20261005_043016.json` |
 | 3 | 2026-10-06 | Row 2 + OWL's own always-on service (`owl-svc` LaunchDaemon → loopback ssh → uvicorn; its pollers paused for the row) + **Spotlight indexing permanently off** + **inner meter lab-G3 `.11`** (was lab-G1) | **1.525 W ± 0.856 W** (runs 1–3, all clean per protocol). Runs 2–3: **1.326 W** (1.329, 1.323; sd 0.12) — matches rows 1–2. Run 1: 1.923 W (sd 0.41), a transient straight after a Screen Sharing session + Activity Monitor were closed; CPU stayed ≥ 99 % idle, so the CPU gate could not catch it | 0.984 W | `results/diagnostics/gos2_idle_row3_20261006_204559.json` (script `bin/gos2-idle-row`) |
+| 5 | 2026-11-04 | Row 4 + **2 TB NVMe SSD attached** (Fanxiang S690Q in a Ugreen USB4 enclosure, 40 Gb/s, bus-powered; APFS volume `GoS2-Ext`, empty; Spotlight off on it); OWL at `622e607` | **7.824 W ± 0.019 W** (runs 2–3, n = 2 clean; run 1 excluded: CPU idle 94.2 %, its mean 7.878 W agrees) — **+6.5 W vs rows 1–4** | 1.026 W | `results/diagnostics/gos2_idle_row5_20261104_224845.json` |
 | 4 | 2026-10-28 | Row 3 + `owl-temps` poller (30 s); Ollama qwen3.5:4b/9b + gpt-oss:20b (2026-10-28 ladder); mlx-community gpt-oss-20b-MXFP4-Q8 + FLUX.2-klein-4B in the HF cache; separate `~/owl/mflux-venv` (mflux 0.24.0, mlx 0.32.4); OWL at `617f8e0` | **1.325 W ± 0.076 W** (runs 2–3, n = 2 clean; run 1 excluded: CPU idle 96.8 %, its mean 1.331 W agrees) — no measurable change vs rows 1–3 | 0.99 W | `results/diagnostics/gos2_idle_row4_20261028_213440.json` |
 
 **Change log since row 2** (each change ⇒ re-measure; row 3 due — Spotlight off AND new inner meter):
+- 2026-11-04 — **external SSD attached** (2 TB Fanxiang S690Q NVMe, Ugreen USB4 enclosure, APFS `GoS2-Ext`, GUID map,
+  not encrypted, ownership ignored). Note: the 2026-10-06 `mdutil -a -i off` did **not** cover a volume mounted later — the
+  new volume arrived with indexing on and was switched off by hand (`mdutil -i off /Volumes/GoS2-Ext`); do this for any
+  future volume. `pmset disksleep 10` is still the default — the drive may change power state after 10 idle minutes, which
+  the idle row cannot distinguish from the floor. Pre-disk calibration (2026-10-10, n = 30) and benchmark manifests archived
+  in `~/owl-data/calibration_backups/2026-11-04_pre-usb4-nvme/` (copy on GoS1 `/srv/data/owl/gos2_calibration_backups/`);
+  restore those values if the disk is removed. Variance calibration + full benchmark re-run with the disk attached (JOURNAL S81).
 - 2026-10-07 — **chip temperature on the home page** via `owl-temps` (`infra/macos/owl-temps.m`: IOHID die
   sensors, no sudo, ~0.2 s), polled every 30 s and never while a measurement holds the lock. Cost check
   (alternating 5-min idle windows, n=3 each, after a 10-min settle): off 1.315 W vs on 1.312 W, **diff −0.003 ±

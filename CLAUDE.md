@@ -64,7 +64,10 @@
 - Nodes talk only through the signed peer API (`peer.py`); a peer's `url` in `compute_hosts` is the one networking
   setting. SSH driver = documented fallback (`hosts.py`). Decode rig: GoS1 is the only owner; GoS2's /decode
   forwards to it. Members reach GoS2 via GoS1's gateway `https://gos2.wattlab.greeningofstreaming.org` (Wix A record → GoS1; members' main-site sign-in carries over; anonymous get a greyed box, never reach GoS2).
-- Idle ~1.3 W: anything running on GoS2 shows at the wall — Spotlight off, sensors poller 30 s and paused
+- Storage: 500 GB internal SSD (`~/owl-data`, ~32 GB used) + **2 TB NVMe SSD since 2026-11-04** (Fanxiang S690Q in a Ugreen
+  USB4 enclosure, APFS `/Volumes/GoS2-Ext`, Spotlight off on it, empty so far). Pre-disk calibration snapshot: GoS2
+  `~/owl-data/calibration_backups/2026-11-04_pre-usb4-nvme/` + GoS1 `/srv/data/owl/gos2_calibration_backups/`.
+- Idle ~1.3 W until 2026-11-04, ~7.8 W with the external SSD attached (design doc §13 row 5): anything running on GoS2 shows at the wall — Spotlight off, sensors poller 30 s and paused
   during measurements, no tests/heavy work on GoS2 during idle windows.
 
 ## Network Topology

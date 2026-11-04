@@ -138,6 +138,11 @@ Not backed up, and mostly too large to be:
   plus `/etc/cron.d/wattlab-results-backup`, exist only in `/etc` on this box —
   `systemd/README.md`'s "source of truth lives here" claim is currently false for
   the primary unit. (Tracked as CR-031 §3 pre-work item 3.)
+- **GoS2 `settings.json`** — per-node calibration, never replicated, not in git. A snapshot of
+  the pre-external-SSD state (2026-10-10 calibration, n = 30) is at
+  `/srv/data/owl/gos2_calibration_backups/2026-11-04_pre-usb4-nvme/` (and on GoS2 under
+  `~/owl-data/calibration_backups/`). Later calibrations exist only in GoS2's live
+  `settings.json` plus the replicated `results/variance/history.jsonl`.
 - **DuckDNS updater** (`~/duckdns/duck.sh`, gos crontab, every 5 min) —
   redundant while the IP is static, kept as insurance; not backed up, short
   enough to recreate from `GOS1_INFRA.md`.
