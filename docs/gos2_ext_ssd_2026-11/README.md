@@ -48,6 +48,20 @@ at the paced rates, so they are shown together.
 - **One unexplained event:** a spike to 9.7 W in the baseline before one external flat-out read (02:14). That trial is
   excluded (n = 2 above). The other flat-out baselines were clean.
 
+## Speed
+
+Flat-out trials, 1 MiB sequential at queue depth 1, cache bypassed, 20 s, n = 3.
+
+| Direction | Internal MB/s | External MB/s | Internal / external |
+|---|---|---|---|
+| Read | 6,719 (6,601–6,782) | 2,657 (2,569–2,701) | 2.5 × |
+| Write | 6,132 (6,106–6,147) | 2,856 (2,851–2,859) | 2.1 × |
+
+- **Preparing the 20 GiB files agreed:** 6,031 MB/s internal and 2,916 MB/s external.
+- **Encode time did not change:** 234–236 s in every arm, because 484 MB over 235 s is only about 2 MB/s.
+- **Not measured:** random I/O, latency, and writes longer than 20 s (about 57 GB per external trial). Speed could fall
+  on a longer external write.
+
 ## Encode
 
 OWL's Apple hardware HEVC command on `meridian_120s` looped to 16 min (1080p, 4 Mb/s, 484 MB out), n = 5 per arm,
