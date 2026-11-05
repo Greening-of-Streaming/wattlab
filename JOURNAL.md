@@ -118,7 +118,11 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 
 **Done:** (1) calibration snapshot BEFORE the first calibration with the disk: GoS2 `settings.json` (2026-10-10 n=30 values), `results/variance/history.jsonl`, the three 2026-10-10 thermal-recovery probes, all benchmark manifests → `~/owl-data/calibration_backups/2026-11-04_pre-usb4-nvme/` + GoS1 `/srv/data/owl/gos2_calibration_backups/`, with a README on how to restore if the disk is removed. (2) Idle floor row 5 (`bin/gos2-idle-row`, protocol unchanged): ~7.8 W (7.824 W ± 0.019 W, runs 2–3; run 1 excluded, CPU idle 94.2 %, its mean 7.878 W agrees; G1 self-draw 1.026 W; `results/diagnostics/gos2_idle_row5_20261104_224845.json`). (3) Hardware disclosure updated: /methodology table + a GoS2 callout, CLAUDE.md, `docs/gos2_design.md` §13, GOS1_DISASTER_RECOVERY.md. (4) Variance calibration (n=30) + full benchmark (10 reps × {meridian, bbb}, LLM, image) queued on GoS2 with the disk attached, followed by a thermal-recovery probe (job ids to be added when the run finishes).
 
-**Open:** nothing lives on the disk yet (data root is still the internal SSD); `pmset disksleep 10` left as is; no Time Machine or other backup of GoS2.
+**Disk power campaign (night of 4–5 Nov):** `docs/gos2_ext_ssd_2026-11/README.md`. Idle: ~1.33 W no disk, 6.19 W plugged + ejected, 7.80 W mounted; unmount alone changes nothing and no software path cuts bus power. Waking the external path costs ~0.4 W extra even at 10 MB/s. Encode (n=5 interleaved): external source + output +5.1 % ΔE vs internal; ejected vs mounted not distinguishable, so baseline subtraction holds and only gross figures carry the floor. `powermetrics` energy reads zero on this M6 / macOS, so controller vs enclosure is unmeasured.
+
+**Mistakes:** the unattended run announced at ~23:00 was not started until 01:00, because the turn ended with nothing launched; the owner caught it by asking. The campaign's chained benchmark launch then failed on a malformed ssh command; launched by hand at 05:12. **Rule:** a promised overnight run counts as started only when a process is verified alive.
+
+**Open:** nothing lives on the disk yet (data root is still the internal SSD); `pmset disksleep 10` left as is; no Time Machine or other backup of GoS2; no-disk floor not re-measured since October (needs an unplug).
 
 ## Session 80 — 2026-10-28 (OWL containerised for Akamai; LLM ladder tidy-up; persistence decided)
 

@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""GoS2 external USB4 NVMe SSD: what does it cost? Unattended, driven from GoS1, measured at GoS2's meters (1 Hz).
+A idle: ejected vs mounted, alternating. B I/O: same synthetic job on internal vs external (3 rates, read + write,
+n=3, shuffled). C encode: OWL's Apple hw HEVC command, three arms (internal, external, internal + disk ejected), n=5.
+Then cleans up, unpauses OWL's poller and launches the recalibration + benchmark + thermal probe unless --no-launch.
+Every trial is appended to trials.jsonl with raw samples as soon as it ends. No campaign file survives on GoS2."""
+import argparse, asyncio, json, plistlib, random, statistics as st, subprocess, time, traceback
+from pathlib import Path
+from dotenv import dotenv_values
+from tapo import ApiClient
+OUT = Path("/srv/data/owl/campaign_2026-11-04_gos2_ext_ssd")
+SSH = ["ssh", "-n", "-i", "/home/gos/.ssh/id_ed25519_gos2", "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "gos@192.168.1.29"]
+INT_DIR, EXT_DIR = "/Users/gos/owl-data/campaign_tmp", "/Volumes/GoS2-Ext/campaign_tmp"
+SRC = "/Users/gos/wattlab/test_content/meridian_120s.mp4"
+ap = argparse.ArgumentParser()
+ap.add_argument("--smoke", action="store_true"); ap.add_argument("--no-launch", action="store_true")
+ap.add_argument("--phases", default="ABC")
+A = ap.parse_args()
+TAG = "smoke" if A.smoke else "run"
+LOG = OUT / f"{TAG}.log"; TRIALS = OUT / f"trials_{TAG}.jsonl"
+
+def log(*a):
+    line = time.strftime("%H:%M:%S ") + " ".join(str(x) for x in a)
+    print(line, flush=True)
+    with LOG.open("a") as f: f.write(line + "\n")
+
+def gos2(cmd, timeout=120, check=False):
+    r = subprocess.run(SSH + [cmd], capture_output=True, text=True, timeout=timeout)
+    if check and r.returncode: raise RuntimeError(f"{cmd!r} rc={r.returncode} {r.stderr[:300]}")
+    return r.stdout
+
+def cpu_idle():
+    out = gos2("top -l 2 -n 0 -s 1 | grep 'CPU usage' | tail -1")
+    return float(out.strip().split(",")[-1].strip().split("%")[0])
+
+def mounted(): return "GoS2-Ext" in gos2("mount")
+
+def set_disk(want):
+    """want True = mounted, False = ejected. Enclosure stays enumerated after an eject."""
+    if mounted() == want: return False
+    dev = gos2("diskutil list external | awk '/external, physical/ {print $1; exit}'").strip()
+    if not dev.startswith("/dev/disk"): raise RuntimeError(f"no external disk: {dev!r}")
+    gos2(f"diskutil {'mountDisk' if want else 'eject'} {dev}", check=True)
+    time.sleep(3)
+    if mounted() != want: raise RuntimeError(f"disk state did not become mounted={want}")
+    log("disk", "mounted" if want else "ejected", dev)
+    return True
+
+def soc_power(n=20):
+    """powermetrics energy fields read 0 on this M6 / macOS, so only CPU cluster idle ratio + frequency are usable."""
+    r = subprocess.run(SSH + [f"sudo -n /usr/local/sbin/owl-powermetrics {n} 1000"], capture_output=True, timeout=n + 60)
+    keep = {}
+    for doc in r.stdout.split(b"\0"):
+        doc = doc.strip()
+        if not doc: continue
+        p = plistlib.loads(doc).get("processor", {})
+        for cl in p.get("clusters", []):
+            keep.setdefault(cl["name"] + "_idle_ratio", []).append(cl.get("idle_ratio", 0))
+            keep.setdefault(cl["name"] + "_freq_mhz", []).append(cl.get("freq_hz", 0) / 1e6)
+    return {k: round(st.mean(v), 4) for k, v in keep.items()}
+
+class Meters:
+    def __init__(s, c): s.c = c; s.d = {}
+    async def read(s, ip):
+        for attempt in (0, 1):
+            try:
+                if ip not in s.d: s.d[ip] = await s.c.p110(ip)
+                return (await s.d[ip].get_energy_usage()).current_power / 1000
+            except Exception as e:
+                s.d.pop(ip, None)
+                if attempt: log("meter read failed", ip, repr(e)[:120]); return None
+    async def sample(s, seconds=None, until=None, tail=0):
+        """[t, inner, outer] at 1 Hz; outer staggered 0.5 s. Fixed duration, or until a future is done plus a tail."""
+        out, t0, i, end = [], time.monotonic(), 0, None
+        while True:
+            nxt = t0 + i
+            await asyncio.sleep(max(0, nxt - time.monotonic()))
+            if seconds is not None and i >= seconds: break
+            if until is not None and until.done():
+                end = end or time.monotonic() + tail
+                if time.monotonic() >= end: break
+            a = await s.read("192.168.1.11")
+            await asyncio.sleep(max(0, nxt + 0.5 - time.monotonic()))
+            b = await s.read("192.168.1.22")
+            out.append([round(nxt - t0, 1), a, b]); i += 1
+        return out
+
+def rec(**kw):
+    kw["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    with TRIALS.open("a") as f: f.write(json.dumps(kw) + "\n")
+    inner = [x[1] for x in kw.get("samples", []) if x[1] is not None]
+    summary = {k: v for k, v in kw.items() if k not in ("samples", "baseline", "soc")}
+    log("trial", summary, "mean_inner", round(st.mean(inner), 3) if inner else None)
+
+async def run_job(m, cmd, timeout, tail=0):
+    loop = asyncio.get_event_loop()
+    t = time.time()
+    fut = loop.run_in_executor(None, lambda: gos2(cmd, timeout=timeout, check=True))
+    samples = await m.sample(until=fut, tail=tail)
+    return samples, fut.result(), t
+
+async def phase_a(m):
+    cycles, settle, window = (1, 10, 20) if A.smoke else (3, 240, 360)
+    for c in range(cycles):
+        for state in (False, True):
+            set_disk(state)
+            await asyncio.sleep(settle)
+            idle = [await asyncio.get_event_loop().run_in_executor(None, cpu_idle)]
+            s = await m.sample(seconds=window // 2)
+            idle.append(await asyncio.get_event_loop().run_in_executor(None, cpu_idle))
+            s += await m.sample(seconds=window - window // 2)
+            soc = await asyncio.get_event_loop().run_in_executor(None, lambda: soc_power(5 if A.smoke else 20))
+            rec(phase="A", cycle=c, disk="mounted" if state else "ejected", cpu_idle=idle, samples=s, soc=soc)
+
+async def phase_b(m):
+    set_disk(True)
+    gib = 1 if A.smoke else 20
+    for d, name in ((INT_DIR, "internal"), (EXT_DIR, "external")):
+        gos2(f"mkdir -p {d}", check=True)
+        log("prep", name, gos2(f"python3 /tmp/gos2_io.py {d}/io.bin prep 0 0 {gib}", timeout=1200, check=True).strip())
+    await asyncio.sleep(10 if A.smoke else 120)
+    rng = random.Random(20261105)
+    rates = [100, 0] if A.smoke else [10, 100, 0]
+    trials = [(d, op, r) for d in ("internal", "external") for op in ("read", "write") for r in rates]
+    for rep in range(1 if A.smoke else 3):
+        order = trials[:]; rng.shuffle(order)
+        for disk, op, rate in order:
+            path = (INT_DIR if disk == "internal" else EXT_DIR) + "/io.bin"
+            secs = (5 if A.smoke else 20) if rate == 0 else (5 if A.smoke else 60)
+            await asyncio.sleep(3 if A.smoke else 15)
+            base = await m.sample(seconds=5 if A.smoke else 45)
+            s, out, _ = await run_job(m, f"python3 /tmp/gos2_io.py {path} {op} {rate} {secs} {gib}", timeout=secs + 300)
+            rec(phase="B", rep=rep, disk=disk, op=op, rate=rate, job=json.loads(out), baseline=base, samples=s)
+    gos2(f"rm -f {INT_DIR}/io.bin {EXT_DIR}/io.bin")
+
+def encode_cmd(src, dst, smoke):
+    loop = "" if smoke else "-stream_loop 7 "
+    lim = "-t 5 " if smoke else ""
+    return (f"/opt/homebrew/bin/ffmpeg -y -hide_banner -loglevel error -hwaccel videotoolbox -hwaccel_output_format videotoolbox_vld "
+            f"{loop}-i {src} {lim}-vf scale_vt=w=-2:h=1080 -c:v hevc_videotoolbox -profile:v main -tag:v hvc1 -allow_sw 0 "
+            f"-prio_speed 0 -b:v 4000k -g 120 -bf 2 -an {dst}")
+
+async def phase_c(m):
+    set_disk(True)
+    gos2(f"mkdir -p {INT_DIR} {EXT_DIR} && cp {SRC} {EXT_DIR}/src.mp4 && cp {SRC} {INT_DIR}/src.mp4", check=True)
+    ARMS = {"internal": (INT_DIR, True), "external": (EXT_DIR, True), "internal_ejected": (INT_DIR, False)}
+    i, e, j = "internal", "external", "internal_ejected"
+    order = [[i, e, j], [j, i, e], [e, i, j], [j, e, i], [i, e, j]]   # interleaved, few eject transitions
+    if A.smoke: order = [[i, e, j]]
+    for rep, arms in enumerate(order):
+        for arm in arms:
+            d, want = ARMS[arm]
+            if set_disk(want): await asyncio.sleep(10 if A.smoke else 240)
+            await asyncio.sleep(5 if A.smoke else 30)
+            idle = await asyncio.get_event_loop().run_in_executor(None, cpu_idle)
+            base = await m.sample(seconds=5 if A.smoke else 90)
+            t0 = time.monotonic()
+            s, _, _ = await run_job(m, encode_cmd(f"{d}/src.mp4", f"{d}/out.mp4", A.smoke), timeout=1200, tail=5 if A.smoke else 30)
+            size = gos2(f"stat -f %z {d}/out.mp4").strip()
+            gos2(f"rm -f {d}/out.mp4")
+            rec(phase="C", rep=rep, arm=arm, cpu_idle=idle, duration_s=round(time.monotonic() - t0, 1), tail_s=5 if A.smoke else 30,
+                output_bytes=size, baseline=base, samples=s)
+
+async def main():
+    OUT.mkdir(parents=True, exist_ok=True)
+    cfg = dotenv_values("/home/gos/wattlab/.env")
+    m = Meters(ApiClient(cfg["TAPO_EMAIL"], cfg["TAPO_PASSWORD"]))
+    gos2("touch /tmp/owl-paused")
+    log("start", TAG, A.phases, "live", gos2("curl -s -m 5 http://127.0.0.1:8000/live"))
+    try:
+        for name, fn in (("A", phase_a), ("B", phase_b), ("C", phase_c)):
+            if name not in A.phases: continue
+            log("phase", name)
+            try: await fn(m)
+            except Exception: log("PHASE FAILED", name, traceback.format_exc())
+    finally:
+        try: set_disk(True)
+        except Exception: log("REMOUNT FAILED", traceback.format_exc())
+        gos2(f"rm -rf {INT_DIR} {EXT_DIR}")
+        gos2("rm -f /tmp/owl-paused")
+        log("cleanup done, mounted =", mounted(), "live", gos2("curl -s -m 5 http://127.0.0.1:8000/live"))
+    if A.smoke or A.no_launch: return
+    if not mounted(): log("NOT launching: disk not mounted"); return
+    await asyncio.sleep(300)
+    r = subprocess.run(["bash", "-c", "ssh " + " ".join(SSH[2:]) + f" bash -s < {OUT}/gos2_launch.sh"], capture_output=True, text=True, timeout=120)
+    log("LAUNCH rc", r.returncode, "\n" + r.stdout + r.stderr)
+
+asyncio.run(main())
