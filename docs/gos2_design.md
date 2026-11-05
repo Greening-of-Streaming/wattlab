@@ -302,7 +302,7 @@ Screen Sharing disconnect. Reason: row 3 run 1 showed a ~0.6 W non-CPU transient
   the idle row cannot distinguish from the floor. Pre-disk calibration (2026-10-10, n = 30) and benchmark manifests archived
   in `~/owl-data/calibration_backups/2026-11-04_pre-usb4-nvme/` (copy on GoS1 `/srv/data/owl/gos2_calibration_backups/`);
   restore those values if the disk is removed. Variance calibration + full benchmark re-run with the disk attached (JOURNAL S81).
-- 2026-11-05 — **external SSD power campaign**: plugged + ejected 6.19 W, mounted 7.80 W; encode ΔE +5.1 % with source + output on it, unchanged on internal. Keep measured jobs on the internal SSD. Report: `docs/gos2_ext_ssd_2026-11/README.md`.
+- 2026-11-05 — **external SSD power campaign**: plugged + ejected 6.19 W, mounted 7.80 W; encode ΔE +5.1 % with source + output on it, unchanged on internal. Keep measured jobs on the internal SSD. Benchmark `aceb9402`: ΔE 0.8–3.6 % below October, gross +11–19 %; calibration n=30 `variance_pct` 0.88 %, but idle noise and drift higher in watts. Report: `docs/gos2_ext_ssd_2026-11/README.md`.
 - 2026-10-07 — **chip temperature on the home page** via `owl-temps` (`infra/macos/owl-temps.m`: IOHID die
   sensors, no sudo, ~0.2 s), polled every 30 s and never while a measurement holds the lock. Cost check
   (alternating 5-min idle windows, n=3 each, after a 10-min settle): off 1.315 W vs on 1.312 W, **diff −0.003 ±

@@ -76,10 +76,60 @@ interleaved, 90 s baseline before each. Durations were the same in all arms, 234
 - **External vs internal:** ΔE +0.0076 ± 0.0018 Wh (+5.1 %). This is real, well above the 1.37 % calibration spread.
 - **Ejected vs mounted:** ΔE +1.8 % ± 2.3 %, not distinguishable. The baseline subtraction removes the floor correctly.
 - **Comparison with no disk:** an October run through OWL read ΔW 2.26 W, ΔE 0.1441 Wh on the same settings, but through
-  OWL's own pipeline, so it is only indicative. The post-disk benchmark is the proper comparison.
+  OWL's own pipeline, so it is only indicative. See the full benchmark below.
 - **Limits:** the source was served mostly from page cache, so the external arm is largely a write-side test. A job that
   keeps the external disk continuously busy could approach the 0.4 W above, about +18 % on this ΔE (inference, not
   measured). The `nice -n -5` prefix was left out so a non-root failure could not abort the unattended run.
+
+## Full benchmark with the disk attached
+
+Benchmark `aceb9402` and thermal probe `bd1415ba`, 5 November, against `gos2-387264bb`, 10 October, with the disk mounted
+but unused. Same config, ffmpeg 9.0.2, macOS 27.0.1 and encode commands. The runs are 26 days apart, so ambient and
+OWL version also differ.
+
+| Source, codec, engine (n = 10) | ΔE Oct Wh | ΔE Nov Wh | Change | Gross Oct Wh | Gross Nov Wh |
+|---|---|---|---|---|---|
+| meridian H.264 hw | 0.1816 | 0.1751 | −3.6 % | 0.192 | 0.219 |
+| meridian H.265 hw | 0.1847 | 0.1825 | −1.2 % | 0.195 | 0.231 |
+| meridian H.264 CPU | 0.4967 | 0.4928 | −0.8 % | 0.524 | 0.584 |
+| meridian H.265 CPU | 0.7361 | 0.7207 | −2.1 % | 0.762 | 0.857 |
+| meridian AV1 CPU | 0.3837 | 0.3789 | −1.2 % | 0.396 | 0.450 |
+| bbb H.264 hw | 0.1866 | 0.1814 | −2.8 % | 0.194 | 0.226 |
+| bbb H.265 hw | 0.1924 | 0.1875 | −2.5 % | 0.201 | 0.236 |
+| bbb H.264 CPU | 0.4163 | 0.4033 | −3.1 % | 0.430 | 0.476 |
+| bbb H.265 CPU | 0.6973 | 0.6814 | −2.3 % | 0.721 | 0.813 |
+| bbb AV1 CPU | 0.4485 | 0.4435 | −1.1 % | 0.463 | 0.520 |
+
+- **ΔE did not inflate.** All ten fell, by 0.8–3.6 %, with durations unchanged. The cause is not established. Lower
+  mains-to-DC losses at a higher floor would fit, and so would ambient over 26 days. Treat October and November ΔE as
+  comparable to about 4 %, not as identical.
+- **Gross rose 11–19 %** on these short encodes, because the floor is in it.
+- **Image:** the three shared models agree within about 2 % on the three settled prompts. FLUX.2 Klein is new in the panel
+  (0.11–0.12 Wh per image), which is why the step took longer.
+- **LLM:** not comparable. The panel's models changed on 28 October.
+- **Thermal recovery unchanged:** power is within 0.14 W of floor at OWL's 35 s cooldown and settled by about 50 s, as in
+  October. `video_cooldown_s` can stay at 35.
+
+### Calibration (n = 30)
+
+| | Pre-disk, 10 Oct | With disk, 5 Nov |
+|---|---|---|
+| `variance_pct` | 1.37 % | 0.88 % |
+| Idle CV | 2.57 % (0.035 W) | 0.69 % (0.055 W) |
+| Idle drift | 4.40 % (0.060 W) | 1.51 % (0.120 W) |
+| CPU encode CV | 1.12 % | 1.21 % |
+| GPU encode CV | 0.43 % | 0.74 % |
+| Mean baseline | 1.371 W | 7.947 W |
+
+**The lower percentages are not a quieter rig.** They are relative to a base nearly six times larger, and idle noise and
+drift are higher in watts. Drift enters OWL's confidence model as an absolute term, so the smallest ΔW that can reach green
+rises from about 0.12 W to about 0.20 W. Only very light jobs are affected.
+
+### Internet outage during the run
+
+A Bouygues outage ran from about 10:41 to 10:46, during bbb rep 6. Poll counts in that rep are normal and both meters
+agree. One encode in it, H.265 CPU, is 2.7 % below its siblings, a 0.3 % effect on that row's mean. No step failed and nothing
+was re-run.
 
 ## What this means for OWL
 
