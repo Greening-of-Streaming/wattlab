@@ -89,6 +89,8 @@ LAB_SESSION_TOGGLE = "lab_session_toggle"  # raise/lower the lab-session flag fr
                                            # the reservations calendar (/lab-session/reserve, …/delete,
                                            # …/extend, reservations.json): a reservation raises the
                                            # same flag, just later — same privilege, one capability.
+FINDINGS_REVIEW    = "findings_review"     # CR-086 — Lab review queue for findings: community
+                                           # 👍/❓ tallies and comments, ranked for the WattLab review meeting
 
 
 # --- Capability → minimum tier ----------------------------------------------
@@ -133,6 +135,7 @@ _REQUIRED_TIER: dict[str, Tier] = {
     PEER_API:           Tier.Anonymous,   # gated by require_peer (signature + peer address)
     NODE_LAN_LINKS:     Tier.Lab,
     NODE_GATEWAY_VIEW:  Tier.Member,
+    FINDINGS_REVIEW:    Tier.Lab,
 }
 
 

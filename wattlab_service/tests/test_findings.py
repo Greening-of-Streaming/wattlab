@@ -486,3 +486,204 @@ def test_preview_draft_source_route_is_scoped_to_cited_drafts():
     # A result no previewed draft cites stays private.
     assert client.get(f"{_PREVIEW}/source/decode/dec0de04/download.json",
                       headers=_ANON).status_code == 404
+
+
+# --- CR-086: layouts, review status, votes, review queue (WattLab call 2026-11-05) ---
+
+import json as _json
+import shutil as _shutil
+import subprocess as _subprocess
+
+import yaml as _yaml
+
+import finding_feedback
+import routes_mockup_findings as _mock
+
+_LAB = {"x-real-ip": "127.0.0.1"}
+_TAX = _yaml.safe_load(Path(_mock._TAXONOMY_PATH).read_text())
+_OV = _yaml.safe_load(Path(_mock._OVERLAY_PATH).read_text())
+
+
+@pytest.fixture
+def fb(tmp_path, monkeypatch):
+    """Votes go to a temp log, never results/_feedback, and the rate limiter
+    starts empty."""
+    monkeypatch.setattr(finding_feedback, "FEEDBACK_DIR", tmp_path)
+    monkeypatch.setattr(finding_feedback, "FEEDBACK_FILE", tmp_path / "votes.jsonl")
+    monkeypatch.setattr(finding_feedback, "_recent", {})
+    return tmp_path / "votes.jsonl"
+
+
+def _post(path, body, headers=_ANON):
+    return client.post(f"{_PREVIEW}{path}", json=body, headers=headers)
+
+
+@pytest.mark.parametrize("variant,marker", [
+    ("questions", "Browse by question"),
+    ("workflow", "Browse by stage of the streaming workflow"),
+    ("quiz", "Which uses more energy?"),
+])
+def test_each_layout_renders_for_anonymous(variant, marker):
+    r = client.get(f"{_PREVIEW}?v={variant}", headers=_ANON)
+    assert r.status_code == 200
+    assert marker in r.text
+    assert "Why does this matter?" in r.text
+    assert "Which one should we keep?" in r.text
+    assert "Data only" in r.text
+    assert "review queue" not in r.text          # the Lab link stays Lab-only
+
+
+def test_unknown_layout_falls_back_to_questions():
+    r = client.get(f"{_PREVIEW}?v=nonsense", headers=_ANON)
+    assert r.status_code == 200 and "Browse by question" in r.text
+
+
+def test_workflow_draws_the_gaps():
+    r = client.get(f"{_PREVIEW}?v=workflow", headers=_ANON)
+    assert "Not measured yet" in r.text
+    assert _TAX["stage"]["values"]["cdn"]["gap_note"] in r.text.replace("&#x27;", "'")
+
+
+def test_workflow_stage_link_filters_server_side():
+    """A stage link is a real navigation, so the list is filtered with JS off."""
+    r = client.get(f"{_PREVIEW}?v=workflow&stage=screen", headers=_ANON)
+    cards = r.text.split('<article class="fx-card')[1:]
+    shown = [c for c in cards if " hidden>" not in c.split(">", 1)[0] + ">"]
+    assert shown and all('data-stages="' in c and "screen" in c.split('data-stages="')[1].split('"')[0] for c in shown)
+    assert len(shown) < len(cards)
+
+
+def test_overlay_uses_only_taxonomy_values():
+    stages = set(_TAX["stage"]["values"])
+    for slug, ov in _OV.items():
+        assert ov.get("stages"), slug
+        assert set(ov["stages"]) <= stages, slug
+        assert ov.get("review_status") in _mock._REVIEW, slug
+        assert ov.get("why_it_matters"), slug
+        assert ov.get("theme") in _TAX["theme"]["values"], slug
+        for tag in ov.get("tags", []):
+            facet, _, key = tag.partition(":")
+            assert key in _TAX[facet]["values"], f"{slug}: {tag}"
+
+
+def test_quiz_answers_are_among_their_options_and_only_on_the_main_shelf():
+    for slug, ov in _OV.items():
+        q = ov.get("quiz")
+        if not q:
+            continue
+        assert q["answer"] in q["options"], slug
+        assert len(q["options"]) >= 2 and q.get("explain"), slug
+        assert int(ov["n_runs"]) >= _mock._DEFAULT_MIN_N, f"{slug}: early signals carry no quiz"
+
+
+def test_validated_status_needs_a_meeting_date():
+    for slug, ov in _OV.items():
+        if ov.get("review_status") == "group-validated":
+            assert ov.get("validated_on"), slug
+
+
+def test_vote_toggles_and_stores_no_raw_ip(fb):
+    slug = "tv-screen-draws-20x-the-streaming-box"
+    r = _post(f"/{slug}/feedback", {"kind": "up"})
+    assert r.status_code == 200 and r.json() == {"on": True, "counts": {"up": 1, "question": 0}}
+    r = _post(f"/{slug}/feedback", {"kind": "up"})
+    assert r.json() == {"on": False, "counts": {"up": 0, "question": 0}}
+    raw = fb.read_text()
+    assert "8.8.8.8" not in raw and "8.8.8.0" not in raw
+    ev = _json.loads(raw.splitlines()[0])
+    assert ev["tier"] == "anonymous" and ev["voter"].startswith("i:")
+
+
+def test_device_id_separates_voters_behind_one_network(fb):
+    slug = "tv-screen-draws-20x-the-streaming-box"
+    a, b = "a" * 32, "b" * 32
+    _post(f"/{slug}/feedback", {"kind": "up", "device": a})
+    r = _post(f"/{slug}/feedback", {"kind": "up", "device": b})
+    assert r.json()["counts"]["up"] == 2
+    assert a not in fb.read_text() and b not in fb.read_text()   # hashed before it reaches disk
+
+
+def test_question_comment_is_capped_and_reaches_only_the_lab_queue(fb):
+    slug = "bitrate-barely-moves-box-playback-power"
+    long = "<b>why</b> " + "x" * 400
+    r = _post(f"/{slug}/feedback", {"kind": "question", "comment": long})
+    assert r.json()["on"] is True
+    stored = _json.loads(fb.read_text().splitlines()[-1])["comment"]
+    assert len(stored) == finding_feedback.COMMENT_MAX
+    assert "xxxxxxxxxx" not in client.get(_PREVIEW, headers=_ANON).text
+    q = client.get(f"{_PREVIEW}/review", headers=_LAB)
+    assert q.status_code == 200
+    assert "&lt;b&gt;why&lt;/b&gt;" in q.text and "<b>why</b>" not in q.text
+
+
+def test_feedback_rejects_bad_input(fb):
+    assert _post("/not-a-finding/feedback", {"kind": "up"}).status_code == 404
+    assert _post("/tv-screen-draws-20x-the-streaming-box/feedback", {"kind": "down"}).status_code == 400
+    r = client.post(f"{_PREVIEW}/tv-screen-draws-20x-the-streaming-box/feedback",
+                    content="kind=up", headers={**_ANON, "content-type": "application/x-www-form-urlencoded"})
+    assert r.status_code == 415                     # a plain cross-site form post can't vote
+    assert not fb.exists()
+
+
+def test_feedback_rate_limit(fb, monkeypatch):
+    monkeypatch.setattr(finding_feedback, "RATE_LIMIT", 3)
+    slug = "tv-screen-draws-20x-the-streaming-box"
+    codes = [_post(f"/{slug}/feedback", {"kind": "up", "device": f"{i:032x}"}).status_code for i in range(4)]
+    assert codes == [200, 200, 200, 429]
+
+
+def test_layout_vote_is_one_pick_per_voter(fb):
+    r = _post("/variant-vote", {"variant": "workflow"})
+    assert r.json()["picked"] == "workflow" and r.json()["counts"]["workflow"] == 1
+    r = _post("/variant-vote", {"variant": "quiz"})
+    assert r.json()["counts"] == {"questions": 0, "workflow": 0, "quiz": 1}
+    r = _post("/variant-vote", {"variant": "quiz"})
+    assert r.json()["picked"] is None and r.json()["counts"]["quiz"] == 0
+    assert _post("/variant-vote", {"variant": "carousel"}).status_code == 400
+
+
+def test_review_queue_is_lab_only_and_ranks_questions_first(fb):
+    assert client.get(f"{_PREVIEW}/review", headers=_ANON).status_code == 403
+    _post("/sd-turbo-cpu-image-first-run/feedback", {"kind": "question"})
+    r = client.get(f"{_PREVIEW}/review", headers=_LAB)
+    assert r.status_code == 200
+    first_row = r.text.split("<tbody>")[1].split("</tr>")[0]
+    assert "AI image" in first_row
+    assert "Signals rank this list; they never change a status." in r.text
+
+
+def test_lab_sees_the_review_link():
+    assert "Lab: review queue" in client.get(_PREVIEW, headers=_LAB).text
+
+
+def test_detail_page_has_why_votes_and_quiz():
+    r = client.get(f"{_PREVIEW}/hw-decoder-cuts-client-energy-4x", headers=_ANON)
+    assert r.status_code == 200
+    assert "Why does this matter?" in r.text
+    assert "Did I understand this?" in r.text
+    assert 'data-slug="hw-decoder-cuts-client-energy-4x"' in r.text
+    assert "Lab-checked" in r.text
+
+
+def test_detail_page_for_new_gos2_draft():
+    r = client.get(f"{_PREVIEW}/encode-energy-levers-nvenc-vs-apple-m6", headers=_ANON)
+    assert r.status_code == 200 and "Draft finding, awaiting lab review" in r.text
+
+
+def test_superseded_m6_encode_draft_stays_off_the_page():
+    assert "apple-m6-encode-energy-vs-ryzen-rtx5080" not in _OV
+    assert "apple-m6-encode-energy-vs-ryzen-rtx5080" not in client.get(_PREVIEW, headers=_ANON).text
+
+
+@pytest.mark.skipif(_shutil.which("node") is None, reason="node not installed")
+@pytest.mark.parametrize("path", ["", "?v=workflow", "?v=quiz", "/hw-decoder-cuts-client-energy-4x", "/review"])
+def test_preview_inline_js_parses(path, tmp_path):
+    from test_inline_js import _inline_scripts
+    html = client.get(f"{_PREVIEW}{path}", headers=_LAB).text
+    scripts = list(_inline_scripts(html))
+    assert scripts or path == "/review"
+    for i, js in enumerate(scripts):
+        p = tmp_path / f"s{i}.js"
+        p.write_text(js)
+        out = _subprocess.run(["node", "--check", str(p)], capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr

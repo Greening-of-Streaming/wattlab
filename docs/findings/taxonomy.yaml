@@ -8,6 +8,66 @@
 # A finding carries one `theme` and any number of `facet:key` tags.
 # Adding a category = add a value here; nothing else changes.
 # House rule: add a new value only once 2 findings need it.
+#
+# 2026-11-06 (CR-086, WattLab call 5 Nov): `stage` places each finding on the
+# streaming workflow for the preview's workflow view. A finding carries one or
+# more `stages`. Stages in `pipeline` order are drawn left to right; `side: true`
+# stages sit beside the pipeline. A stage with no finding is drawn as a gap,
+# and its `gap_note` says what would fill it. Unlike other facets, every stage
+# is listed even with zero findings: the holes are the point.
+
+stage:
+  label: Stage of the streaming workflow
+  values:
+    capture:
+      label: Content & capture
+      pipeline: 1
+      synonyms: [production, camera, mezzanine, master, post-production, ProRes]
+      definition: Making the programme and its high-quality master file.
+      gap_note: Not measured yet. A 4K mezzanine of Big Buck Bunny is being rebuilt from the original frames as a clean starting point.
+    encode:
+      label: Encode & package
+      pipeline: 2
+      synonyms: [encode, transcode, compression, ABR ladder, packaging, NVENC, VideoToolbox, upscaling]
+      definition: Compressing and converting video on a server before it is delivered.
+    origin:
+      label: Origin & storage
+      pipeline: 3
+      synonyms: [origin server, storage, packager, disk, data centre]
+      definition: Storing the encoded files and serving them to the delivery network.
+      gap_note: Not measured yet. Measuring the origin as a workload of its own is an open change request (CR-072).
+    cdn:
+      label: CDN
+      pipeline: 4
+      synonyms: [content delivery network, edge, cache, Akamai]
+      definition: The caches that carry video from the origin to viewers' networks.
+      gap_note: Not measured. Options raised on 5 Nov 2026 are simulated CDN nodes in containers, Akamai test instances and a collaboration with ATEM.
+    access:
+      label: Access network
+      pipeline: 5
+      synonyms: [ISP, broadband, mobile network, Wi-Fi, router, last mile]
+      definition: The broadband or mobile network between the CDN and the home.
+      gap_note: Not measured. ISP networks are outside OWL's reach; Wi-Fi versus Ethernet at the box is being measured separately (CR-074).
+    home-device:
+      label: Home device
+      pipeline: 6
+      synonyms: [set-top box, STB, TV box, streaming stick, player, decoder, client]
+      definition: The box, stick or small computer that decodes the video in the home.
+    screen:
+      label: Screen
+      pipeline: 7
+      synonyms: [TV, television, panel, OLED, display, picture mode]
+      definition: The TV or monitor showing the picture.
+    ai:
+      label: AI workloads
+      side: true
+      synonyms: [LLM, chatbot, image generation, RAG, inference]
+      definition: AI models run on media tasks, alongside the streaming chain.
+    method:
+      label: How we measure
+      side: true
+      synonyms: [methodology, test design, protocol, reproducibility]
+      definition: Checks on our own test methods.
 
 theme:
   label: Question
@@ -94,6 +154,10 @@ lever:
       label: Test design
       synonyms: [loop, excerpt, source file, protocol]
       definition: Choices in how a test is built.
+    software-stack:
+      label: Software stack
+      synonyms: [MLX, Ollama, llama.cpp, PyTorch, MPS, diffusers, mflux, runtime, framework]
+      definition: Which software runs the job on the same hardware.
 
 hardware:
   label: Hardware
@@ -126,6 +190,10 @@ hardware:
       label: Desktop processor
       synonyms: [CPU, Ryzen 9 7900, software]
       definition: GoS1's main processor.
+    apple-m6:
+      label: Apple M6 Mac mini
+      synonyms: [GoS2, Apple silicon, M6, VideoToolbox, Mac mini]
+      definition: GoS2, the lab's second server (Apple M6, 24 GB).
 
 codec:
   label: Video format

@@ -276,6 +276,7 @@ def test_required_tier_table_snapshot():
         "peer_api":            Tier.Anonymous,   # CR-085 — gate is signature + peer address (require_peer)
         "node_lan_links":      Tier.Lab,   # CR-085 machine switch: peers' lab addresses
         "node_gateway_view":   Tier.Member,  # CR-085 member gateway (gos2.wattlab…)
+        "findings_review":     Tier.Lab,   # CR-086 — findings review queue (votes + comments)
     }
     assert capabilities._REQUIRED_TIER == expected
 

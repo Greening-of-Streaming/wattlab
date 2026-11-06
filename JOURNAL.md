@@ -110,6 +110,24 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 #   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
 ```
 
+## Session 82 — 2026-11-06 (CR-086: findings preview, next level — from the 5 Nov WattLab call)
+
+**Opened CR-086** from the 5 Nov WattLab call. Phase A shipped on the hidden preview only
+(`/preview-c5d9b3be/findings`); live `/findings` untouched. Three layouts to compare (`?v=questions|workflow|quiz`)
+with a layout vote. Workflow = SVG of seven stages, with gaps drawn dashed: capture, origin, CDN and access network
+have no finding. "Why does this matter?" on every finding (drafted by Claude from each finding's own section, **Ben
+to edit**). Review-status pill kept apart from 🟢🟡🔴. 👍/❓ (no thumbs-down) stored by new `finding_feedback.py`
+(JSONL, hashed IP or HMAC'd localStorage device id, 300/h per /24, JSON-only POST). Lab review queue at
+`…/findings/review` (new `FINDINGS_REVIEW` cap). "Data only" shelf. /privacy discloses votes + the device id.
+Overlay: 4 GoS2 drafts added; superseded `apple-m6-encode-energy-vs-ryzen-rtx5080` left off. n_runs checked
+against cited results: Apple TV finding claims n=3/cell but cites 8 single runs (flagged in its `n_check`).
+Pre-ladder published findings set `lab-checked` with a `review_note` asking Ben to confirm.
+**Prior art found:** unmerged `feat/finding-draft-restore` (July) built review_status + moderated feedback;
+noted in CR-086 for Phase B. **1360 tests. Restarted 23:15 by the owner** (Claude was blocked by the permission classifier as a
+production deploy); live vote round-trip via the public host verified, test events removed. Committed with the CR-086 commit.
+
+---
+
 ## Session 81 — 2026-11-04 (GoS2: 2 TB USB4 NVMe SSD attached; idle floor row 5; recalibration + full benchmark)
 
 **Why:** GoS2's 500 GB internal SSD holds `~/owl-data` (~32 GB, growing with every campaign). Owner formatted a 2 TB Fanxiang S690Q NVMe (Ugreen USB4 enclosure) as APFS `GoS2-Ext` (GUID, not encrypted) on the MacBook and attached it to GoS2.

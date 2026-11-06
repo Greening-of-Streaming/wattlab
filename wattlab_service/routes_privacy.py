@@ -5,8 +5,10 @@ A plain content page that states what OWL actually does with data: anonymous
 aggregate visit counts (no cookies, no stored IPs — see analytics.py), the one
 strictly-necessary auth cookie (owl_session, members only — auth.py), the
 pseudonymised handling of visitor IPs, and the result data a visitor generates
-by running a job. Kept in sync with analytics.py / auth.py / persist.py BY HAND
-— if data handling changes, this page must change.
+by running a job, plus votes on findings and their device-id localStorage key
+(finding_feedback.py, CR-086). Kept in sync with analytics.py / auth.py /
+persist.py / finding_feedback.py BY HAND — if data handling changes, this page
+must change.
 """
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
@@ -59,6 +61,12 @@ def _body() -> str:
       <li><span class="key">Members&rsquo; email address.</span> If you sign in as a
           GoS member, your email is held in the member allowlist and used solely
           to authenticate you and scope you to your own results.</li>
+      <li><span class="key">Votes and questions on findings.</span> If you press
+          &#128077; or &#10067; on a finding, or vote on a page layout, we store the
+          vote, your audience type and the time, keyed by a one-way hashed token
+          (see below) so a vote can be changed or withdrawn. An optional one-line
+          question you type is stored as written and read only by the lab team;
+          please don&rsquo;t put personal details in it.</li>
     </ul>
 
     <h2>IP addresses</h2>
@@ -72,7 +80,12 @@ def _body() -> str:
     <h2>Cookies</h2>
     <p>OWL sets <strong>no tracking or analytics cookies</strong>. The only cookie
        is <code>owl_session</code>, set <em>only</em> if you sign in as a member;
-       it is strictly necessary to keep you signed in and needs no consent banner.</p>
+       it is strictly necessary to keep you signed in and needs no consent banner.
+       If you vote on a finding, your browser also keeps a random ID in its local
+       storage, created only when you first vote, so that people sharing one
+       network can each vote and you can undo yours. It is hashed before it reaches
+       our server&rsquo;s disk, is used for nothing else, and you can clear it with
+       your browser&rsquo;s site data.</p>
 
     <h2>Retention &amp; your rights</h2>
     <p>Aggregate counts and stored results are kept while they remain useful to

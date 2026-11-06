@@ -11,6 +11,23 @@
 # finding's caveats (Claude's reading 2026-10-16 — VERIFY before Phase 2).
 # Fields: plain_headline, plain_summary, key_number, theme, tags, n_runs, n_note
 # draft: true = the finding lives in docs/findings_drafts/ (shown with a Draft badge).
+#
+# 2026-11-06 (CR-086, WattLab call 5 Nov) adds, per slug:
+#   stages          workflow stages from taxonomy.yaml `stage` (one or more)
+#   review_status   machine-draft | lab-checked | group-validated | not-reproduced
+#                   (a separate axis from the 🟢🟡🔴 measurement confidence).
+#                   Only a WattLab meeting moves a finding to group-validated;
+#                   record it as validated_on: YYYY-MM-DD.
+#   review_note     why the status is what it is (Lab review queue only)
+#   n_check         result of checking n_runs against the cited results (Lab queue only)
+#   why_it_matters  1–2 sentences for a business reader. DRAFTED BY CLAUDE
+#                   2026-11-06 from each finding's own "Why this matters"; Ben to edit.
+#   quiz            optional {question, options, answer, explain}; numbers only from
+#                   the finding itself; main-shelf (n ≥ 3) findings only.
+#
+# n_runs checked 2026-11-06 against the cited result JSON: decode findings match
+# their stated n except the Apple TV one (see its n_check). Video, LLM, image and
+# enhance findings cite single runs, consistent with their n=1/n=2 entries.
 
 tv-screen-draws-20x-the-streaming-box:
   draft: true
@@ -24,6 +41,15 @@ tv-screen-draws-20x-the-streaming-box:
   tags: [where:home-device, hardware:tv, hardware:streaming-box, lever:device-type, lever:resolution-hdr]
   n_runs: 3
   n_note: n=3 per arm, six picture-format arms
+  stages: [screen, home-device]
+  review_status: machine-draft
+  why_it_matters: >-
+    Most debate about streaming energy is about the stream: codecs, bitrate, resolution. In the home, the screen is where nearly all the power goes, so that is where savings are largest.
+  quiz:
+    question: "A streaming box plays into a 55-inch OLED TV. What share of the pair's power does the box use?"
+    options: ["About half", "About a quarter", "Less than 5 %"]
+    answer: "Less than 5 %"
+    explain: "The box drew about 2 W and the screen 50–57 W: the box was 3–5 % of the pair."
 
 tv-picture-mode-outweighs-streaming-choices:
   draft: true
@@ -37,6 +63,15 @@ tv-picture-mode-outweighs-streaming-choices:
   tags: [where:home-device, hardware:tv, lever:settings, lever:content]
   n_runs: 3
   n_note: n=3 per mode (one ad-break cell n=2)
+  stages: [screen]
+  review_status: machine-draft
+  why_it_matters: >-
+    A picture setting the viewer can change in seconds outweighs every choice the streaming industry argues about. Device defaults and viewer guidance may be the cheapest lever there is.
+  quiz:
+    question: "While watching football, which adds more power: switching the TV to Vivid mode, or switching the stream from HD to 4K?"
+    options: ["Vivid mode", "The 4K stream", "About the same"]
+    answer: "Vivid mode"
+    explain: "Vivid added about 20 W at the TV. 4K added 0.3–1.1 W at the box and nothing measurable at the screen."
 
 hdr-costs-the-screen-4k-costs-the-box:
   draft: true
@@ -49,6 +84,15 @@ hdr-costs-the-screen-4k-costs-the-box:
   tags: [where:home-device, hardware:tv, hardware:streaming-box, hardware:apple-tv, lever:resolution-hdr]
   n_runs: 3
   n_note: n=3 per box and format, seven boxes
+  stages: [screen, home-device]
+  review_status: machine-draft
+  why_it_matters: >-
+    HDR and 4K are often lumped together as 'premium formats'. Their energy cost lands in different places, and the HDR cost at the screen is about ten times the 4K cost at the box.
+  quiz:
+    question: "HDR or 4K: which one costs energy mainly at the screen?"
+    options: ["HDR", "4K", "Both equally"]
+    answer: "HDR"
+    explain: "HDR added about 4 W at the TV. 4K added 0.3–1.1 W at the box and nothing measurable at the screen."
 
 bitrate-barely-moves-box-playback-power:
   draft: true
@@ -62,6 +106,15 @@ bitrate-barely-moves-box-playback-power:
   tags: [where:home-device, hardware:streaming-box, lever:bitrate, codec:h264]
   n_runs: 3
   n_note: n=3 per rung, seven rungs, four boxes
+  stages: [home-device]
+  review_status: machine-draft
+  why_it_matters: >-
+    Lowering the bitrate is often sold as an energy saving for viewers' devices. At the box it saves tenths of a watt, with no sweet spot; any case for lower bitrate rests on the network, not the device.
+  quiz:
+    question: "A TV box plays the same clip at 128 times the bitrate. How much more power does it draw?"
+    options: ["Less than half a watt", "About 5 W", "Twice as much"]
+    answer: "Less than half a watt"
+    explain: "Power rose in a straight line by 0.3–0.5 W in total from 0.25 to 32 Mb/s."
 
 hw-decoder-cuts-client-energy-4x:
   plain_headline: A chip built for video plays it on about a quarter of the power software needs in non-specialized hardware
@@ -74,6 +127,17 @@ hw-decoder-cuts-client-energy-4x:
   tags: [where:home-device, lever:hw-vs-sw, hardware:raspberry-pi, hardware:streaming-box, codec:h264, codec:av1]
   n_runs: 3
   n_note: n=3–6 per arm, same board
+  stages: [home-device]
+  review_status: lab-checked
+  review_note: >-
+    Marked lab-reviewed in CLAUDE.md (protocol v3 replication, 2026-08-09).
+  why_it_matters: >-
+    Decode energy is paid by every viewer, every hour. A device generation that drops a video chip, or software that cannot reach it, can roughly quadruple that cost without showing up on any spec sheet.
+  quiz:
+    question: "On the same small computer, how does playing a film through its video chip compare with doing it in software?"
+    options: ["About a quarter of the power", "About the same", "Twice the power"]
+    answer: "About a quarter of the power"
+    explain: "The chip added 0.41 W, software 1.50 W: 3.7× less."
 
 appletv-a10x-av1-vp9-software-fallback:
   plain_headline: A 2017 Apple TV uses about 30% more power for the newer video formats its chip wasn't built for
@@ -85,6 +149,19 @@ appletv-a10x-av1-vp9-software-fallback:
   tags: [where:home-device, lever:hw-vs-sw, lever:codec, hardware:apple-tv, codec:h264, codec:hevc, codec:av1, codec:vp9]
   n_runs: 3
   n_note: n=3 per format, three kinds of content (one cell n=2)
+  stages: [home-device]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  n_check: >-
+    Claim is n=3 per codec per content (about 36 runs), but source_result_ids cite only 8 single-run results. Link the remaining runs before group validation.
+  why_it_matters: >-
+    Sending a newer, more efficient format to an older device can cost energy at the viewer's end. A codec is only cheap to watch on hardware built to decode it.
+  quiz:
+    question: "On a 2017 Apple TV, which uses more power: H.264 or AV1?"
+    options: ["H.264", "AV1", "The same"]
+    answer: "AV1"
+    explain: "AV1 cost about 1.2 W more (+29 %), because this chip decodes it in software."
 
 looped-excerpt-measures-as-continuous:
   plain_headline: Testing with a looped 2-minute clip gives the same reading as playing the full programme
@@ -97,6 +174,15 @@ looped-excerpt-measures-as-continuous:
   tags: [where:home-device, lever:test-design, hardware:streaming-box, codec:h264]
   n_runs: 3
   n_note: n=3 paired passes per box
+  stages: [method]
+  review_status: machine-draft
+  why_it_matters: >-
+    Other labs can test with a short looped clip instead of a full programme and still get a comparable number. That makes tests faster, cheaper and easier to repeat.
+  quiz:
+    question: "Does a 2-minute clip on repeat give a different power reading from the full programme?"
+    options: ["No, the same within 0.02 W", "Yes, about 20 % higher", "Yes, about 20 % lower"]
+    answer: "No, the same within 0.02 W"
+    explain: "On four TV boxes the 2-minute loop matched the continuous programme. A 30-second loop added up to 4 % on one box."
 
 streaming-box-plays-4-7x-cheaper-than-general-purpose:
   plain_headline: A purpose-built streaming box may play video far more cheaply than a small general-purpose computer — but not every cheap box does
@@ -109,6 +195,12 @@ streaming-box-plays-4-7x-cheaper-than-general-purpose:
   tags: [where:home-device, lever:device-type, hardware:streaming-box, hardware:raspberry-pi, codec:h264]
   n_runs: 1
   n_note: single paired read per device (GTV n=2 in the W5 comparison) — verify
+  stages: [home-device]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    Choosing the playback device can matter more than any stream setting. But the label 'streaming box' does not guarantee efficiency; each device has to be measured.
 
 stb-decode-and-play-content-over-codec:
   plain_headline: On modern TV boxes, what you watch may matter more for power than the video format it arrives in
@@ -121,6 +213,10 @@ stb-decode-and-play-content-over-codec:
   tags: [where:home-device, lever:content, lever:codec, hardware:streaming-box, codec:h264, codec:hevc, codec:av1]
   n_runs: 1
   n_note: n=1 per box × content × format cell (one cell n=3)
+  stages: [home-device]
+  review_status: machine-draft
+  why_it_matters: >-
+    If what is on screen moves a box's power more than the codec does, codec choice is a weak energy lever on modern boxes. Energy claims should name the content they were measured on.
 
 codec-decode-energy-depends-on-silicon-and-regime:
   plain_headline: There may be no single "greenest" video format — it depends on the chip doing the work
@@ -133,6 +229,12 @@ codec-decode-energy-depends-on-silicon-and-regime:
   tags: [where:home-device, lever:codec, lever:device-type, hardware:streaming-box, hardware:raspberry-pi, codec:h264, codec:hevc, codec:av1, codec:vp9]
   n_runs: 1
   n_note: n=1–3 per cell (software panels mostly n=1)
+  stages: [home-device]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    Any claim that one codec is 'the green codec' needs to name the device. Ranking formats without naming the chip can point an operator the wrong way.
 
 abr-all-codecs-meridian-120s:
   plain_headline: Encoding video on a graphics card may use 2–4× less energy than on the main processor
@@ -144,6 +246,12 @@ abr-all-codecs-meridian-120s:
   tags: [where:server, lever:hw-vs-sw, lever:codec, hardware:amd-gpu, hardware:desktop-cpu, codec:h264, codec:hevc, codec:av1]
   n_runs: 1
   n_note: n=1 (single full-length run on disk)
+  stages: [encode]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    Encoding is paid once per title, but large libraries and live channels encode constantly. Moving that work to a graphics card could cut server energy severalfold.
 
 av1-hw-sw-vmaf-tradeoff:
   plain_headline: A dedicated AV1 encoding chip may halve the energy, at a small cost in picture quality and file size
@@ -155,6 +263,12 @@ av1-hw-sw-vmaf-tradeoff:
   tags: [where:server, lever:hw-vs-sw, hardware:amd-gpu, hardware:desktop-cpu, codec:av1]
   n_runs: 1
   n_note: n=1 (same run as the all-formats finding)
+  stages: [encode]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    Hardware encoding saves server energy, but a slightly larger file at slightly lower quality is then delivered to every viewer. The saving has to be weighed against that.
 
 gpu-boost-overclocks-fixed-function-nvenc:
   plain_headline: Switching off a graphics card's automatic speed boost may cut video-encoding energy by about a tenth, with no loss of quality
@@ -167,6 +281,12 @@ gpu-boost-overclocks-fixed-function-nvenc:
   tags: [where:server, lever:settings, hardware:nvidia-gpu, codec:h264]
   n_runs: 2
   n_note: n=2 per clock setting (after a discarded warm-up)
+  stages: [encode]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    A default setting nobody chose may be wasting energy on every encode. Capping it is free and costs no quality, which makes it an easy recommendation if the result holds.
 
 upscale-sweetspot-degraded-sources:
   plain_headline: AI upscaling may pay off most on old, low-quality video — and not at all on already-sharp 4K
@@ -179,6 +299,12 @@ upscale-sweetspot-degraded-sources:
   tags: [where:server, lever:content, hardware:nvidia-gpu]
   n_runs: 1
   n_note: n=1 per quality rung (14 runs across the ladder)
+  stages: [encode, ai]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    AI upscaling is expensive, so where it is applied matters. Spent on old, damaged archive footage it buys a lot of quality; spent on footage that is already sharp it buys none.
 
 input-master-sensitivity:
   plain_headline: How big the source file is may make no difference to the energy needed to re-encode it
@@ -190,6 +316,12 @@ input-master-sensitivity:
   tags: [where:server, lever:test-design, lever:bitrate, hardware:amd-gpu, hardware:desktop-cpu, codec:hevc, codec:av1]
   n_runs: 1
   n_note: n=1 per source variant
+  stages: [encode, method]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    Labs can compare encode energy without matching the exact source file their peers used. Only the source's format seems to matter, not its size.
 
 llm-cold-inference-mwh-per-token:
   plain_headline: A bigger AI chat model may use more than ten times the energy per word of a small one
@@ -201,6 +333,12 @@ llm-cold-inference-mwh-per-token:
   tags: [where:server, lever:model-size, hardware:amd-gpu]
   n_runs: 1
   n_note: single run per model; small model near the noise floor
+  stages: [ai]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    Model size may be the biggest single lever on AI energy. Choosing the smallest model that does the job well could save an order of magnitude, but quality has to be checked too.
 
 rag-faithfulness-rem-question:
   plain_headline: In a first test, the smallest AI model made up an answer that larger models got right from the same documents
@@ -213,6 +351,12 @@ rag-faithfulness-rem-question:
   tags: [where:server, lever:model-size, hardware:amd-gpu]
   n_runs: 1
   n_note: n=1 (one question, one run)
+  stages: [ai]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    The cheapest AI model is no saving if its answers are wrong. Energy per answer only means something next to a check of the answer.
 
 sd-turbo-cpu-image-first-run:
   plain_headline: A first measurement of the energy it takes to make one AI image on a desktop processor
@@ -224,3 +368,93 @@ sd-turbo-cpu-image-first-run:
   tags: [where:server, hardware:desktop-cpu]
   n_runs: 1
   n_note: n=1
+  stages: [ai]
+  review_status: lab-checked
+  review_note: >-
+    Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
+  why_it_matters: >-
+    It gives a first, measured reference point for the energy of one AI image, where most published figures are estimates.
+
+# --- Added 2026-11-06 (CR-086): drafts from the October GoS2 campaigns. ---
+# apple-m6-encode-energy-vs-ryzen-rtx5080 is deliberately NOT listed: its own
+# caveat says its hardware percentages are superseded, and
+# encode-energy-levers-nvenc-vs-apple-m6 replaces its framing.
+
+encode-energy-levers-nvenc-vs-apple-m6:
+  draft: true
+  plain_headline: On an NVIDIA graphics card, the encoder's speed setting can nearly triple the energy for no gain in quality; on an Apple M6, no encoder setting matters
+  plain_summary: >-
+    Encoding one 4K clip to HD, NVIDIA's slowest preset used up to 2.9× the energy of a faster one at the same
+    quality score. On an Apple M6 Mac mini, no encoder setting moved energy by more than about 5 %; only where
+    the 4K source was decoded and scaled did. At matched quality the M6 used about 5× less energy above idle.
+  key_number: up to 2.9× from one setting
+  theme: preparing
+  tags: [where:server, lever:settings, lever:hw-vs-sw, hardware:nvidia-gpu, hardware:apple-m6, codec:h264, codec:hevc]
+  n_runs: 3
+  n_note: n=3 per setting, two machines
+  stages: [encode]
+  review_status: machine-draft
+  why_it_matters: >-
+    Encoder guides choose presets for quality and never say what they cost in energy. On some hardware the
+    slowest preset costs two to three times the energy for no measurable gain, so the default deserves a second look.
+  quiz:
+    question: On an NVIDIA RTX 5080, how much can the encoder's speed preset alone change the energy of one encode?
+    options: [Up to 2.9 times, About 5 %, Not at all]
+    answer: Up to 2.9 times
+    explain: Presets p1 to p7 plus a quality bundle ranged from 0.171 to 0.707 Wh at about the same VMAF quality score.
+
+apple-m6-llm-energy-per-token-vs-rtx5080:
+  draft: true
+  plain_headline: An Apple M6 Mac mini uses about half the energy of an RTX 5080 graphics card for each word an AI chat model writes
+  plain_summary: >-
+    Running the same Qwen3 model file, the M6 spent 44–51 % less energy per generated token (a word fragment)
+    above idle. Apple's own MLX software took off a further 26–47 %. The RTX was 3–5× faster.
+  key_number: −44 to −51 % per token
+  theme: ai
+  tags: [where:server, lever:software-stack, lever:device-type, hardware:apple-m6, hardware:nvidia-gpu]
+  n_runs: 3
+  n_note: n=3 per model, machine and runtime
+  stages: [ai]
+  review_status: machine-draft
+  why_it_matters: >-
+    For AI answers that do not need to be instant, a slower low-power machine can do the same work for about
+    half the energy. On that machine the choice of software is worth as much again.
+  quiz:
+    question: Same AI chat model, same task. Which uses less energy per word, an Apple M6 Mac mini or an RTX 5080 graphics card?
+    options: [The Apple M6, The RTX 5080, About the same]
+    answer: The Apple M6
+    explain: The M6 used 44–51 % less energy per token above idle, though the RTX was 3–5× faster.
+
+apple-m6-image-energy-vs-rtx5080:
+  draft: true
+  plain_headline: Making an AI image on an Apple M6 Mac mini uses 10–34 % less energy than on an RTX 5080 graphics card, which is 5–7 times faster
+  plain_summary: >-
+    With the model already loaded, the M6 used 10 % less energy per image on SANA-Sprint and 31–34 % less on
+    two Stable Diffusion models. How complicated the prompt was made no difference to time or energy.
+  key_number: −10 to −34 % per image
+  theme: ai
+  tags: [where:server, lever:device-type, hardware:apple-m6, hardware:nvidia-gpu]
+  n_runs: 3
+  n_note: n=3 per model and machine
+  stages: [ai]
+  review_status: machine-draft
+  why_it_matters: >-
+    How you measure decides the answer: an earlier pass that counted model loading called this a tie. Any
+    published energy-per-image figure should say whether loading is included.
+
+apple-native-stacks-on-m6-flux2-gpt-oss:
+  draft: true
+  plain_headline: On an Apple M6, Apple's own AI software is not always the frugal choice — it saved 17 % per word on a chat model but cost 12 % more per image
+  plain_summary: >-
+    On the same Mac mini, Apple's MLX software used 17 % less energy per token than Ollama for the gpt-oss-20b
+    chat model, but 12 % more per image than PyTorch for FLUX.2 Klein image generation.
+  key_number: +12 % per image · −17 % per token
+  theme: ai
+  tags: [where:server, lever:software-stack, hardware:apple-m6]
+  n_runs: 3
+  n_note: n=3 per software stack
+  stages: [ai]
+  review_status: machine-draft
+  why_it_matters: >-
+    "Use the native software" is common advice for Apple hardware, and it does not always hold. An energy claim
+    has to name the software and its version, not just the machine.

@@ -1385,6 +1385,60 @@ with one process per server (no overlapping blue/green restarts); (e) the decode
 
 ---
 
+## CR-086 · Findings page, next level — layouts to vote on, review ladder, 👍/❓, workflow map
+
+**Status:** opened 2026-11-06 from the WattLab call of 2026-11-05. **Phase A shipped 2026-11-06 on the hidden
+preview only** (`/preview-c5d9b3be/findings`, `routes_mockup_findings.py` + new `finding_feedback.py`); live
+`/findings` and `docs/findings/*.md` untouched. **Phase B (below) waits on the group's pick of a layout.**
+**Prior art, not merged:** branch `feat/finding-draft-restore` (`3bf87dc`, `6b00da3`, 2026-07-01) built a
+`review_status` axis (draft|for-comment|validated), a moderated "Ask OWL" queue with honeypot, a nginx
+rate-limit zone on its POST, and a /privacy section. Read it before Phase B; reuse what still fits.
+
+**What the call asked for:** Tania — browse by stage of the streaming workflow, drawn with its holes; keep raw
+data apart from interpretation; headline claims written by people. Ben — several layouts to vote on, and a
+validation process (statuses moving up, validation in a WattLab meeting). Martin — a closed-door group review of
+all findings, with a few outsiders. Dom — 👍 and ❓ per finding, no thumbs-down; many 👍 = publication candidate,
+many ❓ = back to technical review. Barbara — "Why does this matter?" on every finding; gamify it. Dom/Tania —
+"which uses more energy?" quiz, QR code for the MTS audience. OWL now reads **Open WattLab**.
+
+**Decisions (owner, 2026-11-06):** anyone can vote, one vote per finding per voter, tagged by tier; the public
+page will show every finding with its review status. **Review status and measurement confidence are separate
+axes**: 🟢🟡🔴 stays the CI signal from `confidence.py`; review status is
+`machine-draft → lab-checked → group-validated` (+ `not-reproduced`, e.g. the 4K-upscale claim), never
+traffic-light coloured. **Signals rank the review agenda; they never change a status.**
+
+**Phase A (shipped, preview):**
+- Layouts `?v=questions|workflow|quiz` + a layout vote on every variant. Workflow = inline SVG of seven
+  stages (capture, encode, origin, CDN, access network, home device, screen) plus AI and method beside the chain;
+  empty stages drawn dashed with their `gap_note`. Stage links filter server-side (works with JS off).
+- Per finding: "Why does this matter?", review-status pill, 👍/❓ with an optional one-line "what's unclear?",
+  "Did I understand this?" quiz on the detail page (main-shelf findings only — early signals carry no number).
+- `finding_feedback.py`: append-only `results/_feedback/votes.jsonl` (shares the dir with the July branch's
+  unmerged per-comment JSON files, distinct filename). Voter = `analytics.hash_ip` or, when the page sends one,
+  an HMAC'd random device id from localStorage (people behind one NAT can each vote). 300 events/h per hashed
+  /24. JSON-only POSTs (a plain cross-site form can't vote). /privacy updated.
+- Lab review queue `{prefix}/findings/review` (new `FINDINGS_REVIEW` capability, Lab): ❓ first, then lab-checked
+  with 👍; tier split; latest questions; `n_check` / `review_note` flags.
+- "Data only" shelf: every cited result as JSON, no headline.
+- Overlay: `stages`, `review_status`, `review_note`, `n_check`, `why_it_matters` (drafted by Claude from each
+  finding's own "Why this matters" — **Ben to edit**), `quiz`. Four GoS2 drafts added; the superseded
+  `apple-m6-encode-energy-vs-ryzen-rtx5080` left out. `n_runs` checked against cited results: one gap
+  (Apple TV finding claims n=3 per cell but cites 8 single runs).
+
+**Phase B (after the group picks):**
+1. Move overlay fields into frontmatter; `findings.py:_validate` checks `review_status`, `stages`,
+   `why_it_matters`, `quiz` shape; `finding-draft` skill requires `why_it_matters`, sets `machine-draft`.
+2. Live `/findings` adopts the chosen layout, shows every finding with its status; headline numbers only on
+   `lab-checked` and above. `findings_enabled` rollback contract stays.
+3. Confirm the `lab-checked` statuses the preview assigned to pre-ladder findings (each carries a `review_note`).
+4. Delete `routes_mockup_findings.py` + its `main.py` registration; retire `plain_overlay.yaml`.
+5. Decide whether the vote POST joins the nginx `wattlab_submit` zone (4 r/m is too tight for voting down a list).
+
+**Out of scope, follow-ups:** MTS event kit (QR → `?v=quiz`); a regulator-facing version (Barbara); CR-031
+database if vote volume grows.
+
+---
+
 ## Backlog notes recovered from session memory (2026-08-19, not CRs yet)
 
 *Folded here on the owner's instruction when the per-project session memory was pruned; each is a candidate
