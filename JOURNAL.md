@@ -110,6 +110,16 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 #   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
 ```
 
+## Session 83 — 2026-11-08 (CR-086: a test on every finding)
+
+Owner, following Barbara's "gamify it": every finding on the preview now has a multiple-choice question behind "Test my
+understanding", in a full-page `<dialog>`; the always-open quiz is a collapsed "Test my knowledge" pop-down on every
+layout. Quiz layout retired from the vote (two layouts now, no votes had been cast); `?v=quiz` opens the pop-down. 13
+questions drafted by Claude (**Ben to edit**). Early-signal questions carry no measured quantity. Options shuffled:
+the answer had been first in 7 of 9. Card tests no longer feed the pop-down score. Answers not stored.
+
+---
+
 ## Session 82 — 2026-11-06 (CR-086: findings preview, next level — from the 5 Nov WattLab call)
 
 **Opened CR-086** from the 5 Nov WattLab call. Phase A shipped on the hidden preview only

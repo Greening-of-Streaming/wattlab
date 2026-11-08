@@ -1408,11 +1408,11 @@ axes**: 🟢🟡🔴 stays the CI signal from `confidence.py`; review status is
 traffic-light coloured. **Signals rank the review agenda; they never change a status.**
 
 **Phase A (shipped, preview):**
-- Layouts `?v=questions|workflow|quiz` + a layout vote on every variant. Workflow = inline SVG of seven
+- Layouts `?v=questions|workflow` + a layout vote on each (the Quiz layout was retired 2026-11-08, see below). Workflow = inline SVG of seven
   stages (capture, encode, origin, CDN, access network, home device, screen) plus AI and method beside the chain;
   empty stages drawn dashed with their `gap_note`. Stage links filter server-side (works with JS off).
 - Per finding: "Why does this matter?", review-status pill, 👍/❓ with an optional one-line "what's unclear?",
-  "Did I understand this?" quiz on the detail page (main-shelf findings only — early signals carry no number).
+  and a test on every finding (see below).
 - `finding_feedback.py`: append-only `results/_feedback/votes.jsonl` (shares the dir with the July branch's
   unmerged per-comment JSON files, distinct filename). Voter = `analytics.hash_ip` or, when the page sends one,
   an HMAC'd random device id from localStorage (people behind one NAT can each vote). 300 events/h per hashed
@@ -1424,6 +1424,14 @@ traffic-light coloured. **Signals rank the review agenda; they never change a st
   finding's own "Why this matters" — **Ben to edit**), `quiz`. Four GoS2 drafts added; the superseded
   `apple-m6-encode-energy-vs-ryzen-rtx5080` left out. `n_runs` checked against cited results: one gap
   (Apple TV finding claims n=3 per cell but cites 8 single runs).
+
+**Test on every finding (2026-11-08, owner, after Barbara's "gamify it"):** the always-open quiz became a collapsed
+"Test my knowledge" pop-down on every layout (main-shelf questions only). Every finding has a question behind a "Test
+my understanding" button, in a native `<dialog>` covering the page. `?v=quiz` lands on Questions with the pop-down open
+(MTS QR target); no layout votes had been cast when it left the vote. Early-signal questions test direction only, with
+no measured quantity (enforced by test). Options are shuffled by a slug-seeded hash, because the answer was listed
+first in 7 of 9. Answers are checked in the browser and not stored, so /privacy is unchanged. This stops glancing at
+the card; it can't stop another tab or view-source, and nothing is at stake. 13 new questions drafted by Claude, **Ben to edit**.
 
 **Phase B (after the group picks):**
 1. Move overlay fields into frontmatter; `findings.py:_validate` checks `review_status`, `stages`,

@@ -22,8 +22,12 @@
 #   n_check         result of checking n_runs against the cited results (Lab queue only)
 #   why_it_matters  1–2 sentences for a business reader. DRAFTED BY CLAUDE
 #                   2026-11-06 from each finding's own "Why this matters"; Ben to edit.
-#   quiz            optional {question, options, answer, explain}; numbers only from
-#                   the finding itself; main-shelf (n ≥ 3) findings only.
+#   quiz            {question, options, answer, explain}, required on every finding;
+#                   facts only from the finding itself. The correct option may be listed
+#                   anywhere: the page shuffles the order. Early signals (n < 3) test
+#                   direction only, with no measured quantity anywhere in the quiz, and
+#                   the explanation says how thin the evidence is. DRAFTED BY CLAUDE
+#                   2026-11-08 for the 13 findings that had none; Ben to edit.
 #
 # n_runs checked 2026-11-06 against the cited result JSON: decode findings match
 # their stated n except the Apple TV one (see its n_check). Video, LLM, image and
@@ -201,6 +205,11 @@ streaming-box-plays-4-7x-cheaper-than-general-purpose:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     Choosing the playback device can matter more than any stream setting. But the label 'streaming box' does not guarantee efficiency; each device has to be measured.
+  quiz:
+    question: "In a first test, playing the same clip with a screen attached, which added the least power?"
+    options: ["Google's streaming box", "A Raspberry Pi using its video chip", "A Raspberry Pi in software"]
+    answer: "Google's streaming box"
+    explain: "Google's box added far less, even against the Pi's own video chip. A no-brand TV box was only modestly better than the Pi, so \"streaming box\" is not an efficiency class. One paired reading per device."
 
 stb-decode-and-play-content-over-codec:
   plain_headline: On modern TV boxes, what you watch may matter more for power than the video format it arrives in
@@ -217,6 +226,11 @@ stb-decode-and-play-content-over-codec:
   review_status: machine-draft
   why_it_matters: >-
     If what is on screen moves a box's power more than the codec does, codec choice is a weak energy lever on modern boxes. Energy claims should name the content they were measured on.
+  quiz:
+    question: "On two modern TV boxes, what may move playback power more?"
+    options: ["What you watch", "The video format it arrives in", "Neither moved it"]
+    answer: "What you watch"
+    explain: "Changing the content moved power more than changing the format. Most combinations were measured once, and a third box has since shown a clear format effect."
 
 codec-decode-energy-depends-on-silicon-and-regime:
   plain_headline: There may be no single "greenest" video format — it depends on the chip doing the work
@@ -235,6 +249,11 @@ codec-decode-energy-depends-on-silicon-and-regime:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     Any claim that one codec is 'the green codec' needs to name the device. Ranking formats without naming the chip can point an operator the wrong way.
+  quiz:
+    question: "Which video format may be the cheapest to play?"
+    options: ["It depends on the chip doing the work", "AV1, on every device", "H.264, on every device"]
+    answer: "It depends on the chip doing the work"
+    explain: "On one box the formats were indistinguishable, on another H.264 cost more, and in software the spread was wider. Even the test method can flip the ranking."
 
 abr-all-codecs-meridian-120s:
   plain_headline: Encoding video on a graphics card may use 2–4× less energy than on the main processor
@@ -252,6 +271,11 @@ abr-all-codecs-meridian-120s:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     Encoding is paid once per title, but large libraries and live channels encode constantly. Moving that work to a graphics card could cut server energy severalfold.
+  quiz:
+    question: "On one short clip, where did encoding the video take less energy?"
+    options: ["On the graphics card", "On the main processor", "No difference"]
+    answer: "On the graphics card"
+    explain: "Every format tried (H.264, HEVC, AV1) used less energy on the graphics card. One run each, on one clip."
 
 av1-hw-sw-vmaf-tradeoff:
   plain_headline: A dedicated AV1 encoding chip may halve the energy, at a small cost in picture quality and file size
@@ -269,6 +293,11 @@ av1-hw-sw-vmaf-tradeoff:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     Hardware encoding saves server energy, but a slightly larger file at slightly lower quality is then delivered to every viewer. The saving has to be weighed against that.
+  quiz:
+    question: "In a first test, what did a dedicated AV1 encoding chip give up to save energy?"
+    options: ["A little picture quality and a larger file", "Nothing at all", "Much longer encoding time"]
+    answer: "A little picture quality and a larger file"
+    explain: "The chip used much less energy than software and finished sooner, but scored slightly lower on a quality scale and made a larger file. One run."
 
 gpu-boost-overclocks-fixed-function-nvenc:
   plain_headline: Switching off a graphics card's automatic speed boost may cut video-encoding energy by about a tenth, with no loss of quality
@@ -287,6 +316,11 @@ gpu-boost-overclocks-fixed-function-nvenc:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     A default setting nobody chose may be wasting energy on every encode. Capping it is free and costs no quality, which makes it an easy recommendation if the result holds.
+  quiz:
+    question: "What may switching off a graphics card's automatic speed boost do to video encoding?"
+    options: ["Save some energy at the same quality", "Save energy but lower the quality", "Use more energy, because encoding takes longer"]
+    answer: "Save some energy at the same quality"
+    explain: "The boost pushes the card faster than the video encoder can use. Capping it saved energy at the same quality and nearly the same time. Two runs per setting."
 
 upscale-sweetspot-degraded-sources:
   plain_headline: AI upscaling may pay off most on old, low-quality video — and not at all on already-sharp 4K
@@ -305,6 +339,11 @@ upscale-sweetspot-degraded-sources:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     AI upscaling is expensive, so where it is applied matters. Spent on old, damaged archive footage it buys a lot of quality; spent on footage that is already sharp it buys none.
+  quiz:
+    question: "Where may AI upscaling buy the most picture quality for the energy?"
+    options: ["Old, low-quality video", "Clean HD video", "Already-sharp 4K video"]
+    answer: "Old, low-quality video"
+    explain: "Restoring badly degraded video gained far more quality per unit of energy than polishing clean HD. Re-processing pristine 4K gained nothing, at the highest energy cost. One run per quality level."
 
 input-master-sensitivity:
   plain_headline: How big the source file is may make no difference to the energy needed to re-encode it
@@ -322,6 +361,11 @@ input-master-sensitivity:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     Labs can compare encode energy without matching the exact source file their peers used. Only the source's format seems to matter, not its size.
+  quiz:
+    question: "When re-encoding a clip from a bigger source file, what may happen to the energy?"
+    options: ["It stays about the same", "It rises with the source size", "It falls"]
+    answer: "It stays about the same"
+    explain: "Across a wide range of source bitrates the energy was the same within noise. Starting from an AV1 source did add a little on the graphics card. One run per source."
 
 llm-cold-inference-mwh-per-token:
   plain_headline: A bigger AI chat model may use more than ten times the energy per word of a small one
@@ -339,6 +383,11 @@ llm-cold-inference-mwh-per-token:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     Model size may be the biggest single lever on AI energy. Choosing the smallest model that does the job well could save an order of magnitude, but quality has to be checked too.
+  quiz:
+    question: "How may a larger AI chat model compare with a small one on energy per word?"
+    options: ["It uses far more", "About the same", "It uses less"]
+    answer: "It uses far more"
+    explain: "On an earlier set of models and graphics card, the larger model used far more energy per token. Single runs, and the small model was near the noise floor."
 
 rag-faithfulness-rem-question:
   plain_headline: In a first test, the smallest AI model made up an answer that larger models got right from the same documents
@@ -357,6 +406,11 @@ rag-faithfulness-rem-question:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     The cheapest AI model is no saving if its answers are wrong. Energy per answer only means something next to a check of the answer.
+  quiz:
+    question: "Three AI models were handed the same correct documents. In a first test, which made up part of its answer?"
+    options: ["The smallest model", "The largest model", "All three"]
+    answer: "The smallest model"
+    explain: "The smallest blended in an unrelated source and invented a framework. The two larger models stayed faithful. One question, one run."
 
 sd-turbo-cpu-image-first-run:
   plain_headline: A first measurement of the energy it takes to make one AI image on a desktop processor
@@ -374,6 +428,11 @@ sd-turbo-cpu-image-first-run:
     Published before the review ladder existed (CR-086). Confirm who checked it, then keep or lower this status.
   why_it_matters: >-
     It gives a first, measured reference point for the energy of one AI image, where most published figures are estimates.
+  quiz:
+    question: "What does our measurement of one AI image on a desktop processor give you?"
+    options: ["A first reference point from one run", "An average for the AI industry", "Proof that processors beat graphics cards"]
+    answer: "A first reference point from one run"
+    explain: "It is one run of one small model at one image size on one machine. No graphics card was involved, so it says nothing about how the two compare."
 
 # --- Added 2026-11-06 (CR-086): drafts from the October GoS2 campaigns. ---
 # apple-m6-encode-energy-vs-ryzen-rtx5080 is deliberately NOT listed: its own
@@ -441,6 +500,11 @@ apple-m6-image-energy-vs-rtx5080:
   why_it_matters: >-
     How you measure decides the answer: an earlier pass that counted model loading called this a tie. Any
     published energy-per-image figure should say whether loading is included.
+  quiz:
+    question: "With the model already loaded, which machine used less energy per AI image?"
+    options: ["The Apple M6 Mac mini", "The RTX 5080 graphics card", "About the same"]
+    answer: "The Apple M6 Mac mini"
+    explain: "The M6 used 10–34 % less energy per image. The RTX was 5–7 times faster."
 
 apple-native-stacks-on-m6-flux2-gpt-oss:
   draft: true
@@ -458,3 +522,8 @@ apple-native-stacks-on-m6-flux2-gpt-oss:
   why_it_matters: >-
     "Use the native software" is common advice for Apple hardware, and it does not always hold. An energy claim
     has to name the software and its version, not just the machine.
+  quiz:
+    question: "On an Apple M6, does Apple's own AI software always use less energy?"
+    options: ["No, it depends on the job", "Yes, always", "No, it always uses more"]
+    answer: "No, it depends on the job"
+    explain: "Apple's MLX used 17 % less energy per token on a chat model, but 12 % more per image on FLUX.2 Klein."

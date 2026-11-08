@@ -497,6 +497,8 @@ import subprocess as _subprocess
 import yaml as _yaml
 
 import finding_feedback
+import html as _html
+import re as _re
 import routes_mockup_findings as _mock
 
 _LAB = {"x-real-ip": "127.0.0.1"}
@@ -521,7 +523,6 @@ def _post(path, body, headers=_ANON):
 @pytest.mark.parametrize("variant,marker", [
     ("questions", "Browse by question"),
     ("workflow", "Browse by stage of the streaming workflow"),
-    ("quiz", "Which uses more energy?"),
 ])
 def test_each_layout_renders_for_anonymous(variant, marker):
     r = client.get(f"{_PREVIEW}?v={variant}", headers=_ANON)
@@ -566,14 +567,65 @@ def test_overlay_uses_only_taxonomy_values():
             assert key in _TAX[facet]["values"], f"{slug}: {tag}"
 
 
-def test_quiz_answers_are_among_their_options_and_only_on_the_main_shelf():
+_MEASURED = _re.compile(r"\d\s*(%|×|mWh\b|Wh\b|W\b|times\b)")
+
+
+def _shelves():
+    entries = _mock._entries(_mock._DEFAULT_MIN_N)
+    return [x for x in entries if not x[2]], [x for x in entries if x[2]]
+
+
+def test_every_finding_has_a_valid_question():
+    assert _OV
     for slug, ov in _OV.items():
         q = ov.get("quiz")
-        if not q:
-            continue
+        assert q, f"{slug}: every finding carries a question"
         assert q["answer"] in q["options"], slug
         assert len(q["options"]) >= 2 and q.get("explain"), slug
-        assert int(ov["n_runs"]) >= _mock._DEFAULT_MIN_N, f"{slug}: early signals carry no quiz"
+
+
+def test_early_signal_questions_state_no_measured_quantity():
+    _, early = _shelves()
+    assert early
+    for f, ov, _, _ in early:
+        q = ov["quiz"]
+        for text in [q["question"], q["answer"], q["explain"], *q["options"]]:
+            assert not _MEASURED.search(text), f"{f.slug}: {text}"
+
+
+def test_every_card_opens_its_own_test_window():
+    r = client.get(_PREVIEW, headers=_ANON)
+    main, early = _shelves()
+    n = len(main) + len(early)
+    assert r.text.count('<dialog class="fx-test"') == n
+    assert r.text.count('class="fx-test-open" hidden>Test my understanding') == n
+
+
+def test_knowledge_popdown_is_closed_and_holds_only_the_main_shelf():
+    main, early = _shelves()
+    for layout in ("", "?v=workflow"):
+        text = client.get(f"{_PREVIEW}{layout}", headers=_ANON).text
+        assert '<details class="fx-early" id="fx-test">' in text
+        assert "Test my knowledge" in text
+    pop = text.split('id="fx-test"')[1].split('id="fx-score"')[0]
+    assert pop.count('class="fx-quiz"') == len(main)
+    for f, ov, _, _ in early:
+        assert _html.escape(ov["quiz"]["question"]) not in pop, f.slug
+
+
+def test_quiz_link_lands_on_questions_with_the_test_open():
+    r = client.get(f"{_PREVIEW}?v=quiz", headers=_ANON)
+    assert r.status_code == 200 and "Browse by question" in r.text
+    assert '<details class="fx-early" id="fx-test" open>' in r.text
+    assert "two layouts" in r.text and 'data-variant="quiz"' not in r.text
+
+
+def test_right_answer_is_not_usually_listed_first():
+    main, early = _shelves()
+    entries = main + early
+    first = sum(_mock._quiz_card_html(f, ov, _mock._DEFAULT_MIN_N).split('data-ok="')[1][0] == "1"
+                for f, ov, _, _ in entries)
+    assert first <= 0.6 * len(entries), first
 
 
 def test_validated_status_needs_a_meeting_date():
@@ -635,11 +687,11 @@ def test_feedback_rate_limit(fb, monkeypatch):
 def test_layout_vote_is_one_pick_per_voter(fb):
     r = _post("/variant-vote", {"variant": "workflow"})
     assert r.json()["picked"] == "workflow" and r.json()["counts"]["workflow"] == 1
-    r = _post("/variant-vote", {"variant": "quiz"})
-    assert r.json()["counts"] == {"questions": 0, "workflow": 0, "quiz": 1}
-    r = _post("/variant-vote", {"variant": "quiz"})
-    assert r.json()["picked"] is None and r.json()["counts"]["quiz"] == 0
-    assert _post("/variant-vote", {"variant": "carousel"}).status_code == 400
+    r = _post("/variant-vote", {"variant": "questions"})
+    assert r.json()["counts"] == {"questions": 1, "workflow": 0}
+    r = _post("/variant-vote", {"variant": "questions"})
+    assert r.json()["picked"] is None and r.json()["counts"]["questions"] == 0
+    assert _post("/variant-vote", {"variant": "quiz"}).status_code == 400
 
 
 def test_review_queue_is_lab_only_and_ranks_questions_first(fb):
@@ -660,7 +712,7 @@ def test_detail_page_has_why_votes_and_quiz():
     r = client.get(f"{_PREVIEW}/hw-decoder-cuts-client-energy-4x", headers=_ANON)
     assert r.status_code == 200
     assert "Why does this matter?" in r.text
-    assert "Did I understand this?" in r.text
+    assert 'class="fx-test-open" hidden>Test my understanding' in r.text
     assert 'data-slug="hw-decoder-cuts-client-energy-4x"' in r.text
     assert "Lab-checked" in r.text
 

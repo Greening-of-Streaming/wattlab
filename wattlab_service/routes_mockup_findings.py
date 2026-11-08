@@ -9,9 +9,12 @@ an "Early signals" shelf for findings below the n=3 bar. Served under the same
 unguessable, noindexed prefix as routes_mockups.py.
 
 CR-086 adds, from the 5 Nov call:
-  - three layouts to compare and vote on (`?v=questions|workflow|quiz`):
-    the reader-question menu; the streaming workflow drawn as a diagram, gaps
-    included (Tania); and a "which uses more energy?" quiz (Barbara, Dom, Tania)
+  - two layouts to compare and vote on (`?v=questions|workflow`): the
+    reader-question menu, and the streaming workflow drawn as a diagram, gaps
+    included (Tania). `?v=quiz` still works: Questions with the test open
+  - a question on every finding (Barbara: gamify it), asked in a window that
+    covers the finding, plus a "Test my knowledge" pop-down of the main-shelf
+    questions (Dom, Tania). Answers are checked in the browser and never stored
   - "Why does this matter?" on every finding (Barbara)
   - a review status beside the measurement confidence: the two are separate axes
   - 👍 / ❓ on every finding, no thumbs-down (Dom) — stored by finding_feedback.py
@@ -28,6 +31,7 @@ untouched; the overlay moves into frontmatter in CR-086 Phase B.
 
 DELETE THIS MODULE (and its main.py registration) when the redesign ships.
 """
+import hashlib
 import html as html_lib
 import io
 import json
@@ -79,7 +83,6 @@ _REVIEW = {
 _VARIANTS = {
     "questions": ("Questions", "Browse by the question a reader brings"),
     "workflow":  ("Workflow", "Browse by stage of the streaming chain, gaps included"),
-    "quiz":      ("Quiz", "Start with “which uses more energy?”"),
 }
 _DEFAULT_VARIANT = "questions"
 
@@ -180,6 +183,22 @@ _STYLES = """
   .fx-opt:hover { border-color: var(--accent) }
   .fx-opt.right { border-color: var(--accent); color: var(--accent) }
   .fx-opt.wrong { border-color: var(--warn); color: var(--warn); text-decoration: line-through }
+  .fx-ans > summary[hidden] { display: none }
+  .fx-verdict { margin: 0; font-weight: 600; font-size: 0.9rem; color: var(--accent) }
+  .fx-verdict.no { color: var(--warn) }
+  .fx-verdict:empty { display: none }
+  .fx-test-open { background: none; border: 1px solid var(--accent); color: var(--accent); padding: 0.3rem 0.7rem;
+    font: inherit; font-size: 0.8rem; cursor: pointer }
+  .fx-test-open:hover { background: var(--panel-2) }
+  dialog.fx-test { box-sizing: border-box; position: fixed; inset: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0;
+    border: 0; padding: 1.25rem 1rem; background: var(--bg); color: var(--text); font-size: 1rem; overflow-y: auto }
+  body:has(dialog.fx-test[open]) { overflow: hidden }
+  .fx-test-in { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; padding-top: 8vh }
+  .fx-test-top { display: flex; justify-content: space-between; align-items: center; color: var(--text-3);
+    font-family: monospace; font-size: 0.78rem }
+  .fx-test-close { background: none; border: 1px solid var(--border-3); color: var(--text-2); padding: 0.3rem 0.7rem;
+    font: inherit; font-size: 0.8rem; cursor: pointer }
+  .fx-test-back { align-self: flex-start; border-color: var(--accent); color: var(--accent) }
   .fx-ans > summary { cursor: pointer; color: var(--text-4); font-size: 0.75rem; font-family: monospace }
   .fx-ans p { margin: 0.4rem 0 0; color: var(--text-2); font-size: 0.85rem; line-height: 1.6 }
   .fx-ans a { color: var(--accent) }
@@ -260,9 +279,7 @@ _STYLES = """
   .fx-box .fx-key { font-size: 1.1rem }
   .fx-mono { font-family: monospace; font-size: 0.78rem; color: var(--text-3); line-height: 1.6 }
   .fx-detail a { color: var(--accent) }
-  details.fx-check { margin: 1.25rem 0 }
-  details.fx-check > summary { cursor: pointer; color: var(--accent); font-family: monospace; font-size: 0.85rem }
-  details.fx-check .fx-quiz { margin-top: 0.6rem; max-width: 560px }
+  .fx-check { margin: 1.25rem 0 }
   .fx-draft-banner { border: 1px solid var(--warn); color: var(--warn); padding: 0.55rem 0.85rem;
     font-size: 0.8rem; line-height: 1.5; margin: 0.5rem 0 1rem }
   .fx-review { width: 100%; border-collapse: collapse; font-size: 0.8rem }
@@ -444,18 +461,35 @@ _INTERACT_JS = """
     }
   });
 
-  var right = 0, done = 0, scoreEl = document.getElementById('fx-score');
+  // The score counts the pop-down only: a test on a card stands alone.
+  var right = 0, done = 0, scoreEl = document.getElementById('fx-score'), popdown = document.getElementById('fx-test');
   document.querySelectorAll('.fx-quiz').forEach(function (qz) {
-    var answered = false;
+    var answered = false, inPopdown = !!popdown && popdown.contains(qz);
+    var reveal = qz.querySelector('.fx-ans > summary'); if (reveal) reveal.hidden = true;
     qz.querySelectorAll('.fx-opt').forEach(function (opt) {
       opt.addEventListener('click', function () {
-        if (answered) return; answered = true; done++;
-        var ok = opt.dataset.ok === '1'; if (ok) right++;
+        if (answered) return; answered = true;
+        var ok = opt.dataset.ok === '1';
+        if (inPopdown) { done++; if (ok) right++; }
         opt.classList.add(ok ? 'right' : 'wrong');
         qz.querySelectorAll('.fx-opt').forEach(function (o) { if (o.dataset.ok === '1') o.classList.add('right'); });
+        var verdict = qz.querySelector('.fx-verdict');
+        if (verdict) { verdict.textContent = ok ? 'Correct.' : 'Not quite.'; if (!ok) verdict.classList.add('no'); }
         var ans = qz.querySelector('.fx-ans'); if (ans) ans.open = true;
-        if (scoreEl) scoreEl.textContent = 'You got ' + right + ' of ' + done + ' right.';
+        var dlg = qz.closest('dialog'), back = dlg && dlg.querySelector('.fx-test-back'); if (back) back.hidden = false;
+        if (scoreEl && inPopdown) scoreEl.textContent = 'You got ' + right + ' of ' + done + ' right.';
       });
+    });
+  });
+
+  // showModal() covers the page, makes it inert, and handles Esc and focus return.
+  document.querySelectorAll('.fx-test-open').forEach(function (btn) {
+    var dlg = btn.nextElementSibling;
+    if (!dlg || !dlg.showModal) return;
+    btn.hidden = false;
+    btn.addEventListener('click', function () { dlg.showModal(); });
+    dlg.querySelectorAll('.fx-test-close').forEach(function (c) {
+      c.addEventListener('click', function () { dlg.close(); });
     });
   });
 
@@ -619,7 +653,7 @@ def _card_html(f, ov: dict, early: bool, is_draft: bool, taxonomy: dict, min_n: 
         + (f'<p class="fx-why"><b>Why does this matter?</b>{e(why)}</p>' if why else "")
         + f'<div class="fx-meta">{meta}</div>'
         + (f'<p class="fx-summary">{e(summary)}</p>' if summary and not early else "")
-        + f'<div class="fx-foot">{_vote_html(f.slug, counts)}'
+        + f'<div class="fx-foot">{_vote_html(f.slug, counts)}{_test_html(f, ov, min_n)}'
         f'<span>Measured {e(f.first_measured)}'
         f'{"" if f.last_refined == f.first_measured else " &middot; updated " + e(f.last_refined)}'
         f' &middot; <a href="{detail}">See the science &rarr;</a></span></div>'
@@ -743,26 +777,43 @@ def _workflow_html(entries, taxonomy: dict, min_n: int, stage: str) -> str:
 def _quiz_card_html(f, ov: dict, min_n: int, with_link: bool = True) -> str:
     e = html_lib.escape
     q = ov.get("quiz") or {}
+    # A stable shuffle, so the right answer isn't predictably in one position.
+    shuffled = sorted(q.get("options", []), key=lambda o: hashlib.sha256(f"{f.slug}:{o}".encode()).hexdigest())
     opts = "".join(
         f'<button type="button" class="fx-opt" data-ok="{"1" if o == q.get("answer") else "0"}">{e(o)}</button>'
-        for o in q.get("options", []))
+        for o in shuffled)
     link = (f' <a href="{_detail_url(f.slug, min_n)}">See the finding &rarr;</a>' if with_link else "")
     return (f'<div class="fx-quiz"><p class="q">{e(q.get("question", ""))}</p>'
-            f'<div class="fx-opts">{opts}</div>'
+            f'<div class="fx-opts">{opts}</div><p class="fx-verdict" aria-live="polite"></p>'
             f'<details class="fx-ans"><summary>Show the answer</summary>'
             f'<p><b>{e(q.get("answer", ""))}.</b> {e(q.get("explain", ""))}{link}</p></details></div>')
 
 
-def _quiz_html(entries, min_n: int) -> str:
-    """Quizzes come only from main-shelf findings: early signals show no
-    headline number, so they cannot be the answer to a quiz either."""
+def _test_html(f, ov: dict, min_n: int) -> str:
+    """The per-finding test: a button and a window that covers the page, so the
+    finding can't be read while answering. Needs JS, so the button stays hidden
+    until the script has wired it up."""
+    if not (ov.get("quiz") or {}).get("options"):
+        return ""
+    return (f'<button type="button" class="fx-test-open" hidden>Test my understanding</button>'
+            f'<dialog class="fx-test" aria-label="Test my understanding"><div class="fx-test-in">'
+            f'<div class="fx-test-top"><span>Test my understanding</span>'
+            f'<button type="button" class="fx-test-close">Close</button></div>'
+            f'{_quiz_card_html(f, ov, min_n, with_link=False)}'
+            f'<button type="button" class="fx-test-close fx-test-back" hidden>Back to the finding</button>'
+            f'</div></dialog>')
+
+
+def _quiz_html(entries, min_n: int, is_open: bool = False) -> str:
+    """The "Test my knowledge" pop-down holds main-shelf findings only: early
+    signals show no headline number, so their questions stay on their own card."""
     cards = [_quiz_card_html(f, ov, min_n) for f, ov, early, _ in entries if ov.get("quiz") and not early]
     if not cards:
         return ""
-    return (f'<h2 id="fx-quiz">Which uses more energy?</h2>'
-            f'<p class="fx-axes">{len(cards)} questions, each answered by one of our measurements. '
-            f'Pick an answer to see the result and the finding behind it.</p>'
-            f'<div class="fx-quizzes">{"".join(cards)}</div><p id="fx-score" class="fx-score" aria-live="polite"></p>')
+    return (f'<details class="fx-early" id="fx-test"{" open" if is_open else ""}>'
+            f'<summary><b>Test my knowledge</b> &middot; {len(cards)} questions, each answered by one of our '
+            f'measurements</summary><div class="fx-quizzes" style="margin-top:0.9rem">{"".join(cards)}</div>'
+            f'<p id="fx-score" class="fx-score" aria-live="polite"></p></details>')
 
 
 def _data_shelf_html(entries, min_n: int) -> str:
@@ -788,7 +839,7 @@ def _layout_vote_html(tally: dict) -> str:
         f'<button type="button" class="fx-vbtn" data-variant="{k}" aria-pressed="false" title="{html_lib.escape(desc)}">'
         f'{html_lib.escape(label)}<b>{sum(counts.get(k, {}).values()) or ""}</b></button>'
         for k, (label, desc) in _VARIANTS.items())
-    return (f'<section class="fx-layout-vote" aria-label="Layout vote"><p>This page comes in three layouts for '
+    return (f'<section class="fx-layout-vote" aria-label="Layout vote"><p>This page comes in two layouts for '
             f'the WattLab group to compare. <b>Which one should we keep?</b> Pick one; pick it again to withdraw.</p>'
             f'<div class="fx-vote">{btns}<span class="fx-vmsg" aria-live="polite"></span></div>'
             f'<p class="fx-mono" style="margin:0.6rem 0 0">Votes are stored without your IP address. '
@@ -804,7 +855,8 @@ def _variant_nav_html(variant: str, min_n: int, is_lab: bool) -> str:
     return f'<nav class="fx-variants" aria-label="Layouts to compare">Layout: {links}{lab}</nav>'
 
 
-def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", is_lab: bool = False) -> str:
+def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", is_lab: bool = False,
+                  open_test: bool = False) -> str:
     e = html_lib.escape
     taxonomy = _load_yaml(_TAXONOMY_PATH)
     entries = _entries(min_n)
@@ -861,9 +913,6 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
         browse = (f'<h2>Browse by stage of the streaming workflow</h2>'
                   f'{_workflow_html(entries, taxonomy, min_n, stage)}')
         top, after = chart, browse
-    elif variant == "quiz":
-        top, after = _quiz_html(entries, min_n) + "<h2>Where the watts go</h2>" + chart, \
-            f'<h2>All findings, by question</h2><div class="fx-themes">{theme_btns}</div>'
     else:
         top, after = chart, f'<h2>Browse by question</h2><div class="fx-themes">{theme_btns}</div>'
 
@@ -880,6 +929,7 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
 <p class="fx-axes">Each finding carries two labels. One says how solid the measurement is: 🟢 Solid, 🟡 Indicative
    or 🔴 Unconfirmed. The other says how far it has been reviewed: Draft, Lab-checked, or Validated by the
    WattLab group. Tell us with 👍 when a finding makes sense to you, or ❓ when it doesn't.</p>
+{_quiz_html(entries, min_n, open_test)}
 {top}
 {after}
 <div class="fx-tools">
@@ -938,9 +988,7 @@ def _detail_html(slug: str, min_n: int) -> str | None:
                     if is_draft else "")
     why = ov.get("why_it_matters", "")
     stage_labels = ", ".join(_stages(taxonomy).get(s, {}).get("label", s) for s in ov.get("stages", []))
-    quiz = (f'<details class="fx-check"><summary>Did I understand this? Try one question</summary>'
-            f'{_quiz_card_html(f, ov, min_n, with_link=False)}</details>'
-            if ov.get("quiz") and not early else "")
+    quiz = f'<div class="fx-check">{_test_html(f, ov, min_n)}</div>' if ov.get("quiz") else ""
 
     caveats = [c for c in f.caveats if not c.startswith("DRAFT pending")]
     caveats_html = "".join(f"<li>{findings_mod.md_to_html(c)}</li>" for c in caveats)
@@ -1086,10 +1134,11 @@ async def _json_body(request: Request) -> dict | None:
             dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def mockup_findings_catalog(request: Request):
     variant = request.query_params.get("v", _DEFAULT_VARIANT)
+    open_test = variant == "quiz"     # the former quiz layout, kept as the MTS QR target
     if variant not in _VARIANTS:
         variant = _DEFAULT_VARIANT
     is_lab = capabilities.can(audience.tier(request), FINDINGS_REVIEW)
-    body = _catalog_html(_min_n(request), variant, request.query_params.get("stage", ""), is_lab)
+    body = _catalog_html(_min_n(request), variant, request.query_params.get("stage", ""), is_lab, open_test)
     return _page(request, "Findings (preview)", body)
 
 
