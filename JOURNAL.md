@@ -118,6 +118,11 @@ layout. Quiz layout retired from the vote (two layouts now, no votes had been ca
 questions drafted by Claude (**Ben to edit**). Early-signal questions carry no measured quantity. Options shuffled:
 the answer had been first in 7 of 9. Card tests no longer feed the pop-down score. Answers not stored.
 
+**Front door:** appraised the preview as an entry point for newcomers: wording and order were the main gap. New opening
+with the GoS "no greenwashing" commitment, takeaway above the chart, energy questions first, lighter cards, "Where
+next?". `?look=gos` tries the GoS colours and serif headings on these pages only, for the group to compare. Fixed the
+"What is unclear?" box, which showed on all 22 cards because `display:flex` beat `hidden`.
+
 ---
 
 ## Session 82 — 2026-11-06 (CR-086: findings preview, next level — from the 5 Nov WattLab call)

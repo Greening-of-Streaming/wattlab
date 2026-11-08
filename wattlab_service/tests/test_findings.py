@@ -628,6 +628,60 @@ def test_right_answer_is_not_usually_listed_first():
     assert first <= 0.6 * len(entries), first
 
 
+def test_opening_says_who_we_are_and_why():
+    text = client.get(_PREVIEW, headers=_ANON).text
+    assert "What does streaming really cost in energy? We measure it." in text
+    assert "Our commitment: no greenwashing." in text
+    assert "a Greening of Streaming lab" in text
+    assert 'src="/static/gos-roundel.png"' in text
+    assert client.get("/static/gos-roundel.png").status_code == 200
+    assert "How to read the labels" in text
+    assert text.index("The screen dominates") < text.index('<div class="fx-chart">')
+
+
+def test_list_leads_with_where_the_energy_goes():
+    entries = _mock._entries(_mock._DEFAULT_MIN_N)
+    assert entries[0][0].slug == "tv-screen-draws-20x-the-streaming-box"
+    order = list(_TAX["theme"]["values"])
+    seen = [order.index(ov["theme"]) for _, ov, _, _ in entries]
+    assert seen == sorted(seen)
+
+
+def test_cards_leave_the_detail_to_the_detail_page():
+    text = client.get(_PREVIEW, headers=_ANON).text
+    card = text.split('<article class="fx-card')[1].split("</article>")[0]
+    ov = _OV["tv-screen-draws-20x-the-streaming-box"]
+    assert ov["n_note"] not in card and "Measured 20" not in card
+    assert "See the science" in card and "Test my understanding" in card
+    detail = client.get(f"{_PREVIEW}/tv-screen-draws-20x-the-streaming-box", headers=_ANON).text
+    assert ov["n_note"] in detail and "Measured 20" in detail
+
+
+def test_page_ends_with_a_way_onward():
+    text = client.get(_PREVIEW, headers=_ANON).text
+    assert "Where next?" in text
+    assert "/membership" in text and "/publications" in text
+
+
+def test_question_box_is_hidden_until_asked():
+    text = client.get(_PREVIEW, headers=_ANON).text
+    assert ".fx-ask[hidden] { display: none }" in text
+    assert '<form class="fx-ask" hidden>' in text
+
+
+def test_gos_look_is_opt_in_and_follows_links():
+    plain = client.get(_PREVIEW, headers=_ANON).text
+    assert '<body data-fx-prefix="/preview-c5d9b3be" class="fx-gos"' not in plain
+    gos = client.get(f"{_PREVIEW}?look=gos", headers=_ANON).text
+    assert '<body data-fx-prefix="/preview-c5d9b3be" class="fx-gos"' in gos
+    assert f'href="{_PREVIEW}/tv-screen-draws-20x-the-streaming-box?look=gos"' in gos
+    assert f'href="{_PREVIEW}?v=workflow&amp;look=gos"' in gos
+    assert f'href="{_PREVIEW}?look=lab"' in gos
+    assert "/findings/source/" not in gos or "download.json?look=gos" not in gos
+    detail = client.get(f"{_PREVIEW}/tv-screen-draws-20x-the-streaming-box?look=gos", headers=_ANON).text
+    assert 'class="fx-gos"' in detail
+
+
 def test_validated_status_needs_a_meeting_date():
     for slug, ov in _OV.items():
         if ov.get("review_status") == "group-validated":

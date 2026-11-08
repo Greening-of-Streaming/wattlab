@@ -20,6 +20,10 @@ CR-086 adds, from the 5 Nov call:
   - 👍 / ❓ on every finding, no thumbs-down (Dom) — stored by finding_feedback.py
   - a Lab-only review queue that ranks findings for the group review (Martin)
   - a "Data only" shelf with the raw measurements and no interpretation (Tania)
+  - a front door for newcomers (2026-11-08): who we are first, the takeaway above
+    the chart, the energy questions before the AI ones, lighter cards, a way
+    onward. `?look=gos` tries the Greening of Streaming colours and serif
+    headings on these pages only, by redefining the theme tokens on <body>
 
 Reads:
   docs/findings/taxonomy.yaml             — controlled vocabulary (questions, facets, stages, synonyms)
@@ -35,6 +39,7 @@ import hashlib
 import html as html_lib
 import io
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -109,8 +114,40 @@ _WATTS = [
 ]
 
 _STYLES = """
+  /* The sitewide muted greys fall below 4.5:1 on the dark background. */
+  body { --text-4: #808080; --text-5: #808080 }
   body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text);
          max-width: 980px; margin: 0 auto; padding: 2rem; }
+  body.fx-gos { --bg: #f7f9f6; --panel: #ffffff; --panel-2: #fbfcfa; --border: #dfe5dd; --border-2: #e8ece6;
+    --border-3: #c5cdc3; --text: #161F2C; --text-2: #2f3a48; --text-3: #505761; --text-4: #5f6873; --text-5: #5f6873;
+    --accent: #466B47; --accent-hover: #35533a; --accent-soft: #466B4722; --warn: #9a5b00; --err: #b3261e }
+  .fx-gos h1, .fx-gos h2, .fx-gos h3, .fx-gos .fx-fig-title { font-family: Georgia, Palatino, serif; color: var(--text) }
+  .fx-gos h2 { font-size: 1.3rem }
+  .fx-gos .fx-card, .fx-gos .fx-fig, .fx-gos .fx-theme { background: var(--panel); border-radius: 6px }
+  .fx-gos .fx-q, .fx-gos .fx-theme span, .fx-gos .fx-why b, .fx-gos details.fx-filters > summary, .fx-gos .fx-eyebrow {
+    font-family: inherit }
+  .fx-gos .fx-hero { background: #e6ede4; box-shadow: 0 0 0 100vmax #e6ede4; clip-path: inset(0 -100vmax);
+    padding: 1.75rem 0; margin: 0 0 1.75rem }
+  .fx-gos .fx-hero-in { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1.5rem 1.6rem }
+  .fx-gos .fx-cta { background: #263951; border-color: #263951; color: #fff; border-radius: 4px }
+  .fx-gos .fx-cta-2 { border-radius: 4px; border-color: #263951; color: #263951 }
+  .fx-hero { margin: 0 0 1.5rem }
+  .fx-hero h1 { font-size: 1.85rem; line-height: 1.3; margin: 0.3rem 0 0.8rem }
+  .fx-eyebrow { color: var(--text-3); font-family: monospace; font-size: 0.78rem; margin: 0; display: flex;
+    align-items: center; gap: 0.6rem }
+  .fx-lede a { color: var(--accent) }
+  footer a { color: var(--accent) }
+  .fx-commit { color: var(--text-2); line-height: 1.7; max-width: 680px; margin: 0.6rem 0 0; font-size: 0.95rem }
+  .fx-commit b { color: var(--text) }
+  .fx-ctas { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1.1rem }
+  .fx-cta, .fx-cta-2 { padding: 0.55rem 1rem; font-size: 0.92rem; text-decoration: none; border: 1px solid var(--accent) }
+  .fx-cta { background: var(--accent); color: var(--bg); font-weight: 600 }
+  .fx-cta-2 { color: var(--accent) }
+  .fx-labels { margin: 1.25rem 0 0 }
+  .fx-labels > summary { cursor: pointer; color: var(--text-3); font-size: 0.82rem }
+  .fx-labels .fx-axes { margin: 0.5rem 0 0 }
+  .fx-next-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin: 0; font-size: 0.95rem }
+  .fx-next-links a { color: var(--accent) }
   h1 { font-family: monospace; color: var(--accent); font-size: 1.6rem; margin: 0 0 0.6rem; }
   h2 { font-family: monospace; color: var(--accent); font-size: 1.05rem; margin: 2.5rem 0 0.9rem; }
   .fx-preview { color: var(--text-4); font-family: monospace; font-size: 0.72rem; margin: 0 0 1.25rem;
@@ -123,7 +160,6 @@ _STYLES = """
   .fx-variants a[aria-current="page"] { color: var(--accent); border-bottom: 2px solid var(--accent) }
   .fx-variants .fx-lab { margin-left: auto }
   .fx-lede { color: var(--text-2); line-height: 1.75; max-width: 680px; margin: 0 0 0.5rem; font-size: 1rem }
-  .fx-proof { color: var(--text-3); font-size: 0.82rem; margin: 0 0 0.5rem }
   .fx-axes { color: var(--text-3); font-size: 0.8rem; line-height: 1.6; max-width: 680px; margin: 0 0 1.75rem }
   .fx-fig { border: 1px solid var(--border); background: var(--panel-2); padding: 1.2rem 1.25rem 1rem;
     display: flex; flex-direction: column; gap: 0.6rem }
@@ -231,7 +267,7 @@ _STYLES = """
   .fx-meta { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; align-items: baseline; font-size: 0.78rem }
   .fx-pill { border: 1px solid var(--border-3); padding: 0.05rem 0.55rem; border-radius: 999px; color: var(--text-2);
     white-space: nowrap }
-  .fx-draft { border-color: var(--warn); color: var(--warn) }
+  .fx-draft { border-style: dashed; color: var(--text-3) }
   .fx-rev { border-style: dashed }
   .fx-rev.validated { border-style: solid; border-color: var(--accent); color: var(--accent) }
   .fx-key { color: var(--accent); font-family: monospace; font-weight: bold; font-size: 0.88rem }
@@ -240,8 +276,7 @@ _STYLES = """
     padding-left: 0.7rem }
   .fx-why b { color: var(--text-3); font-family: monospace; font-size: 0.68rem; letter-spacing: 0.05em;
     text-transform: uppercase; font-weight: normal; display: block }
-  .fx-summary { color: var(--text-2); font-size: 0.88rem; line-height: 1.65; margin: 0 }
-  .fx-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem;
+  .fx-foot { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 0.5rem 0.9rem;
     font-size: 0.75rem; color: var(--text-4) }
   .fx-foot a { color: var(--accent); text-decoration: none }
   .fx-vote { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem }
@@ -251,6 +286,7 @@ _STYLES = """
   .fx-vbtn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft) }
   .fx-vbtn b { font-weight: normal; font-family: monospace; margin-left: 0.25rem }
   .fx-ask { display: flex; gap: 0.35rem; width: 100%; margin-top: 0.25rem }
+  .fx-ask[hidden] { display: none }
   .fx-ask input { flex: 1; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--border-3);
     padding: 0.3rem 0.5rem; font: inherit; font-size: 0.8rem }
   .fx-vmsg { color: var(--text-4); font-size: 0.72rem }
@@ -299,6 +335,14 @@ _STYLES = """
     .fx-facet-label { min-width: 100%; }
     .fx-variants .fx-lab { margin-left: 0 }
     .fx-gaps { grid-template-columns: 1fr }
+  }
+  /* Last, so it beats the base rules above. */
+  @media (max-width: 600px) {
+    body { padding: 3.25rem 1rem 1rem }
+    .fx-hero h1 { font-size: 1.5rem }
+    .fx-fig-sub { display: none }
+    .fx-themes { display: flex; overflow-x: auto; padding-bottom: 0.4rem }
+    .fx-theme { flex: 0 0 200px }
   }
 """
 
@@ -482,6 +526,10 @@ _INTERACT_JS = """
     });
   });
 
+  document.querySelectorAll('a[href="#fx-test"]').forEach(function (a) {
+    a.addEventListener('click', function () { if (popdown) popdown.open = true; });
+  });
+
   // showModal() covers the page, makes it inert, and handles Esc and focus return.
   document.querySelectorAll('.fx-test-open').forEach(function (btn) {
     var dlg = btn.nextElementSibling;
@@ -551,8 +599,9 @@ def _search_text(f, ov: dict, taxonomy: dict) -> str:
 
 def _entries(min_n: int):
     """(finding, overlay, is_early, is_draft) — every published finding plus
-    the drafts the overlay names, newest first. A published finding with no
-    overlay entry falls back to its technical headline."""
+    the drafts the overlay names, in the taxonomy's question order (where the
+    energy goes first), newest first within a question. A published finding
+    with no overlay entry falls back to its technical headline."""
     overlay = _load_yaml(_OVERLAY_PATH)
     items = [(f, False) for f in findings_mod.list_all()]
     for slug, ov in overlay.items():
@@ -564,6 +613,8 @@ def _entries(min_n: int):
             if d is not None:
                 items.append((d, True))
     items.sort(key=lambda x: x[0].last_refined, reverse=True)
+    order = {k: i for i, k in enumerate(_load_yaml(_TAXONOMY_PATH).get("theme", {}).get("values", {}))}
+    items.sort(key=lambda x: order.get((overlay.get(x[0].slug) or {}).get("theme"), len(order)))
     out = []
     for f, is_draft in items:
         ov = overlay.get(f.slug) or {}
@@ -638,9 +689,7 @@ def _card_html(f, ov: dict, early: bool, is_draft: bool, taxonomy: dict, min_n: 
                 f'<span class="fx-nchip">not yet repeated {min_n}&times;, so no headline number</span>')
     else:
         meta = (f'{review}<span class="fx-pill" title="{e(meaning)}">{dot} {e(word)}</span>'
-                f'<span class="fx-key">{e(ov.get("key_number", ""))}</span>'
-                f'<span class="fx-nchip">{e(ov.get("n_note") or n_txt)}</span>')
-    summary = ov.get("plain_summary", "")
+                f'<span class="fx-key">{e(ov.get("key_number", ""))}</span>')
     why = ov.get("why_it_matters", "")
     stages = ov.get("stages", [])
     hidden = " hidden" if stage and stage not in stages else ""
@@ -650,13 +699,10 @@ def _card_html(f, ov: dict, early: bool, is_draft: bool, taxonomy: dict, min_n: 
         f'data-tags="{e(" ".join(ov.get("tags", [])))}" data-text="{e(_search_text(f, ov, taxonomy))}"{hidden}>'
         f'<span class="fx-q">{e(theme.get("label", ""))}</span>'
         f'<h3><a href="{detail}">{e(headline)}</a></h3>'
+        f'<div class="fx-meta">{meta}</div>'
         + (f'<p class="fx-why"><b>Why does this matter?</b>{e(why)}</p>' if why else "")
-        + f'<div class="fx-meta">{meta}</div>'
-        + (f'<p class="fx-summary">{e(summary)}</p>' if summary and not early else "")
-        + f'<div class="fx-foot">{_vote_html(f.slug, counts)}{_test_html(f, ov, min_n)}'
-        f'<span>Measured {e(f.first_measured)}'
-        f'{"" if f.last_refined == f.first_measured else " &middot; updated " + e(f.last_refined)}'
-        f' &middot; <a href="{detail}">See the science &rarr;</a></span></div>'
+        + f'<div class="fx-foot"><a href="{detail}">See the science &rarr;</a>'
+        f'{_test_html(f, ov, min_n)}{_vote_html(f.slug, counts)}</div>'
         f'</article>'
     )
 
@@ -846,17 +892,21 @@ def _layout_vote_html(tally: dict) -> str:
             f'This browser keeps a random ID so a vote can be changed or withdrawn.</p></section>')
 
 
-def _variant_nav_html(variant: str, min_n: int, is_lab: bool) -> str:
+def _variant_nav_html(variant: str, min_n: int, is_lab: bool, look: str = "lab") -> str:
     links = " ".join(
         f'<a href="{_PREFIX}/findings{_variant_qs(k, min_n)}" title="{html_lib.escape(desc)}"'
         f'{" aria-current=&quot;page&quot;" if k == variant else ""}>{html_lib.escape(label)}</a>'
         for k, (label, desc) in _VARIANTS.items())
     lab = (f'<a class="fx-lab" href="{_PREFIX}/findings/review">Lab: review queue &rarr;</a>' if is_lab else "")
-    return f'<nav class="fx-variants" aria-label="Layouts to compare">Layout: {links}{lab}</nav>'
+    looks = " ".join(
+        f'<a href="{_PREFIX}/findings{_variant_qs(variant, min_n, look=k)}"'
+        f'{" aria-current=&quot;page&quot;" if k == look else ""}>{label}</a>'
+        for k, label in (("lab", "OWL lab"), ("gos", "GoS website")))
+    return f'<nav class="fx-variants" aria-label="Layouts to compare">Layout: {links} &nbsp; Look: {looks}{lab}</nav>'
 
 
 def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", is_lab: bool = False,
-                  open_test: bool = False) -> str:
+                  open_test: bool = False, look: str = "lab") -> str:
     e = html_lib.escape
     taxonomy = _load_yaml(_TAXONOMY_PATH)
     entries = _entries(min_n)
@@ -896,15 +946,16 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
     n_main_shown = sum(1 for _, ov, _, _ in main if not stage or stage in ov.get("stages", []))
 
     chart = f"""
+<h2 id="fx-found">The biggest surprise so far: the screen</h2>
 <section class="fx-fig" aria-labelledby="fx-watts">
   <div class="fx-fig-title" id="fx-watts">Where the watts go when you watch</div>
+  <p class="fx-fig-note">The screen dominates, the TV's own picture setting outweighs every streaming choice, and
+     4K, HDR and bitrate cost far less at the box than the debate suggests. Select a bar for the finding behind it.</p>
   <div class="fx-fig-sub">Watts at the wall while playing video on one 55-inch OLED TV and the box feeding it.
      A watt drawn for an hour is a watt-hour, so each bar is also the energy per hour of viewing.</div>
   <div class="fx-legend" aria-hidden="true"><span><i style="background:var(--accent)"></i>Total draw</span>
      <span><i style="background:var(--text-4)"></i>Extra draw from one choice</span></div>
   <div class="fx-chart">{_watts_chart_html(min_n)}</div>
-  <p class="fx-fig-note">The screen dominates, the TV's own picture setting outweighs every streaming choice, and
-     4K, HDR and bitrate cost far less at the box than the debate suggests. Select a bar for the finding behind it.</p>
   <p class="fx-fig-cap">All values n=3, measured October 2026. One TV and one box: this shows the scale,
      not a market average. Network and data-centre energy are not included.</p>
 </section>"""
@@ -919,19 +970,26 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
     return f"""
 <p class="fx-preview"><b>Preview</b> of the redesigned findings page, for discussion &middot;
    {n_drafts} findings marked Draft are awaiting lab review &middot; numbers link to the stored measurements</p>
-{_variant_nav_html(variant, min_n, is_lab)}
-<h1>What we've measured</h1>
-<p class="fx-lede">OWL, the <strong>Open WattLab</strong>, is the measurement lab of <strong>Greening of
-   Streaming</strong>, a member-funded non-profit. We measure real streaming hardware at the wall socket, repeat
-   every test, and publish the confidence and the raw data behind each result.</p>
-<p class="fx-proof">{len(main)} findings repeated at least {min_n}&times; &middot; {len(early)} early signals
-   &middot; every one linked to its stored measurement</p>
-<p class="fx-axes">Each finding carries two labels. One says how solid the measurement is: 🟢 Solid, 🟡 Indicative
-   or 🔴 Unconfirmed. The other says how far it has been reviewed: Draft, Lab-checked, or Validated by the
-   WattLab group. Tell us with 👍 when a finding makes sense to you, or ❓ when it doesn't.</p>
+{_variant_nav_html(variant, min_n, is_lab, look)}
+<section class="fx-hero"><div class="fx-hero-in">
+  <p class="fx-eyebrow"><img src="/static/gos-roundel.png" alt="" width="39" height="40">
+     <span>The Open WattLab &middot; a Greening of Streaming lab</span></p>
+  <h1>What does streaming really cost in energy? We measure it.</h1>
+  <p class="fx-lede">The Open WattLab is the measurement lab of <a href="{ui.GOS_URL}" target="_blank" rel="noopener">Greening
+     of Streaming</a>, a member-funded non-profit working to cut the environmental impact of streaming. We test real
+     equipment at the wall socket and publish every result with the data behind it.</p>
+  <p class="fx-commit"><b>Our commitment: no greenwashing.</b> Every number here links to the measurement behind it,
+     and we say how solid it is.</p>
+  <div class="fx-ctas"><a class="fx-cta" href="#fx-found">See what we've found</a>
+     <a class="fx-cta-2" href="#fx-test">Test my knowledge</a></div>
+</div></section>
 {_quiz_html(entries, min_n, open_test)}
 {top}
 {after}
+<details class="fx-labels"><summary>How to read the labels</summary>
+<p class="fx-axes">Each finding carries two labels. One says how solid the measurement is: 🟢 Solid, 🟡 Indicative
+   or 🔴 Unconfirmed. The other says how far it has been reviewed: Draft, Lab-checked, or Validated by the
+   WattLab group. Tell us with 👍 when a finding makes sense to you, or ❓ when it doesn't.</p></details>
 <div class="fx-tools">
   <input id="fx-q" class="fx-search" type="search" aria-label="Search findings"
          placeholder="Search findings, e.g. 4K, set-top box, AV1, picture mode, AI">
@@ -949,6 +1007,10 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
      The numbers, limits and raw data are one click away.</p>
   <div class="fx-list">{cards(early)}</div>
 </details>
+<h2>Where next?</h2>
+<p class="fx-next-links"><a href="/methodology">How we measure</a>
+   <a href="{ui.GOS_URL.rstrip("/")}/publications" target="_blank" rel="noopener">Our publications</a>
+   <a href="{ui.GOS_URL.rstrip("/")}/membership" target="_blank" rel="noopener">Join Greening of Streaming</a></p>
 {_data_shelf_html(entries, min_n)}
 {_layout_vote_html(tally)}
 <script>{_FILTER_JS}</script>
@@ -1100,10 +1162,27 @@ def _review_html(min_n: int) -> str:
 """
 
 
+_PREVIEW_HREF = re.compile(r'href="(' + re.escape(_PREFIX) + r'/findings[^"#]*)(#[^"]*)?"')
+
+
+def _look(request: Request) -> str:
+    return "gos" if request.query_params.get("look") == "gos" else "lab"
+
+
+def _carry_gos_look(m: re.Match) -> str:
+    url, fragment = m.group(1), m.group(2) or ""
+    if "look=" in url or "/findings/source/" in url:
+        return m.group(0)
+    return f'href="{url}{"&amp;" if "?" in url else "?"}look=gos{fragment}"'
+
+
 def _page(request: Request, title: str, body: str) -> HTMLResponse:
+    gos = _look(request) == "gos"
+    if gos:
+        body = _PREVIEW_HREF.sub(_carry_gos_look, body)
     page = ui.render_page(request, title, body, styles=_STYLES, head=_NOINDEX, back=False)
     # The interaction script reads the route prefix from the body element.
-    page = page.replace("<body", f'<body data-fx-prefix="{_PREFIX}"', 1)
+    page = page.replace("<body", f'<body data-fx-prefix="{_PREFIX}"' + (' class="fx-gos"' if gos else ""), 1)
     return HTMLResponse(page)
 
 
@@ -1138,7 +1217,7 @@ async def mockup_findings_catalog(request: Request):
     if variant not in _VARIANTS:
         variant = _DEFAULT_VARIANT
     is_lab = capabilities.can(audience.tier(request), FINDINGS_REVIEW)
-    body = _catalog_html(_min_n(request), variant, request.query_params.get("stage", ""), is_lab, open_test)
+    body = _catalog_html(_min_n(request), variant, request.query_params.get("stage", ""), is_lab, open_test, _look(request))
     return _page(request, "Findings (preview)", body)
 
 

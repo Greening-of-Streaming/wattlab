@@ -1433,6 +1433,15 @@ no measured quantity (enforced by test). Options are shuffled by a slug-seeded h
 first in 7 of 9. Answers are checked in the browser and not stored, so /privacy is unchanged. This stops glancing at
 the card; it can't stop another tab or view-source, and nothing is at stake. 13 new questions drafted by Claude, **Ben to edit**.
 
+**Front door for newcomers (2026-11-08, owner):** the preview opens with who we are, "Our commitment: no greenwashing"
+and the takeaway above the chart. Findings run in the taxonomy's question order, energy first. Cards shed summary,
+repeat note and dates (all on the detail page). A "Where next?" row ends the page. `?look=gos` redefines the theme
+tokens on `<body>` for these pages only, to compare the GoS colours and Georgia headings with the lab look; it departs
+from "preserve the lab look" on purpose, for the group to judge. Muted text raised to 4.5:1 on this page; sitewide
+`--text-4`/`--text-5` still measure 4.0 and 2.9:1 despite the comments in `ui.py`. The first four findings are
+still Draft and should be lab-checked before this leads the site. GoS roundel in the opening, on both looks
+(`static/gos-roundel.png`, 160 px transparent PNG, from the owner's 776×804 master).
+
 **Phase B (after the group picks):**
 1. Move overlay fields into frontmatter; `findings.py:_validate` checks `review_status`, `stages`,
    `why_it_matters`, `quiz` shape; `finding-draft` skill requires `why_it_matters`, sets `machine-draft`.
