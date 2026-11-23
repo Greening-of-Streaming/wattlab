@@ -110,6 +110,17 @@ remote/Tania operation. Do not run display arms on two boxes at once.
 #   See JOURNAL S73 + docs/intra_content_sync_2026-09-03.md. Earlier session headers live in JOURNAL.)
 ```
 
+## Session 85 — 2026-11-23 (GoS2 failures on the call: scratch folder, failed encodes, Enhancement hidden)
+
+On the 23 Nov call GoS2 returned an instant H.264 GPU run with a negative delta, and empty Enhancement pages.
+`/tmp/wattlab_uploads`, created only at import, had been removed by macOS's nightly tmp cleaner (OWL up since 5 Nov),
+and the failed encode was still stored as a result. Fixed in `0528341`: `video.scratch()` recreates the folder per
+job, `run_single` raises on a failed encode, and `ui.router_on()` hides links to a disabled router. GoS2 now disables
+`routes_enhance` (Pixop is GoS1-only). Deploy state, the quarantined jobs and the open `/decode` nav item: CR-085
+follow-up.
+
+---
+
 ## Session 83 — 2026-11-08 (CR-086: a test on every finding)
 
 Owner, following Barbara's "gamify it": every finding on the preview now has a multiple-choice question behind "Test my

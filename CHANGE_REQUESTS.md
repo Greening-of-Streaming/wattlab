@@ -1383,6 +1383,26 @@ cannot sum feeds or dual PSUs; decode/rig plugs use separate Tapo code; (b) `aut
 with one process per server (no overlapping blue/green restarts); (e) the decode rig hardcodes subnet/origin
 (`decode_run.STREAM_BASE_URL`). That is by design, because the rig is tied to GoS1.
 
+### Follow-up 2026-11-23 — GoS2 failures on the 23 Nov call (`0528341`)
+On the call, an H.264 GPU run on GoS2 (through the gateway) ended at once with a negative delta, and the
+Enhancement and sweet-spot pages were empty.
+- **Scratch folder.** `/tmp/wattlab_uploads` was created only at import. GoS2's OWL had been up since 5 Nov and
+  macOS's nightly tmp cleaner had removed the folder, so ffmpeg could not open its output. `video.scratch()` now
+  recreates it on each use. It stays in `/tmp`, so the measured write path is unchanged.
+- **Failed encodes.** The failed run was stored with a ΔW from a 0.1 s window. `run_single` now raises, as
+  `remote_video` already did: the page shows the ffmpeg error and nothing is saved. One failed side aborts a compare
+  or all-codecs sweep.
+- **Enhancement on GoS2.** Pixop is GoS1-only, so GoS2's `settings.json` now has `routes_enhance` in
+  `disabled_routers`. `ui.router_on()` is the one check behind the nav, the home grid and the tour's member link.
+- **Data.** Jobs `d0255125` and `93ac35e9` moved to `results/_quarantine_2026-11-23/` on both nodes (GoS1 held
+  replicas).
+- **Verified on GoS2:** with the folder removed, bbb_120s H.264 GPU ran 19.8 s at +32.1 W (job `8a4283c5`); a broken
+  command returned the ffmpeg error and saved nothing.
+- **Deploy state.** GoS2 carries the fix as a staged patch on `9cb5be4`, not through `main:deploy`. Before the next
+  `git merge --ff-only deploy` there, run `git restore --staged --worktree wattlab_service`. GoS1's service was not
+  restarted (lab session raised), so GoS1 runs the old code until its next restart.
+- **Open.** GoS2's `/decode` is rendered by GoS1, so its nav still shows Enhancement, which is a 404 on GoS2.
+
 ---
 
 ## CR-086 · Findings page, next level — layouts to vote on, review ladder, 👍/❓, workflow map
