@@ -480,6 +480,13 @@ def _findings_on() -> bool:
     return cfg.load().get("findings_enabled", False)
 
 
+def router_on(name: str) -> bool:
+    """False when this node leaves a feature's router unmounted (settings
+    `disabled_routers`, e.g. Pixop enhancement on GoS2). Every link to that
+    feature's pages asks here, so no surface points at a 404."""
+    return name not in (cfg.load().get("disabled_routers") or [])
+
+
 def _footer() -> str:
     link = _FINDINGS_LINK if _findings_on() else ""
     return _FOOTER.replace("<!--FINDINGS-->", link)
@@ -510,12 +517,11 @@ def _nav_items(request: Request) -> tuple:
 def _nav_html(request: Request) -> str:
     path = request.url.path
     links = []
-    off = set(cfg.load().get("disabled_routers") or [])
     for href, label in _nav_items(request):
         if href == "/findings" and not _findings_on():
             continue
-        if (label == "Decode" and "routes_decode" in off) or \
-           (label == "Enhancement" and "routes_enhance" in off):
+        if (label == "Decode" and not router_on("routes_decode")) or \
+           (label == "Enhancement" and not router_on("routes_enhance")):
             continue
         active = path == href
         color = "var(--accent)" if active else "var(--text-3)"

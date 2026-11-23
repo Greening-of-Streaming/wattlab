@@ -23,6 +23,15 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 LOCK_FILE = Path("/tmp/gos-measure.lock")
 
 
+def scratch(name: str) -> Path:
+    """Path for an encode output in UPLOAD_DIR, creating the folder if it is
+    gone. The import-time mkdir above is not enough on a long-running node:
+    macOS clears idle /tmp entries nightly, and on GoS2 (23 Nov 2026) every
+    encode then failed with ffmpeg unable to open its output."""
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    return UPLOAD_DIR / name
+
+
 # Services to pause during measurement.
 # owl-maintenance-watchdog.timer (CR-015) fires every 60s and produced a
 # ~10W bump that landed in roughly every variance-calibration baseline
@@ -618,7 +627,7 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
     s = cfg.load()
     preset = PRESETS[preset_key]
     bps = _preset_bps(preset_key, s)
-    output_path = UPLOAD_DIR / f"{job_id}_{preset_key}_out.mp4"
+    output_path = scratch(f"{job_id}_{preset_key}_out.mp4")
 
     stop_event = asyncio.Event()
     t_start = time.time()
@@ -652,6 +661,14 @@ async def run_single(input_path: Path, job_id: str, preset_key: str,
     t_end = time.time()
     stop_event.set()
     readings = await poll_task
+
+    # A failed encode is not a measurement: its task window is only ffmpeg's
+    # start-up, so a ΔW/ΔE from it is noise that would be stored and shown
+    # as a result. Raise instead (same as remote_video); the route reports
+    # the ffmpeg error and saves nothing.
+    if not transcode_result.get("success"):
+        raise RuntimeError(f"{preset['label']} encode failed: "
+                           f"{(transcode_result.get('stderr') or '').strip()[-300:]}")
 
     delta_t = round(t_end - t_start, 1)
     w_base = baseline["w_base"]
@@ -1211,7 +1228,7 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
             w_base_cpu = sum(raw_cpu_base) / len(raw_cpu_base)
 
             # --- CPU encode ---
-            out_cpu = UPLOAD_DIR / f"{job_id}_var_cpu_{i}.mp4"
+            out_cpu = scratch(f"{job_id}_var_cpu_{i}.mp4")
             cmd_cpu = apply_custom_cmd(cpu_tpl, meridian, out_cpu)
             _stage("H.264 CPU encode")
             stop_cpu = asyncio.Event()
@@ -1254,7 +1271,7 @@ async def run_variance_calibration(job_id: str, jobs: dict) -> dict:
                 w_base_gpu = sum(raw_gpu_base) / len(raw_gpu_base)
 
                 # --- GPU encode ---
-                out_gpu = UPLOAD_DIR / f"{job_id}_var_gpu_{i}.mp4"
+                out_gpu = scratch(f"{job_id}_var_gpu_{i}.mp4")
                 cmd_gpu = apply_custom_cmd(gpu_tpl, meridian, out_gpu)
                 _stage("H.265 GPU encode")
                 stop_gpu = asyncio.Event()

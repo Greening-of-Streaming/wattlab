@@ -31,7 +31,7 @@ import hosts
 import power
 import settings as cfg
 from confidence import confidence
-from video import (LOCK_FILE, UPLOAD_DIR, _attach_vmaf, _clear_progress,
+from video import (LOCK_FILE, scratch, _attach_vmaf, _clear_progress,
                    _make_progress_cb, _probe_duration, analyse,
                    cooldown_between_runs, probe_output_stream, transcode)
 
@@ -131,7 +131,7 @@ async def _encode_once(host: dict, engine_id: str, codec: str, in_rel: str,
         out_size_mb, stream, fetched = probe["size_mb"], probe["stream"], None
     else:
         # Fallback: pull the encode back for size, ffprobe and VMAF on GoS1.
-        local_out = UPLOAD_DIR / f"{job_id}_{key}_out.mp4"
+        local_out = scratch(f"{job_id}_{key}_out.mp4")
         fetched = await asyncio.to_thread(hosts.fetch, host, out_rel, local_out)
         hosts.run(host, f"rm -f {shlex.quote(out_rel)}")
         out_size_mb = round(local_out.stat().st_size / 1024 / 1024, 2) \

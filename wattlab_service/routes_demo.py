@@ -563,7 +563,7 @@ _DEMO_HTML = f"""
       Running an enhancement yourself is a <strong>member feature</strong> &mdash; each run
       holds the lab GPU for real minutes, and an open free enhancer would turn the
       measurement bench into a video-improvement service.
-      <a href="/auth/sign-in?next=/enhance-run" style="color:var(--accent);text-decoration:none;border-bottom:1px solid var(--border-2);padding-bottom:1px">Members: sign in and open ML Video Enhancement &rarr;</a>
+      {{ENHANCE_MEMBER_LINK}}
     </p>
   </div>
   <div class="btn-row" style="margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--panel)">
@@ -1794,6 +1794,14 @@ def _machine_sentence() -> str:
     return f"{lh['label']} is a {lh.get('machine') or 'computer'} ({lh.get('chip') or 'unknown chip'})."
 
 
+# The tour's enhancement step links members to /enhance-run; a node with that
+# router off (ui.router_on) keeps the showcase text and drops the link.
+_ENHANCE_MEMBER_LINK = (
+    '<a href="/auth/sign-in?next=/enhance-run" style="color:var(--accent);text-decoration:none;'
+    'border-bottom:1px solid var(--border-2);padding-bottom:1px">'
+    'Members: sign in and open ML Video Enhancement &rarr;</a>')
+
+
 @router.get("/demo", response_class=HTMLResponse, dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def demo_page(request: Request):
     # CR-002: confidence numbers and baseline/cooldown windows in the Guided
@@ -1845,6 +1853,7 @@ async def demo_page(request: Request):
             .replace("{CONF_GREEN_POLLS}",   str(s.get("conf_green_polls",   "—")))
             .replace("{CONF_YELLOW_POLLS}",  str(s.get("conf_yellow_polls",  "—")))
             .replace("{BETA_CHIP}",          _BETA_CHIP)
+            .replace("{ENHANCE_MEMBER_LINK}", _ENHANCE_MEMBER_LINK if ui.router_on("routes_enhance") else "")
             .replace("{TIER_INDICATOR}",     _tier_indicator_html(request))
             .replace("{UPLOAD_MEMBER_MB}",   str(member_cap_mb))
             .replace("{GPU_H265_ENC}",       _gpu_enc("h265"))

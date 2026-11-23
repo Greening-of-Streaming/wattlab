@@ -326,6 +326,11 @@ async def index(request: Request):
 
     watts = _power_cache["watts"]
     watts_str = f"{watts:.1f}" if watts is not None else "—"
+    # Same rule as the slim nav (ui._nav_html): no link to an unmounted router.
+    decode_link = ('<div class="nav-video"><a href="/decode">▣ Client decode rig</a></div>'
+                   if ui.router_on("routes_decode") else "")
+    enhance_link = ('<div class="nav-video"><a href="/enhance-run">✦ ML Video Enhancement</a></div>'
+                    if ui.router_on("routes_enhance") else "")
     return ui.render_page(request, "GoS", back=False, styles=f"""
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: monospace; background: var(--bg); color: var(--text);
@@ -403,8 +408,8 @@ async def index(request: Request):
     <div class="nav">
         <div class="nav-tour"><a href="/demo">◆ Guided Tour</a></div>
         <div class="nav-video"><a href="/video">▶ Video transcode</a></div>
-        <div class="nav-video"><a href="/decode">▣ Client decode rig</a></div>
-        <div class="nav-video"><a href="/enhance-run">✦ ML Video Enhancement</a></div>
+        {decode_link}
+        {enhance_link}
         <div class="nav-label">Beta · exploratory</div>
         <div class="nav-beta-note">
             Energy / quality / faithfulness tradeoffs we're investigating.<br>

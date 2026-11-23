@@ -30,7 +30,7 @@ from pathlib import Path
 import settings as cfg
 import persist
 from power import get_power_watts
-from video import (LOCK_FILE, UPLOAD_DIR, POLL_INTERVAL, apply_custom_cmd,
+from video import (LOCK_FILE, scratch, POLL_INTERVAL, apply_custom_cmd,
                    focus_mode_enter, focus_mode_exit, transcode,
                    variance_template)
 
@@ -227,7 +227,7 @@ async def _measure_one(workload, cmd_tpl, input_video, distance_s, n_polls,
     _stage(f"pre-cool {pre_cool_s}s")
     await asyncio.sleep(pre_cool_s)
 
-    out_path = UPLOAD_DIR / f"probe_{run_idx}_{workload}.mp4"
+    out_path = scratch(f"probe_{run_idx}_{workload}.mp4")
     cmd = apply_custom_cmd(cmd_tpl, input_video, out_path)
     _stage("encode")
     t0 = time.time()
