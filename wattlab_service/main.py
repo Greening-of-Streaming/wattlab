@@ -56,6 +56,7 @@ import routes_decode   # client-decode rig power console (Lab-only, RIG_CONTROL)
 import routes_demo
 import routes_enhance
 import routes_findings
+import routes_findings_feed   # CR-087 — /findings.json for the GoS website (Wix pulls it)
 import routes_image
 import routes_llm
 import routes_methodology
@@ -71,7 +72,7 @@ import routes_video
 
 for _feature in (routes_audience, routes_auth, routes_benchmark, routes_budget, routes_decode,
                  routes_demo,
-                 routes_enhance, routes_findings, routes_image, routes_llm,
+                 routes_enhance, routes_findings, routes_findings_feed, routes_image, routes_llm,
                  routes_methodology, routes_mockups, routes_mockup_findings, routes_peer, routes_privacy, routes_rag,
                  routes_rem, routes_results, routes_settings, routes_video):
     # `disabled_routers` (settings, read once at boot): a node without the

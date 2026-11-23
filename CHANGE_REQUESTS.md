@@ -1484,6 +1484,30 @@ The group votes on the look as well as the layout: two independent questions at 
 **Out of scope, follow-ups:** MTS event kit (QR → `?v=quiz`); a regulator-facing version (Barbara); CR-031
 database if vote volume grows.
 
+
+---
+## CR-087 · Findings on the GoS website — /findings.json, pulled into Wix
+
+**Status:** opened 2026-11-10 (owner: the website must keep working when OWL is offline). OWL side built: new
+`routes_findings_feed.py` serves `/findings.json` (public, read-only, schema_version 1, follows `findings_enabled`).
+Wix side written, not yet installed: `docs/wix_bridge/` (README, `backend/owlSync.js`, `backend/jobs.config`,
+`findings-page.js`).
+
+**Design:** Wix pulls the feed hourly into its own CMS collection `OwlFindings` and the website page reads only that
+collection, so it shows the last good copy whenever OWL is unreachable. OWL holds no Wix credentials. A failed,
+malformed or suddenly empty download changes nothing on the site; a finding leaves the site only after a good
+download that no longer lists it.
+
+**What crosses over:** findings at Lab-checked or Validated only, so the CR-086 Lab validation button is the switch
+that publishes a finding to the website. Early signals carry no headline number or summary. Validator names never
+leave OWL. Drafts have no public page, so their `url` is null and the website shows them without a link.
+
+**Tested:** feed tests in `tests/test_findings_feed.py`; `owlSync.js` run under node with Wix modules stubbed,
+against the real feed (first sync, stale removal, OWL down, garbled feed, empty feed). The first run inside Wix is
+the real check.
+
+**Phase B of CR-086** must keep this feed's output when the overlay moves into frontmatter.
+
 ---
 
 ## Backlog notes recovered from session memory (2026-08-19, not CRs yet)

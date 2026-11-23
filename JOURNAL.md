@@ -121,6 +121,16 @@ follow-up.
 
 ---
 
+## Session 84 — 2026-11-10 (CR-087: findings on the GoS website)
+
+Owner wants the Wix website to show findings and keep working when OWL is offline. Built `/findings.json`
+(`routes_findings_feed.py`, Lab-checked and above only) and the Wix side in `docs/wix_bridge/`: an hourly Velo job
+copies the feed into a CMS collection, and the page reads only that. Sync logic tested under node with Wix stubbed:
+OWL down, garbled or empty leaves the site unchanged. Today the feed holds 12 findings, 10 of them early signals,
+because the strongest findings are still machine drafts. Not yet installed in Wix.
+
+---
+
 ## Session 83 — 2026-11-08 (CR-086: a test on every finding)
 
 Owner, following Barbara's "gamify it": every finding on the preview now has a multiple-choice question behind "Test my
