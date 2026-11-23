@@ -22,8 +22,10 @@ CR-086 adds, from the 5 Nov call:
   - a "Data only" shelf with the raw measurements and no interpretation (Tania)
   - a front door for newcomers (2026-11-08): who we are first, the takeaway above
     the chart, the energy questions before the AI ones, lighter cards, a way
-    onward. `?look=gos` tries the Greening of Streaming colours and serif
-    headings on these pages only, by redefining the theme tokens on <body>
+    onward. These pages use the Greening of Streaming look by default, by
+    redefining the theme tokens on <body>; `?look=lab` keeps the dark lab look
+  - a "Lab validation" button for Lab visitors: records who checked a finding
+    and when (finding_validation.py) and moves a Draft to Lab-checked
 
 Reads:
   docs/findings/taxonomy.yaml             — controlled vocabulary (questions, facets, stages, synonyms)
@@ -48,8 +50,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 import analytics
 import audience
+import auth
 import capabilities
 import finding_feedback as feedback
+import finding_validation as validation
 import findings as findings_mod
 import ui
 from capabilities import requires, PUBLIC_PAGE, FINDINGS_REVIEW
@@ -90,6 +94,12 @@ _VARIANTS = {
     "workflow":  ("Workflow", "Browse by stage of the streaming chain, gaps included"),
 }
 _DEFAULT_VARIANT = "questions"
+_LOOKS = {
+    "gos": ("GoS website", "White and sage, in the style of greeningofstreaming.org"),
+    "lab": ("OWL lab", "Dark, in the style of the lab's instrument pages"),
+}
+# A lab check can't override what a WattLab meeting or a failed repeat decided.
+_VALIDATION_LOCKED = ("group-validated", "not-reproduced")
 
 # "Where the watts go" — every bar is a number from a finding's stored result,
 # linked to that finding. Kept here (not computed) so the chart is reviewed
@@ -129,8 +139,40 @@ _STYLES = """
   .fx-gos .fx-hero { background: #e6ede4; box-shadow: 0 0 0 100vmax #e6ede4; clip-path: inset(0 -100vmax);
     padding: 1.75rem 0; margin: 0 0 1.75rem }
   .fx-gos .fx-hero-in { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1.5rem 1.6rem }
-  .fx-gos .fx-cta { background: #263951; border-color: #263951; color: #fff; border-radius: 4px }
-  .fx-gos .fx-cta-2 { border-radius: 4px; border-color: #263951; color: #263951 }
+  .fx-gos .fx-cta { background: linear-gradient(90deg, #457a55, #33709a); border: 0; color: #fff; border-radius: 4px }
+  .fx-gos .auth-chip { background: #ffffff }
+  .fx-gos .fx-card { border-left-color: #629E71 }
+  .fx-gos .fx-chart .b-total { fill: #629E71 }
+  .fx-gos .fx-eyebrow img { display: none }
+  body.fx-gos { padding-top: 0 }
+  .fx-mast { background: #fff; box-shadow: 0 0 0 100vmax #fff; clip-path: inset(0 -100vmax); padding: 1.1rem 0 0.7rem }
+  .fx-mast a { display: inline-flex; align-items: center; gap: 0.75rem; text-decoration: none }
+  .fx-mast span { font-family: Georgia, Palatino, serif; font-size: 1.75rem; color: #629E71; line-height: 1.15 }
+  body.fx-gos > nav:not(.fx-variants) { background: #fff; box-shadow: 0 0 0 100vmax #fff; clip-path: inset(0 -100vmax);
+    padding-bottom: 0.8rem; margin-bottom: 1.25rem; font-family: system-ui, -apple-system, sans-serif !important;
+    border-bottom: 1px solid var(--border) }
+  body.fx-gos > nav:not(.fx-variants) a { font-family: system-ui, -apple-system, sans-serif !important }
+  .fx-hero-grid { display: block }
+  .fx-gos .fx-hero-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 0.9rem }
+  .fx-panels, .fx-panels-end { display: none }
+  .fx-gos .fx-panels { display: flex; flex-direction: column; gap: 0.9rem }
+  .fx-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1.1rem 1.15rem;
+    color: var(--text-2); font-size: 0.9rem; line-height: 1.6; flex: 1 }
+  .fx-panel h3 { margin: 0 0 0.5rem; font-size: 1.15rem; text-align: center }
+  .fx-panel p { margin: 0 }
+  .fx-panel b { color: var(--text) }
+  .fx-panel a { color: var(--accent); display: inline-block; margin-top: 0.5rem }
+  .fx-labval { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; font-size: 0.78rem;
+    color: var(--text-3) }
+  .fx-labval b { color: var(--text) }
+  .fx-labval button { background: none; border: 1px solid var(--border-3); color: var(--text-2); padding: 0.2rem 0.6rem;
+    font: inherit; cursor: pointer }
+  .fx-labval .fx-labval-start { border-color: var(--accent); color: var(--accent) }
+  .fx-labval-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.5rem }
+  .fx-labval-form[hidden] { display: none }
+  .fx-labval input { background: var(--panel); color: var(--text); border: 1px solid var(--border-3); padding: 0.2rem 0.45rem;
+    font: inherit; width: 11rem }
+  .fx-gos .fx-cta-2 { border-radius: 4px; border-color: #33709a; color: #2a5f83 }
   .fx-hero { margin: 0 0 1.5rem }
   .fx-hero h1 { font-size: 1.85rem; line-height: 1.3; margin: 0.3rem 0 0.8rem }
   .fx-eyebrow { color: var(--text-3); font-family: monospace; font-size: 0.78rem; margin: 0; display: flex;
@@ -337,8 +379,16 @@ _STYLES = """
     .fx-gaps { grid-template-columns: 1fr }
   }
   /* Last, so it beats the base rules above. */
+  @media (max-width: 700px) {
+    .fx-gos .fx-hero-grid { display: block }
+    .fx-gos .fx-panels { display: none }
+    .fx-gos .fx-panels-end { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 2rem }
+  }
   @media (max-width: 600px) {
     body { padding: 3.25rem 1rem 1rem }
+    body.fx-gos { padding-top: 0 }
+    .fx-mast { padding-top: 3rem }
+    .fx-mast span { font-size: 1.4rem }
     .fx-hero h1 { font-size: 1.5rem }
     .fx-fig-sub { display: none }
     .fx-themes { display: flex; overflow-x: auto; padding-bottom: 0.4rem }
@@ -530,6 +580,40 @@ _INTERACT_JS = """
     a.addEventListener('click', function () { if (popdown) popdown.open = true; });
   });
 
+  // Lab only: the server renders these rows for Lab visitors and nobody else.
+  document.querySelectorAll('.fx-labval[data-slug]').forEach(function (row) {
+    var msg = row.querySelector('.fx-vmsg');
+    function send(body) {
+      fetch(PREFIX + '/findings/' + row.dataset.slug + '/lab-validation', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      }).then(function (r) {
+        return r.json().then(function (d) {
+          if (r.ok) location.reload(); else msg.textContent = d.error || 'Could not record that.';
+        });
+      }).catch(function () { msg.textContent = 'Could not record that.'; });
+    }
+    var start = row.querySelector('.fx-labval-start'), form = row.querySelector('.fx-labval-form');
+    if (start && form) {
+      var name = form.querySelector('input');
+      if (name && !name.value) name.value = store('owl-fx-labname') || '';
+      start.addEventListener('click', function () { start.hidden = true; form.hidden = false; if (name) name.focus(); });
+      form.querySelector('.fx-labval-cancel').addEventListener('click', function () {
+        form.hidden = true; start.hidden = false; msg.textContent = '';
+      });
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var n = name ? name.value.trim() : '';
+        if (name && !n) { msg.textContent = 'Please enter your name.'; return; }
+        if (name) store('owl-fx-labname', n);
+        send({ action: 'validate', name: n });
+      });
+    }
+    var undo = row.querySelector('.fx-labval-undo');
+    if (undo) undo.addEventListener('click', function () {
+      send({ action: 'withdraw', name: store('owl-fx-labname') || '' });
+    });
+  });
+
   // showModal() covers the page, makes it inert, and handles Esc and focus return.
   document.querySelectorAll('.fx-test-open').forEach(function (btn) {
     var dlg = btn.nextElementSibling;
@@ -541,25 +625,24 @@ _INTERACT_JS = """
     });
   });
 
-  var lv = document.querySelector('.fx-layout-vote');
-  if (lv) {
-    var picked = store('owl-fx-layout');
-    lv.querySelectorAll('.fx-vbtn').forEach(function (btn) {
+  document.querySelectorAll('.fx-layout-vote .fx-vote[data-group]').forEach(function (row) {
+    var group = row.dataset.group, key = group === 'variant' ? 'owl-fx-layout' : 'owl-fx-look';
+    var picked = store(key), msg = row.querySelector('.fx-vmsg');
+    row.querySelectorAll('.fx-vbtn').forEach(function (btn) {
       if (picked === btn.dataset.variant) btn.setAttribute('aria-pressed', 'true');
       btn.addEventListener('click', function () {
-        post(PREFIX + '/findings/variant-vote', { variant: btn.dataset.variant }).then(function (d) {
-          var msg = lv.querySelector('.fx-vmsg');
+        post(PREFIX + '/findings/variant-vote', { group: group, variant: btn.dataset.variant }).then(function (d) {
           if (!d._ok) { msg.textContent = d.error || 'Could not record that, please try later.'; return; }
-          store('owl-fx-layout', d.picked || '');
-          lv.querySelectorAll('.fx-vbtn').forEach(function (b) {
+          store(key, d.picked || '');
+          row.querySelectorAll('.fx-vbtn').forEach(function (b) {
             b.setAttribute('aria-pressed', String(b.dataset.variant === d.picked));
             var c = b.querySelector('b'); if (c) c.textContent = d.counts[b.dataset.variant] || '';
           });
           msg.textContent = d.picked ? 'Thank you.' : '';
-        });
+        }).catch(function () { msg.textContent = 'Could not record that, please try later.'; });
       });
     });
-  }
+  });
 })();
 """
 
@@ -615,9 +698,14 @@ def _entries(min_n: int):
     items.sort(key=lambda x: x[0].last_refined, reverse=True)
     order = {k: i for i, k in enumerate(_load_yaml(_TAXONOMY_PATH).get("theme", {}).get("values", {}))}
     items.sort(key=lambda x: order.get((overlay.get(x[0].slug) or {}).get("theme"), len(order)))
+    validated = validation.current()
     out = []
     for f, is_draft in items:
         ov = overlay.get(f.slug) or {}
+        if f.slug in validated:
+            ov = {**ov, "lab_validation": validated[f.slug]}
+            if ov.get("review_status", "machine-draft") == "machine-draft":
+                ov["review_status"] = "lab-checked"
         n = ov.get("n_runs")
         out.append((f, ov, n is None or int(n) < min_n, is_draft))
     return out
@@ -637,6 +725,29 @@ def _review_pill(ov: dict, is_draft: bool) -> str:
     label, tip, _ = _REVIEW[st]
     cls = {"machine-draft": "fx-draft", "group-validated": "fx-rev validated"}.get(st, "fx-rev")
     return f'<span class="fx-pill {cls}" title="{html_lib.escape(tip)}">{label}</span>'
+
+
+def _lab_val_html(f, ov: dict, lab: dict | None) -> str:
+    """The Lab validation control; empty for anyone not on the lab network.
+    `lab` is {"who": signed-in email or ""}. Two clicks by design: a stray tap
+    on a list of 22 cards must not validate a finding."""
+    if lab is None or ov.get("review_status") in _VALIDATION_LOCKED:
+        return ""
+    e = html_lib.escape
+    slug = e(f.slug)
+    v = ov.get("lab_validation")
+    if v:
+        return (f'<div class="fx-labval" data-slug="{slug}"><span>Lab validated by <b>{e(v["by"])}</b>, '
+                f'{e(v["at"][:16].replace("T", " "))}</span>'
+                f'<button type="button" class="fx-labval-undo">Withdraw</button>'
+                f'<span class="fx-vmsg" aria-live="polite"></span></div>')
+    who = (f'<span>as <b>{e(lab["who"])}</b></span>' if lab.get("who") else
+           f'<input type="text" maxlength="{validation.NAME_MAX}" placeholder="Your name" aria-label="Your name">')
+    return (f'<div class="fx-labval" data-slug="{slug}">'
+            f'<button type="button" class="fx-labval-start">Lab validation</button>'
+            f'<form class="fx-labval-form" hidden><span>I checked this against its stored data.</span>{who}'
+            f'<button type="submit">Confirm</button><button type="button" class="fx-labval-cancel">Cancel</button></form>'
+            f'<span class="fx-vmsg" aria-live="polite"></span></div>')
 
 
 def _variant_qs(variant: str, min_n: int, **extra) -> str:
@@ -675,7 +786,7 @@ def _vote_html(slug: str, counts: dict) -> str:
 
 
 def _card_html(f, ov: dict, early: bool, is_draft: bool, taxonomy: dict, min_n: int,
-               counts: dict, stage: str = "") -> str:
+               counts: dict, stage: str = "", lab: dict | None = None) -> str:
     e = html_lib.escape
     dot, word, meaning = _CONF_PLAIN.get(f.confidence, ("·", "", ""))
     headline = ov.get("plain_headline") or f.headline
@@ -702,7 +813,7 @@ def _card_html(f, ov: dict, early: bool, is_draft: bool, taxonomy: dict, min_n: 
         f'<div class="fx-meta">{meta}</div>'
         + (f'<p class="fx-why"><b>Why does this matter?</b>{e(why)}</p>' if why else "")
         + f'<div class="fx-foot"><a href="{detail}">See the science &rarr;</a>'
-        f'{_test_html(f, ov, min_n)}{_vote_html(f.slug, counts)}</div>'
+        f'{_test_html(f, ov, min_n)}{_vote_html(f.slug, counts)}{_lab_val_html(f, ov, lab)}</div>'
         f'</article>'
     )
 
@@ -879,20 +990,26 @@ def _data_shelf_html(entries, min_n: int) -> str:
             f'<th>Stored results (JSON)</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div></details>')
 
 
-def _layout_vote_html(tally: dict) -> str:
-    counts = tally.get("variants", {})
+def _vote_row_html(group: str, question: str, options: dict, counts: dict) -> str:
     btns = "".join(
         f'<button type="button" class="fx-vbtn" data-variant="{k}" aria-pressed="false" title="{html_lib.escape(desc)}">'
         f'{html_lib.escape(label)}<b>{sum(counts.get(k, {}).values()) or ""}</b></button>'
-        for k, (label, desc) in _VARIANTS.items())
-    return (f'<section class="fx-layout-vote" aria-label="Layout vote"><p>This page comes in two layouts for '
-            f'the WattLab group to compare. <b>Which one should we keep?</b> Pick one; pick it again to withdraw.</p>'
-            f'<div class="fx-vote">{btns}<span class="fx-vmsg" aria-live="polite"></span></div>'
+        for k, (label, desc) in options.items())
+    return (f'<p><b>{question}</b></p><div class="fx-vote" data-group="{group}">{btns}'
+            f'<span class="fx-vmsg" aria-live="polite"></span></div>')
+
+
+def _layout_vote_html(tally: dict) -> str:
+    return (f'<section class="fx-layout-vote" aria-label="Layout and look vote"><p>This page comes in two layouts and '
+            f'two looks for the WattLab group to compare, using the switch at the top. '
+            f'Pick an answer to each question; pick it again to withdraw.</p>'
+            f'{_vote_row_html("variant", "Which layout should we keep?", _VARIANTS, tally.get("variants", {}))}'
+            f'{_vote_row_html("look", "Which look should we keep?", _LOOKS, tally.get("looks", {}))}'
             f'<p class="fx-mono" style="margin:0.6rem 0 0">Votes are stored without your IP address. '
             f'This browser keeps a random ID so a vote can be changed or withdrawn.</p></section>')
 
 
-def _variant_nav_html(variant: str, min_n: int, is_lab: bool, look: str = "lab") -> str:
+def _variant_nav_html(variant: str, min_n: int, is_lab: bool, look: str = "gos") -> str:
     links = " ".join(
         f'<a href="{_PREFIX}/findings{_variant_qs(k, min_n)}" title="{html_lib.escape(desc)}"'
         f'{" aria-current=&quot;page&quot;" if k == variant else ""}>{html_lib.escape(label)}</a>'
@@ -901,12 +1018,22 @@ def _variant_nav_html(variant: str, min_n: int, is_lab: bool, look: str = "lab")
     looks = " ".join(
         f'<a href="{_PREFIX}/findings{_variant_qs(variant, min_n, look=k)}"'
         f'{" aria-current=&quot;page&quot;" if k == look else ""}>{label}</a>'
-        for k, label in (("lab", "OWL lab"), ("gos", "GoS website")))
+        for k, (label, _) in _LOOKS.items())
     return f'<nav class="fx-variants" aria-label="Layouts to compare">Layout: {links} &nbsp; Look: {looks}{lab}</nav>'
 
 
+def _panels_html() -> str:
+    """Who is behind the lab; wording from greeningofstreaming.org."""
+    return (f'<div class="fx-panel"><h3>Our members</h3><p>Greening of Streaming brings together forward-thinking '
+            f'organisations, from global media companies to specialised technology providers.</p>'
+            f'<a href="{ui.GOS_URL}" target="_blank" rel="noopener">See our members &rarr;</a></div>'
+            f'<div class="fx-panel"><h3>Our mission</h3><p>To reduce the environmental impact of streaming through '
+            f'<b>industry collaboration</b>, pioneering <b>energy-efficient solutions</b> and promoting '
+            f'<b>evidence-based sustainable practices</b>.</p></div>')
+
+
 def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", is_lab: bool = False,
-                  open_test: bool = False, look: str = "lab") -> str:
+                  open_test: bool = False, look: str = "gos", lab: dict | None = None) -> str:
     e = html_lib.escape
     taxonomy = _load_yaml(_TAXONOMY_PATH)
     entries = _entries(min_n)
@@ -940,7 +1067,7 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
             facet_rows.append(f'<div class="fx-facet"><span class="fx-facet-label">'
                               f'{e(spec.get("label", facet))}</span>{chips}</div>')
 
-    cards = lambda xs: "".join(_card_html(f, ov, er, dr, taxonomy, min_n, votes.get(f.slug, {}), stage)
+    cards = lambda xs: "".join(_card_html(f, ov, er, dr, taxonomy, min_n, votes.get(f.slug, {}), stage, lab)
                                for f, ov, er, dr in xs)
     n_drafts = sum(1 for _, ov, _, dr in entries if _review_status(ov, dr) == "machine-draft")
     n_main_shown = sum(1 for _, ov, _, _ in main if not stage or stage in ov.get("stages", []))
@@ -971,7 +1098,7 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
 <p class="fx-preview"><b>Preview</b> of the redesigned findings page, for discussion &middot;
    {n_drafts} findings marked Draft are awaiting lab review &middot; numbers link to the stored measurements</p>
 {_variant_nav_html(variant, min_n, is_lab, look)}
-<section class="fx-hero"><div class="fx-hero-in">
+<section class="fx-hero"><div class="fx-hero-grid"><div class="fx-hero-in">
   <p class="fx-eyebrow"><img src="/static/gos-roundel.png" alt="" width="39" height="40">
      <span>The Open WattLab &middot; a Greening of Streaming lab</span></p>
   <h1>What does streaming really cost in energy? We measure it.</h1>
@@ -982,7 +1109,7 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
      and we say how solid it is.</p>
   <div class="fx-ctas"><a class="fx-cta" href="#fx-found">See what we've found</a>
      <a class="fx-cta-2" href="#fx-test">Test my knowledge</a></div>
-</div></section>
+</div><aside class="fx-panels" aria-label="About Greening of Streaming">{_panels_html()}</aside></div></section>
 {_quiz_html(entries, min_n, open_test)}
 {top}
 {after}
@@ -1007,6 +1134,7 @@ def _catalog_html(min_n: int, variant: str = _DEFAULT_VARIANT, stage: str = "", 
      The numbers, limits and raw data are one click away.</p>
   <div class="fx-list">{cards(early)}</div>
 </details>
+<div class="fx-panels-end">{_panels_html()}</div>
 <h2>Where next?</h2>
 <p class="fx-next-links"><a href="/methodology">How we measure</a>
    <a href="{ui.GOS_URL.rstrip("/")}/publications" target="_blank" rel="noopener">Our publications</a>
@@ -1025,7 +1153,7 @@ def _source_url(rid: str, is_draft: bool) -> str:
     return f"{_PREFIX}/findings/source/{type_}/{token.split('_')[-1]}/download.json"
 
 
-def _detail_html(slug: str, min_n: int) -> str | None:
+def _detail_html(slug: str, min_n: int, lab: dict | None = None) -> str | None:
     e = html_lib.escape
     taxonomy = _load_yaml(_TAXONOMY_PATH)
     entries = {f.slug: (f, ov, early, dr) for f, ov, early, dr in _entries(min_n)}
@@ -1047,7 +1175,7 @@ def _detail_html(slug: str, min_n: int) -> str | None:
                  f'<span class="fx-key">{e(ov.get("key_number", ""))}</span>')
     draft_banner = ('<p class="fx-draft-banner">Draft finding, awaiting lab review. The measurements are '
                     'stored and linked below; the wording may still change before publication.</p>'
-                    if is_draft else "")
+                    if _review_status(ov, is_draft) == "machine-draft" else "")
     why = ov.get("why_it_matters", "")
     stage_labels = ", ".join(_stages(taxonomy).get(s, {}).get("label", s) for s in ov.get("stages", []))
     quiz = f'<div class="fx-check">{_test_html(f, ov, min_n)}</div>' if ov.get("quiz") else ""
@@ -1078,7 +1206,8 @@ def _detail_html(slug: str, min_n: int) -> str | None:
 {quiz}
 <div class="fx-box">{_vote_html(f.slug, counts)}
   <p class="fx-mono" style="margin:0.5rem 0 0">Does this make sense to you? Your 👍 or ❓ helps the lab decide
-     what to publish and what to re-check. Votes are stored without your IP address.</p></div>
+     what to publish and what to re-check. Votes are stored without your IP address.</p>
+  {_lab_val_html(f, ov, lab)}</div>
 
 <h2>The numbers</h2>
 <div class="fx-box">
@@ -1108,9 +1237,10 @@ def _detail_html(slug: str, min_n: int) -> str | None:
 """
 
 
-def _review_html(min_n: int) -> str:
-    """Lab-only agenda for the group review (Martin, 5 Nov). Ranks findings;
-    never changes a status — that is an overlay edit after a WattLab meeting."""
+def _review_html(min_n: int, lab: dict | None = None) -> str:
+    """Lab-only agenda for the group review (Martin, 5 Nov). Votes rank findings
+    and never change a status. A Lab validation moves Draft to Lab-checked; only
+    a WattLab meeting, as an overlay edit, makes a finding Validated."""
     e = html_lib.escape
     tally = feedback.tally()
     votes = tally.get("findings", {})
@@ -1142,23 +1272,28 @@ def _review_html(min_n: int) -> str:
             f'{notes}</td><td>{_REVIEW[st][0]}</td><td class="num">{dot} {"early" if early else "n≥" + str(min_n)}'
             f'<br><span class="fx-nchip">n={e(str(ov.get("n_runs", "?")))}</span></td>'
             f'<td class="num">{split(up)}</td><td class="num">{split(qn)}</td><td>{comments or "&ndash;"}</td>'
-            f'<td class="num">{e(f.first_measured)}</td></tr>')
+            f'<td>{_lab_val_html(f, ov, lab) or "&ndash;"}</td><td class="num">{e(f.first_measured)}</td></tr>')
     variants = tally.get("variants", {})
     vrow = " &middot; ".join(f'{label}: {sum(variants.get(k, {}).values())}' for k, (label, _) in _VARIANTS.items())
+    looks = tally.get("looks", {})
+    vrow += " &nbsp; Look votes &middot; " + " &middot; ".join(
+        f'{label}: {sum(looks.get(k, {}).values())}' for k, (label, _) in _LOOKS.items())
     return f"""
 <p class="fx-preview"><b>Lab only</b> &middot; review queue for the findings preview</p>
 <p class="fx-mono"><a href="{_PREFIX}/findings">&larr; Findings preview</a></p>
 <h1>Findings review queue</h1>
 <p class="fx-lede">The agenda for the group review. Findings with ❓ come first: send them back to technical
    review. Lab-checked findings with 👍 come next: candidates for validation at a WattLab meeting.</p>
-<p class="fx-axes"><b>Signals rank this list; they never change a status.</b> To change a status after a meeting,
+<p class="fx-axes"><b>Signals rank this list; they never change a status.</b> A Lab validation moves a Draft to
+   Lab-checked and records who and when; it never makes a finding Validated. To record a WattLab meeting's decision,
    edit <code>review_status</code> in <code>docs/findings_drafts/plain_overlay.yaml</code> and add
    <code>validated_on</code>. Counts are split L(ab), M(ember), A(nonymous).</p>
 <p class="fx-mono">Layout votes &middot; {vrow}</p>
 <div class="fx-wide"><table class="fx-review">
 <thead><tr><th>Finding</th><th>Review status</th><th>Measurement</th><th>👍</th><th>❓</th><th>Latest questions</th>
-<th>Measured</th></tr></thead>
+<th>Lab validation</th><th>Measured</th></tr></thead>
 <tbody>{"".join(body)}</tbody></table></div>
+<script>{_INTERACT_JS}</script>
 """
 
 
@@ -1166,23 +1301,37 @@ _PREVIEW_HREF = re.compile(r'href="(' + re.escape(_PREFIX) + r'/findings[^"#]*)(
 
 
 def _look(request: Request) -> str:
-    return "gos" if request.query_params.get("look") == "gos" else "lab"
+    return "lab" if request.query_params.get("look") == "lab" else "gos"
 
 
-def _carry_gos_look(m: re.Match) -> str:
+def _lab_ctx(request: Request) -> dict | None:
+    """None unless on the lab network. Lab tier is by address, so "who" is known
+    only if the visitor is also signed in; otherwise they type a name."""
+    if not capabilities.can(audience.tier(request), FINDINGS_REVIEW):
+        return None
+    return {"who": auth.member_email_from_request(request) or ""}
+
+
+def _carry_lab_look(m: re.Match) -> str:
     url, fragment = m.group(1), m.group(2) or ""
     if "look=" in url or "/findings/source/" in url:
         return m.group(0)
-    return f'href="{url}{"&amp;" if "?" in url else "?"}look=gos{fragment}"'
+    return f'href="{url}{"&amp;" if "?" in url else "?"}look=lab{fragment}"'
+
+
+_MASTHEAD = (f'<header class="fx-mast"><a href="{ui.GOS_URL}" target="_blank" rel="noopener">'
+             f'<img src="/static/gos-roundel.png" alt="" width="54" height="56">'
+             f'<span>Greening of Streaming</span></a></header>')
 
 
 def _page(request: Request, title: str, body: str) -> HTMLResponse:
     gos = _look(request) == "gos"
-    if gos:
-        body = _PREVIEW_HREF.sub(_carry_gos_look, body)
+    if not gos:
+        body = _PREVIEW_HREF.sub(_carry_lab_look, body)
     page = ui.render_page(request, title, body, styles=_STYLES, head=_NOINDEX, back=False)
     # The interaction script reads the route prefix from the body element.
-    page = page.replace("<body", f'<body data-fx-prefix="{_PREFIX}"' + (' class="fx-gos"' if gos else ""), 1)
+    attrs = f'data-fx-prefix="{_PREFIX}"' + (' class="fx-gos"' if gos else "")
+    page = page.replace("<body>", f"<body {attrs}>" + (_MASTHEAD if gos else ""), 1)
     return HTMLResponse(page)
 
 
@@ -1217,14 +1366,14 @@ async def mockup_findings_catalog(request: Request):
     if variant not in _VARIANTS:
         variant = _DEFAULT_VARIANT
     is_lab = capabilities.can(audience.tier(request), FINDINGS_REVIEW)
-    body = _catalog_html(_min_n(request), variant, request.query_params.get("stage", ""), is_lab, open_test, _look(request))
+    body = _catalog_html(_min_n(request), variant, request.query_params.get("stage", ""), is_lab, open_test, _look(request), _lab_ctx(request))
     return _page(request, "Findings (preview)", body)
 
 
 @router.get(_PREFIX + "/findings/review", response_class=HTMLResponse,
             dependencies=[Depends(requires(FINDINGS_REVIEW))])
 async def mockup_findings_review(request: Request):
-    return _page(request, "Findings review queue", _review_html(_min_n(request)))
+    return _page(request, "Findings review queue", _review_html(_min_n(request), _lab_ctx(request)))
 
 
 @router.post(_PREFIX + "/findings/variant-vote", dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -1232,15 +1381,42 @@ async def mockup_variant_vote(request: Request):
     data = await _json_body(request)
     if data is None:
         return JSONResponse({"error": "Send JSON."}, status_code=415)
+    group = data.get("group", "variant")
+    options = {"variant": _VARIANTS, "look": _LOOKS}.get(group) if isinstance(group, str) else None
+    if options is None:
+        return JSONResponse({"error": "Unknown question."}, status_code=400)
     ip_key, tier = _visitor(request)
     try:
-        out = feedback.pick_variant(str(data.get("variant", "")), tuple(_VARIANTS), ip_key=ip_key,
-                                    device=data.get("device"), tier=tier)
+        out = feedback.pick_variant(str(data.get("variant", "")), tuple(options), ip_key=ip_key,
+                                    device=data.get("device"), tier=tier, group=group)
     except feedback.FeedbackError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     except feedback.RateLimited:
         return JSONResponse({"error": "Too many votes from this network. Please try again later."}, status_code=429)
     return JSONResponse(out)
+
+
+@router.post(_PREFIX + "/findings/{slug}/lab-validation", dependencies=[Depends(requires(FINDINGS_REVIEW))])
+async def mockup_lab_validation(request: Request, slug: str):
+    overlays = {f.slug: ov for f, ov, _, _ in _entries(_DEFAULT_MIN_N)}
+    if slug not in overlays:
+        return JSONResponse({"error": "Not a finding on this page."}, status_code=404)
+    data = await _json_body(request)
+    if data is None:
+        return JSONResponse({"error": "Send JSON."}, status_code=415)
+    who = auth.member_email_from_request(request) or str(data.get("name") or "")
+    action = data.get("action")
+    if action == "withdraw":
+        validation.withdraw(slug, who)
+        return JSONResponse({"validated": None})
+    if action != "validate":
+        return JSONResponse({"error": "Unknown action."}, status_code=400)
+    if overlays[slug].get("review_status") in _VALIDATION_LOCKED:
+        return JSONResponse({"error": "This finding's status was set by a WattLab decision."}, status_code=409)
+    try:
+        return JSONResponse({"validated": validation.validate(slug, who)})
+    except validation.ValidationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
 
 
 @router.post(_PREFIX + "/findings/{slug}/feedback", dependencies=[Depends(requires(PUBLIC_PAGE))])
@@ -1284,7 +1460,7 @@ async def mockup_draft_source(job_type: str, job_id: str):
 @router.get(_PREFIX + "/findings/{slug}", response_class=HTMLResponse,
             dependencies=[Depends(requires(PUBLIC_PAGE))])
 async def mockup_finding_detail(request: Request, slug: str):
-    body = _detail_html(slug, _min_n(request))
+    body = _detail_html(slug, _min_n(request), _lab_ctx(request))
     if body is None:
         return HTMLResponse("Not found", status_code=404)
     return _page(request, "Finding (preview)", body)

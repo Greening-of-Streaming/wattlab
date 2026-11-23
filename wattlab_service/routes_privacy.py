@@ -6,8 +6,9 @@ aggregate visit counts (no cookies, no stored IPs — see analytics.py), the one
 strictly-necessary auth cookie (owl_session, members only — auth.py), the
 pseudonymised handling of visitor IPs, and the result data a visitor generates
 by running a job, plus votes on findings and their device-id localStorage key
-(finding_feedback.py, CR-086). Kept in sync with analytics.py / auth.py /
-persist.py / finding_feedback.py BY HAND — if data handling changes, this page
+(finding_feedback.py, CR-086), and the names of lab staff who validate a
+finding (finding_validation.py). Kept in sync with analytics.py / auth.py /
+persist.py / finding_feedback.py / finding_validation.py BY HAND — if data handling changes, this page
 must change.
 """
 from fastapi import APIRouter, Request, Depends
@@ -62,11 +63,16 @@ def _body() -> str:
           GoS member, your email is held in the member allowlist and used solely
           to authenticate you and scope you to your own results.</li>
       <li><span class="key">Votes and questions on findings.</span> If you press
-          &#128077; or &#10067; on a finding, or vote on a page layout, we store the
+          &#128077; or &#10067; on a finding, or vote on a page layout or look, we store the
           vote, your audience type and the time, keyed by a one-way hashed token
           (see below) so a vote can be changed or withdrawn. An optional one-line
           question you type is stored as written and read only by the lab team;
           please don&rsquo;t put personal details in it.</li>
+      <li><span class="key">Lab validations.</span> When a member of the lab team
+          marks a finding as checked, we store the name they enter (or their
+          member email) and the time, so the record shows who checked what. It
+          is visible only on the lab network, and their browser remembers the
+          name for next time.</li>
     </ul>
 
     <h2>IP addresses</h2>

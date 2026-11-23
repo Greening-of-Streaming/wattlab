@@ -498,12 +498,21 @@ import yaml as _yaml
 
 import finding_feedback
 import html as _html
+import json
 import re as _re
+import finding_validation
 import routes_mockup_findings as _mock
 
 _LAB = {"x-real-ip": "127.0.0.1"}
 _TAX = _yaml.safe_load(Path(_mock._TAXONOMY_PATH).read_text())
 _OV = _yaml.safe_load(Path(_mock._OVERLAY_PATH).read_text())
+
+
+@pytest.fixture(autouse=True)
+def _validation_log(tmp_path, monkeypatch):
+    """Real lab validations must not change what these tests see."""
+    monkeypatch.setattr(finding_validation, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(finding_validation, "LOG_FILE", tmp_path / "lab_validations.jsonl")
 
 
 @pytest.fixture
@@ -529,7 +538,8 @@ def test_each_layout_renders_for_anonymous(variant, marker):
     assert r.status_code == 200
     assert marker in r.text
     assert "Why does this matter?" in r.text
-    assert "Which one should we keep?" in r.text
+    assert "Which layout should we keep?" in r.text
+    assert "Which look should we keep?" in r.text
     assert "Data only" in r.text
     assert "review queue" not in r.text          # the Lab link stays Lab-only
 
@@ -669,17 +679,86 @@ def test_question_box_is_hidden_until_asked():
     assert '<form class="fx-ask" hidden>' in text
 
 
-def test_gos_look_is_opt_in_and_follows_links():
-    plain = client.get(_PREVIEW, headers=_ANON).text
-    assert '<body data-fx-prefix="/preview-c5d9b3be" class="fx-gos"' not in plain
-    gos = client.get(f"{_PREVIEW}?look=gos", headers=_ANON).text
-    assert '<body data-fx-prefix="/preview-c5d9b3be" class="fx-gos"' in gos
-    assert f'href="{_PREVIEW}/tv-screen-draws-20x-the-streaming-box?look=gos"' in gos
-    assert f'href="{_PREVIEW}?v=workflow&amp;look=gos"' in gos
+def test_gos_look_is_the_default_and_lab_look_follows_links():
+    gos = client.get(_PREVIEW, headers=_ANON).text
+    assert '<body data-fx-prefix="/preview-c5d9b3be" class="fx-gos">' in gos
+    assert '<header class="fx-mast">' in gos and "Our mission" in gos and "Our members" in gos
     assert f'href="{_PREVIEW}?look=lab"' in gos
-    assert "/findings/source/" not in gos or "download.json?look=gos" not in gos
-    detail = client.get(f"{_PREVIEW}/tv-screen-draws-20x-the-streaming-box?look=gos", headers=_ANON).text
-    assert 'class="fx-gos"' in detail
+    assert f'href="{_PREVIEW}/tv-screen-draws-20x-the-streaming-box"' in gos
+    lab = client.get(f"{_PREVIEW}?look=lab", headers=_ANON).text
+    assert 'class="fx-gos"' not in lab and '<header class="fx-mast">' not in lab
+    assert f'href="{_PREVIEW}/tv-screen-draws-20x-the-streaming-box?look=lab"' in lab
+    assert f'href="{_PREVIEW}?v=workflow&amp;look=lab"' in lab
+    assert f'href="{_PREVIEW}?look=gos"' in lab
+    detail = client.get(f"{_PREVIEW}/tv-screen-draws-20x-the-streaming-box?look=lab", headers=_ANON).text
+    assert 'class="fx-gos"' not in detail
+
+
+_DRAFT = "tv-screen-draws-20x-the-streaming-box"
+_START = 'class="fx-labval-start"'
+
+
+def _lv(body, slug=_DRAFT, headers=_LAB):
+    return client.post(f"{_PREVIEW}/{slug}/lab-validation", json=body, headers=headers)
+
+
+def test_lab_validation_is_offered_to_lab_only():
+    assert _START not in client.get(_PREVIEW, headers=_ANON).text
+    assert _START in client.get(_PREVIEW, headers=_LAB).text
+    assert _START in client.get(f"{_PREVIEW}/{_DRAFT}", headers=_LAB).text
+    assert _START in client.get(f"{_PREVIEW}/review", headers=_LAB).text
+    assert _lv({"action": "validate", "name": "Mallory"}, headers=_ANON).status_code == 403
+    assert not finding_validation.LOG_FILE.exists()
+
+
+def test_lab_validation_records_who_and_when_and_lifts_draft():
+    assert "Draft finding, awaiting lab review" in client.get(f"{_PREVIEW}/{_DRAFT}", headers=_ANON).text
+    r = _lv({"action": "validate", "name": "  Ben   Schwarz "})
+    assert r.status_code == 200 and r.json()["validated"]["by"] == "Ben Schwarz"
+    assert r.json()["validated"]["at"].startswith("20")
+    public = client.get(f"{_PREVIEW}/{_DRAFT}", headers=_ANON).text
+    assert "Draft finding, awaiting lab review" not in public and "Lab-checked" in public
+    assert "Ben Schwarz" not in public
+    lab = client.get(f"{_PREVIEW}/{_DRAFT}", headers=_LAB).text
+    assert "Lab validated by <b>Ben Schwarz</b>" in lab and "fx-labval-undo" in lab
+
+
+def test_lab_validation_needs_a_name_and_escapes_it():
+    assert _lv({"action": "validate", "name": "   "}).status_code == 400
+    assert _lv({"action": "validate", "name": "<b>x</b>"}).status_code == 200
+    assert "&lt;b&gt;x&lt;/b&gt;" in client.get(f"{_PREVIEW}/{_DRAFT}", headers=_LAB).text
+
+
+def test_lab_validation_can_be_withdrawn_and_stays_on_record():
+    _lv({"action": "validate", "name": "Ben"})
+    assert _lv({"action": "withdraw", "name": "Simon"}).status_code == 200
+    assert "Draft finding, awaiting lab review" in client.get(f"{_PREVIEW}/{_DRAFT}", headers=_ANON).text
+    log = [json.loads(x) for x in finding_validation.LOG_FILE.read_text().splitlines()]
+    assert [(x["action"], x["by"]) for x in log] == [("validate", "Ben"), ("withdraw", "Simon")]
+
+
+def test_lab_validation_keeps_the_first_record():
+    _lv({"action": "validate", "name": "Ben"})
+    assert _lv({"action": "validate", "name": "Simon"}).json()["validated"]["by"] == "Ben"
+
+
+def test_lab_validation_rejects_bad_requests():
+    assert _lv({"action": "validate", "name": "Ben"}, slug="no-such-finding").status_code == 404
+    assert _lv({"action": "promote", "name": "Ben"}).status_code == 400
+    r = client.post(f"{_PREVIEW}/{_DRAFT}/lab-validation", content="name=Ben", headers=_LAB)
+    assert r.status_code == 415
+
+
+def test_lab_validation_cannot_override_a_meeting(monkeypatch):
+    real = _mock._load_yaml
+    def locked(path):
+        data = real(path)
+        if path == _mock._OVERLAY_PATH:
+            data[_DRAFT] = {**data[_DRAFT], "review_status": "group-validated", "validated_on": "2026-12-01"}
+        return data
+    monkeypatch.setattr(_mock, "_load_yaml", locked)
+    assert _lv({"action": "validate", "name": "Ben"}).status_code == 409
+    assert "Validated" in client.get(f"{_PREVIEW}/{_DRAFT}", headers=_ANON).text
 
 
 def test_validated_status_needs_a_meeting_date():
@@ -746,6 +825,34 @@ def test_layout_vote_is_one_pick_per_voter(fb):
     r = _post("/variant-vote", {"variant": "questions"})
     assert r.json()["picked"] is None and r.json()["counts"]["questions"] == 0
     assert _post("/variant-vote", {"variant": "quiz"}).status_code == 400
+
+
+def test_look_vote_is_separate_from_the_layout_vote(fb):
+    assert _post("/variant-vote", {"variant": "workflow"}).json()["picked"] == "workflow"
+    r = _post("/variant-vote", {"group": "look", "variant": "lab"})
+    assert r.json()["picked"] == "lab" and r.json()["counts"] == {"gos": 0, "lab": 1}
+    r = _post("/variant-vote", {"group": "look", "variant": "gos"})
+    assert r.json()["counts"] == {"gos": 1, "lab": 0}
+    tally = finding_feedback.tally()
+    assert sum(tally["variants"]["workflow"].values()) == 1 and "lab" not in tally["looks"]
+    assert sum(tally["looks"]["gos"].values()) == 1
+    r = _post("/variant-vote", {"group": "look", "variant": "gos"})
+    assert r.json()["picked"] is None and r.json()["counts"]["gos"] == 0
+    assert sum(finding_feedback.tally()["variants"]["workflow"].values()) == 1
+
+
+def test_look_vote_rejects_bad_requests(fb):
+    assert _post("/variant-vote", {"group": "look", "variant": "workflow"}).status_code == 400
+    assert _post("/variant-vote", {"group": "colour", "variant": "gos"}).status_code == 400
+    assert _post("/variant-vote", {"group": ["look"], "variant": "gos"}).status_code == 400
+
+
+def test_both_votes_show_on_either_look_and_in_the_queue(fb):
+    for look in ("", "?look=lab"):
+        text = client.get(f"{_PREVIEW}{look}", headers=_ANON).text
+        assert 'data-group="variant"' in text and 'data-group="look"' in text
+    _post("/variant-vote", {"group": "look", "variant": "gos"})
+    assert "GoS website: 1" in client.get(f"{_PREVIEW}/review", headers=_LAB).text
 
 
 def test_review_queue_is_lab_only_and_ranks_questions_first(fb):

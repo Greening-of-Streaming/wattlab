@@ -134,6 +134,11 @@ with the GoS "no greenwashing" commitment, takeaway above the chart, energy ques
 next?". `?look=gos` tries the GoS colours and serif headings on these pages only, for the group to compare. Fixed the
 "What is unclear?" box, which showed on all 22 cards because `display:flex` beat `hidden`.
 
+**GoS look now the default** on the findings pages, with masthead and members/mission panels (`?look=lab` for dark).
+**Lab validation** added: who and when, append-only, Draft to Lab-checked only, withdrawable. Name is typed or the
+signed-in email, because Lab tier knows a network, not a person.
+Added a vote on the look (GoS website or OWL lab) beside the layout vote, so the email can share one link.
+
 ---
 
 ## Session 82 — 2026-11-06 (CR-086: findings preview, next level — from the 5 Nov WattLab call)

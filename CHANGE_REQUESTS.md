@@ -1463,6 +1463,15 @@ from "preserve the lab look" on purpose, for the group to judge. Muted text rais
 still Draft and should be lab-checked before this leads the site. GoS roundel in the opening, on both looks
 (`static/gos-roundel.png`, 160 px transparent PNG, from the owner's 776×804 master).
 
+**GoS look as default, Lab validation (2026-11-08, owner):** the findings pages now default to the GoS look, with a
+GoS masthead and "Our members" / "Our mission" panels; `?look=lab` keeps the dark look. Lab visitors get a "Lab
+validation" button (two clicks, on cards, detail pages and the review queue): `finding_validation.py` keeps an
+append-only `results/_feedback/lab_validations.jsonl` of who and when. A standing validation moves `machine-draft` to
+`lab-checked` at read time; withdrawing moves it back. It cannot override `group-validated` or `not-reproduced`. Lab
+tier is by address, so "who" is the signed-in email or a typed name: an attestation among colleagues, not
+authentication. Names are shown on the lab network only; /privacy updated. Phase B should fold this into frontmatter.
+The group votes on the look as well as the layout: two independent questions at the foot of the page, tallied apart.
+
 **Phase B (after the group picks):**
 1. Move overlay fields into frontmatter; `findings.py:_validate` checks `review_status`, `stages`,
    `why_it_matters`, `quiz` shape; `finding-draft` skill requires `why_it_matters`, sets `machine-draft`.

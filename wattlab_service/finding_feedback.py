@@ -1,6 +1,6 @@
 """
 finding_feedback.py — CR-086 — community signals on findings (👍 / ❓) and the
-findings-page layout vote.
+findings-page votes on layout and look.
 
 WattLab call 2026-11-05 (Dom's proposal, group consensus): each finding gets a
 thumbs-up ("makes sense to me") and a question mark ("I don't get this"), and
@@ -51,7 +51,7 @@ RATE_LIMIT = 300           # events per IP key …
 RATE_WINDOW_S = 3600       # … per hour
 
 _DEVICE_RE = re.compile(r"^[0-9a-f]{32}$")
-_TARGET_RE = re.compile(r"^(finding|variant):[a-z0-9][a-z0-9-]{0,80}$")
+_TARGET_RE = re.compile(r"^(finding|variant|look):[a-z0-9][a-z0-9-]{0,80}$")
 
 _lock = threading.Lock()
 _recent: dict[str, deque] = {}
@@ -147,24 +147,25 @@ def toggle_finding(slug: str, kind: str, *, ip_key: str, device: str | None,
 
 
 def pick_variant(variant: str, allowed: tuple[str, ...], *, ip_key: str,
-                 device: str | None, tier: str) -> dict:
-    """One layout pick per visitor: choosing a variant switches off their
-    previous pick; choosing the same one again withdraws it."""
+                 device: str | None, tier: str, group: str = "variant") -> dict:
+    """One pick per visitor per question (`group`: layout or look): choosing an
+    option switches off their previous pick in that group only; choosing the
+    same one again withdraws it."""
     if variant not in allowed:
         raise FeedbackError(f"variant must be one of {allowed}")
     voter = voter_key(ip_key, device)
     with _lock:
         _check_rate(ip_key)
         cur = _state(_load_events())
-        mine = [t for (t, k, v) in cur if k == VARIANT_KIND and v == voter]
-        target = f"variant:{variant}"
+        mine = [t for (t, k, v) in cur if k == VARIANT_KIND and v == voter and t and t.startswith(group + ":")]
+        target = f"{group}:{variant}"
         evs = [_event(t, VARIANT_KIND, voter, tier, False) for t in mine]
         if target not in mine:
             evs.append(_event(target, VARIANT_KIND, voter, tier, True))
         _append(evs)
         cur = _state(_load_events())
     return {"picked": variant if target not in mine else None,
-            "counts": {a: sum(1 for (t, k, _) in cur if t == f"variant:{a}" and k == VARIANT_KIND)
+            "counts": {a: sum(1 for (t, k, _) in cur if t == f"{group}:{a}" and k == VARIANT_KIND)
                        for a in allowed}}
 
 
@@ -175,11 +176,12 @@ def _counts_for(cur: dict, target: str) -> dict:
 def tally() -> dict:
     """Everything the pages and the Lab review queue need, from one replay:
     {"findings": {slug: {"up": {tier: n}, "question": {tier: n}, "comments": [...]}},
-     "variants": {key: {tier: n}}}. Comments are newest first and include
+     "variants": {key: {tier: n}}, "looks": {key: {tier: n}}}. Comments are newest first and include
     only ❓ votes still switched on."""
     cur = _state(_load_events())
     findings: dict[str, dict] = {}
     variants: dict[str, dict] = {}
+    looks: dict[str, dict] = {}
     for (target, kind, _), ev in cur.items():
         if not target:
             continue
@@ -193,6 +195,9 @@ def tally() -> dict:
         elif typ == "variant" and kind == VARIANT_KIND:
             v = variants.setdefault(key, {})
             v[tier] = v.get(tier, 0) + 1
+        elif typ == "look" and kind == VARIANT_KIND:
+            v = looks.setdefault(key, {})
+            v[tier] = v.get(tier, 0) + 1
     for f in findings.values():
         f["comments"].sort(key=lambda c: c["ts"], reverse=True)
-    return {"findings": findings, "variants": variants}
+    return {"findings": findings, "variants": variants, "looks": looks}
