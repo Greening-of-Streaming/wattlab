@@ -41,7 +41,8 @@ from runtime import job_status as _job_status
 # access policy; the owner's queue stays the single reservation authority, so
 # a decode run from any node never overlaps another measurement on the owner.
 # The visitor's tier rides in the signed query (_owl_tier) so the owner renders
-# the controls that visitor may use. Pages get a banner naming both machines.
+# the controls that visitor may use. Pages get a banner naming both machines
+# and this node's own nav in place of the owner's.
 
 def _has_rig() -> bool:
     import settings as _cfg
@@ -85,7 +86,7 @@ async def _forward_to_owner(request: Request):
     except Exception as e:
         return JSONResponse({"error": f"{owner.get('label')} unreachable: {e!r}"[:300]}, status_code=502)
     if is_page and ctype and ctype.startswith("text/html") and status == 200:
-        html = data.decode("utf-8", "replace")
+        html = ui.swap_nav(data.decode("utf-8", "replace"), request)   # this node's links
         i = html.find(_BANNER_MARK)
         j = html.find(">", i) + 1 if i >= 0 else 0
         html = html[:j] + _remote_banner(owner.get("label", owner["id"])) + html[j:]

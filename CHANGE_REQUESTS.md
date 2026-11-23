@@ -1401,7 +1401,8 @@ Enhancement and sweet-spot pages were empty.
 - **Deploy state.** GoS2 carries the fix as a staged patch on `9cb5be4`, not through `main:deploy`. Before the next
   `git merge --ff-only deploy` there, run `git restore --staged --worktree wattlab_service`. GoS1's service was not
   restarted (lab session raised), so GoS1 runs the old code until its next restart.
-- **Open.** GoS2's `/decode` is rendered by GoS1, so its nav still shows Enhancement, which is a 404 on GoS2.
+- **Decode page.** GoS2's `/decode` is rendered by GoS1 (rig owner) and forwarded, so it carried GoS1's nav,
+  Enhancement included. The forwarder now swaps in the local nav (`ui.swap_nav`), so it works before GoS1 restarts.
 
 ---
 

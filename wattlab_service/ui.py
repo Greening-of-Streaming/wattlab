@@ -514,6 +514,10 @@ def _nav_items(request: Request) -> tuple:
     )
 
 
+_NAV_OPEN = ('<nav style="display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center;'
+             'font-family:monospace;font-size:0.72rem;margin-bottom:1.5rem">')
+
+
 def _nav_html(request: Request) -> str:
     path = request.url.path
     links = []
@@ -531,11 +535,20 @@ def _nav_html(request: Request) -> str:
             f'onmouseout="this.style.color=\'{color}\'">{label}</a>'
         )
     sep = '<span style="color:var(--text-5)">·</span>'
-    return (
-        '<nav style="display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center;'
-        'font-family:monospace;font-size:0.72rem;margin-bottom:1.5rem">'
-        + sep.join(links) + '</nav>'
-    )
+    return _NAV_OPEN + sep.join(links) + '</nav>'
+
+
+def swap_nav(html: str, request: Request) -> str:
+    """Replace the slim nav of a page ANOTHER node rendered with this node's
+    own. A forwarded page (a node without the rig gets /decode from the rig
+    owner) is shown under this node's name, so its links land here, and the
+    owner's nav can offer a feature this node has off (Enhancement on GoS2 →
+    404). A page without the nav is returned unchanged."""
+    i = html.find(_NAV_OPEN)
+    j = html.find("</nav>", i) if i >= 0 else -1
+    if j < 0:
+        return html
+    return html[:i] + _nav_html(request) + html[j + len("</nav>"):]
 
 
 # Confidence flag popover — inject into any page that shows .conf-badge elements.

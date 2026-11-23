@@ -307,6 +307,25 @@ def test_node_without_rig_forwards_api_and_pages(monkeypatch):
     assert "The decode rig is wired to <b>GoS1</b>" in page and "<h1>Decode Rig</h1>" in page
 
 
+def test_forwarded_decode_page_carries_this_nodes_nav(monkeypatch):
+    """GoS2, 23 Nov 2026: the rig owner renders /decode with ITS nav, which
+    offered Enhancement on a node that has that router off (a 404 there)."""
+    import settings as cfg, ui
+    _no_rig(monkeypatch)
+    owner_nav = ui._NAV_OPEN + '<a href="/enhance-run">Enhancement</a><a href="/decode">Decode</a></nav>'
+    monkeypatch.setattr(peer, "forward", lambda *a, **k: (
+        200, "text/html; charset=utf-8",
+        ("<html><body>" + owner_nav + "<h1>Decode Rig</h1></body></html>").encode()))
+    no_rig_load = cfg.load
+    monkeypatch.setattr(cfg, "load", lambda: {**no_rig_load(), "disabled_routers": ["routes_enhance"]})
+    page = client.get("/decode", headers=LAB).text
+    assert "/enhance-run" not in page and page.count("<nav ") == 1
+    assert 'href="/decode"' in page and 'href="/video"' in page
+    assert "The decode rig is wired to <b>GoS1</b>" in page and "<h1>Decode Rig</h1>" in page
+    bare = "<html><body>no nav here</body></html>"
+    assert ui.swap_nav(bare, None) == bare
+
+
 def test_node_without_rig_applies_its_own_gates_before_forwarding(monkeypatch):
     calls = _no_rig(monkeypatch)
     r = client.post("/decode/run", headers=ANON, data={"template": "x"})
